@@ -110,7 +110,7 @@ void ConvertObject(benchmark::State& state) {
   SteadyValue(state, R"(class Payload {
   toJson(): int[] { return [20, 22]; }
 }
-func main(): int { return Json.stringify(Payload()) == '[20,22]' ? 42 : 0; })",
+func main(): int { return JSON.stringify(Payload()) == '[20,22]' ? 42 : 0; })",
               kAnswer);
 }
 

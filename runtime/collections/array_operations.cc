@@ -22,9 +22,8 @@
 #include "runtime/value/value_io.h"
 
 namespace vela::runtime {
-namespace {
 
-ExecutionStatus Error(ArrayAccessError error) {
+ExecutionStatus ArrayExecutionStatus(ArrayAccessError error) {
   switch (error) {
     case ArrayAccessError::NotArray:
     case ArrayAccessError::ElementTypeMismatch:
@@ -37,18 +36,20 @@ ExecutionStatus Error(ArrayAccessError error) {
   std::unreachable();
 }
 
+namespace {
+
 template <class T, class Convert>
 std::expected<Value, ExecutionStatus> Result(std::expected<T, ArrayAccessError> result,
                                              const Convert& convert) {
   if (!result) {
-    return std::unexpected(Error(result.error()));
+    return std::unexpected(ArrayExecutionStatus(result.error()));
   }
   return convert(*result);
 }
 
 std::expected<Value, ExecutionStatus> MutationResult(std::expected<void, ArrayAccessError> result) {
   if (!result) {
-    return std::unexpected(Error(result.error()));
+    return std::unexpected(ArrayExecutionStatus(result.error()));
   }
   return Value::Null();
 }
@@ -58,7 +59,7 @@ std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
                                                 Heap& heap) {
   const auto length = Heap::ArrayLength(array);
   if (!length) {
-    return std::unexpected(Error(length.error()));
+    return std::unexpected(ArrayExecutionStatus(length.error()));
   }
   const auto first = arguments[1];
   const auto last = arguments[2];
@@ -76,7 +77,7 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
                                                    Heap& heap) {
   const auto length = Heap::ArrayLength(array);
   if (!length) {
-    return std::unexpected(Error(length.error()));
+    return std::unexpected(ArrayExecutionStatus(length.error()));
   }
   const bool splice = builtin == Builtin::ArraySplice;
   const auto input = arguments[splice ? 3 : 1];
@@ -102,7 +103,7 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   if (items == &array) {
     const auto copy = heap.SliceArray(array, 0, *length);
     if (!copy) {
-      return std::unexpected(Error(copy.error()));
+      return std::unexpected(ArrayExecutionStatus(copy.error()));
     }
     items = *copy;
     roots.front() = Value::Object(items);
@@ -110,13 +111,13 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   if (splice) {
     const auto removed = heap.SliceArray(array, start, start + count);
     if (!removed) {
-      return std::unexpected(Error(removed.error()));
+      return std::unexpected(ArrayExecutionStatus(removed.error()));
     }
     roots.back() = Value::Object(*removed);
   }
   const auto changed = heap.ReplaceArrayRange(array, start, count, *items);
   if (!changed) {
-    return std::unexpected(Error(changed.error()));
+    return std::unexpected(ArrayExecutionStatus(changed.error()));
   }
   return splice ? roots.back() : Value::Integer(*Heap::ArrayLength(array));
 }
@@ -228,14 +229,14 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), *length);
       const auto filled = heap.FillArray(array, arguments[1], start, end);
       if (!filled) {
-        return std::unexpected(Error(filled.error()));
+        return std::unexpected(ArrayExecutionStatus(filled.error()));
       }
       return receiver;
     }
     case Builtin::ArrayReverse: {
       const auto reversed = Heap::ReverseArray(array);
       if (!reversed) {
-        return std::unexpected(Error(reversed.error()));
+        return std::unexpected(ArrayExecutionStatus(reversed.error()));
       }
       return receiver;
     }
@@ -248,7 +249,7 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
     case Builtin::ArrayShift: {
       const auto length = Heap::ArrayLength(array);
       if (!length) {
-        return std::unexpected(Error(length.error()));
+        return std::unexpected(ArrayExecutionStatus(length.error()));
       }
       if (*length == 0) {
         return Value::Null();

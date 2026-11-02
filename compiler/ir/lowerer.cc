@@ -108,6 +108,7 @@ LoweringResult Lowerer::Lower() && {
   program_.native_mode = native_mode_;
   BuildFunctionTable();
   BuildClassTable();
+  LowerJSONDecodePlans();
   if (declarations_ != nullptr) {
     for (const auto& [name, selector] : interface_method_ids_) {
       if (program_.selector_declarations.size() <= selector) {
@@ -562,29 +563,7 @@ void Lowerer::LowerFunction(const frontend::Function& source,
                             const frontend::LambdaDescriptor* lambda) {
   auto function = PrepareFunction(source, function_info, owner, lambda);
   if (source.intrinsic) {
-    BeginFunctionBody(function, owner);
-    const auto builtin = *source.intrinsic;
-    auto result = function.parameter_count;
-    if (builtin == Builtin::DateToUTC) {
-      Emit({
-          .opcode = Opcode::LoadInt,
-          .dst = result,
-          .immediate = class_ids_.at("DateParts"),
-          .location = source.location,
-      });
-      ++result;
-    }
-    Emit({
-        .opcode = Opcode::BuiltinCall,
-        .dst = result,
-        .lhs = 0,
-        .index = static_cast<std::uint32_t>(builtin),
-        .location = source.location,
-    });
-    Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
-    function.register_count = result + 1;
-    StoreFunction(std::move(function));
-    current_function_ = nullptr;
+    LowerIntrinsicFunction(std::move(function), source, owner, *source.intrinsic);
     return;
   }
   if (!source.native_symbol.empty()) {

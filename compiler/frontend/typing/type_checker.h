@@ -590,6 +590,7 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::flat_hash_set<const void*> failed_templates_;
   NodeFacts facts_;
   NodeFacts definitions_;
+  absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests_;
 };
 
 }  // namespace vela::frontend

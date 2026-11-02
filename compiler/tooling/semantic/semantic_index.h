@@ -235,6 +235,9 @@ class SemanticIndex final {
   [[nodiscard]] std::string DisplaySignature(const frontend::FunctionDescriptor& signature) const;
   [[nodiscard]] frontend::TypeDescriptor Capability(frontend::TypeDescriptor type) const;
   [[nodiscard]] std::vector<std::string_view> MemberOwners(frontend::TypeDescriptor type) const;
+  [[nodiscard]] Completion SpecializedCompletion(std::string_view owner,
+                                                 const Symbol& symbol,
+                                                 std::string_view name) const;
   void DeclareLocal(const void* node,
                     SourceLocation location,
                     std::string detail,
@@ -255,6 +258,8 @@ class SemanticIndex final {
   void IndexExpression(const frontend::Expression& expression);
   [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindCallParameters(
       std::size_t callee_offset) const;
+  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindMemberValueParameters(
+      const frontend::Expression& expression) const;
   [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindMemberCallParameters(
       const frontend::Expression& call) const;
   [[nodiscard]] std::optional<std::uint32_t> ImportSource(

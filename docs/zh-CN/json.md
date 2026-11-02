@@ -4,14 +4,14 @@
 
 本文定义 JSON API 与受检查动态值的契约。可运行示例见 [`examples/json.vela`](../../examples/json.vela)。
 
-Vela 采用 Dart 的 JSON 值模型：解析得到原生基本值、数组和有序 Map，序列化直接接受这些值。公开名称为 `Json.parse` 和 `Json.stringify`，不提供独立的 JSON 节点类或节点构造 API。
+Vela 采用 Dart 的 JSON 值模型：解析得到原生基本值、数组和有序 Map，序列化直接接受这些值。公开名称为 `JSON.parse` 和 `JSON.stringify`，不提供独立的 JSON 节点类或节点构造 API。
 
 ```vela
 func main(): void {
   const payload: Map<string, dynamic> = {'name': 'Vela', 'items': [1, true, null]};
 
-  const text: string = Json.stringify(payload);
-  const root: dynamic = Json.parse(text);
+  const text: string = JSON.stringify(payload);
+  const root: dynamic = JSON.parse(text);
   const name: string = root.get('name') ?? '';
   print(name);
 }
@@ -23,10 +23,12 @@ func main(): void {
 
 | API | 契约 |
 | --- | --- |
-| `Json.parse(source: string): dynamic` | 解析一个完整 JSON 值，返回原生 Vela 值 |
-| `Json.stringify(value: dynamic): string` | 将值图编码为紧凑 JSON，拒绝不支持的值与循环引用 |
+| `JSON.parse(source: string): dynamic` | 解析一个完整 JSON 值，返回原生 Vela 值 |
+| `JSON.parse<T>(source: string): T` | 按显式目标类型校验并构造值；输入错误抛出 `JSONParseError` |
+| `JSON.safeParse<T>(source: string): JSONParseResult<T>` | 按相同规则解码；输入错误返回失败结果 |
+| `JSON.stringify(value: dynamic): string` | 将值图编码为紧凑 JSON，拒绝不支持的值与循环引用 |
 
-`Json` 是无需 import 的标准静态类，不可构造。其声明与现有标准对象一样，参与标准源码依赖闭包与编译缓存指纹计算。
+`JSON` 是无需 import 的标准静态类，不可构造。其声明与现有标准对象一样，参与标准源码依赖闭包与编译缓存指纹计算。
 
 | JSON 值 | 解析后的 Vela 值 |
 | --- | --- |
@@ -38,7 +40,7 @@ func main(): void {
 | 数组 | `dynamic[]` |
 | 对象 | `Map<string, dynamic>` |
 
-接受所有 JSON 根值。解析出的数组始终为 `dynamic[]`，即使当前元素全部为整数。对象数组的元素是 Map，不会自动构造业务类实例。Map 的 `get` 对缺失字段和存储的 JSON null 均返回 null；需要区分时使用 `has`。对象访问使用已有 Map 方法，不增加通过属性名访问字段的简写。
+无类型参数的 parse 接受所有 JSON 根值，使用上表的动态值模型。其数组始终为 `dynamic[]`，即使当前元素全部为整数；对象数组的元素是 Map。Map 的 `get` 对缺失字段和存储的 JSON null 均返回 null；需要区分时使用 `has`。对象访问使用已有 Map 方法，不增加通过属性名访问字段的简写。泛型解码的类型、构造、默认值和结构化错误契约见 [JSON 强类型解码](typed_json.md)。
 
 ## 动态类型与受检查操作
 
@@ -49,7 +51,7 @@ func main(): void {
 默认诊断 `implicit_dynamic_conversion` 会在这些隐式边界发出 warning，编辑器显示相同的诊断代码和级别。它指出可能失败的转换，不会在编译期猜测运行时 JSON 的实际内容。运行时检查继续执行，warning 不阻止生成程序。
 
 ```vela
-const values: dynamic[] = Json.parse('[7, "Vela", true]');
+const values: dynamic[] = JSON.parse('[7, "Vela", true]');
 const id: int = values[0];       // 运行时检查成功。
 const name: string = values[1];  // 运行时检查成功。
 const wrong: int = values[1];    // 抛出可捕获的类型转换错误。
@@ -84,11 +86,11 @@ Vela 容器保持不变性。将 `int[]` 存入动态变量不会把存储变成
 解析得到的 `dynamic[]` 也不会因为当前元素都是整数就变成 `int[]`。通过显式检查并复制完成转换：
 
 ```vela
-const values: dynamic[] = Json.parse('[1, 2, 3]');
+const values: dynamic[] = JSON.parse('[1, 2, 3]');
 const integers: int[] = values.map(value => value as int);
 ```
 
-这里的 map 立即遍历：返回一个新的带类型数组，或传播首次元素检查失败，不向调用方交付部分填充的结果。对象数组同样需要显式业务转换函数，检查必填字段、可空性与字段类型。把解析出的 Map 转换为 `User` 不会创建 User 实例。第一版不包含按目标类型自动解码或生成业务模型转换代码。
+这里的 map 立即遍历：返回一个新的带类型数组，或传播首次元素检查失败，不向调用方交付部分填充的结果。已存在的动态对象仍需显式检查和业务转换；把 Map 转换为 `User` 不会创建 User 实例。接收 JSON 文本时，直接使用 `JSON.parse<int[]>(source)` 或 `JSON.safeParse<User[]>(source)`，按目标类型完整校验后构造真正的类型化值，详见 [JSON 强类型解码](typed_json.md)。
 
 动态数组元素和动态 Map/Set 槽位使用带标记存储。各值保留已有相等与哈希规则所需的信息，包括枚举类型身份。静态基本类型容器继续采用紧凑存储。普通集合支持动态键；JSON 编码另行要求每个实际对象键都是字符串。
 
@@ -122,7 +124,7 @@ class User {
 
 func main(): void {
   const users: User[] = [User(name: 'Vela', age: 7)];
-  print(Json.stringify(users));
+  print(JSON.stringify(users));
 }
 ```
 
@@ -157,7 +159,7 @@ func main(): void {
 
 | 阶段 | 必须完成的工作 |
 | --- | --- |
-| 标准环境 | Json 及依赖声明只注册一次；保留名称预留、局部遮蔽、源码 overlay 和缓存指纹契约 |
+| 标准环境 | JSON 及依赖声明只注册一次；保留名称预留、局部遮蔽、源码 overlay 和缓存指纹契约 |
 | 前端 | 增加 Dynamic，接通具体类型边界检查、混合字面量上下文、动态操作与收窄失效；保留容器不变性 |
 | 运行时类型身份 | 类型擦除后仍区分枚举与 int、完整函数签名、类身份、容器类型实参和 Future 实参；复用规范类型元数据 |
 | 运行时存储与 GC | 数组和集合增加真正的动态 tagged 槽位，追踪所有包含动态值的存储；保留基本类型快路径 |

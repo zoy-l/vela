@@ -19,6 +19,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/module_binding.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
@@ -93,12 +94,59 @@ class Math {
         .name = kJsonTypeName,
         .source =
             R"(/// Strict in-memory JSON using native values, dynamic arrays, and ordered maps.
-class Json {
+class JSON {
   private constructor() {}
   /// Parses one complete JSON value. Invalid input throws JsonDecodeError with a byte offset.
   static external func parse(source: string): dynamic;
+  /// Decodes the complete input through the target type's public constructor contract.
+  static external func parse<T>(source: string): T;
+  /// Returns an immutable success or input-error result. User exceptions still propagate.
+  static external func safeParse<T>(source: string): JSONParseResult<T>;
   /// Encodes compact JSON; objects use public toJson(). Cycles throw JsonEncodeError.
   static external func stringify(value: dynamic): string;
+}
+)",
+    },
+    {
+        .name = kJsonParseResultTypeName,
+        .source = R"(/// An immutable parse state created by JSON.safeParse<T>.
+class JSONParseResult<T> {
+  private successValue: bool = false;
+  private payload: dynamic = null;
+  private constructor() {}
+  get success(): bool { return this.successValue; }
+  get value(): T {
+    if (!this.successValue) {
+      throw Error(message: 'JSON result has no success value', code: 'TypeError');
+    }
+    return this.payload as T;
+  }
+  get error(): JSONParseError {
+    if (this.successValue) {
+      throw Error(message: 'JSON result has no input error', code: 'TypeError');
+    }
+    return this.payload as JSONParseError;
+  }
+}
+)",
+    },
+    {
+        .name = kJsonParseErrorTypeName,
+        .source = R"(/// A structured input error created by typed JSON decoding.
+class JSONParseError {
+  private codeValue: string = '';
+  private pathValue: string = '$';
+  private expectedValue: string? = null;
+  private actualValue: string? = null;
+  private offsetValue: int? = null;
+  private messageValue: string = '';
+  private constructor() {}
+  get code(): string { return this.codeValue; }
+  get path(): string { return this.pathValue; }
+  get expected(): string? { return this.expectedValue; }
+  get actual(): string? { return this.actualValue; }
+  get offset(): int? { return this.offsetValue; }
+  get message(): string { return this.messageValue; }
 }
 )",
     },
@@ -273,9 +321,14 @@ class TimeoutException {
 });
 
 std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
+  if (owner == kJsonTypeName && declaration.name == "parse" &&
+      !declaration.type_parameters.empty()) {
+    return Builtin::JsonTypedParse;
+  }
   static const absl::flat_hash_map<std::pair<std::string_view, std::string_view>, Builtin>
       kIntrinsics = {
           {{kJsonTypeName, "parse"}, Builtin::JsonParse},
+          {{kJsonTypeName, "safeParse"}, Builtin::JsonSafeParse},
           {{kJsonTypeName, "stringify"}, Builtin::JsonStringify},
           {{kRegExpTypeName, "escape"}, Builtin::RegExpEscape},
           {{kByteArrayTypeName, "from"}, Builtin::ByteArrayFrom},
@@ -301,8 +354,8 @@ std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
   static std::array<Entry, kDeclarations.size()> entries;
   auto& entry = entries.at(index);
   std::call_once(entry.once, [&] {
-    auto syntax = std::make_shared<ParsedSource>(
-        ParseSourceSnapshot(std::string(kDeclarations.at(index).source)));
+    auto syntax = std::make_shared<ParsedSource>(ParseSourceSnapshot(
+        std::string(kDeclarations.at(index).source), 0, SyntaxContext::Standard));
     for (auto& declaration : syntax->program.classes) {
       for (auto& method : declaration.methods) {
         method.intrinsic = Intrinsic(declaration.name, method);
@@ -310,6 +363,15 @@ std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
           method.native_symbol.clear();
         }
       }
+    }
+    if (syntax->diagnostics.empty()) {
+      syntax->diagnostics = BindStandardDeclarations(
+          syntax->program, {
+                               .path = std::string(kStandardSourcePrefix) +
+                                       std::string(kDeclarations.at(index).name),
+                               .text = syntax->source->text,
+                               .syntax = syntax->source,
+                           });
     }
     entry.syntax = std::move(syntax);
   });
@@ -375,6 +437,11 @@ Diagnostics AddStandardEnvironment(Program& program) {
   }
   if (used.contains(kDateTypeName)) {
     used.insert(std::string(kDatePartsTypeName));
+  }
+  if (used.contains(kJsonTypeName) || used.contains(kJsonParseResultTypeName)) {
+    used.insert(std::string(kJsonParseResultTypeName));
+    used.insert(std::string(kJsonParseErrorTypeName));
+    used.insert(std::string(kErrorTypeName));
   }
   if (used.contains(kRegExpMatchTypeName)) {
     used.insert(std::string(kRegExpTypeName));

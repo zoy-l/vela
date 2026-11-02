@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "base/execution_status.h"
+#include "base/test_operation.h"
 #include "base/utf8.h"
 #include "runtime/heap/heap.h"
 #include "runtime/strings/string.h"

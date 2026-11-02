@@ -3,7 +3,7 @@
 [**English**](standard_library.md) | [简体中文](../zh-CN/standard_library.md)
 
 
-`Math`, `Random`, `performance`, `Date`, `DateParts`, `Json` and `Error` are default global declarations;
+`Math`, `Random`, `performance`, `Date`, `DateParts`, `JSON` and `Error` are default global declarations;
 they require no import. Native calls remain statically checked and linked.
 Only referenced standard objects contribute declarations and native functions;
 ordinary scripts do not load the entire standard environment. These global
@@ -52,11 +52,17 @@ accepted grammar, defaults, ranges, and error codes.
 
 ## JSON
 
-`Json.parse(source: string): dynamic` returns ordinary primitives, `dynamic[]`
-and ordered `Map<string, dynamic>` objects. `Json.stringify(value: dynamic): string`
+`JSON.parse(source: string): dynamic` returns ordinary primitives, `dynamic[]`
+and ordered `Map<string, dynamic>` objects. `JSON.stringify(value: dynamic): string`
 produces compact JSON and supports application objects through public `toJson()`
 methods. Dynamic operations and assignments to concrete types are checked;
 see [JSON and dynamic values](json.md) for numeric, Unicode, cycle and error contracts.
+
+`JSON.parse<T>(source)` validates the complete input and constructs an actual T;
+invalid input throws `JSONParseError`. `JSON.safeParse<T>(source)` returns a read-only
+`JSONParseResult<T>`: branch on `success` before reading `value: T` or
+`error: JSONParseError`. The target type is explicit, and class inputs follow the
+public constructor parameter contract. See [typed JSON decoding](typed_json.md).
 
 ## Numeric parsing
 

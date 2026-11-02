@@ -84,7 +84,12 @@ JsonRuntimeError JsonEncoder::Error(ExecutionStatus status, std::string_view mes
     }
   }
   std::ranges::reverse(path);
-  return {.status = status, .message = std::string(message) + " at $" + path};
+  return {
+      .status = status,
+      .message = std::string(message) + " at $" + path,
+      .expected = {},
+      .actual = {},
+  };
 }
 
 JsonRuntimeError JsonEncoder::ConversionError(std::string_view message) const {
@@ -93,8 +98,8 @@ JsonRuntimeError JsonEncoder::ConversionError(std::string_view message) const {
 
 JsonRuntimeError JsonEncoder::OomError(Allocation kind) const {
   return Error(ExecutionStatus::OutOfMemory, kind == Allocation::Output
-                                               ? "JSON output allocation failed"
-                                               : "JSON traversal allocation failed");
+                                                 ? "JSON output allocation failed"
+                                                 : "JSON traversal allocation failed");
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::Append(std::string_view text) {
@@ -372,8 +377,7 @@ std::expected<Value, JsonRuntimeError> JsonEncoder::Advance() {
     if (frame_ == nullptr) {
       auto* output = heap_->BuildString(*values_.at(kOutput).AsObject());
       if (output == nullptr) {
-        return std::unexpected(
-            OomError(Allocation::Output));
+        return std::unexpected(OomError(Allocation::Output));
       }
       return Value::String(output);
     }

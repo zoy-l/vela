@@ -17,6 +17,7 @@
 #include "base/array_algorithm.h"
 #include "base/async_operation.h"
 #include "base/builtin.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
 
@@ -167,6 +168,24 @@ struct LambdaDescriptor final {
   std::vector<Capture> captures;
 };
 
+struct JSONDecodeParameter final {
+  std::string name;
+  std::uint32_t node = 0;
+  bool optional = false;
+};
+
+// 规范类型身份对应唯一节点；递归边只保存节点编号，不展开或复制构造契约。
+struct JSONDecodePlan final {
+  TypeDescriptor type;
+  std::optional<std::uint32_t> element;
+  std::vector<JSONDecodeParameter> parameters;
+};
+
+struct JSONDecodeRequest final {
+  TypeDescriptor type;
+  SourceLocation location;
+};
+
 // 以 AST 节点为键的检查事实。泛型模板按抽象参数检查时写入独立的一组，执行降级只读取具体声明的事实。
 struct NodeFacts {
   std::vector<LambdaDescriptor> lambdas;
@@ -208,8 +227,13 @@ struct SemanticModel final : NodeFacts {
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments;
   absl::flat_hash_map<TypeParameterId, TypeDescriptor> parameter_bounds;
   absl::flat_hash_map<std::string, TypeName> type_applications;
+  absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests;
+  std::vector<JSONDecodePlan> json_decode_plans;
+  absl::flat_hash_map<std::string, std::uint32_t> json_decode_entries;
   // 泛型模板定义检查的节点事实；节点属于 Program::templates 与 class/interface 的方法模板。
   NodeFacts definitions;
 };
+
+[[nodiscard]] Diagnostics BuildJSONDecodePlans(SemanticModel& model);
 
 }  // namespace vela::frontend

@@ -125,8 +125,8 @@ class Payload {
 func main(): int {
   const object: dynamic = Payload(value: 42);
   const read = object.read;
-  const text = Json.stringify(object);
-  const values: dynamic[] = Json.parse(text);
+  const text = JSON.stringify(object);
+  const values: dynamic[] = JSON.parse(text);
   return read() == values[0] && text == '[42,true,null]' ? 42 : 0;
 }
 )",

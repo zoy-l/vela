@@ -12,7 +12,7 @@ from pathlib import Path
 from tools.config import BUILD_VARIANTS, ROOT, configure, toolchain_tools
 
 
-def _compilation_database(output: Path) -> list[dict[str, object]]:
+def compilation_database(output: Path) -> list[dict[str, object]]:
     tools = toolchain_tools()
     result = subprocess.run(
         [
@@ -41,7 +41,7 @@ def _compilation_database(output: Path) -> list[dict[str, object]]:
     return database
 
 
-def _write_database(path: Path, database: list[dict[str, object]]) -> None:
+def write_database(path: Path, database: list[dict[str, object]]) -> None:
     path.write_text(
         json.dumps(database, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -51,11 +51,11 @@ def _write_database(path: Path, database: list[dict[str, object]]) -> None:
 
 def generate(variant: str) -> None:
     output = configure(variant)
-    database = _compilation_database(output)
+    database = compilation_database(output)
     output_database = output / "compile_commands.json"
     root_database = ROOT / "compile_commands.json"
-    _write_database(output_database, database)
-    _write_database(root_database, database)
+    write_database(output_database, database)
+    write_database(root_database, database)
     print(f"clangd compilation database: {root_database.relative_to(ROOT)}")
     print(f"entries: {len(database)} ({output_database.relative_to(ROOT)})")
 

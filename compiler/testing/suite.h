@@ -17,6 +17,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "base/mock_operation.h"
+#include "base/test_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
@@ -57,7 +58,7 @@ class Suite final : public runtime::TestBridge {
   std::expected<void, std::string> Register(const runtime::TestRegistration& registration) override;
   void RegisterMockFailure(const runtime::NominalType& type, MockFailureKind kind) override;
   std::expected<runtime::Value, std::string> Control(
-      runtime::TestControl operation,
+      TestControl operation,
       std::span<const runtime::Value> arguments,
       std::vector<runtime::FutureTraceFrame> trace) override;
 

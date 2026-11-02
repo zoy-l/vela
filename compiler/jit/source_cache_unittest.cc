@@ -218,8 +218,9 @@ TEST_F(NativeSourceCacheTest, JsonAndDynamicDispatchRetainMetadataInFreshIsolate
   Write("main.vela", R"(class Payload {
   toJson(): int[] { return [40, 2]; }
 }
+
 func main(): int {
-  const root: dynamic = Json.parse(Json.stringify(Payload()));
+  const root: dynamic = JSON.parse(JSON.stringify(Payload()));
   const get = root.slice;
   const values: dynamic[] = get();
   return values[0] + values[1];
@@ -235,6 +236,37 @@ func main(): int {
   auto instance = runtime::NativeInstance::Instantiate(fresh, cached.code.image);
   ASSERT_TRUE(instance);
   ExpectEntry(**instance, kAnswer);
+}
+
+TEST_F(NativeSourceCacheTest, TypedJSONPlansInvalidateWithConstructorInputsAndRestoreFromCache) {
+  constexpr std::string_view kSource = R"(class Item { value: int = 42; }
+func main(): int { return JSON.safeParse<Item>('{}').value.value; })";
+  Write("main.vela", kSource);
+  const auto first = Compile();
+  ASSERT_TRUE(first.Succeeded()) << frontend::DiagnosticsText(first.diagnostics);
+  EXPECT_EQ(first.code.cache, jit::CodeCacheStatus::Miss);
+  ExpectRun(first, kAnswer);
+  const auto cached = Compile();
+  ASSERT_TRUE(cached.Succeeded()) << frontend::DiagnosticsText(cached.diagnostics);
+  EXPECT_EQ(cached.code.cache, jit::CodeCacheStatus::Hit);
+  runtime::Isolate fresh(1);
+  auto instance = runtime::NativeInstance::Instantiate(fresh, cached.code.image);
+  ASSERT_TRUE(instance);
+  ExpectEntry(**instance, kAnswer);
+  Write("main.vela", R"(class Item { value: int; }
+func main(): int {
+  const result = JSON.safeParse<Item>('{}');
+  return !result.success && result.error.code == 'missing_field' ? 43 : 0;
+})");
+  const auto changed = Compile();
+  ASSERT_TRUE(changed.Succeeded()) << frontend::DiagnosticsText(changed.diagnostics);
+  EXPECT_EQ(changed.code.cache, jit::CodeCacheStatus::Miss);
+  ExpectRun(changed, kChangedAnswer);
+  Write("main.vela", kSource);
+  const auto restored = Compile();
+  ASSERT_TRUE(restored.Succeeded()) << frontend::DiagnosticsText(restored.diagnostics);
+  EXPECT_EQ(restored.code.cache, jit::CodeCacheStatus::Hit);
+  ExpectRun(restored, kAnswer);
 }
 
 TEST_F(NativeSourceCacheTest, RebuildsCorruptCacheAndReportsUnwritableCacheDirectory) {

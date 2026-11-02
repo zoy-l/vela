@@ -23,7 +23,7 @@ def output_directory(variant: str) -> Path:
     return ROOT / "out" / variant
 
 
-def _require_file(path: Path, description: str) -> Path:
+def require_file(path: Path, description: str) -> Path:
     if not path.is_file():
         raise RuntimeError(f"Missing {description}: {path}; run gclient sync --no-history")
     return path
@@ -61,7 +61,7 @@ def static_library_name(name: str) -> str:
     return name + (".lib" if platform.system() == "Windows" else ".a")
 
 
-def _xcode_path(arguments: list[str], description: str) -> Path:
+def xcode_path(arguments: list[str], description: str) -> Path:
     result = subprocess.run(
         ["/usr/bin/xcrun", "--sdk", "macosx", *arguments],
         check=True,
@@ -76,7 +76,7 @@ def _xcode_path(arguments: list[str], description: str) -> Path:
     return path.resolve()
 
 
-def _xcode_linker_version(linker: Path) -> str:
+def xcode_linker_version(linker: Path) -> str:
     result = subprocess.run(
         [str(linker), "-version_details"],
         check=True,
@@ -108,36 +108,36 @@ def toolchain_tools() -> dict[str, Path]:
         cxx = clang_bin / "clang++"
         archiver = clang_bin / "llvm-ar"
         linker = (
-            _xcode_path(["--find", "ld"], "linker")
+            xcode_path(["--find", "ld"], "linker")
             if platform.system() == "Darwin"
             else clang_bin / "ld.lld"
         )
     tools = {
-        "gn": _require_file(gn_path, "project GN executable"),
-        "ninja": _require_file(ninja_path, "project Ninja executable"),
-        "cc": _require_file(cc, "project Clang executable"),
-        "cxx": _require_file(cxx, "project Clang++ executable"),
-        "archiver": _require_file(archiver, "project LLVM archiver"),
-        "linker": _require_file(linker, "host linker"),
-        "clang_format": _require_file(
+        "gn": require_file(gn_path, "project GN executable"),
+        "ninja": require_file(ninja_path, "project Ninja executable"),
+        "cc": require_file(cc, "project Clang executable"),
+        "cxx": require_file(cxx, "project Clang++ executable"),
+        "archiver": require_file(archiver, "project LLVM archiver"),
+        "linker": require_file(linker, "host linker"),
+        "clang_format": require_file(
             clang_bin / executable_name("clang-format"),
             "project clang-format executable",
         ),
-        "clangd": _require_file(
+        "clangd": require_file(
             clang_bin / executable_name("clangd"),
             "project clangd executable",
         ),
-        "clang_tidy": _require_file(
+        "clang_tidy": require_file(
             clang_bin / executable_name("clang-tidy"),
             "project clang-tidy executable",
         ),
     }
     if platform.system() == "Darwin":
-        tools["sysroot"] = _xcode_path(["--show-sdk-path"], "macOS SDK")
+        tools["sysroot"] = xcode_path(["--show-sdk-path"], "macOS SDK")
     return tools
 
 
-def _gn_value(value: str | list[str]) -> str:
+def gn_value(value: str | list[str]) -> str:
     normalized = ([item.replace("\\", "/") for item in value] if isinstance(value, list)
                   else value.replace("\\", "/"))
     return json.dumps(normalized)
@@ -192,9 +192,9 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     args.update(link_configuration())
     if platform.system() == "Darwin":
         args["vela_sysroot"] = tools["sysroot"].as_posix()
-        args["vela_linker_version"] = _xcode_linker_version(tools["linker"])
+        args["vela_linker_version"] = xcode_linker_version(tools["linker"])
     encoded_args = " ".join(
-        f"{key}={_gn_value(value)}" for key, value in args.items()
+        f"{key}={gn_value(value)}" for key, value in args.items()
     )
     command = [
         str(tools["gn"]),

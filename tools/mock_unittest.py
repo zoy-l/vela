@@ -117,7 +117,7 @@ export type Public = Private;
 export func makePublic(): Public { return Private(value: 42); }
 export enum Choice { first, second }
 export interface Repository {
-  calls(_control: int, _method0: string, _object: bool): other.Box<int>;
+  calls(mockControl: int, mockMethod0: string, mockObject: bool): other.Box<int>;
   object(): (int, string?) => int[];
   control(value: Public): Public;
   six(a: int, b: string, c: bool, d: int?, e: double, f: Map<string, int>): void;
@@ -148,7 +148,7 @@ func main(): void {
       .thenDo((call: mock.MockInvocation): void => { expect(call.argument('d'), null); });
     mock.when(repository.calls.done(api.Choice.second)).thenAnswer(
       async (call: mock.MockInvocation): Future<void> => { await sleep(1); });
-    expect(repository.object.calls(_object: true, _method0: 'text', _control: 1), same(box));
+    expect(repository.object.calls(mockObject: true, mockMethod0: 'text', mockControl: 1), same(box));
     const callback = repository.object.object();
     expect(callback(7, null), [7]);
     expect(repository.object.control(value), same(value));

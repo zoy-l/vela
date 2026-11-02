@@ -77,6 +77,11 @@ std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncodi
         completion.detail = DisplaySignature(*signature);
       }
     }
+    if (kind == CompletionKind::Method && reference.expression != nullptr) {
+      if (const auto signature = FindMemberValueParameters(*reference.expression)) {
+        completion.detail = DisplaySignature(*signature);
+      }
+    }
     if (reference.expression != nullptr &&
         (kind == CompletionKind::Variable || kind == CompletionKind::Constant ||
          kind == CompletionKind::Field || kind == CompletionKind::Property)) {

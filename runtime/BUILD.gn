@@ -113,6 +113,10 @@ source_set("runtime") {
     "json/json.h",
     "json/json_decode.cc",
     "json/json_encode.cc",
+    "json/json_path.cc",
+    "json/json_path.h",
+    "json/parsed_json.cc",
+    "json/parsed_json.h",
     "library/builtins.cc",
     "library/builtins.h",
     "library/date.cc",
@@ -158,6 +162,7 @@ source_set("runtime") {
     "native/native_instance.h",
     "native/native_json.cc",
     "native/native_json.h",
+    "native/native_json_decode.cc",
     "native/native_main.cc",
     "native/native_main.h",
     "native/native_materialization.cc",
@@ -256,6 +261,7 @@ executable("runtime_tests") {
   ]
   deps = [
     ":runtime",
+    "//base:json",
     "//third_party:gtest_main",
     "//third_party:pcre2",
     "//third_party:utf8proc",

@@ -176,6 +176,36 @@ bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
          callee.identity.local == 0 && callee.identity.declaration != DeclarationId{};
 }
 
+std::vector<std::size_t> FunctionCallees(const ir::Function& function,
+                                         const ir::Program& program,
+                                         NativeCodeTier tier) {
+  std::vector<std::size_t> callees;
+  if (function.json_decode_plan) {
+    for (const auto node : ir::JSONDecodeClosure(program, *function.json_decode_plan)) {
+      const auto target = program.json_decode_plans.at(node).constructor;
+      if (target != kInvalidFunctionTarget) {
+        callees.push_back(target);
+      }
+    }
+  }
+  for (const auto& instruction : function.instructions) {
+    if (instruction.opcode == Opcode::Call) {
+      callees.push_back(instruction.index);
+    }
+  }
+  if (tier == NativeCodeTier::Optimized) {
+    for (const auto& target : FindDirectCalls(function, program)) {
+      if (target) {
+        callees.push_back(target->function);
+      }
+    }
+  }
+  std::ranges::sort(callees);
+  const auto duplicates = std::ranges::unique(callees);
+  callees.erase(duplicates.begin(), duplicates.end());
+  return callees;
+}
+
 }  // namespace
 
 bool NativeCallPlan::IsEntrySlotRequired(CallEdge edge) const {
@@ -188,23 +218,7 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program, NativeCodeTier tier) 
   const auto count = functions.size();
   std::vector<std::vector<std::size_t>> edges(count);
   for (std::size_t index = 0; index < count; ++index) {
-    auto& callees = edges.at(index);
-    const auto& function = functions.at(index);
-    for (const auto& instruction : function.instructions) {
-      if (instruction.opcode == Opcode::Call) {
-        callees.push_back(instruction.index);
-      }
-    }
-    if (tier == NativeCodeTier::Optimized) {
-      for (const auto& target : FindDirectCalls(function, program)) {
-        if (target) {
-          callees.push_back(target->function);
-        }
-      }
-    }
-    std::ranges::sort(callees);
-    const auto duplicates = std::ranges::unique(callees);
-    callees.erase(duplicates.begin(), duplicates.end());
+    edges.at(index) = FunctionCallees(functions.at(index), program, tier);
   }
   NativeCallPlan plan{.components = CallComponents(edges), .slot_targets = {}, .dependencies = {}};
   const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;

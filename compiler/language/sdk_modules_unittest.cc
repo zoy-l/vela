@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/test_operation.h"
 #include "gtest/gtest.h"
 
 #include "base/mock_operation.h"
@@ -39,14 +40,14 @@ struct ProtocolRecorder final : runtime::TestBridge {
     failures.push_back(kind);
   }
   std::expected<runtime::Value, std::string> Control(
-      runtime::TestControl operation,
+      TestControl operation,
       std::span<const runtime::Value> /*arguments*/,
       std::vector<runtime::FutureTraceFrame> /*trace*/) override {
     controls.push_back(operation);
     return runtime::Value::Integer(1);
   }
   std::vector<runtime::TestOperation> registrations;
-  std::vector<runtime::TestControl> controls;
+  std::vector<TestControl> controls;
   std::vector<MockFailureKind> failures;
 };
 
@@ -87,7 +88,7 @@ func main(): void {
                                         Operation::TearDownAll,
                                         Operation::AddTearDown,
                                     }));
-  using Control = runtime::TestControl;
+  using Control = TestControl;
   EXPECT_EQ(recorder.controls, (std::vector<Control>{
                                    Control::RegisterCallback,
                                    Control::EnterCallback,

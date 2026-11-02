@@ -1,9 +1,12 @@
 #include "compiler/tooling/semantic/semantic_index.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <span>
 #include <string>
 #include <string_view>
+
+#include "base/builtin.h"
 
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -22,6 +25,20 @@ std::string TypeText(const TypeName& type) {
 
 std::string Signature(const frontend::Function& function) {
   return DisplaySymbolName(FunctionSignature(function));
+}
+
+CompletionKind MethodKind(const frontend::Function& method) {
+  return method.is_getter || method.is_setter ? CompletionKind::Property : CompletionKind::Method;
+}
+
+std::string MethodDetail(const frontend::Function& method) {
+  if (method.is_getter) {
+    return TypeText(method.return_type);
+  }
+  if (method.is_setter && !method.parameters.empty()) {
+    return TypeText(method.parameters.front().type);
+  }
+  return Signature(method);
 }
 
 std::string GenericName(std::string_view source_name,
@@ -135,8 +152,14 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
        {std::span(declaration.methods), std::span(declaration.method_templates)}) {
     for (const auto& method : methods) {
       const auto method_symbol =
-          DeclareMember(declaration.name, method, CompletionKind::Method, Signature(method));
+          DeclareMember(declaration.name, method, MethodKind(method), MethodDetail(method));
       BindIntrinsicSignature(method_symbol, declaration, method);
+      if (method.intrinsic == Builtin::JsonTypedParse && !method.type_parameters.empty()) {
+        const auto plain =
+            std::ranges::find(declaration.methods, "parse", &frontend::Function::name);
+        symbols_.at(method_symbol).completion.detail =
+            Signature(*plain) + " | " + Signature(method);
+      }
       CollectParameters(method_symbol, method);
     }
   }
@@ -153,7 +176,7 @@ void SemanticIndex::CollectInterface(const frontend::Interface& declaration) {
        {std::span(declaration.methods), std::span(declaration.method_templates)}) {
     for (const auto& method : methods) {
       const auto method_symbol =
-          DeclareMember(declaration.name, method, CompletionKind::Method, Signature(method));
+          DeclareMember(declaration.name, method, MethodKind(method), MethodDetail(method));
       CollectParameters(method_symbol, method);
     }
   }
@@ -162,7 +185,7 @@ void SemanticIndex::CollectInterface(const frontend::Interface& declaration) {
 void SemanticIndex::BindIntrinsicSignature(std::size_t symbol,
                                            const frontend::Class& owner,
                                            const frontend::Function& method) {
-  if (!method.intrinsic) {
+  if (!method.intrinsic || !method.type_parameters.empty()) {
     return;
   }
   if (const auto checked = model_.classes.find(owner.name); checked != model_.classes.end()) {

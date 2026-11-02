@@ -31,6 +31,7 @@ void SteadyValue(benchmark::State& state,
   auto& heap = isolate.heap();
   heap.Collect();
   auto baseline = heap.allocated_bytes();
+  heap.ResetAllocationStatistics();
   const auto warm = runtime::ExecuteNativeFunction(*instance, function);
   if (!warm.Succeeded() || !warm.value.IsInteger() || warm.value.AsInteger() != expected) {
     state.SkipWithError("Standard API warm-up returned an unexpected result");
@@ -43,6 +44,11 @@ void SteadyValue(benchmark::State& state,
     baseline = heap.allocated_bytes();
     state.counters["persistent_bytes"] = static_cast<double>(baseline);
   } else {
+    const auto statistics = heap.allocation_statistics();
+    state.counters["first_call_allocated_bytes"] = static_cast<double>(statistics.bytes);
+    state.counters["first_call_allocation_count"] = static_cast<double>(statistics.count);
+    state.counters["first_call_peak_heap_bytes"] =
+        static_cast<double>(statistics.peak_live_bytes - baseline);
     state.counters["first_call_gc_bytes"] = static_cast<double>(heap.allocated_bytes() - baseline);
   }
   for (auto iteration : state) {

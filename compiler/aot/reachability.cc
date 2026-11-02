@@ -15,6 +15,7 @@
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/json_decode.h"
 #include "base/layout_description.h"
 #include "base/member.h"
 #include "base/opcode.h"
@@ -32,6 +33,7 @@ enum class NodeKind : std::uint8_t {
   Collection,
   Signature,
   Interface,
+  JSONPlan,
 };
 
 enum class TypeExposure : std::uint8_t { Internal, Host };
@@ -68,6 +70,8 @@ class Reachability final {
   void VisitSource(const frontend::TypeDescriptor& type, TypeExposure exposure);
   void VisitMember(const MemberDefinition& member, TypeExposure exposure);
   void MarkDynamic();
+  std::vector<std::uint32_t> PruneJSONPlans(ir::Program& program,
+                                            std::span<const std::uint32_t> functions) const;
   template <class T>
   void RemapClass(T& type, std::uint32_t index, std::span<const std::uint32_t> mapping) const;
 
@@ -154,6 +158,9 @@ void Reachability::VisitSource(const frontend::TypeDescriptor& type, TypeExposur
 }
 
 void Reachability::VisitFunction(const ir::Function& function, TypeExposure exposure) {
+  if (function.json_decode_plan) {
+    Mark(NodeKind::JSONPlan, *function.json_decode_plan);
+  }
   for (const auto& type : function.value_types) {
     // 局部表示擦除不扩大宿主边界；只有签名、字段和复合载荷传播对外暴露。
     VisitSource(type, TypeExposure::Internal);
@@ -319,6 +326,21 @@ void Reachability::Visit(Node node) {
         Mark(NodeKind::Class, target, node.exposure);
       }
       break;
+    case NodeKind::JSONPlan: {
+      const auto& plan = program_.json_decode_plans.at(node.index);
+      Mark(NodeKind::Type, plan.type);
+      if (plan.constructor != kInvalidFunctionTarget) {
+        Mark(NodeKind::Function, plan.constructor);
+      }
+      if (plan.kind == JSONDecodeKind::Array || plan.kind == JSONDecodeKind::Map ||
+          plan.kind == JSONDecodeKind::Nullable) {
+        Mark(NodeKind::JSONPlan, plan.element);
+      }
+      for (const auto& parameter : plan.parameters) {
+        Mark(NodeKind::JSONPlan, parameter.node);
+      }
+      break;
+    }
   }
 }
 
@@ -351,6 +373,34 @@ void Reachability::RemapClass(T& type,
   }
 }
 
+std::vector<std::uint32_t> Reachability::PruneJSONPlans(
+    ir::Program& program,
+    std::span<const std::uint32_t> functions) const {
+  std::vector<std::uint32_t> plan_mapping(program.json_decode_plans.size(), kInvalidFunctionTarget);
+  std::vector<ir::JSONDecodePlan> plans;
+  for (std::size_t index = 0; index < program.json_decode_plans.size(); ++index) {
+    if (reached_.contains(
+            {.kind = NodeKind::JSONPlan, .index = static_cast<std::uint32_t>(index)})) {
+      plan_mapping.at(index) = static_cast<std::uint32_t>(plans.size());
+      plans.push_back(std::move(program.json_decode_plans.at(index)));
+    }
+  }
+  program.json_decode_plans = std::move(plans);
+  for (auto& plan : program.json_decode_plans) {
+    if (plan.constructor != kInvalidFunctionTarget) {
+      plan.constructor = functions[plan.constructor];
+    }
+    if (plan.kind == JSONDecodeKind::Array || plan.kind == JSONDecodeKind::Map ||
+        plan.kind == JSONDecodeKind::Nullable) {
+      plan.element = plan_mapping.at(plan.element);
+    }
+    for (auto& parameter : plan.parameters) {
+      parameter.node = plan_mapping.at(parameter.node);
+    }
+  }
+  return plan_mapping;
+}
+
 void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& main) const {
   std::vector<std::uint32_t> mapping(program.functions.size(), kInvalidFunctionTarget);
   std::vector<ir::Function> functions;
@@ -362,7 +412,13 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
     }
   }
   program.functions = std::move(functions);
+  const auto plan_mapping = PruneJSONPlans(program, mapping);
   for (auto& function : program.functions) {
+    if (function.json_decode_plan) {
+      function.json_decode_plan = plan_mapping.at(*function.json_decode_plan);
+      // 标准强类型入口的第一个常量是传给运行时的计划编号。
+      function.instructions.front().immediate = *function.json_decode_plan;
+    }
     for (auto& instruction : function.instructions) {
       if (instruction.opcode == Opcode::Call) {
         instruction.index = mapping.at(instruction.index);

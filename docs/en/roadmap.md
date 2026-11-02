@@ -96,6 +96,7 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add PCRE2-backed regular expressions with Dart-style APIs and typed matches ([contract](regexp.md))
 - [x] Add collection standard library APIs
 - [x] Add JSON parsing and serialization over native values ([design](json.md))
+- [x] Rename standard class `Json` to `JSON` and add `JSON.parse<T>` / `JSON.safeParse<T>` with typed results, constructor-based decoding, and M0–M5 acceptance; passed on macOS arm64, with environment skips and platform scope recorded in the [design](typed_json.md#11-acceptance-scope)
 - [x] Add fixed byte storage and typed byte views ([contract](byte_data.md))
 - [x] Define process exit codes
 

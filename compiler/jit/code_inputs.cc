@@ -245,6 +245,25 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
   for (const auto& function : program.functions) {
     BinaryWriter writer;
     writer.Write(function.name);
+    Put(writer, function.json_decode_plan.has_value());
+    if (function.json_decode_plan) {
+      Put(writer, *function.json_decode_plan);
+      const auto closure = ir::JSONDecodeClosure(program, *function.json_decode_plan);
+      Sequence(writer, closure, [&](BinaryWriter& output, const auto node) {
+        const auto& plan = program.json_decode_plans.at(node);
+        Put(output, node);
+        output.Write(plan.name);
+        Put(output, plan.kind);
+        Put(output, plan.type);
+        Put(output, plan.element);
+        Put(output, plan.constructor);
+        Sequence(output, plan.parameters, [](BinaryWriter& parameters, const auto& parameter) {
+          parameters.Write(parameter.name);
+          Put(parameters, parameter.node);
+          Put(parameters, parameter.optional);
+        });
+      });
+    }
     Put(writer, tier);
     Put(writer, optimization);
     Put(writer, debugging);

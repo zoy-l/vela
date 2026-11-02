@@ -40,6 +40,7 @@ class ModuleBinding final {
       : modules_(std::move(modules)), sources_(std::move(sources)), scopes_(modules_.size()) {}
 
   ParseResult Run();
+  Diagnostics BindStandard(Program& program);
 
  private:
   void Error(SourceLocation location, std::string message);
@@ -475,10 +476,24 @@ ParseResult ModuleBinding::Run() {
   return {.program = std::move(combined), .diagnostics = std::move(diagnostics_)};
 }
 
+Diagnostics ModuleBinding::BindStandard(Program& program) {
+  for (auto& declaration : program.classes) {
+    BindClass(declaration, declaration.name);
+  }
+  return std::move(diagnostics_);
+}
+
 }  // namespace
 
 ParseResult BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources) {
   return ModuleBinding(std::move(modules), std::move(sources)).Run();
+}
+
+Diagnostics BindStandardDeclarations(Program& program, SourceFile source) {
+  std::vector<SourceModule> modules(1);
+  std::vector<SourceFile> sources;
+  sources.push_back(std::move(source));
+  return ModuleBinding(std::move(modules), std::move(sources)).BindStandard(program);
 }
 
 }  // namespace vela::frontend

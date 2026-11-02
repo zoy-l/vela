@@ -84,6 +84,13 @@ struct GcBarrierState final {
   std::uint8_t mark_bit = 1;
 };
 
+// 自上次重置以来成功分配的总量和同时存活峰值，覆盖托管块及 Heap 核算的外部块。
+struct HeapAllocationStatistics final {
+  std::uint64_t bytes = 0;
+  std::uint64_t count = 0;
+  std::size_t peak_live_bytes = 0;
+};
+
 inline constexpr std::size_t kDefaultGcThreshold = 65536;
 inline constexpr std::size_t kMaximumByteArrayLength =
     std::numeric_limits<std::uint32_t>::max() - sizeof(HeapObject);
@@ -340,11 +347,19 @@ class Heap final {
   [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
   [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
+  [[nodiscard]] HeapAllocationStatistics allocation_statistics() const noexcept {
+    return allocation_statistics_;
+  }
+  void ResetAllocationStatistics() noexcept {
+    allocation_statistics_ = {.peak_live_bytes = allocated_bytes_};
+  }
   // 外部字段块载荷，包含已准备的迁移块，不含分配器头部。
   [[nodiscard]] std::size_t instance_field_bytes() const noexcept { return instance_field_bytes_; }
   [[nodiscard]] std::size_t instance_type_count() const noexcept { return instance_type_count_; }
   // 限制 Heap 核算的托管及外部块活跃字节；降低限额不改变已分配状态，后续申请显式失败。
   void SetAllocationLimit(std::size_t bytes) noexcept { allocation_limit_ = bytes; }
+  // 限制自上次统计重置以来的成功分配次数，覆盖外部暂存块，用于逐分配点验证失败清理。
+  void SetAllocationCountLimit(std::uint64_t count) noexcept { allocation_count_limit_ = count; }
   void AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const;
 
  private:
@@ -467,9 +482,11 @@ class Heap final {
 
   std::size_t object_count_ = 0;
   std::size_t allocated_bytes_ = 0;
+  HeapAllocationStatistics allocation_statistics_;
   std::size_t committed_bytes_ = 0;
   std::size_t instance_field_bytes_ = 0;
   std::size_t allocation_limit_ = std::numeric_limits<std::size_t>::max();
+  std::uint64_t allocation_count_limit_ = std::numeric_limits<std::uint64_t>::max();
   std::size_t gc_threshold_ = 0;
   std::size_t minimum_gc_threshold_ = 0;
   GcBarrierState barrier_state_;

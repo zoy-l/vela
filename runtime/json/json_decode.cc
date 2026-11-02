@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include <absl/strings/numbers.h>
 #include <yyjson.h>
@@ -20,6 +21,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/json/frame_pool.h"
+#include "runtime/json/parsed_json.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -27,7 +29,12 @@ namespace vela::runtime {
 namespace {
 
 JsonRuntimeError OutOfMemory() {
-  return {.status = ExecutionStatus::OutOfMemory, .message = "JSON allocation failed"};
+  return {
+      .status = ExecutionStatus::OutOfMemory,
+      .message = "JSON allocation failed",
+      .expected = {},
+      .actual = {},
+  };
 }
 
 void* Allocate(void* context, std::size_t size) {
@@ -49,7 +56,9 @@ void* Reallocate(void* context, void* pointer, std::size_t old_size, std::size_t
   return replacement;
 }
 
-std::expected<Value, JsonRuntimeError> Number(std::string_view token) {
+}  // namespace
+
+std::expected<Value, JsonRuntimeError> ReadJSONNumber(std::string_view token) {
   if (token.find_first_of(".eE") == std::string_view::npos) {
     std::int64_t integer = 0;
     const auto parsed =
@@ -57,14 +66,26 @@ std::expected<Value, JsonRuntimeError> Number(std::string_view token) {
     if (parsed.ec == std::errc()) {
       return Value::Integer(integer);
     }
-    return std::unexpected(JsonRuntimeError{.message = "JSON integer exceeds signed 64-bit range"});
+    return std::unexpected(JsonRuntimeError{
+        .message = "JSON integer exceeds signed 64-bit range",
+        .kind = JsonRuntimeError::Kind::NumberOutOfRange,
+        .expected = {},
+        .actual = {},
+    });
   }
   double number = 0;
   if (!absl::SimpleAtod(token, &number) || !std::isfinite(number)) {
-    return std::unexpected(JsonRuntimeError{.message = "JSON number exceeds finite double range"});
+    return std::unexpected(JsonRuntimeError{
+        .message = "JSON number exceeds finite double range",
+        .kind = JsonRuntimeError::Kind::NumberOutOfRange,
+        .expected = {},
+        .actual = {},
+    });
   }
   return Value::Double(number);
 }
+
+namespace {
 
 struct DecodeFrame final {
   DecodeFrame(Heap& heap, DecodeFrame* parent, yyjson_val* node, Value value) {
@@ -199,7 +220,7 @@ class Decoder final {
     }
     if (yyjson_is_raw(node)) {
       const std::string_view token(yyjson_get_raw(node), yyjson_get_len(node));
-      auto number = Number(token);
+      auto number = ReadJSONNumber(token);
       if (!number) {
         number.error().offset = document_.RawOffset(*node);
       }
@@ -225,12 +246,13 @@ class Decoder final {
 
 }  // namespace
 
-std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolate& isolate) {
+std::expected<JsonDocument, JsonRuntimeError> ReadJSONDocument(std::string_view source,
+                                                               Heap& heap) {
   const yyjson_alc allocator{
       .malloc = Allocate,
       .realloc = Reallocate,
       .free = Free,
-      .ctx = &isolate.heap(),
+      .ctx = &heap,
   };
   auto document = JsonDocument::Parse(source, YYJSON_READ_NUMBER_AS_RAW, &allocator);
   if (!document) {
@@ -240,7 +262,17 @@ std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolat
             error.out_of_memory ? ExecutionStatus::OutOfMemory : ExecutionStatus::JsonDecodeError,
         .offset = error.offset,
         .message = error.message,
+        .expected = {},
+        .actual = {},
     });
+  }
+  return std::move(*document);
+}
+
+std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolate& isolate) {
+  auto document = ReadJSONDocument(source, isolate.heap());
+  if (!document) {
+    return std::unexpected(document.error());
   }
   return Decoder(isolate, *document).Decode(document->root());
 }

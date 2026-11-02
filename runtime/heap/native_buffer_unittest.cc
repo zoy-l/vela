@@ -48,5 +48,36 @@ TEST(NativeBufferTest, ExternalStorageIsAccountedAndOverflowIsRejected) {
   EXPECT_EQ(heap.committed_bytes(), committed);
 }
 
+TEST(NativeBufferTest, AllocationStatisticsIncludeReleasedNativeAndManagedStorage) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  heap.Collect();
+  const auto baseline = heap.allocated_bytes();
+  heap.ResetAllocationStatistics();
+  std::size_t native_bytes = 0;
+  {
+    constexpr std::size_t kCount = 128;
+    NativeBuffer<char> buffer(heap, kCount);
+    ASSERT_TRUE(buffer.IsAllocated());
+    native_bytes = heap.allocated_bytes() - baseline;
+    EXPECT_EQ(heap.allocation_statistics().bytes, native_bytes);
+    EXPECT_EQ(heap.allocation_statistics().count, 1U);
+  }
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+  ASSERT_NE(heap.AllocateString("allocation statistics"), nullptr);
+  const auto statistics = heap.allocation_statistics();
+  EXPECT_GT(statistics.bytes, native_bytes);
+  EXPECT_EQ(statistics.count, 2U);
+  EXPECT_GE(statistics.peak_live_bytes, baseline + native_bytes);
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+  EXPECT_EQ(heap.allocation_statistics().bytes, statistics.bytes);
+  heap.ResetAllocationStatistics();
+  const auto reset = heap.allocation_statistics();
+  EXPECT_EQ(reset.bytes, 0U);
+  EXPECT_EQ(reset.count, 0U);
+  EXPECT_EQ(reset.peak_live_bytes, baseline);
+}
+
 }  // namespace
 }  // namespace vela::runtime

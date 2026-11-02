@@ -7,10 +7,12 @@
 
 #include "gtest/gtest.h"
 
+#include <yyjson.h>
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/json/json.h"
+#include "runtime/json/parsed_json.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
@@ -170,6 +172,62 @@ TEST(JsonRuntimeTest, RootsPendingInputBeforeAdvancingAndReleasesItOnDestruction
   heap.FinishCollection();
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST(ParsedJSONTest, IndexesEscapedDuplicateKeysAndEveryTokenWithoutManagedValues) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto baseline = heap.allocated_bytes();
+  constexpr std::string_view kSource = R"({"\u0061":1,"display.name":["😀",false],"a":42,"":null})";
+  {
+    const auto parsed = ParsedJSON::Parse(kSource, heap);
+    ASSERT_TRUE(parsed) << parsed.error().message;
+    EXPECT_EQ(heap.object_count(), 0U);
+    auto& document = **parsed;
+    const auto* number = document.Field(document.root(), "a");
+    ASSERT_NE(number, nullptr);
+    EXPECT_EQ(document.Number(number).AsInteger(), 42);
+    EXPECT_EQ(document.Offset(number), kSource.find("42"));
+    auto* values = document.Field(document.root(), "display.name");
+    ASSERT_NE(values, nullptr);
+    const auto* flag = yyjson_arr_get(values, 1);
+    EXPECT_EQ(document.Offset(flag), kSource.find("false"));
+    EXPECT_NE(document.Field(document.root(), ""), nullptr);
+  }
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+}
+
+TEST(ParsedJSONTest, ChecksOverwrittenNumericTokensBeforeDiscardingDuplicateValues) {
+  Isolate isolate;
+  constexpr std::string_view kSource = R"({"a":1e9999,"a":42})";
+  const auto parsed = ParsedJSON::Parse(kSource, isolate.heap());
+  ASSERT_FALSE(parsed);
+  EXPECT_EQ(parsed.error().kind, JsonRuntimeError::Kind::NumberOutOfRange);
+  EXPECT_EQ(parsed.error().offset, kSource.find("1e9999"));
+  EXPECT_EQ(parsed.error().path, "$.a");
+  EXPECT_EQ(isolate.heap().allocated_bytes(), 0U);
+}
+
+TEST(ParsedJSONTest, LocatesSyntaxErrorsInTheKnownStructuralPrefix) {
+  Isolate isolate(1);
+  constexpr std::string_view kSource = R"({"display\u002ename":[0,{"value":truX}]})";
+  const auto parsed = ParsedJSON::Parse(kSource, isolate.heap());
+  ASSERT_FALSE(parsed);
+  EXPECT_EQ(parsed.error().kind, JsonRuntimeError::Kind::Syntax);
+  EXPECT_EQ(parsed.error().path, "$[\"display.name\"][1].value");
+  EXPECT_EQ(isolate.heap().allocated_bytes(), 0U);
+}
+
+TEST(ParsedJSONTest, IndexesDeepInputWithoutCppRecursionAndReleasesAllNativeStorage) {
+  Isolate isolate;
+  constexpr std::size_t kDepth = 5000;
+  const auto source = std::string(kDepth, '[') + "42" + std::string(kDepth, ']');
+  {
+    const auto parsed = ParsedJSON::Parse(source, isolate.heap());
+    ASSERT_TRUE(parsed);
+    EXPECT_EQ((*parsed)->size(), kDepth + 1);
+  }
+  EXPECT_EQ(isolate.heap().allocated_bytes(), 0U);
 }
 
 }  // namespace

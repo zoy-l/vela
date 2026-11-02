@@ -11,11 +11,7 @@ from pathlib import Path
 from tools.config import ROOT, toolchain_tools
 
 
-def _clang_format(tools: dict[str, Path]) -> Path:
-    return tools["clang_format"]
-
-
-def _project_files(values: list[str]) -> list[Path]:
+def project_files(values: list[str]) -> list[Path]:
     roots = [ROOT / value for value in values] if values else [ROOT]
     files: set[Path] = set()
     for root in roots:
@@ -44,8 +40,8 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("paths", nargs="*", help="Files or directories under the project root")
     parsed = parser.parse_args(arguments)
     tools = toolchain_tools()
-    clang_format = _clang_format(tools)
-    for path in _project_files(parsed.paths):
+    clang_format = tools["clang_format"]
+    for path in project_files(parsed.paths):
         if path.suffix in {".gn", ".gni"}:
             subprocess.run([str(tools["gn"]), "format", str(path)], cwd=ROOT, check=True)
         else:

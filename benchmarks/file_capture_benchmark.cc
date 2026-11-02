@@ -77,7 +77,7 @@ std::expected<std::unique_ptr<compiler::SourceSession>, std::string> OpenSource(
 void PollIdle(benchmark::State& state, compiler::DevelopmentFiles& files) {
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto polled = files.Poll();
+    auto polled = files.Poll();
     if (!polled) {
       state.SkipWithError(frontend::DiagnosticsText(polled.error()));
       return;

@@ -23,6 +23,13 @@ INSTANTIATE_TEST_SUITE_P(
     StaticContracts,
     GenericDefinitionTest,
     testing::Values(
+        "import 'sdk:test'; import 'sdk:mock'; "
+        "func main(): void { const method = MockFunction1<int, int>(MockSession()); "
+        "const result: int = method.function(42); expect(result, 42); }",
+        "class User { name: string; } "
+        "func decode<T>(source: string): T { return JSON.parse<T>(source); } "
+        "func main(): string { const parse = JSON.safeParse<User>; "
+        "return parse('{\"name\":\"Vela\"}').value.name; }",
         "func identity<T>(value:T):T{return value;}",
         "interface Reader<E>{read():E;} "
         "func read<T extends Reader<E>,E>(value:T):E{return value.read();}",

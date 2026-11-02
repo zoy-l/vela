@@ -121,6 +121,10 @@ class Lowerer final {
                      const frontend::FunctionDescriptor& function_info,
                      const frontend::Class* owner = nullptr,
                      const frontend::LambdaDescriptor* lambda = nullptr);
+  void LowerIntrinsicFunction(Function function,
+                              const frontend::Function& source,
+                              const frontend::Class* owner,
+                              Builtin builtin);
   void LowerFunctionParameters(const frontend::Function& source,
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
@@ -170,8 +174,9 @@ class Lowerer final {
   void EmitConstructorInitialization(const frontend::ClassDescriptor& info,
                                      RegisterId object,
                                      std::span<const RegisterId> arguments,
-                                     std::span<const std::uint64_t> provided,
                                      frontend::SourceLocation location);
+  void LowerJSONDecodePlans();
+  void LowerJSONConstructor(const frontend::JSONDecodePlan& plan);
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,

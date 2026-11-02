@@ -30,7 +30,7 @@ class NativeDistributionTest(unittest.TestCase):
         categories = [
             "class", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
-            "builtin_function_value", "string", "regexp", "json", "standard_library", "async_contract",
+            "builtin_function_value", "string", "regexp", "json", "typed_json", "standard_library", "async_contract",
             "language_basics", "control_flow", "match", "cast", "optimization", "recursion",
         ]
         selected = os.environ.get("VELA_AOT_CORPUS_CATEGORIES")
@@ -118,6 +118,10 @@ class NativeDistributionTest(unittest.TestCase):
                 ("invalid_type", "func main(): bool { return true; }", 70),
                 ("invalid_range", "func main(): int { return 256; }", 70),
                 ("standard", "func main(): int { return Math.sqrt(1764.0).toInt(); }", 42),
+                ("typed_json", "class Item { value: int = 42; } func main(): int { "
+                 "const failed = JSON.safeParse<Item>('{\"value\":false}'); "
+                 "return !failed.success && failed.error.path == '$.value' "
+                 "? JSON.parse<Item>('{}').value : 0; }", 42),
             ]
             applications = []
             sources = []

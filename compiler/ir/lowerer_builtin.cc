@@ -4,13 +4,91 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include "base/builtin.h"
 #include "base/regexp.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
+
+void Lowerer::LowerIntrinsicFunction(Function function,
+                                     const frontend::Function& source,
+                                     const frontend::Class* owner,
+                                     Builtin builtin) {
+  BeginFunctionBody(function, owner);
+  auto result = function.parameter_count;
+  RegisterId argument_start = 0;
+  if (source.intrinsic_operation) {
+    argument_start = result;
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result++,
+        .immediate = *source.intrinsic_operation,
+        .location = source.location,
+    });
+    for (RegisterId parameter = 0; parameter < function.parameter_count; ++parameter) {
+      Emit({
+          .opcode = Opcode::Move,
+          .dst = result++,
+          .lhs = parameter,
+          .location = source.location,
+      });
+    }
+    while (result - argument_start < BuiltinArity(builtin)) {
+      Emit({.opcode = Opcode::LoadNull, .dst = result++, .location = source.location});
+    }
+  }
+  if (builtin == Builtin::JsonTypedParse || builtin == Builtin::JsonSafeParse) {
+    const auto key = owner->name + '.' + source.name;
+    function.json_decode_plan = model_.json_decode_entries.at(key);
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result,
+        .immediate = model_.json_decode_entries.at(key),
+        .location = source.location,
+    });
+    ++result;
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result,
+        .immediate = class_ids_.at(frontend::kJsonParseErrorTypeName),
+        .location = source.location,
+    });
+    ++result;
+    if (builtin == Builtin::JsonSafeParse) {
+      Emit({
+          .opcode = Opcode::LoadInt,
+          .dst = result,
+          .immediate = class_ids_.at(function.return_type.name),
+          .location = source.location,
+      });
+      ++result;
+    }
+  }
+  if (builtin == Builtin::DateToUTC) {
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result,
+        .immediate = class_ids_.at("DateParts"),
+        .location = source.location,
+    });
+    ++result;
+  }
+  Emit({
+      .opcode = Opcode::BuiltinCall,
+      .dst = result,
+      .lhs = argument_start,
+      .index = static_cast<std::uint32_t>(builtin),
+      .location = source.location,
+  });
+  Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
+  function.register_count = result + 1;
+  StoreFunction(std::move(function));
+  current_function_ = nullptr;
+}
 
 Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expression) {
   const auto& result_type = model_.expression_types.at(&expression);

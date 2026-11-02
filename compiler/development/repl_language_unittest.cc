@@ -20,8 +20,8 @@
 #include "compiler/test_support/program_test_support.h"
 #include "gtest/gtest.h"
 
-#include "runtime/heap/heap.h"
 #include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
@@ -147,7 +147,7 @@ TEST_F(ReplLanguageTest, LambdasInLoopIterablesKeepTheirTargetsAcrossSubmissions
 }
 
 TEST_F(ReplLanguageTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmissions) {
-  Execute(R"(const root: dynamic = Json.parse('{"name":"Vela","items":[40,2]}');)");
+  Execute(R"(const root: dynamic = JSON.parse('{"name":"Vela","items":[40,2]}');)");
   Execute("const read = root.get;");
   session().isolate().heap().Collect();
   Execute("const name: string = read('name');");
@@ -155,8 +155,21 @@ TEST_F(ReplLanguageTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmis
   Execute("values[0] + values[1]");
   Execute("root.set('name', name.toUpperCase());");
   session().isolate().heap().Collect();
-  Execute("Json.stringify(root)");
+  Execute("JSON.stringify(root)");
   EXPECT_EQ(output().str(), "42\n{\"name\":\"VELA\",\"items\":[40,2]}\n");
+}
+
+TEST_F(ReplLanguageTest, TypedJSONResultsAndSpecializedFunctionsSurviveLaterSubmissions) {
+  Execute("class User { name: string; age: int = 42; }");
+  Execute("const parse: (string) => User = JSON.parse<User>;");
+  Execute(R"(const result = JSON.safeParse<User>('{"name":"Vela"}');)");
+  session().isolate().heap().Collect();
+  Execute("result.value.age");
+  Execute(R"(parse('{"name":"Other","age":43}').age)");
+  Execute("const failure = JSON.safeParse<User>('{}');");
+  session().isolate().heap().Collect();
+  Execute("failure.error.path");
+  EXPECT_EQ(output().str(), "42\n43\n$.name\n");
 }
 
 TEST_F(ReplLanguageTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {

@@ -2,7 +2,7 @@
 
 [English](../en/standard_library.md) | [**简体中文**](standard_library.md)
 
-`Math`、`Random`、`performance`、`Date`、`DateParts`、`Json` 和 `Error` 是系统默认声明的全局对象，无需显式 import 导入即可使用。原生 C++ 函数调用依然保持静态检查与静态链接。编译产物仅针对实际被引用的标准对象生成声明与原生函数绑定；普通脚本不会被迫加载整个标准库运行时环境。这些全局名称属于保留字，但允许被局部变量遮蔽（shadow）。内部标准库声明的源码参与编译缓存指纹计算，不能通过外部源码覆盖（source overlay）篡改。用户通过 import 仅解析本地文件，旧式的 `std:` 导入前缀已被彻底移除。宿主应用可通过强类型原生注册表提供业务 API；CLI 的系统时钟与 Isolate 局部的随机数实现均作为其默认的宿主绑定提供。
+`Math`、`Random`、`performance`、`Date`、`DateParts`、`JSON` 和 `Error` 是系统默认声明的全局对象，无需显式 import 导入即可使用。原生 C++ 函数调用依然保持静态检查与静态链接。编译产物仅针对实际被引用的标准对象生成声明与原生函数绑定；普通脚本不会被迫加载整个标准库运行时环境。这些全局名称属于保留字，但允许被局部变量遮蔽（shadow）。内部标准库声明的源码参与编译缓存指纹计算，不能通过外部源码覆盖（source overlay）篡改。用户通过 import 仅解析本地文件，旧式的 `std:` 导入前缀已被彻底移除。宿主应用可通过强类型原生注册表提供业务 API；CLI 的系统时钟与 Isolate 局部的随机数实现均作为其默认的宿主绑定提供。
 
 ```typescript
 const result = Math.sqrt(9.0);
@@ -25,7 +25,9 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 ## JSON
 
-`Json.parse(source: string): dynamic` 返回原生基本值、`dynamic[]` 和有序 `Map<string, dynamic>` 对象。`Json.stringify(value: dynamic): string` 输出紧凑 JSON，通过公开 `toJson()` 方法支持业务对象。动态操作和进入具体类型的赋值仍进行检查；数字、Unicode、循环与错误契约见 [JSON 与动态值](json.md)。
+`JSON.parse(source: string): dynamic` 返回原生基本值、`dynamic[]` 和有序 `Map<string, dynamic>` 对象。`JSON.stringify(value: dynamic): string` 输出紧凑 JSON，通过公开 `toJson()` 方法支持业务对象。动态操作和进入具体类型的赋值仍进行检查；数字、Unicode、循环与错误契约见 [JSON 与动态值](json.md)。
+
+`JSON.parse<T>(source)` 完整校验后构造真正的 `T`，输入错误抛出 `JSONParseError`。`JSON.safeParse<T>(source)` 返回只读的 `JSONParseResult<T>`：按 `success` 分支读取 `value: T` 或 `error: JSONParseError`。目标类型必须显式给出；类输入遵循公开构造参数契约。详见 [JSON 强类型解码](typed_json.md)。
 
 ## 数值解析
 

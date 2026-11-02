@@ -360,7 +360,7 @@ class BenchmarkReportTest(unittest.TestCase):
             report = Path(temporary) / "native.json"
             parsed = parse_arguments(["--native-compare", "--report", str(report)])
 
-            def execute(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
                 self.assertIn("--benchmark_filter=^native/", command)
                 rows = native_samples(7)
                 if "--benchmark_list_tests=true" in command:
@@ -381,7 +381,7 @@ class BenchmarkReportTest(unittest.TestCase):
             markdown.write_text("stale success", encoding="utf-8")
             parsed = parse_arguments(["--compare", "--report", str(report)])
 
-            def execute(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
                 self.assertFalse(report.exists())
                 self.assertFalse(markdown.exists())
                 if "--benchmark_list_tests=true" in command:
@@ -403,7 +403,7 @@ class BenchmarkReportTest(unittest.TestCase):
             parsed = parse_arguments(["--compare", "--report", str(report), "--",
                                       "--benchmark_repetitions=3", "--benchmark_filter=^compare/"])
 
-            def execute(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
                 self.assertIn("--benchmark_filter=^compare/", command)
                 if "--benchmark_list_tests=true" in command:
                     return subprocess.CompletedProcess(command, 0, stdout="\n".join(case(backend) for backend in BACKENDS))

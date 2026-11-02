@@ -113,6 +113,10 @@ yyjson_val* JsonDocument::root() noexcept {
   return yyjson_doc_get_root(document_.get());
 }
 
+std::size_t JsonDocument::value_count() const noexcept {
+  return yyjson_doc_get_val_count(document_.get());
+}
+
 std::size_t JsonDocument::RawOffset(const yyjson_val& value) const noexcept {
   return static_cast<std::size_t>(yyjson_get_raw(&value) - storage_.get());
 }

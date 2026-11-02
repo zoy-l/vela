@@ -49,7 +49,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(arguments)
 
 
-def _is_project_file(path: Path) -> bool:
+def is_project_file(path: Path) -> bool:
     return (
         path.is_relative_to(ROOT)
         and not path.is_relative_to(ROOT / "third_party")
@@ -57,7 +57,7 @@ def _is_project_file(path: Path) -> bool:
     )
 
 
-def _build_files(gn: Path, variant: str) -> list[Path]:
+def collect_build_files(gn: Path, variant: str) -> list[Path]:
     result = subprocess.run(
         [str(gn), "desc", str(output_directory(variant)), "//*", "sources", "--format=json"],
         cwd=ROOT,
@@ -74,7 +74,7 @@ def _build_files(gn: Path, variant: str) -> list[Path]:
     for target in targets.values():
         for source in target.get("sources", []):
             path = (ROOT / source.removeprefix("//")).resolve()
-            if _is_project_file(path):
+            if is_project_file(path):
                 files.add(path)
     return sorted(files)
 
@@ -112,7 +112,7 @@ def prepare_generated_headers(variant: str, tools: dict[str, Path], files: list[
                        cwd=ROOT, check=True)
 
 
-def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
+def path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     files: set[Path] = set()
     for path in paths:
         candidate = (path if path.is_absolute() else Path.cwd() / path).resolve()
@@ -129,7 +129,7 @@ def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     return sorted(files)
 
 
-def _check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) -> LintResult:
+def check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) -> LintResult:
     command = [
         str(clang_tidy), str(source), "-p", str(database), "--quiet", "--warnings-as-errors=*",
     ]
@@ -151,7 +151,7 @@ def _check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) 
     return LintResult(source=source, return_code=result.returncode, output=result.stdout)
 
 
-def _report_failure(result: LintResult) -> None:
+def report_failure(result: LintResult) -> None:
     print(
         f"clang-tidy failed for {result.source.relative_to(ROOT)} "
         f"(exit {result.return_code})",
@@ -167,15 +167,15 @@ def run(parsed: argparse.Namespace) -> int:
     generate_compilation_database(parsed.variant)
     database = output_directory(parsed.variant)
     tools = toolchain_tools()
-    build_files = _build_files(tools["gn"], parsed.variant)
-    files = _path_files(parsed.paths, build_files) if parsed.paths else build_files
+    build_files = collect_build_files(tools["gn"], parsed.variant)
+    files = path_files(parsed.paths, build_files) if parsed.paths else build_files
     if not files:
         raise RuntimeError("no C++ source files or headers were selected for lint")
     prepare_generated_headers(parsed.variant, tools, files)
 
     if parsed.fix:
         # 不并行修复：多个翻译单元可能同时改写共享头文件。
-        results = [_check_source(tools["clang_tidy"], source, database, fix=True) for source in files]
+        results = [check_source(tools["clang_tidy"], source, database, fix=True) for source in files]
     else:
         worker_count = min(parsed.jobs, len(files))
         print(
@@ -186,7 +186,7 @@ def run(parsed: argparse.Namespace) -> int:
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
             pending = {
-                pool.submit(_check_source, tools["clang_tidy"], source, database, fix=False)
+                pool.submit(check_source, tools["clang_tidy"], source, database, fix=False)
                 for source in files
             }
             completed = 0
@@ -218,7 +218,7 @@ def run(parsed: argparse.Namespace) -> int:
 
     failures = [result for result in results if result.return_code != 0]
     for result in failures:
-        _report_failure(result)
+        report_failure(result)
     print(f"linted {len(files)} C++ file(s), including headers; failures: {len(failures)}")
     return 1 if failures else 0
 

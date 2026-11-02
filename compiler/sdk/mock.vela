@@ -1,22 +1,30 @@
 import 'sdk:test' as testing;
 
-external func _control(
-  operation: int,
-  first: dynamic,
-  second: dynamic,
-  third: dynamic,
-  fourth: dynamic
-): dynamic;
-
-external func _inspect(operation: int, value: dynamic): dynamic;
-
-external func _contract(operation: int, signature: dynamic, value: dynamic): dynamic;
+external func currentTestScope(): int;
+external func registerFinalizer(callback: () => void): int;
+external func releaseFinalizer(identity: int): void;
+external func trackCallWait(future: Future<MockInvocation>): void;
+external func kindOfValue(value: dynamic): int;
+external func displayValue(value: dynamic): string;
+external func isVoidSignature(signature: dynamic): bool;
+external func acceptsReturn(signature: dynamic, value: dynamic): bool;
+external func signatureArity(signature: dynamic): int?;
+external func parameterName(signature: dynamic, index: int): string;
+external func acceptsAnswer(callback: dynamic, sample: MockInvocation): bool;
+external func acceptsVoidAnswer(callback: dynamic, sample: MockInvocation): bool;
+external func isThrowable(value: dynamic): bool;
+external func captureTrace(): ByteArray;
+external func resolveTrace(trace: ByteArray, callback: (string, string, int, int, int) => void): void;
+external func registerFailure(kind: int, error: dynamic): void;
+external func observeMatch(source: Future<bool>, target: Completer<MockInvocation>): bool;
+external func failObservation(target: Completer<MockInvocation>, error: dynamic): void;
+external func acceptsResponseSignature(signature: dynamic, callback: dynamic): bool;
 
 /// Invalid mock configuration or an operation outside its owning test scope.
 export class MockUsageError extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 0, this);
+    registerFailure(0, this);
   }
 }
 
@@ -24,7 +32,7 @@ export class MockUsageError extends testing.TestFailure {
 export class MockMissingStub extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 1, this);
+    registerFailure(1, this);
   }
 }
 
@@ -32,7 +40,7 @@ export class MockMissingStub extends testing.TestFailure {
 export class MockStubExhausted extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 2, this);
+    registerFailure(2, this);
   }
 }
 
@@ -40,7 +48,7 @@ export class MockStubExhausted extends testing.TestFailure {
 export class MockVerificationFailure extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 3, this);
+    registerFailure(3, this);
   }
 }
 
@@ -48,7 +56,7 @@ export class MockVerificationFailure extends testing.TestFailure {
 export class MockReset extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 4, this);
+    registerFailure(4, this);
   }
 }
 
@@ -56,11 +64,11 @@ export class MockReset extends testing.TestFailure {
 export class MockSessionClosed extends testing.TestFailure {
   constructor(message: string) {
     super(message: message);
-    _contract(9, 5, this);
+    registerFailure(5, this);
   }
 }
 
-func _usage(message: string): void {
+func raiseUsageError(message: string): void {
   throw MockUsageError(message);
 }
 
@@ -73,66 +81,64 @@ export class MockSourceFrame {
   instruction: int;
 }
 
-func _frames(trace: ByteArray): MockSourceFrame[] {
-  const values: dynamic[] = [];
-  _contract(8, trace, values);
+func traceFrames(trace: ByteArray): MockSourceFrame[] {
   const result: MockSourceFrame[] = [];
-  for (let index = 0; index < values.length; index += 5) {
+  resolveTrace(trace, (functionName: string, file: string, line: int, column: int, instruction: int): void => {
     result.push(
       MockSourceFrame(
-        functionName: values[index] as string,
-        file: values[index + 1] as string,
-        line: values[index + 2] as int,
-        column: values[index + 3] as int,
-        instruction: values[index + 4] as int
+        functionName: functionName,
+        file: file,
+        line: line,
+        column: column,
+        instruction: instruction
       )
     );
-  }
+  });
   return result;
 }
 
-class _CallReport {
+class CallReport {
   sequence: int;
   arguments: string[];
   omittedArguments: int;
   trace: ByteArray;
 }
 
-class _MockDetails {
+class MockDetails {
   mockSessionID: int;
   mockID: int;
   method: string;
   expected: string;
   actualCount: int;
-  calls: _CallReport[];
+  calls: CallReport[];
   configurations: string[] = [];
   configurationTraces: ByteArray[] = [];
   verificationTrace: ByteArray? = null;
 }
 
-const _reportCallBudget = 16;
+const reportCallBudget = 16;
 
-const _reportArgumentBudget = 16;
+const reportArgumentBudget = 16;
 
-class _Any implements testing.Matcher {
+class AnyValueMatcher implements testing.Matcher {
   match (actual: dynamic): testing.MatchResult {
     return testing.MatchResult(success: true, description: 'any value');
   }
 }
 
 /// Matches any single argument, including null.
-export const any: testing.Matcher = _Any();
+export const any: testing.Matcher = AnyValueMatcher();
 
-class _Capture {
+class Capture {
   matcher: testing.Matcher;
 }
 
 /// Captures any argument after a successful verification commits.
-export const captureAny = _Capture(matcher: any);
+export const captureAny = Capture(matcher: any);
 
-func _matcher(value: dynamic): testing.Matcher {
+func argumentMatcher(value: dynamic): testing.Matcher {
   if (value is testing.AsyncMatcher) {
-    _usage('mock argument matchers must be synchronous');
+    raiseUsageError('mock argument matchers must be synchronous');
   }
   if (value is testing.Matcher) {
     return value;
@@ -142,7 +148,7 @@ func _matcher(value: dynamic): testing.Matcher {
 
 /// Captures arguments satisfying a synchronous matcher.
 export func captureThat(matcher: dynamic): dynamic {
-  return _Capture(matcher: _matcher(matcher));
+  return Capture(matcher: argumentMatcher(matcher));
 }
 
 /// Owns mock identities, ordering and cleanup for one executing test.
@@ -155,13 +161,13 @@ export class MockSession {
   private matching: bool = false;
 
   constructor() {
-    this.scope = _control(5, null, null, null, null) as int;
+    this.scope = currentTestScope();
     if (this.scope == 0) {
-      _usage('MockSession requires an executing test, setUp or tearDown');
+      raiseUsageError('MockSession requires an executing test, setUp or tearDown');
     }
-    this.identity = _control(6, () => {
+    this.identity = registerFinalizer(() => {
       this.close();
-    }, null, null, null) as int;
+    });
   }
 
   get mockSessionID(): int {
@@ -169,14 +175,14 @@ export class MockSession {
   }
 
   check(): void {
-    if (_control(5, null, null, null, null) != this.scope) {
-      _usage('mock operation belongs to a different test scope');
+    if (currentTestScope() != this.scope) {
+      raiseUsageError('mock operation belongs to a different test scope');
     }
     if (this.closed) {
       throw MockSessionClosed('mock session is closed');
     }
     if (this.matching) {
-      _usage('mock operations cannot reenter an argument matcher');
+      raiseUsageError('mock operations cannot reenter an argument matcher');
     }
   }
 
@@ -205,14 +211,14 @@ export class MockSession {
     }
     this.check();
     let pending = 0;
-    let report: _MockDetails? = null;
+    let report: MockDetails? = null;
     for (const control in this.controls) {
       if (report == null) { report = control.unfinished(); }
       pending += control.finish();
     }
     this.controls.clear();
     this.closed = true;
-    _control(7, this.identity, null, null, null);
+    releaseFinalizer(this.identity);
     if (pending != 0) {
       const error = MockUsageError('${pending} mock stub builder(s) were not completed');
       error.mock = report;
@@ -257,7 +263,7 @@ export class MockControl {
     }
   }
 
-  unfinished(): _MockDetails? {
+  unfinished(): MockDetails? {
     for (const method in this.methods) {
       const report = method.unfinished();
       if (report != null) { return report; }
@@ -281,7 +287,7 @@ export class MockControl {
         const invocation = record.invocation;
         if (includeVerified || !record.verified) {
           const error = MockVerificationFailure('unexpected call: ${invocation.methodName} #${invocation.sequence}');
-          const details = method.report('no interactions', 1, _contract(7, null, null) as ByteArray);
+          const details = method.report('no interactions', 1, captureTrace());
           details.calls = [invocation.report()];
           error.mock = details;
           throw error;
@@ -338,19 +344,19 @@ export class MockInvocation {
     return this.values.slice(0, this.values.length);
   }
   get registrationLocation(): MockSourceFrame[] {
-    return _frames(this.registeredAt);
+    return traceFrames(this.registeredAt);
   }
   get callLocation(): MockSourceFrame[] {
-    return _frames(this.calledAt);
+    return traceFrames(this.calledAt);
   }
 
-  report(): _CallReport {
+  report(): CallReport {
     const arguments: string[] = [];
-    const count = this.values.length < _reportArgumentBudget ? this.values.length : _reportArgumentBudget;
+    const count = this.values.length < reportArgumentBudget ? this.values.length : reportArgumentBudget;
     for (let index = 0; index < count; index ++) {
-      arguments.push(_inspect(1, this.values[index]) as string);
+      arguments.push(displayValue(this.values[index]));
     }
-    return _CallReport(
+    return CallReport(
       sequence: this.order,
       arguments: arguments,
       omittedArguments: this.values.length - count,
@@ -360,7 +366,7 @@ export class MockInvocation {
 
   argumentAt(index: int): dynamic {
     if (index < 0 || index >= this.values.length) {
-      _usage('mock argument index is out of range');
+      raiseUsageError('mock argument index is out of range');
     }
     return this.values[index];
   }
@@ -368,9 +374,9 @@ export class MockInvocation {
   argument(name: string): dynamic {
     const index = this.names.get(name);
     if (index == null) {
-      _usage('unknown mock argument: ${name}');
+      throw MockUsageError('unknown mock argument: ${name}');
     }
-    return this.values[index as int];
+    return this.values[index];
   }
 }
 
@@ -386,25 +392,24 @@ export class MockCall {
   constructor(method: MockMethod, arguments: dynamic[]) {
     method.control.session.check();
     if (arguments.length != method.arity) {
-      _usage('wrong number of mock arguments');
+      raiseUsageError('wrong number of mock arguments');
     }
     this.target = method;
-    this.source = _contract(7, null, null) as ByteArray;
+    this.source = captureTrace();
     const descriptions: string[] = [];
     for (const value in arguments) {
-      const capture = value is _Capture;
-      if (descriptions.length < _reportArgumentBudget) {
+      const capture = value is Capture;
+      if (descriptions.length < reportArgumentBudget) {
         descriptions.push(
-          value is testing.Matcher || capture ? '<matcher>' : _inspect(1, value) as string
+          value is testing.Matcher || capture ? '<matcher>' : displayValue(value)
         );
       }
       this.captures.push(capture);
-      if (capture) {
-        const marker = value as _Capture;
-        this.matchers.push(marker.matcher);
+      if (value is Capture) {
+        this.matchers.push(value.matcher);
         this.capturing = true;
       } else {
-        this.matchers.push(_matcher(value));
+        this.matchers.push(argumentMatcher(value));
       }
     }
     if (arguments.length > descriptions.length) {
@@ -426,7 +431,7 @@ export class MockCall {
     return this.source.slice(0, this.source.length);
   }
 
-  match (invocation: MockInvocation): _Match {
+  match (invocation: MockInvocation): CallMatch {
     const session = this.target.control.session;
     session.beginMatch();
     try {
@@ -435,59 +440,59 @@ export class MockCall {
         const argument = invocation.argumentAt(index);
         const result = this.matchers[index].match (argument);
         if (!result.success) {
-          return _Match(success: false, captured: [], result: result);
+          return CallMatch(success: false, captured: [], result: result);
         }
         if (this.captures[index]) {
           captured.push(argument);
         }
       }
-      return _Match(success: true, captured: captured, result: null);
+      return CallMatch(success: true, captured: captured, result: null);
     } finally {
       session.endMatch();
     }
   }
 }
 
-class _Match {
+class CallMatch {
   success: bool;
   captured: dynamic[];
   result: testing.MatchResult?;
 }
 
-class _Response {
+class Response {
   call: MockCall;
   kind: int;
   value: dynamic;
   index: int = 0;
 }
 
-class _Record {
+class Record {
   invocation: MockInvocation;
   verified: bool = false;
 }
 
-class _Wait {
+class Wait {
   call: MockCall;
   completion: Completer<MockInvocation> = Completer<MockInvocation>();
-  trace: ByteArray = _contract(7, null, null) as ByteArray;
+  trace: ByteArray = captureTrace();
 
   private async evaluate(invocation: MockInvocation): Future<bool> {
     return this.call.match (invocation).success;
   }
 
   observe(invocation: MockInvocation): void {
-    if (_contract(10, this.evaluate(invocation), this.completion) as bool) {
+    if (observeMatch(this.evaluate(invocation), this.completion)) {
       this.completion.complete(invocation);
     }
   }
 
   fail(error: dynamic): void {
     error.mock = this.call.method.report(this.call.description, 0, this.trace);
-    _contract(11, this.completion, error);
+    failObservation(this.completion, error);
   }
 }
 
-enum _CloseReason {
+enum CloseReason {
   reset,
   session
 }
@@ -500,36 +505,36 @@ export class MockMethod {
   private names: Map<string, int> = Map<string, int>();
   private count: int = 0;
   private voidResult: bool = false;
-  private records: _Record[] = [];
-  private responses: _Response[] = [];
+  private records: Record[] = [];
+  private responses: Response[] = [];
   private pending: Map<int, MockCall> = Map<int, MockCall>();
   private nextStub: int = 0;
   private generation: int = 0;
   private historyGeneration: int = 0;
-  private waits: _Wait[] = [];
+  private waits: Wait[] = [];
   private registeredAt: ByteArray;
 
   constructor(control: MockControl, name: string) {
     this.owner = control;
     this.name = name;
-    this.registeredAt = _contract(7, null, null) as ByteArray;
+    this.registeredAt = captureTrace();
     control.attach(this);
   }
 
   bind(signature: dynamic): void {
     this.owner.session.check();
     if (this.signature != null) {
-      _usage('mock method signature is already bound');
+      raiseUsageError('mock method signature is already bound');
     }
     this.signature = signature;
-    const count = _contract(2, signature, null);
-    if (!(count is int)) {
-      _usage('mock method requires a real callable signature');
+    const count = signatureArity(signature);
+    if (count == null) {
+      throw MockUsageError('mock method requires a real callable signature');
     }
-    this.count = count as int;
-    this.voidResult = _contract(0, signature, null) as bool;
+    this.count = count;
+    this.voidResult = isVoidSignature(signature);
     for (let index = 0; index < this.count; index ++) {
-      const parameter: string = _contract(3, signature, index) as string;
+      const parameter: string = parameterName(signature, index);
       this.names.set(parameter, index);
     }
   }
@@ -552,13 +557,13 @@ export class MockMethod {
   query(arguments: dynamic[]): MockCall {
     return MockCall(this, arguments);
   }
-  history(): _Record[] {
+  history(): Record[] {
     return this.records.slice(0, this.records.length);
   }
   get recordCount(): int {
     return this.records.length;
   }
-  recordAt(index: int): _Record {
+  recordAt(index: int): Record {
     return this.records[index];
   }
   firstAfter(sequence: int): int {
@@ -583,22 +588,22 @@ export class MockMethod {
 
   validateValue(value: dynamic): void {
     if (
-      this.voidResult || _inspect(0, value) == 4 || !(_contract(1, this.signature, value) as bool)
+      this.voidResult || kindOfValue(value) == 4 || !(acceptsReturn(this.signature, value))
     ) {
-      _usage('thenReturn requires a non-Future value satisfying ${this.name}');
+      raiseUsageError('thenReturn requires a non-Future value satisfying ${this.name}');
     }
   }
 
   validateCallback(callback: dynamic, isVoid: bool): void {
     const sample = this.describe([], 0);
     if (
-      isVoid != this.voidResult || !(_contract(isVoid ? 5 : 4, callback, sample) as bool) || (!isVoid && !(_contract(12, this.signature, callback) as bool))
+      isVoid != this.voidResult || !((isVoid ? acceptsVoidAnswer(callback, sample) : acceptsAnswer(callback, sample))) || (!isVoid && !(acceptsResponseSignature(this.signature, callback)))
     ) {
-      _usage('response must accept MockInvocation and return the required value or void');
+      raiseUsageError('response must accept MockInvocation and return the required value or void');
     }
   }
 
-  commit(response: _Response, identity: int): void {
+  commit(response: Response, identity: int): void {
     this.owner.session.check();
     // 同一不可变模式的新响应完全遮蔽旧响应，移除后也不会重复求值 matcher。
     for (let index = this.responses.length - 1; index >= 0; index--) {
@@ -618,18 +623,18 @@ export class MockMethod {
       arguments,
       this.names,
       this.registeredAt,
-      _contract(7, null, null) as ByteArray
+      captureTrace()
     );
   }
 
   private record(arguments: dynamic[]): MockInvocation {
     const sequence = this.owner.session.nextSequence();
     if (arguments.length != this.count) {
-      _usage('wrong number of real mock arguments');
+      raiseUsageError('wrong number of real mock arguments');
     }
     const invocation = this.describe(arguments, sequence);
-    this.records.push(_Record(invocation: invocation));
-    const pending: _Wait[] = [];
+    this.records.push(Record(invocation: invocation));
+    const pending: Wait[] = [];
     for (const wait in this.waits) {
       wait.observe(invocation);
       if (!wait.completion.isCompleted) {
@@ -640,7 +645,7 @@ export class MockMethod {
     return invocation;
   }
 
-  private select(invocation: MockInvocation): _Response {
+  private select(invocation: MockInvocation): Response {
     let mismatch: testing.MatchResult? = null;
     for (let index = this.responses.length - 1; index >= 0; index --) {
       const response = this.responses[index];
@@ -655,7 +660,7 @@ export class MockMethod {
     const error = MockMissingStub('no matching stub for ${this.name} #${invocation.sequence}');
     const details = this.report('a matching configured response', 0, null);
     for (
-      let index = this.responses.length - 1; index >= 0 && details.configurations.length < _reportCallBudget; index --
+      let index = this.responses.length - 1; index >= 0 && details.configurations.length < reportCallBudget; index --
     ) {
       const call = this.responses[index].call;
       details.configurations.push(call.description);
@@ -668,7 +673,12 @@ export class MockMethod {
     throw error;
   }
 
-  invoke(arguments: dynamic[]): dynamic {
+  invoke<R>(arguments: dynamic[]): R {
+    // 响应注册已按真实签名验证；此处是擦除载荷恢复名义返回类型的唯一边界。
+    return this.resolveResponse(arguments) as R;
+  }
+
+  private resolveResponse(arguments: dynamic[]): dynamic {
     const invocation = this.record(arguments);
     const response = this.select(invocation);
     if (response.kind == 0) {
@@ -703,7 +713,7 @@ export class MockMethod {
       throw response.value;
     }
     if (response.kind != 4) {
-      _usage('void method requires thenDo');
+      raiseUsageError('void method requires thenDo');
     }
     response.value(invocation);
   }
@@ -713,10 +723,10 @@ export class MockMethod {
     this.historyGeneration ++;
   }
 
-  report(expected: string, count: int, verificationTrace: ByteArray?): _MockDetails {
-    const calls: _CallReport[] = [];
+  report(expected: string, count: int, verificationTrace: ByteArray?): MockDetails {
+    const calls: CallReport[] = [];
     for (
-      let index = this.records.length - 1; index >= 0 && calls.length < _reportCallBudget; index --
+      let index = this.records.length - 1; index >= 0 && calls.length < reportCallBudget; index --
     ) {
       const record = this.records[index];
       if (!record.verified) {
@@ -724,7 +734,7 @@ export class MockMethod {
       }
     }
     calls.reverse();
-    return _MockDetails(
+    return MockDetails(
       mockSessionID: this.owner.session.mockSessionID,
       mockID: this.owner.mockID,
       method: this.name,
@@ -738,11 +748,11 @@ export class MockMethod {
   wait(call: MockCall): Future<MockInvocation> {
     this.owner.session.check();
     if (call.hasCaptures) {
-      _usage('capture patterns are only valid in verification');
+      raiseUsageError('capture patterns are only valid in verification');
     }
-    const wait = _Wait(call: call);
+    const wait = Wait(call: call);
     const future = wait.completion.future;
-    _control(8, future, null, null, null);
+    trackCallWait(future);
     for (const record in this.records) {
       wait.observe(record.invocation);
       if (wait.completion.isCompleted) {
@@ -753,9 +763,9 @@ export class MockMethod {
     return future;
   }
 
-  private closeWaits(reason: _CloseReason): void {
+  private closeWaits(reason: CloseReason): void {
     for (const wait in this.waits) {
-      if (reason == _CloseReason.reset) {
+      if (reason == CloseReason.reset) {
         wait.fail(MockReset('mock was reset before the expected call'));
       } else {
         wait.fail(MockSessionClosed('mock session closed before the expected call'));
@@ -769,13 +779,13 @@ export class MockMethod {
     this.responses.clear();
     this.pending.clear();
     this.generation ++;
-    this.closeWaits(_CloseReason.reset);
+    this.closeWaits(CloseReason.reset);
   }
-  unfinished(): _MockDetails? {
+  unfinished(): MockDetails? {
     if (this.pending.size == 0) { return null; }
     const report = this.report('complete every stub builder', this.pending.size, null);
     for (const call in this.pending.values()) {
-      if (report.configurations.length == _reportCallBudget) { break; }
+      if (report.configurations.length == reportCallBudget) { break; }
       report.configurations.push(call.description);
       report.configurationTraces.push(call.configurationTrace);
     }
@@ -784,7 +794,7 @@ export class MockMethod {
 
   finish(): int {
     const pending = this.pending.size;
-    this.closeWaits(_CloseReason.session);
+    this.closeWaits(CloseReason.session);
     this.reset();
     this.signature = null;
     return pending;
@@ -800,7 +810,7 @@ export class MockStub {
 
   constructor(call: MockCall) {
     if (call.hasCaptures) {
-      _usage('capture patterns are only valid in verification');
+      raiseUsageError('capture patterns are only valid in verification');
     }
     const method = call.method;
     this.identity = method.beginStub(call);
@@ -812,12 +822,12 @@ export class MockStub {
     const method = this.call.method;
     method.control.session.check();
     if (this.completed || this.generation != method.epoch) {
-      _usage('mock stub builder is stale or completed');
+      raiseUsageError('mock stub builder is stale or completed');
     }
   }
 
   private commit(kind: int, value: dynamic): void {
-    this.call.method.commit(_Response(call: this.call, kind: kind, value: value), this.identity);
+    this.call.method.commit(Response(call: this.call, kind: kind, value: value), this.identity);
     this.completed = true;
   }
 
@@ -829,7 +839,7 @@ export class MockStub {
   thenReturnInOrder(values: dynamic[]): void {
     this.check();
     if (values.length == 0) {
-      _usage('response sequence must not be empty');
+      raiseUsageError('response sequence must not be empty');
     }
     const method = this.call.method;
     for (const value in values) {
@@ -839,8 +849,8 @@ export class MockStub {
   }
   thenThrow(error: dynamic): void {
     this.check();
-    if (!(_contract(6, null, error) as bool)) {
-      _usage('thenThrow requires a throwable object');
+    if (!(isThrowable(error))) {
+      raiseUsageError('thenThrow requires a throwable object');
     }
     this.commit(2, error);
   }
@@ -880,7 +890,7 @@ export class MockVerificationResult {
 export class MockVerification {
   private call: MockCall;
   private epoch: int;
-  private records: _Record[] = [];
+  private records: Record[] = [];
   private captured: dynamic[] = [];
   private completed: bool = false;
   private source: ByteArray;
@@ -900,7 +910,7 @@ export class MockVerification {
     method.control.session.check();
     this.call = call;
     this.epoch = method.historyEpoch;
-    this.source = _contract(7, null, null) as ByteArray;
+    this.source = captureTrace();
     for (const record in method.history()) {
       if (record.verified) {
         continue;
@@ -921,17 +931,17 @@ export class MockVerification {
     const session = method.control.session;
     session.check();
     if (this.completed || this.epoch != method.historyEpoch) {
-      _usage('verification builder is stale or completed');
+      raiseUsageError('verification builder is stale or completed');
     }
     for (const record in this.records) {
       if (record.verified) {
-        _usage('verification records were already consumed');
+        raiseUsageError('verification records were already consumed');
       }
     }
     if (!(count is testing.Matcher) && (!(count is int) || count < 0)) {
-      _usage('called requires a nonnegative int or synchronous Matcher');
+      raiseUsageError('called requires a nonnegative int or synchronous Matcher');
     }
-    const matcher = _matcher(count);
+    const matcher = argumentMatcher(count);
     const result = this.matchCount(matcher);
     if (!result.success) {
       const error = MockVerificationFailure(
@@ -987,18 +997,18 @@ export func untilCalled(call: MockCall): Future<MockInvocation> {
 /// Atomically consumes the earliest distinct ordered matches in one session.
 export func verifyInOrder(calls: MockCall[]): MockVerificationResult {
   if (calls.length == 0) {
-    _usage('verifyInOrder requires at least one pattern');
+    raiseUsageError('verifyInOrder requires at least one pattern');
   }
   const session = calls[0].method.control.session;
   session.check();
   for (const call in calls) {
     if (call.method.control.session != session) {
-      _usage('ordered verification cannot combine sessions');
+      raiseUsageError('ordered verification cannot combine sessions');
     }
   }
-  const selected: _Record[] = [];
+  const selected: Record[] = [];
   const captured: dynamic[] = [];
-  const source: ByteArray = _contract(7, null, null) as ByteArray;
+  const source: ByteArray = captureTrace();
   let sequence = 0;
   for (const call in calls) {
     const method = call.method;
@@ -1047,7 +1057,7 @@ export class MockFunction0<R> {
     this.method.bind(this.invoke);
   }
   private invoke(): R {
-    return this.method.invoke([]) as R;
+    return this.method.invoke<R>([]);
   }
   get function(): () => R {
     return this.invoke;
@@ -1070,7 +1080,7 @@ export class MockFunction1<A, R> {
     this.method.bind(this.invoke);
   }
   private invoke(argument: A): R {
-    return this.method.invoke([argument]) as R;
+    return this.method.invoke<R>([argument]);
   }
   get function(): (A) => R {
     return this.invoke;
@@ -1093,7 +1103,7 @@ export class MockFunction2<A, B, R> {
     this.method.bind(this.invoke);
   }
   private invoke(first: A, second: B): R {
-    return this.method.invoke([first, second]) as R;
+    return this.method.invoke<R>([first, second]);
   }
   get function(): (A, B) => R {
     return this.invoke;

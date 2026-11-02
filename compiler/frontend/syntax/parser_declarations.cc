@@ -332,7 +332,8 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
     AddDiagnostic(name.location, "external functions cannot be async");
     return std::nullopt;
   }
-  if (!function.native_symbol.empty() && !function.type_parameters.empty()) {
+  if (!function.native_symbol.empty() && !function.type_parameters.empty() &&
+      context_ != SyntaxContext::Standard) {
     AddDiagnostic(name.location, "external functions cannot declare generic parameters");
     return std::nullopt;
   }

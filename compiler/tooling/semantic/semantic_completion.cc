@@ -218,6 +218,34 @@ std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token
   return found == candidates.end() ? std::nullopt : std::optional(*found);
 }
 
+Completion SemanticIndex::SpecializedCompletion(std::string_view owner,
+                                                const Symbol& symbol,
+                                                std::string_view name) const {
+  auto completion = symbol.completion;
+  if (completion.kind != CompletionKind::Property) {
+    return completion;
+  }
+  const auto specialize = [&](const auto& declarations) {
+    const auto declaration = declarations.find(owner);
+    if (declaration == declarations.end()) {
+      return;
+    }
+    const auto method = declaration->second.methods.find(name);
+    if (method == declaration->second.methods.end()) {
+      return;
+    }
+    const auto& signature = method->second;
+    if (signature.is_getter) {
+      completion.detail = DisplayType(signature.return_type);
+    } else if (const auto& property_type = signature.setter_parameter_type) {
+      completion.detail = DisplayType(*property_type);
+    }
+  };
+  specialize(model_.classes);
+  specialize(model_.interfaces);
+  return completion;
+}
+
 std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver) const {
   std::vector<Completion> result;
   if (receiver.type.nullable || receiver.type.kind == Kind::Invalid) {
@@ -234,7 +262,7 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
       if (symbol.storage == receiver.storage &&
           (symbol.visibility == frontend::Visibility::Public || receiver.context_class == owner) &&
           visible.insert(symbol.completion.label).second) {
-        result.push_back(symbol.completion);
+        result.push_back(SpecializedCompletion(owner, symbol, name));
       }
     }
   }

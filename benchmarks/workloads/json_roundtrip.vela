@@ -11,8 +11,8 @@ func run(): int {
     record.set('items', items);
     records.push(record);
   }
-  const text = Json.stringify(records);
-  const decoded: dynamic[] = Json.parse(text);
+  const text = JSON.stringify(records);
+  const decoded: dynamic[] = JSON.parse(text);
   if (decoded.length != size) {
     return -1;
   }

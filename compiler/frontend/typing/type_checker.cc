@@ -127,6 +127,10 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   static_cast<NodeFacts&>(model) = std::exchange(facts_, {});
   model.type_applications = specializer.TakeTypeApplications();
   model.definitions = std::move(definitions_);
+  model.json_decode_requests = std::move(json_decode_requests_);
+  for (auto& diagnostic : BuildJSONDecodePlans(model)) {
+    AddDiagnostic(diagnostic.location, std::move(diagnostic.message));
+  }
   // 模板与其特化的声明解析可能在同一源码位置给出相同诊断，只保留首次出现。
   absl::flat_hash_set<std::tuple<std::string, std::uint32_t, std::uint32_t, std::string>> reported;
   std::erase_if(diagnostics_, [&](const Diagnostic& diagnostic) {

@@ -1,10 +1,12 @@
 #include "runtime/native/native_mock.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include "base/execution_status.h"
@@ -25,31 +27,29 @@
 namespace vela::runtime {
 namespace {
 
-std::expected<Value, ExecutionStatus> ExpandTrace(Heap& heap,
+std::expected<Value, ExecutionStatus> ExpandTrace(NativeExecution& execution,
                                                   std::span<const FutureTraceFrame> frames,
-                                                  HeapObject& array) {
-  const auto* layout = Heap::ArrayTypeOf(array);
-  if (layout == nullptr || !layout->element.dynamic) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
+                                                  Value callback) {
+  auto& heap = execution.isolate().heap();
+  RootRange callback_root(heap, &callback, 1, RootOwner::Runtime);
   constexpr std::size_t kFrameWidth = 5;
-  if (!heap.ReserveArray(array, *Heap::ArrayLength(array) + (frames.size() * kFrameWidth))) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
+  std::array<Value, kFrameWidth> arguments;
+  RootRange argument_roots(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
   for (const auto& frame : frames) {
-    for (const auto& text : {frame.function, frame.source_path}) {
+    const std::array texts{std::string_view(frame.function), std::string_view(frame.source_path)};
+    for (std::size_t index = 0; index < texts.size(); ++index) {
+      const auto text = texts[index];
       auto* string = heap.AllocateString(text);
       if (string == nullptr) {
         return std::unexpected(ExecutionStatus::OutOfMemory);
       }
-      std::ignore = heap.PushArray(array, Value::String(string));
+      arguments[index] = Value::String(string);
     }
-    for (const auto number : {
-             static_cast<std::int64_t>(frame.line),
-             static_cast<std::int64_t>(frame.column),
-             static_cast<std::int64_t>(frame.instruction),
-         }) {
-      std::ignore = heap.PushArray(array, Value::Integer(number));
+    arguments[2] = Value::Integer(static_cast<std::int64_t>(frame.line));
+    arguments[3] = Value::Integer(static_cast<std::int64_t>(frame.column));
+    arguments[4] = Value::Integer(static_cast<std::int64_t>(frame.instruction));
+    if (const auto invoked = InvokeNativeCallable(execution, callback, arguments); !invoked) {
+      return invoked;
     }
   }
   return Value::Null();
@@ -176,7 +176,16 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
   if (operation <= MockOperation::AcceptsVoidAnswer ||
       operation == MockOperation::AcceptsResponseSignature) {
     const auto contract = InspectNativeCallable(execution.instance(), signature_value);
-    return contract ? Inspect(execution, operation, *contract, value) : Value::Boolean(false);
+    if (contract) {
+      return Inspect(execution, operation, *contract, value);
+    }
+    if (operation == MockOperation::Arity) {
+      return Value::Null();
+    }
+    if (operation == MockOperation::ParameterName) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    return Value::Boolean(false);
   }
   auto& isolate = execution.isolate();
   if (operation == MockOperation::CaptureTrace) {
@@ -184,10 +193,10 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
   }
   if (operation == MockOperation::ResolveTrace) {
     const auto frames = ReadTestTrace(signature_value);
-    if (!frames || !value.IsObject()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    if (!frames) {
+      return std::unexpected(frames.error());
     }
-    return ExpandTrace(isolate.heap(), *frames, *value.AsObject());
+    return ExpandTrace(execution, *frames, value);
   }
   if (operation == MockOperation::RegisterFailure) {
     const auto kind = DecodeOperation<MockFailureKind::SessionClosed>(signature_value);
@@ -200,7 +209,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
     return Value::Null();
   }
   if (operation == MockOperation::IsThrowable) {
-    return Value::Boolean(Heap::IsThrowable(value));
+    return Value::Boolean(Heap::IsThrowable(signature_value));
   }
   std::unreachable();
 }

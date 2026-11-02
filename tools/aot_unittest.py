@@ -507,7 +507,7 @@ TEST(NativeHostTest, JsonTraversesNativeToJsonMethodsAndPreservesFailuresAndCycl
   const auto instance = NativeInstance::Instantiate(isolate, *JSON_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  ExpectIntegerOperations(JSON_ENTRY, execution, {0, 1, 2, 3, 4, 5, 6, 7});
+  ExpectIntegerOperations(JSON_ENTRY, execution, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
 }
 
 TEST(NativeHostTest, ClosuresSharedMutationAndBoundInterfaceMethodsCallNativeTargets) {
@@ -961,6 +961,9 @@ export func calculate(operation: int): int {
 }
 """,
             "JSON_ENTRY": """
+class Record { id: int; name: string = 'default'; }
+class Tree<T> { value: T; children: Tree<T>[] = []; }
+func decode<T>(source: string): T { return JSON.parse<T>(source); }
 class Box { toJson(): int { return 42; } }
 class Failure {}
 class Throwing { toJson(): int { throw Failure(); } }
@@ -976,37 +979,62 @@ class Text {
   }
 }
 export func calculate(operation: int): int {
-  if (operation == 0) { return Json.parse('42') as int; }
-  if (operation == 1) { return Json.stringify(Box()) == '42' ? 42 : 0; }
+  if (operation == 8) {
+    const record = JSON.parse<Record>('{"id":42}');
+    return record.name == 'default' ? record.id : 0;
+  }
+  if (operation == 9) {
+    const result = JSON.safeParse<Record>('{"id":false}');
+    return !result.success && result.error.path == '$.id' &&
+        result.error.code == 'type_mismatch' ? 42 : 0;
+  }
+  if (operation == 10) {
+    const parse: (string) => JSONParseResult<int?> = JSON.safeParse<int?>;
+    const result = parse('null');
+    return result.success && result.value == null && decode<int>('42') == 42 ? 42 : 0;
+  }
+  if (operation == 11) {
+    const root = JSON.parse<Tree<int>>('{"value":20,"children":[{"value":22}]}');
+    return root.value + root.children[0].value;
+  }
+  if (operation == 12) {
+    try { JSON.parse<int>('false'); }
+    catch (error: JSONParseError) {
+      return error.actual == 'bool' && error.expected == 'int' && error.offset == 0 ? 42 : 0;
+    }
+    return 0;
+  }
+  if (operation == 0) { return JSON.parse('42') as int; }
+  if (operation == 1) { return JSON.stringify(Box()) == '42' ? 42 : 0; }
   if (operation == 2) {
     const source = '{"items":[1,true,null,"字"]}';
-    return Json.stringify(Json.parse(source)) == source ? 42 : 0;
+    return JSON.stringify(JSON.parse(source)) == source ? 42 : 0;
   }
   if (operation == 3) {
-    try { Json.parse('{'); }
+    try { JSON.parse('{'); }
     catch (error: Error) {
       return error.code == 'JsonDecodeError' && error.message.includes(' at byte ') ? 42 : 0;
     }
     return 0;
   }
   if (operation == 4) {
-    try { Json.stringify(Throwing()); }
+    try { JSON.stringify(Throwing()); }
     catch (error: Failure) { return 42; }
     return 0;
   }
   if (operation == 5) {
     const values: dynamic[] = [];
     values.push(values);
-    try { Json.stringify(values); }
+    try { JSON.stringify(values); }
     catch (error: Error) { return error.code == 'JsonEncodeError' ? 42 : 0; }
     return 0;
   }
   if (operation == 6) {
-    try { Json.stringify(EnumBox()); }
+    try { JSON.stringify(EnumBox()); }
     catch (error: Error) { return error.code == 'JsonEncodeError' ? 42 : 0; }
     return 0;
   }
-  return Json.stringify(Text(text: 'retained')) == '\"retained\"' ? 42 : 0;
+  return JSON.stringify(Text(text: 'retained')) == '\"retained\"' ? 42 : 0;
 }
 """,
             "CALLABLE_ENTRY": """

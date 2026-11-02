@@ -231,6 +231,15 @@ const runtime::NativeFunctionDependencies* NativeImageBuilder::Dependencies(
   std::vector<std::uint32_t> version_positions;
   std::vector<std::uint32_t> construction_positions;
   std::vector<std::uint32_t> binding_positions;
+  if (function.json_decode_plan) {
+    for (const auto node : ir::JSONDecodeClosure(*program_, *function.json_decode_plan)) {
+      const auto target = program_->json_decode_plans.at(node).constructor;
+      if (target != kInvalidFunctionTarget) {
+        versions.push_back(target);
+        version_positions.push_back(static_cast<std::uint32_t>(function.instructions.size() - 2));
+      }
+    }
+  }
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
     const auto& instruction = function.instructions.at(index);
     const auto position = static_cast<std::uint32_t>(index);
@@ -407,6 +416,27 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build(std::span<const std::
   image.selector_declarations = Copy(program_->selector_declarations);
   image.native_mode = static_cast<std::uint32_t>(program_->native_mode);
   image.global_flags = Copy(program_->global_flags);
+  std::vector<runtime::NativeJSONDecodePlan> json_plans;
+  for (const auto& plan : program_->json_decode_plans) {
+    std::vector<runtime::NativeJSONDecodeParameter> parameters;
+    parameters.reserve(plan.parameters.size());
+    for (const auto& parameter : plan.parameters) {
+      parameters.push_back({
+          .name = Text(parameter.name),
+          .node = parameter.node,
+          .optional = static_cast<std::uint32_t>(parameter.optional),
+      });
+    }
+    json_plans.push_back({
+        .name = Text(plan.name),
+        .parameters = Copy(parameters),
+        .kind = plan.kind,
+        .type = plan.type,
+        .element = plan.element,
+        .constructor = plan.constructor,
+    });
+  }
+  image.json_decode_plans = Copy(json_plans);
   return std::move(data_);
 }
 

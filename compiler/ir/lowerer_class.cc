@@ -281,7 +281,16 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   }
   if (HasInstanceInitialization(info) ||
       (generated && native_mode_ == NativeProgramMode::Reloadable)) {
-    EmitConstructorInitialization(info, object, arguments, provided, location);
+    if (generated) {
+      for (const auto mask : provided) {
+        arguments.push_back(EmitTemporary({
+            .opcode = Opcode::LoadInt,
+            .immediate = std::bit_cast<std::int64_t>(mask),
+            .location = location,
+        }));
+      }
+    }
+    EmitConstructorInitialization(info, object, arguments, location);
   }
   return {.reg = object, .type = info.type};
 }
@@ -289,10 +298,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
 void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& info,
                                             RegisterId object,
                                             std::span<const RegisterId> arguments,
-                                            std::span<const std::uint64_t> provided,
                                             frontend::SourceLocation location) {
   const auto& source = *info.declaration;
-  const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
   const auto name = std::string(info.type.name) + ".$constructor";
   std::uint32_t target = 0;
   if (const auto existing = function_ids_.find(name); existing != function_ids_.end()) {
@@ -302,15 +309,14 @@ void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& inf
     target = AddFunctionId(name);
     pending_constructors_.push_back(&source);
   }
-  const auto count = generated ? provided.size() : arguments.size();
+  const auto count = arguments.size();
   const auto base = AllocateRegisterWindow(count + 1, location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = location});
   for (std::size_t index = 0; index < count; ++index) {
     Emit({
-        .opcode = generated ? Opcode::LoadInt : Opcode::Move,
+        .opcode = Opcode::Move,
         .dst = static_cast<RegisterId>(base + index + 1),
-        .lhs = generated ? 0 : arguments.subspan(index).front(),
-        .immediate = generated ? std::bit_cast<std::int64_t>(provided.subspan(index).front()) : 0,
+        .lhs = arguments.subspan(index).front(),
         .location = location,
     });
   }

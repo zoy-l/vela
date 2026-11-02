@@ -75,12 +75,12 @@ TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionId
 }
 
 TEST(ReachabilityTest, ErasedLocalValuesDoNotRetainUnreferencedClassMethods) {
-  for (const auto* const expression : {"42", "Json.parse('42')", "erase(42)", "parsed()"}) {
+  for (const auto* const expression : {"42", "JSON.parse('42')", "erase(42)", "parsed()"}) {
     SCOPED_TRACE(expression);
     const std::string source =
         "class Unused { value: int = 42; read(): int { return this.value; } } "
         "func erase(value: dynamic): dynamic { return value; } "
-        "func parsed(): dynamic { return Json.parse('42'); } "
+        "func parsed(): dynamic { return JSON.parse('42'); } "
         "export func main(): int { const erased: dynamic = " +
         std::string(expression) + "; return erased as int; }";
     auto prepared = ir::test::Prepare(source);
@@ -104,7 +104,7 @@ TEST(ReachabilityTest, HostDynamicContractsAndDynamicDispatchRetainTheirMemberCl
       "export func main(value: () => dynamic): bool { return true; }",
       "export func main(): Future<dynamic> { return Future.value<dynamic>(42); }",
       "export func main(): int { const value: dynamic = Box(); return value.read() as int; }",
-      "export func main(): string { return Json.stringify(Box()); }",
+      "export func main(): string { return JSON.stringify(Box()); }",
   });
   for (const auto body : bodies) {
     SCOPED_TRACE(body);

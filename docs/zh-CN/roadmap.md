@@ -92,6 +92,7 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 添加基于 PCRE2 的 Dart 风格正则 API 与带类型匹配结果（[契约](regexp.md)）
 - [x] 添加集合标准库 API
 - [x] 添加基于原生值的 JSON 解析与序列化（[设计](json.md)）
+- [x] 将标准类 `Json` 改名为 `JSON`，添加 `JSON.parse<T>` / `JSON.safeParse<T>`，完成强类型结果、按构造契约解码及 M0–M5 验收；macOS arm64 通过，环境跳过及平台范围见[设计](typed_json.md#11-验收范围)
 - [x] 添加固定字节存储与带类型字节视图（[契约](byte_data.md)）
 - [x] 明确进程退出码
 

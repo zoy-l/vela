@@ -1210,7 +1210,7 @@ export func main(): int { const bytes = ByteArray(length: 8); const data = ByteD
   return data.getInt32(0) == 42 && bytes[3] == 42 ? 42 : 0; }
 )",
                          R"(
-export func main(): int { const root: dynamic = Json.parse('{"items":[40,2]}');
+export func main(): int { const root: dynamic = JSON.parse('{"items":[40,2]}');
   const values: dynamic[] = root.get('items'); return (values[0] as int) + (values[1] as int); }
 )",
                          R"(

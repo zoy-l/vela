@@ -217,6 +217,9 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
   if (builtin == Builtin::JsonParse || builtin == Builtin::JsonStringify) {
     return StoreNativeResult(result, ExecuteNativeJson(*execution, builtin, decoded.front()));
   }
+  if (builtin == Builtin::JsonTypedParse || builtin == Builtin::JsonSafeParse) {
+    return StoreNativeResult(result, ExecuteNativeTypedJSON(*execution, builtin, decoded));
+  }
   if (builtin >= Builtin::DateParse && builtin <= Builtin::DateToUTC) {
     return StoreNativeResult(result, ExecuteNativeDate(*execution, builtin, decoded));
   }

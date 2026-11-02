@@ -155,14 +155,14 @@ class CommandTest(CommandTestCase):
         self.assertIn("func bind(value: int): () => string", text)
 
     def test_json_dynamic_survive_documentation_formatting_cache_and_repl(self) -> None:
-        self.write("export func encode(value: dynamic): string { return Json.stringify(value); }\n"
-                   "func main(): int { const root: dynamic = Json.parse('[40,true,null]'); "
+        self.write("export func encode(value: dynamic): string { return JSON.stringify(value); }\n"
+                   "func main(): int { const root: dynamic = JSON.parse('[40,true,null]'); "
                    "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
         self.format_and_document("func encode(value: dynamic): string")
         self.cached_run(expected=42)
         result = self.command("repl", commands=(
-            "const root: dynamic = Json.parse('[40,true,null]');\n"
-            "root[0] += 2;\nJson.stringify(root)\n.quit\n"))
+            "const root: dynamic = JSON.parse('[40,true,null]');\n"
+            "root[0] += 2;\nJSON.stringify(root)\n.quit\n"))
         self.assertIn("[42,true,null]", result.stdout)
 
     def test_source_entries_require_files_and_import_schemes_are_explicit(self) -> None:

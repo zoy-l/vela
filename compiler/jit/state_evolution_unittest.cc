@@ -491,6 +491,22 @@ TEST_P(JitStateTest, AQueuedPublicationMigratesAtAPreciseSafepointAndOldFramesCa
   EXPECT_EQ(compiler_->resource_counts().batches, 1U);
 }
 
+TEST_P(JitStateTest, TypedJSONEntriesKeepTheirPlansAndFollowConstructorBodyUpdates) {
+  const std::string decode = "export func decode(): int { return JSON.parse<Item>('{}').value; } ";
+  auto update = Update("class Item { value: int = 40; } " + decode);
+  ASSERT_TRUE(update) << update.error();
+  const auto captured = Entry("decode").Capture();
+  ASSERT_TRUE(captured);
+  EXPECT_EQ(captured->Invoke({})->AsInteger(), 40);
+  update = Update("class Item { value: int = 42; } " + decode);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  const auto old_entry = captured->Invoke({});
+  ASSERT_TRUE(old_entry);
+  EXPECT_EQ(old_entry->AsInteger(), 42);
+  EXPECT_EQ(Entry("decode").Invoke({})->AsInteger(), 42);
+}
+
 TEST_P(JitStateTest, ConstructionArgumentsRunBeforeTheInitializationBarrierAndBodiesRunInsideIt) {
   ASSERT_TRUE(
       isolate_.RegisterNative(runtime::NativeFunction::Bind<&IsConstructing>("constructing")));

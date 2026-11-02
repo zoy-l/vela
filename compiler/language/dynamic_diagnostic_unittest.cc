@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -35,31 +35,31 @@ INSTANTIATE_TEST_SUITE_P(
         "func use(value: int):void {} func main():void { const data:dynamic=42; use(data); }",
         "func main(): int { const data: dynamic = 42; return data; }",
         "const data: dynamic = 42; const value: int = data; func main():void {}",
-        "class Box { value: int = Json.parse('42'); } func main():void { Box(); }",
+        "class Box { value: int = JSON.parse('42'); } func main():void { Box(); }",
         "func main():void { const data:dynamic=42; const values:int[]=[data]; }",
         "func main():void { const data:dynamic=42; const values=[0]; values[0]=data; }",
         "func main():void { const data:dynamic=true; if(data) {} }",
-        "async func main():Future<int> { return Json.parse('42'); }",
+        "async func main():Future<int> { return JSON.parse('42'); }",
         "func main():void { const value:dynamic=42; const result:Future<int> = "
         "Future.value(value); }",
         "func main():void { const values:dynamic=[Future.value(42)]; "
         "const result=Future.wait<int>(values); }",
-        "func main():void { const root = Json.parse('{}'); const name:string=root.get('name') ?? "
+        "func main():void { const root = JSON.parse('{}'); const name:string=root.get('name') ?? "
         "''; }"));
 
 TEST(DynamicConversionDiagnosticTest, ExplicitChecksAndValidRefinementsDoNotWarn) {
   runtime::Isolate isolate;
-  const auto compiled =
-      test::CompileSource(R"(
+  const auto compiled = test::CompileSource(
+      R"(
 func main(): int {
-  const value: dynamic = Json.parse('42');
+  const value: dynamic = JSON.parse('42');
   const erased: dynamic = value;
   const checked = erased as int;
   if (value is int) { const precise: int = value; return precise + checked - 42; }
   return 0;
 }
 )",
-                    isolate, {.implicit_dynamic_conversion = frontend::DiagnosticSeverity::Error});
+      isolate, {.implicit_dynamic_conversion = frontend::DiagnosticSeverity::Error});
   ASSERT_TRUE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.empty());
   const auto executed = test::Execute(*compiled.instance, "main");
@@ -76,7 +76,7 @@ func main(): int {
   catch (error: Error) { return 42; }
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_EQ(compiled.diagnostics.size(), 1U);
   const auto executed = test::Execute(*compiled.instance, "main");
@@ -93,7 +93,7 @@ func main(): void {
   const second: (string) => int = values.get;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_EQ(compiled.diagnostics.size(), 2U);
   EXPECT_NE(compiled.diagnostics.front().location, compiled.diagnostics.back().location);

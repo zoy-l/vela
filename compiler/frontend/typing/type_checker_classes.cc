@@ -1,3 +1,4 @@
+#include "base/builtin.h"
 #include "base/member.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/initialization.h"
@@ -178,7 +179,7 @@ void TypeChecker::ResolveClassMethods(const Class& class_declaration, ClassInfo&
   }
   for (const auto& method : class_declaration.method_templates) {
     if (info.fields.contains(method.name) || info.static_fields.contains(method.name) ||
-        info.methods.contains(method.name) ||
+        (info.methods.contains(method.name) && method.intrinsic != Builtin::JsonTypedParse) ||
         !info.method_templates
              .emplace(method.name,
                       MethodTemplate{.owner = class_declaration.name, .declaration = &method})

@@ -7,15 +7,15 @@ example is [`examples/json.vela`](../../examples/json.vela).
 
 Vela uses Dart's JSON value model: decoding produces ordinary primitive values,
 arrays, and ordered maps; encoding accepts those values directly. The public
-names are `Json.parse` and `Json.stringify`. There is no separate JSON node
+names are `JSON.parse` and `JSON.stringify`. There is no separate JSON node
 class or node-construction API.
 
 ```vela
 func main(): void {
   const payload: Map<string, dynamic> = {'name': 'Vela', 'items': [1, true, null]};
 
-  const text: string = Json.stringify(payload);
-  const root: dynamic = Json.parse(text);
+  const text: string = JSON.stringify(payload);
+  const root: dynamic = JSON.parse(text);
   const name: string = root.get('name') ?? '';
   print(name);
 }
@@ -33,10 +33,12 @@ object conversion rules. JSON encoding still requires actual string keys.
 
 | API | Contract |
 | --- | --- |
-| `Json.parse(source: string): dynamic` | Parse one complete JSON value; return a native Vela value |
-| `Json.stringify(value: dynamic): string` | Encode a value graph as compact JSON; reject unsupported values and cycles |
+| `JSON.parse(source: string): dynamic` | Parse one complete JSON value; return a native Vela value |
+| `JSON.parse<T>(source: string): T` | Validate and construct the explicit target type; throw `JSONParseError` for invalid input |
+| `JSON.safeParse<T>(source: string): JSONParseResult<T>` | Decode under the same rules; return a failure result for invalid input |
+| `JSON.stringify(value: dynamic): string` | Encode a value graph as compact JSON; reject unsupported values and cycles |
 
-`Json` is a standard static class, available without an import and not
+`JSON` is a standard static class, available without an import and not
 constructible. Its declaration participates in the standard-source dependency
 closure and compilation-cache fingerprint, like the existing standard objects.
 
@@ -50,11 +52,13 @@ closure and compilation-cache fingerprint, like the existing standard objects.
 | Array | `dynamic[]` |
 | Object | `Map<string, dynamic>` |
 
-All JSON root types are accepted. Every decoded array uses `dynamic[]`, even
+Without type arguments, parse accepts all JSON root types and uses the dynamic model above. Every decoded array uses `dynamic[]`, even
 when its current elements are all integers. Object arrays contain maps; parsing
 does not construct application class instances. A missing map entry and an
 entry containing JSON null both produce null from `get`; use `has` to distinguish
 them. Object access uses the existing Map methods, not property-name shorthand.
+See [typed JSON decoding](typed_json.md) for generic target types, constructors,
+defaults, and structured errors.
 
 ## Dynamic typing and checked operations
 
@@ -76,7 +80,7 @@ fail; it cannot predict the contents of runtime JSON. Runtime checks still execu
 and warnings do not prevent compilation.
 
 ```vela
-const values: dynamic[] = Json.parse('[7, "Vela", true]');
+const values: dynamic[] = JSON.parse('[7, "Vela", true]');
 const id: int = values[0];       // Runtime check succeeds.
 const name: string = values[1];  // Runtime check succeeds.
 const wrong: int = values[1];    // Catchable checked-cast failure.
@@ -144,16 +148,17 @@ Conversely, a decoded `dynamic[]` does not become `int[]` just because all its
 current elements are integers. Use an explicit checked copy:
 
 ```vela
-const values: dynamic[] = Json.parse('[1, 2, 3]');
+const values: dynamic[] = JSON.parse('[1, 2, 3]');
 const integers: int[] = values.map(value => value as int);
 ```
 
 The map operation is eager. It either returns a new typed array or propagates
 the first failed element check. It does not publish a partially filled result.
-An object array similarly needs an explicit model conversion function that
-checks required fields, nullability, and field types. Casting a decoded map to
-`User` does not instantiate a User. Typed decoding and generated model converters
-are outside the first version.
+Existing dynamic objects still need explicit checks and model conversion.
+Casting a map to `User` does not instantiate a User. When receiving JSON text,
+use `JSON.parse<int[]>(source)` or `JSON.safeParse<User[]>(source)` to validate the
+complete target structure and construct actual typed values. See
+[typed JSON decoding](typed_json.md).
 
 Dynamic `map` derives the result array's element type from the callback's retained
 result signature. Dynamic `reduce` preserves the initial accumulator's actual
@@ -217,7 +222,7 @@ class User {
 
 func main(): void {
   const users: User[] = [User(name: 'Vela', age: 7)];
-  print(Json.stringify(users));
+  print(JSON.stringify(users));
 }
 ```
 
@@ -288,7 +293,7 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 
 | Stage | Required completion |
 | --- | --- |
-| Standard environment | Register Json and its dependent declarations once; preserve reserved names, local shadowing, source overlays, and cache fingerprints |
+| Standard environment | Register JSON and its dependent declarations once; preserve reserved names, local shadowing, source overlays, and cache fingerprints |
 | Frontend | Add Dynamic; check concrete-boundary conversions, contextual mixed literals, dynamic operations, and refinement invalidation; retain container invariance |
 | Runtime identity | Distinguish enums from int, full function signatures, class identities, container arguments, and Future arguments after erasure; reuse canonical type metadata |
 | Runtime storage and GC | Add genuine tagged dynamic slots to arrays/collections and trace all dynamic-bearing storage; preserve primitive fast paths |

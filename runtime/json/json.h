@@ -22,6 +22,18 @@ struct JsonRuntimeError final {
   ExecutionStatus status = ExecutionStatus::JsonDecodeError;
   std::size_t offset = 0;
   std::string message;
+  enum class Kind : std::uint8_t {
+    Syntax,
+    NumberOutOfRange,
+    TypeMismatch,
+    MissingField,
+    UnknownField,
+  };
+  Kind kind = Kind::Syntax;
+  std::string path = "$";
+  std::optional<std::string> expected;
+  std::optional<std::string> actual;
+  bool has_offset = true;
 };
 
 // source 的借用由调用者保根；返回图由 Isolate 拥有，不借用 source 或解析 arena。

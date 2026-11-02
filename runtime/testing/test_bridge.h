@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/mock_operation.h"
+#include "base/test_operation.h"
 
 #include "runtime/async/future.h"
 #include "runtime/value/value.h"
@@ -25,18 +26,6 @@ enum class TestOperation : std::uint8_t {
   SetUpAll,
   TearDownAll,
   AddTearDown,
-};
-
-enum class TestControl : std::uint8_t {
-  TrackExpectation,
-  RegisterCallback,
-  EnterCallback,
-  ExitCallback,
-  CheckCallback,
-  CurrentTestScope,
-  RegisterFinalizer,
-  ReleaseFinalizer,
-  TrackCallWait,
 };
 
 struct TestRegistration final {

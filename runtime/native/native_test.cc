@@ -9,6 +9,7 @@
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_status.h"
+#include "base/test_operation.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"

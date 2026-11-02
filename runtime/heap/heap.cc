@@ -104,6 +104,10 @@ void* Heap::AllocateExternal(std::size_t bytes, std::size_t replaced_bytes) noex
   if (memory != nullptr) {
     allocated_bytes_ += bytes;
     committed_bytes_ += bytes;
+    allocation_statistics_.bytes += bytes;
+    ++allocation_statistics_.count;
+    allocation_statistics_.peak_live_bytes =
+        std::max(allocation_statistics_.peak_live_bytes, allocated_bytes_);
   }
   return memory;
 }
@@ -505,6 +509,10 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   }
 
   allocated_bytes_ += block_size;
+  allocation_statistics_.bytes += block_size;
+  ++allocation_statistics_.count;
+  allocation_statistics_.peak_live_bytes =
+      std::max(allocation_statistics_.peak_live_bytes, allocated_bytes_);
   return {
       .memory = memory,
       .size = static_cast<std::uint32_t>(block_size),
@@ -588,7 +596,8 @@ bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
 }
 
 bool Heap::CanAllocate(std::size_t bytes) const noexcept {
-  return bytes <= allocation_limit_ && allocated_bytes_ <= allocation_limit_ - bytes;
+  return allocation_statistics_.count < allocation_count_limit_ && bytes <= allocation_limit_ &&
+         allocated_bytes_ <= allocation_limit_ - bytes;
 }
 
 void Heap::MaybeCollect(std::size_t next_size) noexcept {

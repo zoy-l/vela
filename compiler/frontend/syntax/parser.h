@@ -35,7 +35,11 @@ struct ParsedSource final {
   Diagnostics diagnostics;
 };
 
-[[nodiscard]] ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id = 0);
+enum class SyntaxContext : std::uint8_t { Source, Standard };
+
+[[nodiscard]] ParsedSource ParseSourceSnapshot(std::string source,
+                                               std::uint32_t source_id = 0,
+                                               SyntaxContext context = SyntaxContext::Source);
 
 [[nodiscard]] ParseResult ParseSource(std::string_view source, std::uint32_t source_id = 0);
 void AppendProgram(Program& destination, Program source);
@@ -43,7 +47,8 @@ void AppendProgram(Program& destination, Program source);
 class Parser final {
  public:
   // token 存储必须覆盖 Parse；语法角色直接标注到同一 token 流，供格式化等工具消费。
-  explicit Parser(std::span<Token> tokens) : tokens_(tokens) {}
+  explicit Parser(std::span<Token> tokens, SyntaxContext context = SyntaxContext::Source)
+      : tokens_(tokens), context_(context) {}
 
   [[nodiscard]] ParseResult Parse();
 
@@ -141,6 +146,7 @@ class Parser final {
   static std::unique_ptr<Expression> MakeExpression(Expression::Kind kind, SourceLocation location);
 
   std::span<Token> tokens_;
+  SyntaxContext context_;
   std::size_t current_ = 0;
   std::size_t previous_index_ = 0;
   std::optional<Token> remainder_;

@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "base/declaration.h"
+#include "base/json_decode.h"
 #include "base/native_program_mode.h"
 #include "base/source_location.h"
 #include "runtime/native/native_abi.h"
@@ -171,6 +172,21 @@ struct NativeDeclarationDescription final {
   DeclarationId definition;
 };
 
+struct NativeJSONDecodeParameter final {
+  NativeText name;
+  std::uint32_t node = 0;
+  std::uint32_t optional = 0;
+};
+
+struct NativeJSONDecodePlan final {
+  NativeText name;
+  NativeTable<NativeJSONDecodeParameter> parameters;
+  JSONDecodeKind kind = JSONDecodeKind::Dynamic;
+  std::uint32_t type = 0;
+  std::uint32_t element = 0;
+  std::uint32_t constructor = kNoNativeIndex;
+};
+
 struct NativeImage final {
   std::uint32_t abi_version = kNativeAbiVersion;
   std::uint32_t record_bytes = sizeof(NativeImage);
@@ -197,6 +213,7 @@ struct NativeImage final {
   NativeTable<DeclarationId> selector_declarations;
   std::uint32_t native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
   NativeTable<std::uint32_t> global_flags;
+  NativeTable<NativeJSONDecodePlan> json_decode_plans;
 
   [[nodiscard]] bool IsReloadable() const noexcept {
     return native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable);

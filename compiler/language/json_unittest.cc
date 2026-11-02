@@ -105,15 +105,15 @@ INSTANTIATE_TEST_SUITE_P(ProductionContracts,
                          JsonProgramTest,
                          testing::Values(
                              R"(func main(): int {
-  const n: int = Json.parse('42');
-  const a: dynamic[] = Json.parse('[1,"Vela",true,null,1.0]');
-  const text = Json.stringify(a);
+  const n: int = JSON.parse('42');
+  const a: dynamic[] = JSON.parse('[1,"Vela",true,null,1.0]');
+  const text = JSON.stringify(a);
   return n == 42 && text == '[1,"Vela",true,null,1.0]' ? 42 : 0;
 })",
                              R"(func main(): int {
-  const payload: Map<string, dynamic> = Json.parse('{"b":1,"a":2,"b":3}');
+  const payload: Map<string, dynamic> = JSON.parse('{"b":1,"a":2,"b":3}');
   const b: int = payload.get('b');
-  return b == 3 && Json.stringify(payload) == '{"b":3,"a":2}' ? 42 : 0;
+  return b == 3 && JSON.stringify(payload) == '{"b":3,"a":2}' ? 42 : 0;
 })",
                              R"(class User {
   name: string;
@@ -126,7 +126,7 @@ INSTANTIATE_TEST_SUITE_P(ProductionContracts,
 }
 func main(): int {
   const users = [User(name: 'Vela'), User(name: 'Language')];
-  return Json.stringify(users) ==
+  return JSON.stringify(users) ==
     '[{"name":"Vela","items":[1,true,null]},{"name":"Language","items":[1,true,null]}]'
     ? 42 : 0;
 })",
@@ -134,9 +134,9 @@ func main(): int {
   toJson(): int { throw Error(message: 'original', code: 'UserError'); }
 }
 func main(): int {
-  try { Json.stringify(Bad()); } catch (error: Error) {
+  try { JSON.stringify(Bad()); } catch (error: Error) {
     if (error.code != 'UserError' || error.message != 'original') { return 0; }
-    return Json.stringify(Json.parse('42')) == '42' ? 42 : 0;
+    return JSON.stringify(JSON.parse('42')) == '42' ? 42 : 0;
   }
   return 0;
 })",
@@ -144,13 +144,13 @@ func main(): int {
   toJson(): Cycle { return this; }
 }
 func main(): int {
-  try { Json.stringify(Cycle()); } catch (error: Error) {
+  try { JSON.stringify(Cycle()); } catch (error: Error) {
     return error.code == 'JsonEncodeError' ? 42 : 0;
   }
   return 0;
 })",
                              R"(func main(): int {
-  try { Json.parse('9223372036854775808'); } catch (error: Error) {
+  try { JSON.parse('9223372036854775808'); } catch (error: Error) {
     return error.code == 'JsonDecodeError' && error.message.includes('byte 0') ? 42 : 0;
   }
   return 0;
@@ -166,14 +166,14 @@ func main(): int {
 func main(): int {
   const items: dynamic[] = [];
   items.push(Mutator(parent: items));
-  try { Json.stringify(items); } catch (error: Error) {
+  try { JSON.stringify(items); } catch (error: Error) {
     return error.code == 'ConcurrentModification' ? 42 : 0;
   }
   return 0;
 })",
                              R"(func main(): int {
   const branch = [1, 2];
-  return Json.stringify([branch, branch]) == '[[1,2],[1,2]]' ? 42 : 0;
+  return JSON.stringify([branch, branch]) == '[[1,2],[1,2]]' ? 42 : 0;
 })",
                              R"(enum First { value }
 enum Second { value }
@@ -189,7 +189,7 @@ func main(): int {
   keys.add(Second.value);
   keys.add(0);
   if (keys.size != 3 || !keys.has(First.value)) { return 0; }
-  try { Json.stringify(value); } catch (error: Error) {
+  try { JSON.stringify(value); } catch (error: Error) {
     return error.code == 'JsonEncodeError' ? 42 : 0;
   }
   return 0;
@@ -199,7 +199,7 @@ func main(): int {
   const values = [Colour.red];
   const erased: dynamic = values;
   if (erased is int[] || !(erased is Colour[])) { return 0; }
-  try { Json.stringify(values); } catch (error: Error) {
+  try { JSON.stringify(values); } catch (error: Error) {
     return error.code == 'JsonEncodeError' ? 42 : 0;
   }
   return 0;
@@ -215,7 +215,7 @@ func main(): int {
 func main(): int {
   const items = Map<string, dynamic>();
   items.set('object', Mutator(parent: items));
-  try { Json.stringify(items); } catch (error: Error) {
+  try { JSON.stringify(items); } catch (error: Error) {
     return error.code == 'ConcurrentModification' ? 42 : 0;
   }
   return 0;
@@ -231,7 +231,7 @@ func main(): int {
     callable(42) == 42 ? 42 : 0;
 })",
                              R"(func main(): int {
-  const values: dynamic = Json.parse('[40,1.5,"Vela",true]');
+  const values: dynamic = JSON.parse('[40,1.5,"Vela",true]');
   const answer: int = values[0] + 2;
   const number: double = -values[1] * 2.0;
   const text: string = values[2] + 7;
@@ -239,7 +239,7 @@ func main(): int {
   values[0] = answer;
   if (!flag) { return 0; }
   return answer == 42 && number == -3.0 && text == 'Vela7' &&
-    Json.stringify(values) == '[42,1.5,"Vela",true]' ? 42 : 0;
+    JSON.stringify(values) == '[42,1.5,"Vela",true]' ? 42 : 0;
 })",
                              R"(enum Kind { first, second }
 func main(): int {
@@ -254,7 +254,7 @@ func main(): int {
   return 0;
 })",
                              R"(func main(): int {
-  const wrong: dynamic = Json.parse('1.0');
+  const wrong: dynamic = JSON.parse('1.0');
   try { const answer: int = true ? wrong : 0; } catch (error: Error) {
     try { const answer: int = wrong ?? 0; } catch (other: Error) {
       return error.code == 'InvalidCast' && other.code == 'InvalidCast' ? 42 : 0;
@@ -305,7 +305,7 @@ func main(): int {
                              R"(enum Flag { yes }
 class Model { toJson(): Flag { return Flag.yes; } }
 func main(): int {
-  try { Json.stringify(Model()); } catch (error: Error) {
+  try { JSON.stringify(Model()); } catch (error: Error) {
     return error.code == 'JsonEncodeError' ? 42 : 0;
   }
   return 0;
@@ -348,7 +348,7 @@ func main(): int {
   return result == 42 && nothing?.action(fail()) == null ? 42 : 0;
 })",
                              R"(func main(): int {
-  const root = Json.parse('{"name":"Vela","values":[40,2]}');
+  const root = JSON.parse('{"name":"Vela","values":[40,2]}');
   const name: string = root.get(key: 'name');
   const items = root.get('values');
   items.push(7, 8);
@@ -359,7 +359,7 @@ func main(): int {
   const has = root.has;
   if (!has('name') || root.size != 2 || root.keys().length != 2) { return 0; }
   root.set('name', 'Vela2');
-  return Json.stringify(root) == '{"name":"Vela2","values":[40,2]}' ? 42 : 0;
+  return JSON.stringify(root) == '{"name":"Vela2","values":[40,2]}' ? 42 : 0;
 })",
                              R"(enum Flag { yes }
 func main(): int {
@@ -478,7 +478,7 @@ func main(): int {
   return 0;
 })",
                              R"(func main(): int {
-  const values: dynamic = Json.parse('[40,2]');
+  const values: dynamic = JSON.parse('[40,2]');
   const mapped = values.map((value: int): string => value.toString());
   const total: int = values.reduce((acc: int, value: int): int => acc + value, 0);
   let sum = 0;

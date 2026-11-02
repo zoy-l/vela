@@ -24,6 +24,7 @@ English and Simplified Chinese editions are listed side by side below. Implement
 | **Standard Library** / 标准库 | [standard_library.md](en/standard_library.md) | [standard_library.md](zh-CN/standard_library.md) |
 | **UTC Date & Time** / UTC 日期与时间 | [time.md](en/time.md) | [time.md](zh-CN/time.md) |
 | **JSON & Dynamic Values** / JSON 与动态值 | [json.md](en/json.md) | [json.md](zh-CN/json.md) |
+| **Typed JSON Decoding** / JSON 强类型解码（验收中 / acceptance in progress） | [typed_json.md](en/typed_json.md) | [typed_json.md](zh-CN/typed_json.md) |
 | **Byte Storage & Typed Views** / 字节存储与带类型视图 | [byte_data.md](en/byte_data.md) | [byte_data.md](zh-CN/byte_data.md) |
 | **Toolchain Contracts** / 工具链契约 | [toolchain.md](en/toolchain.md) | [toolchain.md](zh-CN/toolchain.md) |
 | **Native AOT Compilation** / 原生 AOT 编译 | [aot.md](en/aot.md) | [aot.md](zh-CN/aot.md) |

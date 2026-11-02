@@ -118,6 +118,8 @@ enum class Builtin : std::uint8_t {
   RegExpMatchGroups,
   RegExpMatchNamedGroup,
   JsonParse,
+  JsonTypedParse,
+  JsonSafeParse,
   JsonStringify,
   // 参数为 [整数族 Opcode 选择子, left, right]；选择子只表示运算，实际类型由 Value 决定。
   DynamicBinary,
@@ -240,6 +242,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
+    case Builtin::JsonTypedParse:
     case Builtin::DynamicBinary:
     case Builtin::DynamicCall:
     case Builtin::DynamicMemberSet:
@@ -265,6 +268,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::MockInspect:
       return 3;
     case Builtin::ArrayFill:
+    case Builtin::JsonSafeParse:
     case Builtin::NewRegExp:
     case Builtin::RegExpAllMatches:
     case Builtin::ByteDataSetInt16:

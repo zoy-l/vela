@@ -271,16 +271,16 @@ class LanguageServerTest(CommandTestCase):
 
     def test_json_and_checked_dynamic_share_types_hover_tokens_and_completion(self) -> None:
         source = ("func main(): void {\n"
-                  "  const root: dynamic = Json.parse('[1,true,null]');\n"
+                  "  const root: dynamic = JSON.parse('[1,true,null]');\n"
                   "  const items: dynamic[] = root;\n"
-                  "  print(Json.stringify(items));\n"
+                  "  print(JSON.stringify(items));\n"
                   "}\n")
         messages = self.session([self.open(source),
             self.symbol_query("hover", source, source.index("dynamic"), "type"),
             self.symbol_query("hover", source, source.index("parse("), "parse"),
             self.symbol_query("hover", source, source.index("stringify("), "stringify"),
             self.symbol_query("hover", source, source.index("= root") + 2, "root"),
-            self.symbol_query("completion", source, source.index("Json.parse") + len("Json."), "members"),
+            self.symbol_query("completion", source, source.index("JSON.parse") + len("JSON."), "members"),
             self.symbol_query("completion", source, source.index("print("), "globals"),
             request("textDocument/semanticTokens/full", {"textDocument": {"uri": self.uri}}, "tokens")])
         diagnostics = self.diagnostics(messages)[-1]["diagnostics"]
@@ -288,19 +288,42 @@ class LanguageServerTest(CommandTestCase):
         self.assertEqual(diagnostics[0]["code"], "implicit_dynamic_conversion")
         self.assertEqual(diagnostics[0]["severity"], 2)
         for identity, signature in (("type", "type dynamic"),
-                                    ("parse", "Json.parse(source: string): dynamic"),
-                                    ("stringify", "Json.stringify(value: dynamic): string"),
+                                    ("parse", "JSON.parse(source: string): dynamic"),
+                                    ("stringify", "JSON.stringify(value: dynamic): string"),
                                     ("root", "const root: dynamic")):
             self.assertIn(signature, self.reply(messages, identity)["result"]["contents"]["value"])
         self.assertIn("checked at runtime", self.reply(messages, "type")["result"]["contents"]["value"])
         self.assertEqual({item["label"] for item in self.reply(messages, "members")["result"]},
-                         {"parse", "stringify"})
-        self.assertTrue({"Json", "dynamic"} <= {
+                         {"parse", "safeParse", "stringify"})
+        self.assertTrue({"JSON", "dynamic"} <= {
             item["label"] for item in self.reply(messages, "globals")["result"]})
         tokens = self.semantic_tokens(messages)
         line = source.splitlines()[1]
         self.assertIn((1, line.index("dynamic"), 7, "type", 2), tokens)
-        self.assertIn((1, line.index("Json"), 4, "class", 2), tokens)
+        self.assertIn((1, line.index("JSON"), 4, "class", 2), tokens)
+
+    def test_typed_json_function_values_and_result_properties_keep_concrete_signatures(self) -> None:
+        source = ("class User { name: string; }\n"
+                  "func main(): void {\n"
+                  "  const parse = JSON.parse<User>;\n"
+                  "  const safe = JSON.safeParse<User>;\n"
+                  "  const result = safe('{\"name\":\"Vela\"}');\n"
+                  "  print(result.value.name);\n"
+                  "}\n")
+        messages = self.session([self.open(source),
+            self.symbol_query("hover", source, source.index("parse<User>"), "parse"),
+            self.symbol_query("hover", source, source.index("safeParse<User>"), "safe"),
+            self.symbol_query("hover", source, source.index("value.name"), "value"),
+            self.symbol_query("completion", source, source.index("value.name"), "members")])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        for identity, signature in (("parse", "JSON.parse(source: string): User"),
+                                    ("safe", "JSON.safeParse(source: string): JSONParseResult<User>"),
+                                    ("value", "value: User")):
+            self.assertIn(signature, self.reply(messages, identity)["result"]["contents"]["value"])
+
+        members = {item['label']: item for item in self.reply(messages, 'members')['result']}
+        self.assertEqual(members['value']['kind'], 10)
+        self.assertEqual(members['value']['detail'], 'User')
 
     def test_dynamic_diagnostics_and_formatting_keep_explicit_type_boundaries(self) -> None:
         source = "func main():void{const values:dynamic[]=[1,true,null];const value:int=values[0];}"
@@ -321,7 +344,7 @@ class LanguageServerTest(CommandTestCase):
         (self.directory / "vela.json").write_text(
             json.dumps({"diagnostics": {"implicit_dynamic_conversion": "error"}}),
             encoding="utf-8", newline="\n")
-        source = "func main():void { const root=Json.parse('{}'); const name:string=root.get('name') ?? ''; }"
+        source = "func main():void { const root=JSON.parse('{}'); const name:string=root.get('name') ?? ''; }"
         messages = self.session([self.open(source), self.change([{
             "text": source.replace("root.get('name') ?? ''", "(root.get('name') as string?) ?? ''")
         }])])

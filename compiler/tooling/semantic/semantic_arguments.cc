@@ -314,19 +314,16 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
   return std::nullopt;
 }
 
-std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParameters(
-    const frontend::Expression& call) const {
-  const auto& callee = *call.callee;
-  auto receiver = ReceiverFor(*callee.object);
-  const auto& facts = FactsFor(call);
+std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberValueParameters(
+    const frontend::Expression& expression) const {
+  const auto& facts = FactsFor(expression);
   for (const auto* members : {
            &facts.static_members,
            &facts.instance_members,
            &facts.interface_members,
            &facts.super_members,
        }) {
-    const auto member =
-        members == &facts.super_members ? members->find(&callee) : members->find(&call);
+    const auto member = members->find(&expression);
     if (member != members->end()) {
       const auto& reference = member->second;
       if (const auto owner = model_.classes.find(reference.owner); owner != model_.classes.end()) {
@@ -335,6 +332,20 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParamet
       return model_.interfaces.at(reference.owner).methods.at(reference.member);
     }
   }
+  return std::nullopt;
+}
+
+std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParameters(
+    const frontend::Expression& call) const {
+  const auto& callee = *call.callee;
+  if (const auto signature = FindMemberValueParameters(call)) {
+    return signature;
+  }
+  if (const auto signature = FindMemberValueParameters(callee)) {
+    return signature;
+  }
+  auto receiver = ReceiverFor(*callee.object);
+  const auto& facts = FactsFor(call);
   const absl::node_hash_map<std::string, frontend::FunctionDescriptor>* methods = nullptr;
   const absl::flat_hash_map<std::string, frontend::MethodTemplate>* templates = nullptr;
   if (const auto class_type = model_.classes.find(receiver.type.name);

@@ -8,6 +8,7 @@
 
 #include "base/callable.h"
 #include "base/declaration.h"
+#include "base/json_decode.h"
 #include "base/layout_description.h"
 #include "base/member.h"
 #include "base/native_program_mode.h"
@@ -90,6 +91,7 @@ struct Function final {
   std::optional<CallSignature> signature = std::nullopt;
   FunctionIdentity identity;
   std::vector<DeclarationId> type_dependencies;
+  std::optional<std::uint32_t> json_decode_plan = std::nullopt;
 };
 
 struct Declaration final {
@@ -102,6 +104,21 @@ struct Declaration final {
   std::vector<std::string> enum_members;
   std::string generic_signature;
   DeclarationId definition;
+};
+
+struct JSONDecodeParameter final {
+  std::string name;
+  std::uint32_t node = 0;
+  bool optional = false;
+};
+
+struct JSONDecodePlan final {
+  std::string name;
+  JSONDecodeKind kind = JSONDecodeKind::Dynamic;
+  std::uint32_t type = 0;
+  std::uint32_t element = 0;
+  std::uint32_t constructor = kInvalidFunctionTarget;
+  std::vector<JSONDecodeParameter> parameters;
 };
 
 struct Program final {
@@ -123,6 +140,10 @@ struct Program final {
   std::vector<DeclarationId> selector_declarations;
   NativeProgramMode native_mode = NativeProgramMode::Closed;
   std::vector<std::uint32_t> global_flags;
+  std::vector<JSONDecodePlan> json_decode_plans;
 };
+
+[[nodiscard]] std::vector<std::uint32_t> JSONDecodeClosure(const Program& program,
+                                                           std::uint32_t root);
 
 }  // namespace vela::ir

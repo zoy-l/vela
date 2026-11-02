@@ -1,4 +1,5 @@
 #include "base/execution_status.h"
+#include "base/test_operation.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 
@@ -19,7 +20,6 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/native_execution.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
 
 namespace vela::testing {
@@ -338,27 +338,27 @@ std::expected<runtime::Value, std::string> Suite::CheckCallback(runtime::Value i
 }
 
 std::expected<runtime::Value, std::string> Suite::Control(
-    runtime::TestControl operation,
+    TestControl operation,
     std::span<const runtime::Value> arguments,
     std::vector<runtime::FutureTraceFrame> trace) {
   switch (operation) {
-    case runtime::TestControl::TrackExpectation:
+    case TestControl::TrackExpectation:
       return TrackExpectation(arguments.front(), std::move(trace), ExpectationKind::Assertion);
-    case runtime::TestControl::RegisterCallback:
+    case TestControl::RegisterCallback:
       return RegisterCallback(arguments, std::move(trace));
-    case runtime::TestControl::EnterCallback:
+    case TestControl::EnterCallback:
       return EnterCallback(arguments.front());
-    case runtime::TestControl::ExitCallback:
+    case TestControl::ExitCallback:
       return ExitCallback(arguments.front());
-    case runtime::TestControl::CheckCallback:
+    case TestControl::CheckCallback:
       return CheckCallback(arguments.front());
-    case runtime::TestControl::CurrentTestScope:
+    case TestControl::CurrentTestScope:
       return CurrentTestScope();
-    case runtime::TestControl::RegisterFinalizer:
+    case TestControl::RegisterFinalizer:
       return RegisterFinalizer(arguments.front(), std::move(trace));
-    case runtime::TestControl::ReleaseFinalizer:
+    case TestControl::ReleaseFinalizer:
       return ReleaseFinalizer(arguments.front());
-    case runtime::TestControl::TrackCallWait:
+    case TestControl::TrackCallWait:
       return TrackExpectation(arguments.front(), std::move(trace),
                               ExpectationKind::CallObservation);
   }

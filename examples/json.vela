@@ -10,20 +10,32 @@ class User {
   }
 }
 
+class Payload {
+  name: string;
+  items: dynamic[];
+}
+
 func main(): int {
-  const root: dynamic = Json.parse('{"name":"Vela","items":[7,true,null]}');
-  const name: string = root.get('name');
-  const items: dynamic[] = root.get('items');
-  const first: int = items[0];
+  const root = JSON.parse<Payload>('{"name":"Vela","items":[7,true,null]}');
+  const name = root.name;
+  const items = root.items;
+  const first = items[0];
+  if (!(first is int)) {
+    return 1;
+  }
   print(name);
-  print(Json.stringify(items));
+  print(JSON.stringify(items));
 
   const users = [User(name: name, age: first)];
-  const output = Json.stringify(users);
+  const output = JSON.stringify(users);
   print(output);
 
-  const numbers: dynamic[] = Json.parse('[20,22]');
-  const integers: int[] = numbers.map(value => value as int);
+  const parsed = JSON.safeParse<User[]>(output);
+  if (!parsed.success) {
+    print('${parsed.error.path}: ${parsed.error.message}');
+    return 1;
+  }
+  const integers = JSON.parse<int[]>('[20,22]');
   print(integers.reduce((total, value) => total + value, 0));
-  return output == '[{"name":"Vela","age":7}]' && integers[0] + integers[1] == 42 ? 0 : 1;
+  return parsed.value[0].age == 7 && output == '[{"name":"Vela","age":7}]' && integers[0] + integers[1] == 42 ? 0 : 1;
 }

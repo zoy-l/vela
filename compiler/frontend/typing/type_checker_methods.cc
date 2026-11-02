@@ -1,4 +1,5 @@
 #include <absl/container/flat_hash_map.h>
+#include "base/builtin.h"
 #include "compiler/frontend/syntax/names.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -30,6 +31,14 @@ std::optional<TypeChecker::Type> TypeChecker::CheckMethodApplication(
     const Type* expected,
     MethodAccess access) {
   if (const auto method = methods.find(member.text); method != methods.end()) {
+    const auto intrinsic = method->second.declaration->intrinsic;
+    if (intrinsic == Builtin::JsonTypedParse && member.type_arguments.empty()) {
+      return std::nullopt;
+    }
+    if (intrinsic == Builtin::JsonSafeParse && member.type_arguments.empty()) {
+      AddDiagnostic(member.location, "JSON.safeParse requires an explicit target type argument");
+      return InvalidType();
+    }
     return CheckGenericMethod(method->second, member, call, expected, access);
   }
   if (!member.type_arguments.empty()) {
@@ -47,6 +56,11 @@ const MethodTemplate* TypeChecker::InferenceMethod(const Expression& member) {
   }
   if (owner != nullptr) {
     const auto method = owner->method_templates.find(member.text);
+    if (method != owner->method_templates.end() &&
+        method->second.declaration->intrinsic == Builtin::JsonTypedParse &&
+        member.type_arguments.empty()) {
+      return nullptr;
+    }
     return method == owner->method_templates.end() ? nullptr : &method->second;
   }
   Type receiver;
@@ -256,6 +270,14 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
   signature.member_owner = method.owner;
   signature.storage = declaration.storage;
   signature.visibility = declaration.visibility;
+  const bool json_decode = declaration.intrinsic == Builtin::JsonTypedParse ||
+                           declaration.intrinsic == Builtin::JsonSafeParse;
+  if (json_decode && checking_definitions_ && !HasTypeParameters(arguments.front())) {
+    const auto target = ResolveType(arguments.front(), VoidTypePolicy::Allowed);
+    json_decode_requests_.try_emplace(
+        "$definition.json." + std::string(target.name),
+        JSONDecodeRequest{.type = target, .location = member.location});
+  }
   const bool abstract = checking_definitions_ || types_.at(method.owner).is_abstract ||
                         std::ranges::any_of(arguments, HasTypeParameters);
   if (!abstract) {
@@ -265,6 +287,14 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
       return InvalidType();
     }
     const auto* node = call == nullptr ? &member : call;
+    if (json_decode) {
+      json_decode_requests_.try_emplace(
+          target->owner + '.' + target->member,
+          JSONDecodeRequest{
+              .type = ResolveType(arguments.front(), VoidTypePolicy::Allowed),
+              .location = member.location,
+          });
+    }
     if (types_.at(method.owner).kind == Type::Kind::Interface) {
       facts_.interface_members.insert_or_assign(node, *target);
     } else if (access == MethodAccess::Static) {

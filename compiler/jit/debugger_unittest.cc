@@ -215,6 +215,29 @@ TEST_P(JitDebuggerTest, RecursiveFramesRecoverWithoutReplayingCompletedCalls) {
   EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
+TEST_P(JitDebuggerTest, TypedJSONSessionsKeepPlansAndPartialValuesAcrossPublication) {
+  const std::string common = "func checkpoint(): void {} ";
+  Load(common +
+       "class Item { value: int = 20; constructor { checkpoint(); } } "
+       "export func decode(): int { const items = JSON.parse<Item[]>('[{},{}]'); "
+       "return items[0].value + items[1].value; }");
+  auto candidate = Prepare(common +
+                           "class Item { value: int = 22; constructor { checkpoint(); } } "
+                           "export func decode(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  const auto result = session_->Invoke("main.vela", "decode");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), 42);
+  EXPECT_FALSE(publication.HasPending());
+  EXPECT_EQ(session_->snapshot()->revision, 2U);
+  EXPECT_EQ(session_->Invoke("main.vela", "decode")->AsInteger(), 0);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().images, 1U);
+}
+
 TEST_P(JitDebuggerTest, RecoveredCallersKeepScalarValuesComputedBeforeTheEnteredCall) {
   Load(
       "let calls = 0; "

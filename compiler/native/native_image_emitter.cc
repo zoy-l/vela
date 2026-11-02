@@ -47,6 +47,8 @@ using runtime::NativeFieldDescription;
 using runtime::NativeFunctionDependencies;
 using runtime::NativeFunctionDescription;
 using runtime::NativeImage;
+using runtime::NativeJSONDecodeParameter;
+using runtime::NativeJSONDecodePlan;
 using runtime::NativeMemberDescription;
 using runtime::NativeSignatureDescription;
 using runtime::NativeSignatureParameter;
@@ -103,6 +105,7 @@ class ImageEmitter final {
   llvm::Constant* Dependencies(const NativeFunctionDependencies* dependencies);
   llvm::Constant* DependencyBlocks(std::span<const NativeDependencyBlock> descriptions);
   llvm::Constant* Members(std::span<const NativeMemberDescription> members);
+  llvm::Constant* JSONPlans(std::span<const NativeJSONDecodePlan> plans);
 
   llvm::Module& module_;
   llvm::LLVMContext& context_;
@@ -129,6 +132,8 @@ class ImageEmitter final {
   llvm::StructType* declaration_;
   llvm::StructType* member_;
   llvm::StructType* image_;
+  llvm::StructType* json_parameter_;
+  llvm::StructType* json_plan_;
   bool has_compatible_layout_ = true;
 };
 
@@ -325,12 +330,31 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeMemberDescription, setter),
           offsetof(NativeMemberDescription, kind),
       });
+  json_parameter_ = RecordType<NativeJSONDecodeParameter>(
+      "vela.json.parameter", std::to_array<llvm::Type*>({text_, word_, word_}),
+      std::array{
+          offsetof(NativeJSONDecodeParameter, name),
+          offsetof(NativeJSONDecodeParameter, node),
+          offsetof(NativeJSONDecodeParameter, optional),
+      });
+  json_plan_ = RecordType<NativeJSONDecodePlan>(
+      "vela.json.plan",
+      std::to_array<llvm::Type*>(
+          {text_, table_, llvm::Type::getInt8Ty(context_), word_, word_, word_}),
+      std::array{
+          offsetof(NativeJSONDecodePlan, name),
+          offsetof(NativeJSONDecodePlan, parameters),
+          offsetof(NativeJSONDecodePlan, kind),
+          offsetof(NativeJSONDecodePlan, type),
+          offsetof(NativeJSONDecodePlan, element),
+          offsetof(NativeJSONDecodePlan, constructor),
+      });
   image_ = RecordType<NativeImage>(
       "vela.image",
       std::to_array<llvm::Type*>({
           word_,  word_,  text_,  text_,  table_, table_, table_, table_, table_,
           table_, table_, table_, table_, table_, table_, table_, table_, wide_,
-          table_, table_, table_, table_, table_, word_,  table_,
+          table_, table_, table_, table_, table_, word_,  table_, table_,
       }),
       std::array{
           offsetof(NativeImage, abi_version),
@@ -358,6 +382,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeImage, selector_declarations),
           offsetof(NativeImage, native_mode),
           offsetof(NativeImage, global_flags),
+          offsetof(NativeImage, json_decode_plans),
       });
 }
 
@@ -653,10 +678,34 @@ std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
                                          Identities(image.selector_declarations.values()),
                                          Word(image.native_mode),
                                          Numbers(image.global_flags.values()),
+                                         JSONPlans(image.json_decode_plans.values()),
                                      });
   auto* storage = new llvm::GlobalVariable(module_, image_, true, llvm::GlobalValue::PrivateLinkage,
                                            description, "vela.image");
   return storage;
+}
+
+llvm::Constant* ImageEmitter::JSONPlans(std::span<const NativeJSONDecodePlan> plans) {
+  std::vector<llvm::Constant*> nodes;
+  for (const auto& plan : plans) {
+    std::vector<llvm::Constant*> parameters;
+    for (const auto& parameter : plan.parameters.values()) {
+      parameters.push_back(
+          Record(json_parameter_,
+                 {Text(parameter.name.text()), Word(parameter.node), Word(parameter.optional)}));
+    }
+    nodes.push_back(
+        Record(json_plan_, {
+                               Text(plan.name.text()),
+                               Table(json_parameter_, parameters),
+                               llvm::ConstantInt::get(llvm::Type::getInt8Ty(context_),
+                                                      static_cast<std::uint8_t>(plan.kind)),
+                               Word(plan.type),
+                               Word(plan.element),
+                               Word(plan.constructor),
+                           }));
+  }
+  return Table(json_plan_, nodes);
 }
 
 }  // namespace

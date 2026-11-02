@@ -58,10 +58,12 @@ ParseResult ParseSource(std::string_view source, std::uint32_t source_id) {
   return Parser(lexed.tokens).Parse();
 }
 
-ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id) {
+ParsedSource ParseSourceSnapshot(std::string source,
+                                 std::uint32_t source_id,
+                                 SyntaxContext context) {
   auto lexed = Lexer(source, source_id, CommentRetention::Preserve).Tokenize();
   auto parsed = lexed.diagnostics.empty()
-                    ? Parser(lexed.tokens).Parse()
+                    ? Parser(lexed.tokens, context).Parse()
                     : ParseResult{.program = {}, .diagnostics = std::move(lexed.diagnostics)};
   auto lines = IndexSourceLines(source);
   auto snapshot = std::make_shared<const SourceSnapshot>(SourceSnapshot{
