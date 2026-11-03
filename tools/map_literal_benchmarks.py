@@ -35,7 +35,7 @@ def workload(shape: str, form: str, name: str) -> tuple[str, int]:
         body = f"const map = Map<{arguments}>();\n"
         body += "".join(f"map.set({key}, {value});\n" for key, value in entries)
     projected = {"dynamic": "value as int", "nested": "value[0]"}.get(shape, "value")
-    body += f"let total = map.size;\nfor (const [key, value] in map) {{ total += {projected}; }}\n"
+    body += f"let total = map.size;\nfor (const value in map.values()) {{ total += {projected}; }}\n"
     return f"export func {name}(): int {{\n{body}return total;\n}}\n", len(values) + sum(values.values())
 
 

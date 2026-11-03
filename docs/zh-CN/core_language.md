@@ -307,11 +307,18 @@ scores.set('Dart', 40);              // void
 const score: int? = scores.get("Vela");
 const keys: string[] = scores.keys();
 const values: int[] = scores.values();
+
+for (const key in scores) {
+  const value = scores.get(key);
+  if (value != null) { print('${key}: ${value}'); }
+}
 ```
 
 带有静态类型标注的目标变量允许直接简写为 `Set()` 或 `Map()`，类型实参从上下文自动推导。类型保持不变性（invariant）；包含 null 键/值的集合需要可空参数。`get()` 在键缺失时返回 null；`has()` 可清晰区分键不存在还是存储了 null 值。Map 同样暴露 `has`、`delete`、`clear` 和 `size`。快照数组严格保持元素的插入顺序。更新已存在的键保持其原本位置；删除后重新插入则置于末尾。字符串按内容比较，引用类型按对象身份比较，所有 NaN 视作同一个键，+0 与 -0 视作同一个键。普通数值比较保持现有的 IEEE 语义。
 
 键与值采用开放寻址哈希索引及插入顺序链表的强类型连续存储。检索/更新的均摊时间复杂度为 O(1)；生成快照、clear 清空及存活元素追踪为 O(size)。字符串键的哈希计算额外产生 O(key byte length) 开销。扩容与紧凑化偶尔消耗 O(size) 时间。底层分配计入托管堆内存分配压力并由 GC 回收。数组统一使用动态可增长的 `T[]`，不引入冗余的 `List<T>` 容器；详见[动态可增长数组](arrays.md)。
+
+集合循环只绑定一个只读名称。Map 循环按插入顺序遍历键快照；`get(key)` 读取当前值，键已被删除时返回 null。仅需值快照时使用 `for (const value in scores.values())`。循环绑定不支持解构。
 
 ### Map 字面量
 
@@ -326,7 +333,7 @@ const make: (int) => Map<string, int> = value => ({'answer': value});
 
 每次求值创建新的 Map，再按源码顺序执行每个条目的键、键转换、值、值转换及插入，每个表达式只执行一次。重复键覆盖值并保留首次插入位置，所有表达式仍正常求值。失败会停止后续条目，已发生的外部副作用保留。引用值与普通 `set` 一样共享；`const` 不冻结集合。
 
-语句开头的 `{` 和 lambda 的 `=> {` 始终表示代码块，单独的 Map 表达式语句及 lambda 表达式体须加括号。`=> {}` 是空代码块，`() => ({})` 可在 Map 返回类型上下文中返回空 Map。不支持 `<K, V>{...}`、字段名简写、Set 字面量、解构或集合展开。现有 Map 遍历专用的 `[key, value]` 绑定保持不变。完整执行与工具契约见[Map 字面量设计](destructuring_spread.md)。
+语句开头的 `{` 和 lambda 的 `=> {` 始终表示代码块，单独的 Map 表达式语句及 lambda 表达式体须加括号。`=> {}` 是空代码块，`() => ({})` 可在 Map 返回类型上下文中返回空 Map。不支持 `<K, V>{...}`、字段名简写、Set 字面量、解构或集合展开。完整执行与工具契约见[Map 字面量设计](destructuring_spread.md)。
 
 ## Unicode 码点与字素簇
 

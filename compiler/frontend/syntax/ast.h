@@ -243,8 +243,6 @@ struct Statement final {
   // 仅交互入口的末尾表达式回显；普通语法不产生此标记。
   bool echo = false;
   std::unique_ptr<Expression> iterable;
-  std::string second_name;
-  bool destructuring = false;
 
   [[nodiscard]] bool IntroducesScope() const noexcept {
     return kind == Kind::Block || kind == Kind::For || kind == Kind::ForEach;

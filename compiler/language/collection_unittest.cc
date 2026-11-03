@@ -114,10 +114,10 @@ func main(): int {
 )",
                                          R"(
 func main(): int {
-  const values = Map<int, int>(); values.set(1, 9); values.set(2, 30);
+  const values = Map<int, int>(); values.set(1, 9); values.set(41, 30);
   let total = 0;
-  for (const [key, value] in values) {
-    total += key + value;
+  for (const key in values) {
+    total += key;
     values.clear(); values.set(100, 100);
   }
   return total;

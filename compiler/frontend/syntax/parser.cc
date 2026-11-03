@@ -391,25 +391,12 @@ std::unique_ptr<Statement> Parser::ParseForEachStatement() {
   statement->kind = Statement::Kind::ForEach;
   statement->location = Previous().location;
   statement->binding = BindingKind::Constant;
-  if (Match(TokenKind::LeftBracket)) {
-    const auto first = TakeName();
-    if (!first || !Expect(TokenKind::Comma, "expected ',' in dictionary binding")) {
-      return nullptr;
-    }
-    const auto second = TakeName();
-    if (!second || !Expect(TokenKind::RightBracket, "expected ']' after dictionary binding")) {
-      return nullptr;
-    }
-    statement->name = first->lexeme;
-    statement->second_name = second->lexeme;
-    statement->destructuring = true;
-  } else {
-    const auto name = TakeName();
-    if (!name) {
-      return nullptr;
-    }
-    statement->name = name->lexeme;
+  const auto name = TakeName();
+  if (!name) {
+    AddDiagnostic(Peek().location, "expected name after 'const' in collection loop");
+    return nullptr;
   }
+  statement->name = name->lexeme;
   if (!Expect(TokenKind::In, "expected 'in' in collection loop")) {
     return nullptr;
   }

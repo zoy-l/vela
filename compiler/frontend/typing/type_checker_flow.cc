@@ -281,24 +281,7 @@ StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& 
   if (!IsValid(element) || iterable.nullable) {
     AddDiagnostic(statement.iterable->location, "'in' requires a non-null array, set, or map");
   }
-  if (statement.destructuring) {
-    if (iterable.kind != Type::Kind::Map) {
-      AddDiagnostic(statement.location, "dictionary destructuring requires a map");
-    } else {
-      const auto arguments = generic_arguments_.find(collection.name);
-      if (arguments == generic_arguments_.end() || arguments->second.size() != 2) {
-        AddDiagnostic(statement.location, "map type arguments are invalid");
-      } else {
-        DeclareLocal(statement.name, arguments->second.front(), statement.location,
-                     BindingKind::Constant, &statement.name);
-        DeclareLocal(statement.second_name, arguments->second.back(), statement.location,
-                     BindingKind::Constant, &statement.second_name);
-      }
-    }
-  } else {
-    DeclareLocal(statement.name, element, statement.location, BindingKind::Constant,
-                 &statement.name);
-  }
+  DeclareLocal(statement.name, element, statement.location, BindingKind::Constant, &statement.name);
   ++loop_depth_;
   CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;

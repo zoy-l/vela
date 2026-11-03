@@ -464,35 +464,24 @@ void SemanticIndex::VisitForEach(const Statement& statement, const Scope& scope)
   VisitExpression(statement.iterable.get(), scope);
   auto body = Extent(*statement.then_branch);
   body.depth = scope.depth + 1;
-  std::string first_type;
-  std::string second_type;
+  std::string binding_type;
   const auto& types = Facts().expression_types;
   const auto iterable = types.find(statement.iterable.get());
   if (iterable != types.end()) {
     const auto& type = iterable->second;
     if (const auto element = model_.array_elements.find(type.name);
         element != model_.array_elements.end()) {
-      first_type = DisplayType(element->second);
+      binding_type = DisplayType(element->second);
     } else if (const auto arguments = model_.generic_arguments.find(type.name);
                arguments != model_.generic_arguments.end() && !arguments->second.empty()) {
-      first_type = DisplayType(arguments->second.front());
-      if (statement.destructuring && arguments->second.size() == 2) {
-        second_type = DisplayType(arguments->second.back());
-      }
+      binding_type = DisplayType(arguments->second.front());
     }
   }
   const auto& tokens = sources_.at(statement.location.source_id).tokens;
-  const auto first = TokenAt(statement.location) + (statement.destructuring ? 2 : 1);
-  const auto declare = [&](const void* node, std::size_t token, std::string detail) {
-    const auto location = tokens.at(token).location;
-    DeclareLocal(node, location, std::move(detail), body, body.begin);
-    if (phase_ == IndexPhase::Checked) {
-      symbols_.at(declarations_.at(KeyAt(location))).completion.kind = CompletionKind::Constant;
-    }
-  };
-  declare(&statement.name, first, std::move(first_type));
-  if (statement.destructuring) {
-    declare(&statement.second_name, first + 2, std::move(second_type));
+  const auto location = tokens.at(TokenAt(statement.location) + 1).location;
+  DeclareLocal(&statement.name, location, std::move(binding_type), body, body.begin);
+  if (phase_ == IndexPhase::Checked) {
+    symbols_.at(declarations_.at(KeyAt(location))).completion.kind = CompletionKind::Constant;
   }
   VisitStatement(statement.then_branch.get(), body);
 }

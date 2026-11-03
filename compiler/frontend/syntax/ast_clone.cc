@@ -171,17 +171,12 @@ std::unique_ptr<Statement> AstCloner::CloneStatement(const Statement* source) {
   result->echo = source->echo;
   result->binding = source->binding;
   result->name = source->name;
-  result->second_name = source->second_name;
-  result->destructuring = source->destructuring;
   result->initializer = CloneStatement(source->initializer.get());
   result->expression = CloneExpression(source->expression.get());
   result->condition = CloneExpression(source->condition.get());
   result->iterable = CloneExpression(source->iterable.get());
   if (transform_ != nullptr && source->kind == Statement::Kind::ForEach) {
     transform_->Declare(source->name);
-    if (source->destructuring) {
-      transform_->Declare(source->second_name);
-    }
   }
   result->then_branch = CloneScopedStatement(source->then_branch.get());
   result->else_branch = CloneScopedStatement(source->else_branch.get());

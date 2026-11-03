@@ -134,11 +134,8 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
   const auto iterable = LowerExpression(*statement.iterable);
   const auto kind = iterable.type.kind;
   const bool is_array = kind == frontend::TypeDescriptor::Kind::Array;
-  const bool is_map = kind == frontend::TypeDescriptor::Kind::Map;
   RegisterId values_array = iterable.reg;
-  RegisterId map_values_array = iterable.reg;
   frontend::TypeDescriptor element_type;
-  frontend::TypeDescriptor value_type;
   if (is_array) {
     element_type = model_.array_elements.at(iterable.type.name);
   } else {
@@ -148,18 +145,6 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
     Emit(
         {.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
     const auto keys_array = base + 1;
-    RegisterId value_base = base;
-    if (is_map && statement.destructuring) {
-      value_base = AllocateRegisterWindow(2, statement.location);
-      map_values_array = value_base + 1;
-      value_type = arguments.back();
-      Emit({
-          .opcode = Opcode::Move,
-          .dst = value_base,
-          .lhs = iterable.reg,
-          .location = statement.location,
-      });
-    }
     const auto length = AllocateTemporary(statement.location);
     EmitBuiltinCall(Builtin::CollectionSize, length, base, statement.location);
     Emit({
@@ -172,17 +157,6 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
     EmitBuiltinCall(Builtin::CollectionKeys, AllocateTemporary(statement.location), base,
                     statement.location);
     values_array = keys_array;
-    if (is_map && statement.destructuring) {
-      Emit({
-          .opcode = Opcode::NewDynamicArray,
-          .dst = map_values_array,
-          .lhs = length,
-          .index = RegisterArrayType(frontend::MakeArrayType(value_type)),
-          .location = statement.location,
-      });
-      EmitBuiltinCall(Builtin::CollectionValues, AllocateTemporary(statement.location), value_base,
-                      statement.location);
-    }
   }
   const auto index = AllocateTemporary(statement.location);
   Emit({.opcode = Opcode::LoadInt, .dst = index, .immediate = 0, .location = statement.location});
@@ -207,24 +181,6 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
   const auto binding = AllocateRegister(statement.location);
   Emit({.opcode = Opcode::Move, .dst = binding, .lhs = value, .location = statement.location});
   DeclareLocal(statement.name, binding, element_type, statement.location, &statement.name);
-  if (statement.destructuring) {
-    const auto second = EmitTemporary({
-        .opcode = Opcode::GetIndex,
-        .lhs = map_values_array,
-        .rhs = index,
-        .location = statement.location,
-    });
-    RecordValueType(second, value_type);
-    const auto second_binding = AllocateRegister(statement.location);
-    Emit({
-        .opcode = Opcode::Move,
-        .dst = second_binding,
-        .lhs = second,
-        .location = statement.location,
-    });
-    DeclareLocal(statement.second_name, second_binding, value_type, statement.location,
-                 &statement.second_name);
-  }
   BeginControl(ControlTargets::Kind::Loop);
   LowerScopedStatement(*statement.then_branch);
   BindContinues(static_cast<std::uint32_t>(current_function_->instructions.size()));

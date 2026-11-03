@@ -13,7 +13,7 @@ output and where evaluation stops.
 | Example | Features | Expected output (one value per line) |
 | --- | --- | --- |
 | [compound_assignment.vela](compound_assignment.vela) | All eleven compound assignments, prefix/postfix `++` and `--`, and an index evaluated once | `9`, `9`, `11`, `11`, `9`, `15`, `1` |
-| [collection_iteration.vela](collection_iteration.vela) | Read-only `const` bindings for arrays and Sets; Map `[key, value]` destructuring | `60`, `Vela`, `Dart`, `Vela: 42`, `Dart: 7` |
+| [collection_iteration.vela](collection_iteration.vela) | Read-only `const` bindings for arrays, Sets and Map keys; Map values read with `get()` | `60`, `Vela`, `Dart`, `Vela: 42`, `Dart: 7` |
 | [bitwise.vela](bitwise.vela) | 64-bit `~`, `&`, `\|`, `^`, `<<`, `>>`, and `>>>` | `-6`, `1`, `7`, `6`, `20`, `-2`, `4611686018427387902`, `1099511627776` |
 | [conditional.vela](conditional.vela) | Right-associative `? :` and evaluation of only the selected branch | `high`, `pass`, `retry`, `selected`, `42` |
 | [null_safe.vela](null_safe.vela) | `?.`, `?.[]`, and `??`; skipped method calls, index expressions, and default expressions | `fallback`, `empty`, `Vela`, `no label`, `label: Vela`, `7`, `index evaluated`, `42` |

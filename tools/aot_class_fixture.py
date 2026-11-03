@@ -41,8 +41,12 @@ class GenericChild<T> extends GenericBase<T> {
 func identity<T>(value: T): T { return value; }
 func callbacks<K extends string, V extends int>(values: Map<K, V>): (() => int)[] {
   const result: (() => int)[] = [];
-  for (const [key, value] in identity(values)) {
-    result.push((): int => key.length + value);
+  for (const key in identity(values)) {
+    const value = values.get(key);
+    if (value != null) {
+      const captured = value;
+      result.push((): int => key.length + captured);
+    }
   }
   return result;
 }
@@ -180,11 +184,11 @@ export func calculate(operation: int): int {
   }
   if (operation == 6) { return LoopInitialized([0, 1]).value; }
   if (operation == 7) {
-    const values = Map<int, int>(); values.set(1, 9); values.set(2, 30);
+    const values = Map<int, int>(); values.set(1, 9); values.set(41, 30);
     let total = 0;
-    for (const [key, value] in values) {
+    for (const key in values) {
       values.clear(); values.set(100, 100); collect();
-      total += key + value;
+      total += key;
     }
     const items = Set<int>(); items.add(1); items.add(41);
     let sum = 0;

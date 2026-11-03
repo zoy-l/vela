@@ -119,9 +119,6 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   Walk(statement->iterable.get());
   if (statement->kind == Statement::Kind::ForEach) {
     Declare(statement->name, &statement->name, BindingKind::Constant);
-    if (statement->destructuring) {
-      Declare(statement->second_name, &statement->second_name, BindingKind::Constant);
-    }
   }
   WalkScoped(statement->then_branch.get());
   WalkScoped(statement->else_branch.get());

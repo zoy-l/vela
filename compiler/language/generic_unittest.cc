@@ -363,8 +363,12 @@ func collect<T>(values: T[]): (() => T)[] {
 }
 func pairs<K extends string, V extends int>(values: Map<K, V>): (() => int)[] {
   const result: (() => int)[] = [];
-  for (const [key, value] in values) {
-    result.push((): int => key.length + value);
+  for (const key in values) {
+    const value = values.get(key);
+    if (value != null) {
+      const captured = value;
+      result.push((): int => key.length + captured);
+    }
   }
   return result;
 }
@@ -520,7 +524,7 @@ func main(): int { return apply<int>(42); }
            R"(
 func identity<T>(value: T): T { return value; }
 func apply<T>(values: Map<string, T>): T {
-  for (const [key, identity] in values) { return identity<T>(identity); }
+  for (const identity in values.values()) { return identity<T>(identity); }
   return values.values()[0];
 }
 func main(): int { return apply<int>(Map<string, int>()); }

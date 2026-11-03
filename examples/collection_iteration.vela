@@ -17,8 +17,10 @@ func main(): void {
   const scores = Map<string, int>();
   scores.set('Vela', 42);
   scores.set('Dart', 7);
-  for (const [name, score] in scores) {
-    // Both bindings are read-only; score retains its int type.
-    print('${name}: ${score}');
+  for (const name in scores) {
+    const score = scores.get(name);
+    if (score != null) {
+      print('${name}: ${score}');
+    }
   }
 }

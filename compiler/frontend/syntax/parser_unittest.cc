@@ -17,6 +17,16 @@
 namespace vela::frontend {
 namespace {
 
+TEST(ParserTest, RejectsDestructuredCollectionBindings) {
+  for (const std::string_view binding : {"[key, value]", "[key]", "[key,", "["}) {
+    SCOPED_TRACE(binding);
+    const auto parsed =
+        ParseSource("func f(): void { for (const " + std::string(binding) + " in values) {} }");
+    ASSERT_FALSE(parsed.diagnostics.empty());
+    EXPECT_EQ(parsed.diagnostics.front().message, "expected name after 'const' in collection loop");
+  }
+}
+
 TEST(ParserTest, ParsesRadixIntegersWithSignedBoundsAndPreservesSpelling) {
   constexpr auto kLiterals = std::to_array<std::pair<std::string_view, std::int64_t>>({
       {"0x2a", 42},

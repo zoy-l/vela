@@ -463,9 +463,6 @@ void Specializer::Normalize(Statement* statement, const TypeSubstitutions& subst
   Normalize(statement->iterable.get(), substitutions);
   if (statement->kind == Statement::Kind::ForEach) {
     scopes_.back().insert(statement->name);
-    if (statement->destructuring) {
-      scopes_.back().insert(statement->second_name);
-    }
   }
   NormalizeScoped(statement->then_branch.get(), substitutions);
   NormalizeScoped(statement->else_branch.get(), substitutions);

@@ -1517,7 +1517,8 @@ class LanguageServerTest(CommandTestCase):
                   "  const items = [1];\n"
                   "  for (const items in items) { print(items); }\n"
                   "  const pairs = Map<string, int>(); pairs.set('key', 42);\n"
-                  "  for (const [key, value] in pairs) {\n"
+                  "  for (const key in pairs) {\n"
+                  "    const value = pairs.get(key) ?? 0;\n"
                   "    const capture = (): string => key; print(value);\n"
                   "  }\n"
                   "  print(items);\n}")
@@ -1533,7 +1534,7 @@ class LanguageServerTest(CommandTestCase):
             self.symbol_query('completion', source, source.rindex('print(items)'), 'outside')])
         self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
         for identity, line, marker in [('iterable', 1, 'items ='), ('element', 2, 'items in'),
-                                       ('key', 4, 'key,'), ('value', 4, 'value]')]:
+                                       ('key', 4, 'key in'), ('value', 5, 'value =')]:
             self.assertEqual(self.reply(messages, identity)['result']['range']['start'], {
                 'line': line, 'character': source.splitlines()[line].index(marker)})
         for identity, signature in [('element-type', 'const items: int'),

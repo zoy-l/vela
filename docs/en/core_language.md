@@ -440,6 +440,11 @@ scores.set('Dart', 40);              // void
 const score: int? = scores.get("Vela");
 const keys: string[] = scores.keys();
 const values: int[] = scores.values();
+
+for (const key in scores) {
+  const value = scores.get(key);
+  if (value != null) { print('${key}: ${value}'); }
+}
 ```
 
 An annotated destination also permits `Set()` or `Map()` with contextual type
@@ -450,6 +455,11 @@ Snapshot arrays preserve insertion order. Updating an existing key retains its
 position; removal and reinsertion place it last. Strings compare by contents,
 reference values by identity, all NaNs are the same key, and +0/-0 are the same
 key. Ordinary numeric equality keeps its existing IEEE semantics.
+
+Collection loops bind one read-only name. A Map loop iterates a snapshot of its
+keys in insertion order; `get(key)` reads the current value and returns null if
+the key has been removed. Use `for (const value in scores.values())` to iterate
+a value snapshot. Loop bindings do not support destructuring.
 
 Keys and values use typed contiguous storage with an open-addressed hash index
 and insertion-order links. Lookup/update is expected amortized O(1); snapshots,
@@ -487,8 +497,7 @@ Map expression statements and Map lambda expression bodies require parentheses.
 `=> {}` is an empty block; `() => ({})` returns an empty Map with a Map result
 context. Leading `<K, V>{...}`, field shorthand, Set literals, destructuring and
 collection spread are unsupported. See the [Map literal design (Chinese)](../zh-CN/destructuring_spread.md)
-for execution and tooling contracts. Existing `[key, value]` bindings in Map
-iteration remain available.
+for execution and tooling contracts.
 
 ## Unicode code points and graphemes
 

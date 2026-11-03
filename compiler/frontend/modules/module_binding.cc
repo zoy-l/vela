@@ -344,9 +344,6 @@ void ModuleBinding::BindStatement(Statement* statement) {
   BindExpression(statement->iterable.get());
   if (statement->kind == Statement::Kind::ForEach) {
     locals_.back().insert(statement->name);
-    if (statement->destructuring) {
-      locals_.back().insert(statement->second_name);
-    }
   }
   BindScoped(statement->then_branch.get());
   BindScoped(statement->else_branch.get());
