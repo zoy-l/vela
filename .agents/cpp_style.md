@@ -13,6 +13,12 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   `bool IsLambda() const;`, and traditional return types in function-pointer aliases.
   Retain trailing return types only where C++ syntax requires them, such as explicit lambda
   results or deduction guides. Local variable type inference remains allowed.
+- Preserve deduced iterator types for standard-library range algorithms; a `std::array` iterator
+  can be a pointer in libc++ and a class in MSVC STL. `vl lint` excludes
+  `readability-qualified-auto` in `compiler/frontend/builtins/async_builtins.cc`,
+  `compiler/frontend/builtins/sdk_modules.cc`, `compiler/frontend/typing/type_name.cc`, and
+  `runtime/heap/heap_string_case.cc` because its `auto*` fixes make those lookups platform-dependent.
+  Keep explicit pointer qualification for actual pointer contracts in these files.
 - Use `#pragma once` in headers; do not use include guards.
 - Use the repository's `.clang-format` for mechanical formatting, with a 100-column line limit.
 - For C++ enums and initializer lists, clang-tidy requires trailing commas in multiline constructs;

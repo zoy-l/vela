@@ -19,10 +19,14 @@ from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
-# These fixed ABI signatures and fallible array owners are documented in .agents/cpp_style.md.
+# File-scoped exceptions and their contracts are documented in .agents/cpp_style.md.
 SCOPED_CHECK_EXCEPTIONS = {
+    "compiler/frontend/builtins/async_builtins.cc": ("readability-qualified-auto",),
+    "compiler/frontend/builtins/sdk_modules.cc": ("readability-qualified-auto",),
+    "compiler/frontend/typing/type_name.cc": ("readability-qualified-auto",),
     "compiler/jit/platform_support_win.cc": ("bugprone-easily-swappable-parameters",),
     "compiler/jit/code_resources.cc": ("bugprone-easily-swappable-parameters",),
+    "runtime/heap/heap_string_case.cc": ("readability-qualified-auto",),
     "runtime/native/native_operations.cc": ("bugprone-easily-swappable-parameters",),
     "runtime/native/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
 }

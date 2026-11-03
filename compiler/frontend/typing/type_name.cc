@@ -23,7 +23,7 @@ std::string_view CanonicalTypeName(std::string_view name) noexcept {
     return kSleepFunctionName;
   }
 
-  const auto* const found = std::ranges::find(kBuiltinTypeNames, name);
+  const auto found = std::ranges::find(kBuiltinTypeNames, name);
   return found == kBuiltinTypeNames.end() ? std::string_view() : *found;
 }
 
