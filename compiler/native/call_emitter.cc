@@ -119,6 +119,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
+  auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
   const auto& target = generated_.subspan(selected.function).front();
   llvm::Value* status = nullptr;
   if (IsEntrySlotRequired(selected.function)) {
@@ -200,6 +201,10 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     Store(instruction.dst,
           builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
           callee.return_type);
+  }
+  if (import_done != nullptr) {
+    builder_.CreateBr(import_done);
+    builder_.SetInsertPoint(import_done);
   }
   if (intrinsic_done != nullptr) {
     PollAfterRuntimeCall();

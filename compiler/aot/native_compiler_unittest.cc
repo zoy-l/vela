@@ -14,6 +14,7 @@
 
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -227,10 +228,32 @@ export func calculate(count: int): int {
       const auto calls = CollectHostCalls(*loop);
       for (const auto* call : calls.direct) {
         EXPECT_TRUE(call->arg_size() == 1U || call->arg_size() == 2U);
+        for (const auto* user : call->users()) {
+          if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(user)) {
+            EXPECT_FALSE(loop->contains(store->getParent())) << result->llvm_ir;
+          }
+        }
       }
       if (!calls.direct.empty()) {
         ++direct_loops;
         EXPECT_FALSE(calls.has_checked) << result->llvm_ir;
+        std::size_t frame_stores = 0;
+        for (const auto* block : loop->blocks()) {
+          for (const auto& instruction : *block) {
+            const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+            if (store == nullptr || !llvm::getUnderlyingObject(store->getPointerOperand())
+                                         ->getName()
+                                         .starts_with("import.frame")) {
+              continue;
+            }
+            ++frame_stores;
+            // 循环内只重置函数与指令位置；固定元数据在调用者入口初始化。
+            EXPECT_TRUE(llvm::isa<llvm::ConstantInt>(store->getValueOperand()));
+            EXPECT_TRUE(store->getValueOperand()->getType()->isIntegerTy());
+          }
+        }
+        EXPECT_GE(frame_stores, 1U) << result->llvm_ir;
+        EXPECT_LE(frame_stores, 2U) << result->llvm_ir;
       }
     }
   }

@@ -29,6 +29,21 @@
 
 namespace vela::compiler::native {
 
+llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth) {
+  using runtime::NativeMemoryLayout;
+  auto* word = builder_.getInt64Ty();
+  auto* stack_limit = builder_.CreateLoad(
+      word, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionStackLimit));
+  stack_limit->setMetadata(llvm::LLVMContext::MD_invariant_load,
+                           llvm::MDNode::get(module_.getContext(), {}));
+  auto* stack_position = builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress,
+                                                  {builder_.getPtrTy()}, {builder_.getInt32(0)});
+  auto* stack_available =
+      builder_.CreateICmpUGT(builder_.CreatePtrToInt(stack_position, word), stack_limit);
+  return builder_.CreateAnd(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)),
+                            stack_available);
+}
+
 void FunctionEmitter::EmitFrameEntry() {
   using runtime::NativeMemoryLayout;
   using runtime::NativeTraceFrame;
@@ -48,22 +63,12 @@ void FunctionEmitter::EmitFrameEntry() {
   }
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
-  auto* invariant = llvm::MDNode::get(context, {});
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
   auto* depth = builder_.CreateLoad(word, depth_address);
-  auto* stack_limit =
-      builder_.CreateLoad(word, ByteAddress(execution, NativeMemoryLayout::kExecutionStackLimit));
-  stack_limit->setMetadata(llvm::LLVMContext::MD_invariant_load, invariant);
-  auto* stack_position =
-      builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress, {pointer}, {builder_.getInt32(0)});
-  auto* stack_available =
-      builder_.CreateICmpUGT(builder_.CreatePtrToInt(stack_position, word), stack_limit);
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
-  builder_.CreateCondBr(
-      builder_.CreateAnd(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)),
-                         stack_available),
-      available, failed, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.CreateCondBr(HasStackBudget(depth), available, failed,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(available);
   builder_.CreateBr(initialize);
   builder_.SetInsertPoint(initialize);
@@ -196,15 +201,39 @@ void FunctionEmitter::PrepareTraceFrame() {
 }
 
 void FunctionEmitter::CacheImports() {
+  bool inline_import = false;
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto target = CallTarget(index);
-    if (!target || program_.functions.at(target->function).native_symbol.empty() ||
-        imports_.contains(target->function)) {
+    if (!target || imports_.contains(target->function)) {
+      continue;
+    }
+    const auto& callee = program_.functions.at(target->function);
+    if (callee.native_symbol.empty()) {
       continue;
     }
     // 绑定随实例创建后不可变；闭包临时切换实例会在返回时恢复，作用域内可复用。
     imports_.emplace(target->function,
                      LoadImport(builder_, module_, body_->getArg(0), target->function));
+    inline_import = inline_import || CanInlineImportCall(callee);
+  }
+  if (inline_import) {
+    using runtime::NativeTraceFrame;
+    Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+    auto* frame = allocation.CreateAlloca(
+        llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(NativeTraceFrame)), nullptr,
+        "import.frame");
+    frame->setAlignment(llvm::Align(alignof(NativeTraceFrame)));
+    import_frame_ = frame;
+    // 封闭调用没有宿主检查点和调试槽；同一调用者内的宿主调用顺序借用此帧。
+    // 重入会构造新的调用者帧，不能覆盖仍在执行的外层宿主帧。
+    builder_.CreateStore(trace_frame_, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
+    builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
+    auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
+    builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
+    builder_.CreateStore(null_pointer,
+                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
+    builder_.CreateStore(builder_.getInt64(0),
+                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
   }
 }
 

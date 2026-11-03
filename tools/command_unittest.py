@@ -45,6 +45,13 @@ class CommandTest(CommandTestCase):
         self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in files], before)
         return cached
 
+    def test_all_example_templates_pass_check(self) -> None:
+        examples = sorted((ROOT / "examples").rglob("*.vela"))
+        self.assertTrue(examples, "no example templates found")
+        for example in examples:
+            with self.subTest(example=example.relative_to(ROOT).as_posix()):
+                self.command("check", example)
+
     def test_native_object_integrity_survives_source_deletion(self) -> None:
         self.write("export func main(): int { return 42; }")
         image = self.directory / "main.o"

@@ -42,7 +42,6 @@
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_deoptimization.h"
-#include "runtime/native/native_function.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
 
@@ -588,108 +587,6 @@ void FunctionEmitter::BindFrameStorage() {
           builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + kVirtualStateFieldIndex);
     }
   }
-}
-
-void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
-  if (program_.native_mode != NativeProgramMode::Reloadable) {
-    return;
-  }
-  auto* address = ByteAddress(ControlState(), offsetof(runtime::NativeControlState, host_borrows));
-  auto* depth = builder_.CreateLoad(builder_.getInt64Ty(), address);
-  auto* updated = change == HostBorrow::Enter ? builder_.CreateAdd(depth, builder_.getInt64(1))
-                                              : builder_.CreateSub(depth, builder_.getInt64(1));
-  builder_.CreateStore(updated, address);
-}
-
-void FunctionEmitter::EmitImport() {
-  SetPosition();
-  using AotCallKind = runtime::NativeFunction::AotCallKind;
-  using runtime::NativeMemoryLayout;
-  auto* context = body_->getArg(0);
-  auto* function = builder_.getInt32(static_cast<std::uint32_t>(function_index_));
-  std::vector<llvm::Value*> arguments{context, function};
-  std::vector<llvm::Type*> types{builder_.getPtrTy(), builder_.getInt32Ty()};
-  for (std::size_t index = 0; index < source_.parameter_count; ++index) {
-    const auto reg = static_cast<ir::RegisterId>(index);
-    if (const auto slot = roots_.slots.at(reg)) {
-      WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
-    }
-    auto* value = Load(reg);
-    if (source_.value_types.at(reg).kind == Kind::Bool) {
-      value = builder_.CreateZExt(value, builder_.getInt8Ty());
-    }
-    arguments.push_back(value);
-    types.push_back(value->getType());
-  }
-  if (program_.native_mode == NativeProgramMode::Reloadable || roots_.debug_values) {
-    Poll();
-  }
-  EmitIntrinsicImport();
-  const auto& return_type = source_.return_type;
-  auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
-                          ? builder_.getInt8Ty()
-                          : ValueType(module_.getContext(), return_type);
-  auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
-  auto* target = builder_.CreateExtractValue(entries, 0);
-  auto* call_kind = builder_.CreateExtractValue(entries, 1);
-  const auto emit_direct = [&](AotCallKind kind) {
-    std::vector<llvm::Value*> direct_arguments(arguments.begin() + 2, arguments.end());
-    std::vector<llvm::Type*> direct_types(types.begin() + 2, types.end());
-    if (kind == AotCallKind::DirectWithContext) {
-      direct_arguments.insert(direct_arguments.begin(),
-                              ByteAddress(context, NativeMemoryLayout::kExecutionContext));
-      direct_types.insert(direct_types.begin(), builder_.getPtrTy());
-    }
-    auto* direct_result = return_type.kind == Kind::Void ? builder_.getVoidTy() : result_type;
-    auto* signature = llvm::FunctionType::get(direct_result, direct_types, false);
-    EmitHostBoundary(HostBorrow::Enter);
-    auto* value = builder_.CreateCall(signature, target, direct_arguments);
-    EmitHostBoundary(HostBorrow::Exit);
-    if (return_type.kind != Kind::Void) {
-      llvm::Value* result = value;
-      if (return_type.kind == Kind::Bool) {
-        result = builder_.CreateICmpNE(result, builder_.getInt8(0));
-      }
-      builder_.CreateStore(result, Output());
-    }
-    Finish(Status(builder_, ExecutionStatus::Returned));
-  };
-  if (return_type.kind == Kind::Void || return_type.kind == Kind::Bool ||
-      return_type.kind == Kind::Int || return_type.kind == Kind::Double) {
-    auto* direct = llvm::BasicBlock::Create(module_.getContext(), "import.direct", body_);
-    auto* checked = llvm::BasicBlock::Create(module_.getContext(), "import.checked", body_);
-    builder_.CreateCondBr(
-        builder_.CreateICmpNE(call_kind,
-                              builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::Checked))),
-        direct, checked);
-    builder_.SetInsertPoint(direct);
-    auto* with_context = llvm::BasicBlock::Create(module_.getContext(), "import.context", body_);
-    auto* plain = llvm::BasicBlock::Create(module_.getContext(), "import.plain", body_);
-    builder_.CreateCondBr(
-        builder_.CreateICmpEQ(
-            call_kind, builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::DirectWithContext))),
-        with_context, plain);
-    builder_.SetInsertPoint(with_context);
-    emit_direct(AotCallKind::DirectWithContext);
-    builder_.SetInsertPoint(plain);
-    emit_direct(AotCallKind::Direct);
-    builder_.SetInsertPoint(checked);
-  }
-  arguments.push_back(Output());
-  types.push_back(builder_.getPtrTy());
-  auto* signature = llvm::FunctionType::get(builder_.getInt8Ty(), types, false);
-  EmitHostBoundary(HostBorrow::Enter);
-  auto* called = builder_.CreateCall(signature, target, arguments);
-  EmitHostBoundary(HostBorrow::Exit);
-  CheckStatus(called);
-  if (return_type.kind != Kind::Void) {
-    llvm::Value* value = builder_.CreateLoad(result_type, Output());
-    if (return_type.kind == Kind::Bool) {
-      value = builder_.CreateICmpNE(value, builder_.getInt8(0));
-    }
-    builder_.CreateStore(value, Output());
-  }
-  Finish(Status(builder_, ExecutionStatus::Returned));
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size_t index) {

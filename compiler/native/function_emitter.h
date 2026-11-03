@@ -137,6 +137,13 @@ class FunctionEmitter final {
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
   void EmitHostBoundary(HostBorrow change);
+  llvm::Value* EmitDirectHostCall(const ir::Function& callee,
+                                  llvm::Value* entries,
+                                  std::span<llvm::Value* const> arguments);
+  bool CanInlineImportCall(const ir::Function& callee) const;
+  llvm::BasicBlock* EmitInlineImportCall(const ir::Instruction& instruction,
+                                         CallableTarget selected,
+                                         std::span<llvm::Value* const> arguments);
   std::uint64_t TracePosition() const;
   void Poll();
   bool IsBoundaryPollRequired(std::size_t index) const;
@@ -234,6 +241,7 @@ class FunctionEmitter final {
   std::expected<void, std::string> PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
+  llvm::Value* HasStackBudget(llvm::Value* depth);
   void EmitFrameEntry();
   void CacheImports();
   void CacheFields();
@@ -282,6 +290,7 @@ class FunctionEmitter final {
   llvm::Value* virtual_state_ = nullptr;
   llvm::Value* trace_frame_ = nullptr;
   llvm::Value* trace_initialized_ = nullptr;
+  llvm::Value* import_frame_ = nullptr;
   llvm::Value* debug_values_ = nullptr;
   llvm::Value* field_caches_ = nullptr;
   struct DirectField final {
