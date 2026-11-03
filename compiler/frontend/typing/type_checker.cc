@@ -1247,8 +1247,9 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   if (expression.operation == TokenKind::Ampersand || expression.operation == TokenKind::Pipe ||
       expression.operation == TokenKind::Caret || expression.operation == TokenKind::ShiftLeft ||
       expression.operation == TokenKind::ShiftRight ||
-      expression.operation == TokenKind::ShiftUnsignedRight) {
-    return CheckBitwiseTypes(expression, left, right);
+      expression.operation == TokenKind::ShiftUnsignedRight ||
+      expression.operation == TokenKind::Percent) {
+    return CheckIntegerTypes(expression, left, right);
   }
   if (expression.operation == TokenKind::Less || expression.operation == TokenKind::LessEqual ||
       expression.operation == TokenKind::Greater ||
@@ -1314,12 +1315,15 @@ TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
   return InvalidType();
 }
 
-TypeChecker::Type TypeChecker::CheckBitwiseTypes(const Expression& expression,
+TypeChecker::Type TypeChecker::CheckIntegerTypes(const Expression& expression,
                                                  const Type& left,
                                                  const Type& right) {
   if (left.kind != Type::Kind::Int || right.kind != Type::Kind::Int || left.nullable ||
       right.nullable) {
-    DiagnoseBinaryOperandMismatch(expression, left, right, "bitwise operands must be int");
+    const std::string_view message = expression.operation == TokenKind::Percent
+                                         ? "remainder operands must be int"
+                                         : "bitwise operands must be int";
+    DiagnoseBinaryOperandMismatch(expression, left, right, message);
     return InvalidType();
   }
   return left;

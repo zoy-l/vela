@@ -1,0 +1,17 @@
+func main(): void {
+  const iterations = 1000000;
+  let checksum = 0;
+
+  const started = performance.now();
+  for (let index = 0; index < iterations; index++) {
+    // 替换为待测代码；这里用滚动校验值保留循环中的计算结果。
+    checksum = (checksum * 31 + index) % 1000000007;
+  }
+  const elapsedMs = performance.now() - started;
+  const nsPerIteration = elapsedMs * 1000000.0 / iterations.toDouble();
+
+  print('iterations: ${iterations}');
+  print('elapsed: ${elapsedMs} ms');
+  print('average: ${nsPerIteration} ns/iteration');
+  print('checksum: ${checksum}');
+}

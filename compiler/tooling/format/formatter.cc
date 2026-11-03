@@ -182,6 +182,8 @@ bool IsOperator(const FormatItem& item) {
     case TokenKind::Minus:
     case TokenKind::Star:
     case TokenKind::Slash:
+    case TokenKind::Percent:
+    case TokenKind::PercentEqual:
     case TokenKind::Less:
     case TokenKind::LessEqual:
     case TokenKind::Greater:

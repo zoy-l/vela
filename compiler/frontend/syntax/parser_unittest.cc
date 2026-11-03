@@ -125,7 +125,7 @@ TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
       {"<", TokenKind::Less},
       {"<<", TokenKind::ShiftLeft},
       {"+", TokenKind::Plus},
-      {"*", TokenKind::Star},
+      {"%", TokenKind::Percent},
   });
   for (std::size_t lower = 0; lower < kOperators.size(); ++lower) {
     for (std::size_t higher = lower; higher < kOperators.size(); ++higher) {
@@ -147,6 +147,29 @@ TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
         ASSERT_NE(expression.right, nullptr);
         EXPECT_EQ(expression.right->operation, right_op);
       }
+    }
+  }
+}
+
+TEST(ParserTest, MultiplicationDivisionAndRemainderShareLeftAssociativePrecedence) {
+  constexpr auto kOperators = std::to_array<std::pair<std::string_view, TokenKind>>({
+      {"*", TokenKind::Star},
+      {"/", TokenKind::Slash},
+      {"%", TokenKind::Percent},
+  });
+  for (const auto& [left_text, left_op] : kOperators) {
+    for (const auto& [right_text, right_op] : kOperators) {
+      const std::string source = "func f(): int { return a " + std::string(left_text) + " b " +
+                                 std::string(right_text) + " c; }";
+      SCOPED_TRACE(source);
+      const auto parsed = ParseSource(source);
+      ASSERT_TRUE(parsed.diagnostics.empty());
+      const auto& expression =
+          *parsed.program.functions.front().body->statements.front()->expression;
+      EXPECT_EQ(expression.kind, Expression::Kind::Binary);
+      EXPECT_EQ(expression.operation, right_op);
+      ASSERT_NE(expression.left, nullptr);
+      EXPECT_EQ(expression.left->operation, left_op);
     }
   }
 }

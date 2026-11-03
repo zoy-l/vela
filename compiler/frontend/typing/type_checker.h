@@ -507,7 +507,7 @@ class TypeChecker final : private InferenceTypeRelations {
   Type CheckBoundBinaryTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckLogicalTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckCoalesceTypes(const Expression& expression, const Type& left, const Type& right);
-  Type CheckBitwiseTypes(const Expression& expression, const Type& left, const Type& right);
+  Type CheckIntegerTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckRelationalTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckEquality(const Expression& expression, const Type& left, const Type& right);
 

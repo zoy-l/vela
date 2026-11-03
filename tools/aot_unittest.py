@@ -217,8 +217,11 @@ TEST(NativeHostTest, OptimizedIntegerCallsLoopsAndShiftSemantics) {
   const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  const std::array<std::array<std::int64_t, 4>, 8> cases{{
+  const std::array<std::array<std::int64_t, 4>, 14> cases{{
       {0, -3, -4, 12}, {0, 3, -4, -12}, {3, -1, 1, -2},
+      {2, 43, 5, 3}, {2, -43, 5, -3}, {2, 43, -5, 3}, {2, -43, -5, -3},
+      {2, std::numeric_limits<std::int64_t>::min(), 1, 0},
+      {8, -43, 5, -3},
       {3, 1, -1, std::numeric_limits<std::int64_t>::min()},
       {4, -8, 65, -4}, {5, -1, 64, -1}, {6, 0, 0, 90},
       {7, 512, 0, 512},
@@ -245,6 +248,8 @@ TEST(NativeHostTest, ErrorsAndDepthLimitsCleanUpAllNativeFrames) {
       Case{0, maximum, 2, ExecutionStatus::IntegerOverflow},
       Case{1, minimum, -1, ExecutionStatus::IntegerOverflow},
       Case{2, minimum, -1, ExecutionStatus::IntegerOverflow},
+      Case{8, minimum, -1, ExecutionStatus::IntegerOverflow},
+      Case{2, 43, 0, ExecutionStatus::DivisionByZero},
       Case{1, 1, 0, ExecutionStatus::DivisionByZero},
       Case{7, static_cast<std::int64_t>(vela::kMaxCallFrames + 1), 0, ExecutionStatus::StackOverflow},
   };
@@ -749,11 +754,12 @@ export func calculate(operation: int, left: int, right: int): int {
   touch();
   if (operation == 0) { return left * right; }
   if (operation == 1) { return left / right; }
-  if (operation == 2) { let remainder = left; remainder %= right; return remainder; }
+  if (operation == 2) { return left % right; }
   if (operation == 3) { return left << right; }
   if (operation == 4) { return left >> right; }
   if (operation == 5) { return left >>> right; }
   if (operation == 7) { return depth(left); }
+  if (operation == 8) { let remainder = left; remainder %= right; return remainder; }
   let sum = 0;
   for (let index = 0; index < 10; index++) { sum += twice(index); }
   return sum;

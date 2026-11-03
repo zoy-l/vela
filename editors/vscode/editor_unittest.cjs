@@ -91,6 +91,52 @@ async function runEditorTests() {
   const uri = vscode.Uri.file(path.join(directory, "exceptions.vela"));
   const temporaryDocuments = [];
   try {
+    const asyncUri = vscode.Uri.file(path.join(directory, "async-highlighting.vela"));
+    const asyncText = "async func main(): Future<int> {\n" +
+      "  // async await Future\n" +
+      "  const label = 'async await Future';\n" +
+      "  const remainder = 43 % (5);\n" +
+      "  const futureValue = Future.value(42);\n" +
+      "  return await futureValue;\n}\n";
+    await fs.writeFile(asyncUri.fsPath, asyncText);
+    const asyncDocument = await vscode.workspace.openTextDocument(asyncUri);
+    temporaryDocuments.push(asyncDocument);
+    const syntaxTokens = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", asyncUri);
+    for (const [spelling, scope, count] of [
+      ["async", "storage.modifier.vela", 1],
+      ["await", "keyword.control.vela", 1],
+      ["Future", "support.type.vela", 2]
+    ]) {
+      const highlighted = syntaxTokens.filter(token => token.c === spelling && token.t.split(" ").includes(scope));
+      assert.equal(highlighted.length, count, `${spelling} must receive ${scope} outside comments and strings`);
+      for (const token of highlighted) {
+        for (const theme of ["dark_plus", "light_plus", "hc_black"]) {
+          assert.ok(!token.r[theme].startsWith("default:"),
+            `${spelling} must have a syntax color in ${theme}`);
+        }
+      }
+    }
+    assert.equal(syntaxTokens.filter(token => token.c === "%"
+      && token.t.split(" ").includes("keyword.operator.vela")).length, 1,
+      "remainder must receive the arithmetic operator scope");
+    const asyncLegend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", asyncUri);
+    const asyncTokens = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", asyncUri);
+    assert.ok(asyncTokens, "async code must expose semantic tokens");
+    const futureTokens = [];
+    let asyncLine = 0, asyncCharacter = 0;
+    for (let index = 0; index < asyncTokens.data.length; index += 5) {
+      const [deltaLine, deltaCharacter, length, kind, modifiers] = asyncTokens.data.slice(index, index + 5);
+      asyncLine += deltaLine;
+      asyncCharacter = deltaLine ? deltaCharacter : asyncCharacter + deltaCharacter;
+      const spelling = asyncDocument.getText(new vscode.Range(asyncLine, asyncCharacter,
+        asyncLine, asyncCharacter + length));
+      if (spelling === "Future") futureTokens.push({ kind: asyncLegend.tokenTypes[kind], modifiers });
+    }
+    const defaultLibrary = 1 << asyncLegend.tokenModifiers.indexOf("defaultLibrary");
+    assert.deepEqual(futureTokens, [{ kind: "type", modifiers: defaultLibrary },
+      { kind: "type", modifiers: defaultLibrary }], "Future annotations and factory receivers must keep built-in type coloring");
+    console.log("PASS: async, await and Future have syntax colors and preserve semantic type coloring");
+
     const runUri = vscode.Uri.file(path.join(directory, "run $shell; 中文.vela"));
     await fs.writeFile(runUri.fsPath, "func main(): int { return 1; }\n");
     const runDocument = await vscode.workspace.openTextDocument(runUri);

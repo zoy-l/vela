@@ -35,6 +35,18 @@ TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
             "    value = value + 1;\n  }\n  return value;\n}\n");
 }
 
+TEST(FormatterTest, SpacesRemainderExpressionsAndAssignmentsBeforeParentheses) {
+  const auto result = FormatSource(
+      "func remainder(value:int,modulus:int):int{value%=(modulus+1);return value%(modulus+1);}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "func remainder(value: int, modulus: int): int {\n"
+            "  value %= (modulus + 1);\n  return value % (modulus + 1);\n}\n");
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
+}
+
 TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
   const auto result = FormatSource(
       "class Pair<T,U>{a:T;b:U;}func main():int{const a:Pair<int,int> ="

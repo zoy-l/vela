@@ -998,6 +998,20 @@ class LanguageServerTest(CommandTestCase):
         self.assertEqual(edits[0]["newText"], "func main(): int {\n  print('must not run');\n  return 42;\n}\n")
         self.assertFalse(self.entry.exists())
 
+    def test_remainder_expressions_share_types_diagnostics_and_formatting(self) -> None:
+        source = "func main():int{let result=43%5;result%=(1+1);return result%(1+1);}"
+        messages = self.session([
+            self.open(source),
+            request("textDocument/formatting", {"textDocument": {"uri": self.uri}}, "format"),
+            self.symbol_query("hover", source, source.index("result="), "hover"),
+        ])
+        self.assertEqual(self.diagnostics(messages)[0]["diagnostics"], [])
+        self.assertIn("result: int", self.reply(messages, "hover")["result"]["contents"]["value"])
+        formatted = self.reply(messages, "format")["result"][0]["newText"]
+        self.assertIn("let result = 43 % 5;", formatted)
+        self.assertIn("result %= (1 + 1);", formatted)
+        self.assertIn("return result % (1 + 1);", formatted)
+
     def test_clears_diagnostics_for_dependencies_removed_from_the_graph(self) -> None:
         library = self.directory / "bad.vela"
         library.write_text("export func bad(): int { return true; }", encoding="utf-8", newline="\n")

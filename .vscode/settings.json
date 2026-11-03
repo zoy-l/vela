@@ -1,5 +1,4 @@
 {
-  "vela.serverPath": "out/release/vela.exe",
   "[vela]": {
     "editor.defaultFormatter": "vela.vela-language",
     "editor.quickSuggestions": {

@@ -1,6 +1,5 @@
 import '../spectral_norm.vela' as spectral;
 
-func remainder(value: int, divisor: int): int { let result = value; result %= divisor; return result; }
 external func addOne(value: int): int = 'dasprofile.addOne';
 
 let keys: string[] = [];
@@ -38,7 +37,7 @@ export func prepare(which: int): int {
   if (which == 1) {
     keys.reserve(500000);
     for (let i = 0; i < 500000; i++) {
-      keys.push(remainder(271828183 ^ (i * 119), 500000).toString());
+      keys.push(((271828183 ^ (i * 119)) % 500000).toString());
     }
   }
   if (which == 6 || which == 14) {
@@ -141,7 +140,7 @@ export func interop(): int {
 
 func isPrime(value: int): bool {
   for (let i = 2; i < value; i++) {
-    if (remainder(value, i) == 0) { return false; }
+    if (value % i == 0) { return false; }
   }
   return true;
 }
@@ -297,13 +296,13 @@ export func tree(): int {
   let result = 0;
   let seed = 1;
   for (let i = 1; i < 20000; i++) {
-    current = remainder(current * 57 + 43, 10007);
+    current = (current * 57 + 43) % 10007;
     split(root, current);
     const low = splitLow;
     split(splitHigh, current + 1);
     let equal = splitLow;
     const high = splitHigh;
-    const mode = remainder(i, 3);
+    const mode = i % 3;
     if (mode == 0) {
       if (equal == null) {
         seed = (seed * 1103515245 + 12345) & 2147483647;

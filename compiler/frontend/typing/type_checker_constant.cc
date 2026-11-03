@@ -35,12 +35,13 @@ namespace {
 std::optional<ConstantValue> IntegerConstant(TokenKind operation,
                                              std::int64_t left,
                                              std::int64_t right) {
-  constexpr std::array<std::pair<TokenKind, Opcode>, 4> kArithmetic = {
+  constexpr std::array<std::pair<TokenKind, Opcode>, 5> kArithmetic = {
       {
           {TokenKind::Plus, Opcode::AddInt},
           {TokenKind::Minus, Opcode::SubInt},
           {TokenKind::Star, Opcode::MulInt},
           {TokenKind::Slash, Opcode::DivInt},
+          {TokenKind::Percent, Opcode::ModInt},
       },
   };
   for (const auto& [symbol, opcode] : kArithmetic) {

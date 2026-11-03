@@ -75,7 +75,7 @@ void BindSdkDeclarations(std::string_view identity, Program& program) {
     return;
   }
   for (auto& function : program.functions) {
-    const auto binding = std::ranges::find(kBindings, function.name, &SDKBinding::name);
+    const auto* const binding = std::ranges::find(kBindings, function.name, &SDKBinding::name);
     if (binding != kBindings.end()) {
       function.intrinsic = binding->builtin;
       function.intrinsic_operation = binding->operation;

@@ -655,6 +655,7 @@ executable("vela_compiler_tests") {
     "language/optimized_execution_unittest.cc",
     "language/recursion_unittest.cc",
     "language/regexp_unittest.cc",
+    "language/remainder_unittest.cc",
     "language/sdk_modules_unittest.cc",
     "language/stack_trace_unittest.cc",
     "language/standard_library_unittest.cc",

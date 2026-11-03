@@ -654,6 +654,7 @@ std::uint8_t BinaryPrecedence(TokenKind kind) {
       return kAdditivePrecedence;
     case TokenKind::Star:
     case TokenKind::Slash:
+    case TokenKind::Percent:
       return kMultiplicativePrecedence;
     default:
       return 0;

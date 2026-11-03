@@ -88,11 +88,15 @@ def test_extension(code: Path) -> int:
             f"--user-data-dir={profile / 'user'}",
             f"--extensions-dir={profile / 'extensions'}",
             "--disable-extensions", "--skip-welcome", "--skip-release-notes",
-            "--disable-workspace-trust", "--wait", str(ROOT),
-        ], cwd=ROOT, env=environment, check=False)
+            # --verbose 等待进程退出；macOS 的 --wait 会在测试结束后继续等待文件关闭标记。
+            "--disable-workspace-trust", "--verbose", str(ROOT),
+        ], cwd=ROOT, env=environment, check=False, stdout=subprocess.PIPE,
+           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         if not report.is_file():
-            raise RuntimeError("VS Code exited without running the extension-host tests")
+            raise RuntimeError("VS Code exited without running the extension-host tests\n" + result.stdout)
         outcome = json.loads(report.read_text(encoding="utf-8"))
+        if result.returncode or not outcome["passed"]:
+            print(result.stdout)
         print(json.dumps(outcome, ensure_ascii=False, indent=2))
         return result.returncode or (0 if outcome["passed"] else 1)
     finally:
