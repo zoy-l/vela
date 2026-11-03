@@ -1098,13 +1098,19 @@ Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& exp
 
 Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expression,
                                            const LoweredValue& object) {
+  const auto location = expression.location;
   const auto type = model_.types.at(object.type.name);
   const auto owner = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
   const auto& method_owner = model_.classes.at(owner).methods.at(expression.text).member_owner;
   const std::string method_key = MethodKey(method_owner, DeclarationKind::Getter, expression.text);
-  const auto base = AllocateRegister(expression.location);
-  Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = expression.location});
-  const auto result = AllocateTemporary(expression.location);
+  std::optional<std::size_t> null_jump;
+  if (expression.null_safe) {
+    null_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::JumpIfNull, .lhs = object.reg, .location = location});
+  }
+  const auto base = AllocateRegister(location);
+  Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = location});
+  const auto result = AllocateTemporary(location);
   const auto& result_type = model_.expression_types.at(&expression);
   RecordValueType(result, result_type);
   Emit({
@@ -1112,8 +1118,9 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
       .dst = result,
       .lhs = base,
       .index = function_ids_.at(method_key),
-      .location = expression.location,
+      .location = location,
   });
+  FinishNullSafe(null_jump, result, location);
   return {.reg = result, .type = result_type};
 }
 

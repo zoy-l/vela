@@ -96,6 +96,45 @@ func main(): int {
   EXPECT_EQ(*result, kExpectedSum);
 }
 
+TEST(CompilerTest, NullSafePropertiesAndStringIndicesPreserveShortCircuiting) {
+  constexpr std::string_view source = R"(
+let fallback_calls: int = 0;
+let index_calls: int = 0;
+let getter_calls: int = 0;
+class Label {
+  text: string;
+  get display(): string { getter_calls += 1; return this.text; }
+  get size(): int { getter_calls += 1; return this.text.length; }
+}
+func fallback(): string { fallback_calls += 1; return 'missing'; }
+func position(): int { index_calls += 1; return 0; }
+func main(): int {
+  const present: Label? = Label(text: 'Vela');
+  const missing: Label? = null;
+  const text: string? = 'Vela';
+  const absent: string? = null;
+  const field = present?.text ?? fallback();
+  const getter = present?.display ?? fallback();
+  const size = present?.size ?? -1;
+  const length = text?.length ?? -1;
+  const initial = text?.[position()] ?? fallback();
+  const missing_field = missing?.text ?? fallback();
+  const missing_getter = missing?.display ?? fallback();
+  const missing_size = missing?.size ?? 7;
+  const missing_initial = absent?.[position()] ?? fallback();
+  const missing_length = absent?.length ?? 7;
+  return field == 'Vela' && getter == 'Vela' && size == 4 && length == 4 && initial == 'V' &&
+         missing_field == 'missing' && missing_getter == 'missing' &&
+         missing_size == 7 && missing_initial == 'missing' && missing_length == 7 &&
+         fallback_calls == 3 && index_calls == 1 && getter_calls == 2 ? 42 : 0;
+}
+)";
+  Isolate isolate(1);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kExpectedSum);
+}
+
 TEST(CompilerTest, CoalescePreservesStorageAndSkipsUnneededDefaults) {
   constexpr std::string_view source = R"(
 let fallback_calls: int = 0;

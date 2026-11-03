@@ -342,10 +342,10 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
       AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
       return InvalidType();
     }
-    auto result = CheckObjectMember(expression, NonNullable(object), expected);
-    return IsValid(result) ? NullableType(result) : result;
+    object = NonNullable(object);
   }
-  return CheckObjectMember(expression, object, expected);
+  const auto result = CheckObjectMember(expression, object, expected);
+  return expression.null_safe && IsValid(result) ? NullableType(result) : result;
 }
 
 TypeChecker::Type TypeChecker::CheckSuperMember(const Expression& expression,

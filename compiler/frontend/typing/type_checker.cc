@@ -957,7 +957,7 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   }
   if (object.kind == Type::Kind::String) {
     facts_.builtin_calls.insert_or_assign(&expression, Builtin::StringIndex);
-    return object;
+    return expression.null_safe ? NullableType(object) : object;
   }
   if (object.kind == Type::Kind::RegExpMatch) {
     facts_.builtin_calls.insert_or_assign(&expression, Builtin::RegExpMatchGroup);

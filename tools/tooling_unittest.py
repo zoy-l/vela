@@ -172,6 +172,24 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(self.reply(messages, "definition")["result"]["range"]["start"],
                                  {"line": 2, "character": len(f"  {binding} ")})
 
+    def test_null_safe_results_keep_nullable_types_after_receiver_promotion(self) -> None:
+        source = ("class Label { text: string; get display(): string { return this.text; } }\n"
+                  "func main(): void {\n"
+                  "  const label: Label? = Label(text: 'Vela');\n"
+                  "  const text: string? = 'Vela';\n"
+                  "  const field = label?.text;\n"
+                  "  const getter = label?.display;\n"
+                  "  const length = text?.length;\n"
+                  "  const indexed = text?.[0];\n"
+                  "  print(label?.text ?? 'missing');\n"
+                  "  print(text?.[0] ?? 'missing');\n"
+                  "}\n")
+        self.check_hovers(source, [
+            ("field =", "const field: string?"),
+            ("getter =", "const getter: string?"),
+            ("length =", "const length: int?"),
+            ("indexed =", "const indexed: string?")])
+
     def test_hover_refines_parameters_after_early_returns(self) -> None:
         for condition in ("value == null", "!(value != null)"):
             with self.subTest(condition=condition):

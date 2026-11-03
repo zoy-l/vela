@@ -33,6 +33,29 @@ func main(): int {
   EXPECT_TRUE(checked.Succeeded());
 }
 
+TEST(RefinementTest, NullSafeResultsRemainNullableAfterReceiverPromotion) {
+  const auto checked = CheckTestSource(R"(
+class Label {
+  text: string;
+  get display(): string { return this.text; }
+}
+func first(text: string?): string { return text?.[0] ?? 'missing'; }
+func main(): string {
+  const label: Label? = Label(text: 'Vela');
+  const text: string? = 'Vela';
+  const field = label?.text ?? 'missing';
+  const getter = label?.display ?? 'missing';
+  const length = text?.length ?? 0;
+  const indexed = text?.[0] ?? 'missing';
+  return field + getter + length + indexed;
+}
+)");
+  for (const auto& diagnostic : checked.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  EXPECT_TRUE(checked.Succeeded());
+}
+
 class NullableOperandDiagnosticTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(NullableOperandDiagnosticTest, ReportsTheNullableOperandBeforeNumericTypeMismatches) {
