@@ -7,10 +7,11 @@
 #include <vector>
 
 #include <llvm/IR/BasicBlock.h>
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/MDBuilder.h>
 
+#include "base/callable.h"
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
@@ -44,6 +45,13 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
                                                  std::span<llvm::Value* const> arguments) {
   using AotCallKind = runtime::NativeFunction::AotCallKind;
   auto& context = module_.getContext();
+  const auto& return_type = callee.return_type;
+  const auto return_kind = return_type.kind;
+  auto* result_type = builder_.getVoidTy();
+  if (return_kind != Kind::Void) {
+    result_type =
+        return_kind == Kind::Bool ? builder_.getInt8Ty() : ValueType(context, return_type);
+  }
   auto* target = builder_.CreateExtractValue(entries, 0);
   auto* call_kind = builder_.CreateExtractValue(entries, 1);
   auto* with_context = llvm::BasicBlock::Create(context, "import.context", body_);
@@ -69,15 +77,11 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     for (auto* value : values) {
       types.push_back(value->getType());
     }
-    auto* result_type = callee.return_type.kind == Kind::Void ? builder_.getVoidTy()
-                        : callee.return_type.kind == Kind::Bool
-                            ? builder_.getInt8Ty()
-                            : ValueType(context, callee.return_type);
     auto* signature = llvm::FunctionType::get(result_type, types, false);
     EmitHostBoundary(HostBorrow::Enter);
     llvm::Value* result = builder_.CreateCall(signature, target, values);
     EmitHostBoundary(HostBorrow::Exit);
-    if (callee.return_type.kind == Kind::Bool) {
+    if (return_kind == Kind::Bool) {
       result = builder_.CreateICmpNE(result, builder_.getInt8(0));
     }
     builder_.CreateBr(done);
@@ -88,7 +92,7 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
   builder_.SetInsertPoint(plain);
   auto* ordinary = emit(AotCallKind::Direct);
   builder_.SetInsertPoint(done);
-  if (callee.return_type.kind == Kind::Void) {
+  if (return_kind == Kind::Void) {
     return builder_.getFalse();
   }
   auto* result = builder_.CreatePHI(contextual->getType(), 2, "import.result");

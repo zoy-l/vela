@@ -181,6 +181,7 @@ export func read(values: int[], index: int): int { return values[index]; }
 
 struct LoopHostCalls {
   std::vector<const llvm::CallBase*> direct;
+  std::vector<const llvm::StoreInst*> frame_stores;
   bool has_checked = false;
 };
 
@@ -189,13 +190,18 @@ LoopHostCalls CollectHostCalls(const llvm::Loop& loop) {
   for (const auto* block : loop.blocks()) {
     for (const auto& instruction : *block) {
       const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
-      if (call == nullptr || !call->isIndirectCall()) {
-        continue;
+      if (call != nullptr && call->isIndirectCall()) {
+        if (call->getType()->isIntegerTy(std::numeric_limits<std::int64_t>::digits + 1)) {
+          calls.direct.push_back(call);
+        } else {
+          calls.has_checked = true;
+        }
       }
-      if (call->getType()->isIntegerTy(std::numeric_limits<std::int64_t>::digits + 1)) {
-        calls.direct.push_back(call);
-      } else {
-        calls.has_checked = true;
+      const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+      if (store != nullptr && llvm::getUnderlyingObject(store->getPointerOperand())
+                                  ->getName()
+                                  .starts_with("import.frame")) {
+        calls.frame_stores.push_back(store);
       }
     }
   }
@@ -226,35 +232,29 @@ export func calculate(count: int): int {
     const llvm::LoopInfo loops(dominators);
     for (const auto* loop : loops.getLoopsInPreorder()) {
       const auto calls = CollectHostCalls(*loop);
+      if (calls.direct.empty()) {
+        continue;
+      }
+      ++direct_loops;
+      EXPECT_FALSE(calls.has_checked) << result->llvm_ir;
       for (const auto* call : calls.direct) {
-        EXPECT_TRUE(call->arg_size() == 1U || call->arg_size() == 2U);
+        const auto argument_count = call->arg_size();
+        EXPECT_TRUE(argument_count == 1U || argument_count == 2U);
         for (const auto* user : call->users()) {
           if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(user)) {
             EXPECT_FALSE(loop->contains(store->getParent())) << result->llvm_ir;
           }
         }
       }
-      if (!calls.direct.empty()) {
-        ++direct_loops;
-        EXPECT_FALSE(calls.has_checked) << result->llvm_ir;
-        std::size_t frame_stores = 0;
-        for (const auto* block : loop->blocks()) {
-          for (const auto& instruction : *block) {
-            const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-            if (store == nullptr || !llvm::getUnderlyingObject(store->getPointerOperand())
-                                         ->getName()
-                                         .starts_with("import.frame")) {
-              continue;
-            }
-            ++frame_stores;
-            // 循环内只重置函数与指令位置；固定元数据在调用者入口初始化。
-            EXPECT_TRUE(llvm::isa<llvm::ConstantInt>(store->getValueOperand()));
-            EXPECT_TRUE(store->getValueOperand()->getType()->isIntegerTy());
-          }
-        }
-        EXPECT_GE(frame_stores, 1U) << result->llvm_ir;
-        EXPECT_LE(frame_stores, 2U) << result->llvm_ir;
+      for (const auto* store : calls.frame_stores) {
+        // 循环内只重置函数与指令位置；固定元数据在调用者入口初始化。
+        const auto* value = store->getValueOperand();
+        EXPECT_TRUE(llvm::isa<llvm::ConstantInt>(value));
+        EXPECT_TRUE(value->getType()->isIntegerTy());
       }
+      const auto frame_store_count = calls.frame_stores.size();
+      EXPECT_GE(frame_store_count, 1U) << result->llvm_ir;
+      EXPECT_LE(frame_store_count, 2U) << result->llvm_ir;
     }
   }
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
