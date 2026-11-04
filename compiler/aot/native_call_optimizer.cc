@@ -17,13 +17,15 @@ namespace {
 void BindClosureArguments(ir::Function& function,
                           const ir::Function& callee,
                           ir::Instruction& instruction,
+                          CallableMode mode,
                           std::vector<ir::Instruction>& code) {
   const auto base = function.register_count;
   for (std::size_t parameter = 0; parameter < callee.parameter_count; ++parameter) {
     const auto source = parameter == 0 ? instruction.rhs : instruction.lhs + parameter - 1;
     const auto type = parameter == 0 ? callee.value_types.front() : function.value_types.at(source);
     code.push_back({
-        .opcode = Opcode::Move,
+        .opcode =
+            parameter == 0 && mode == CallableMode::BoundMethod ? Opcode::GetField : Opcode::Move,
         .dst = function.register_count++,
         .lhs = static_cast<ir::RegisterId>(source),
         .location = instruction.location,
@@ -49,9 +51,9 @@ void DevirtualizeNativeCalls(ir::Program& program) {
       auto instruction = function.instructions.at(index);
       const auto target = targets.at(index);
       if (target) {
-        if (target->mode == CallableMode::Closure) {
+        if (target->mode == CallableMode::Closure || target->mode == CallableMode::BoundMethod) {
           const auto& callee = program.functions.at(target->function);
-          BindClosureArguments(function, callee, instruction, code);
+          BindClosureArguments(function, callee, instruction, target->mode, code);
         }
         // 只追踪单定义和 Move 链，所有可能覆写都使目标未知；对象的 callable target 不可变。
         // NewInstance 在当前实例建立环境，因此直接调用保留捕获对象且无需跨实例重绑定。

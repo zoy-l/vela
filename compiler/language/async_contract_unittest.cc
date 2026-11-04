@@ -80,7 +80,7 @@ func main(): int { orphan(); return 0; }
   CollectAndExpectNoAsyncState(isolate);
 }
 
-TEST(AsyncLifetimeTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
+TEST(AsyncLifetimeTest, RepeatedScalarValueAwaitAllocatesOnlyTheResultFuture) {
   runtime::Isolate isolate(std::numeric_limits<std::size_t>::max());
   const auto compiled = test::CompileCleanSource(R"(
 async func main(): Future<int> {
@@ -96,7 +96,36 @@ async func main(): Future<int> {
   ASSERT_TRUE(value) << value.error();
   constexpr std::int64_t kExpectedResult = 42;
   EXPECT_EQ(*value, kExpectedResult);
-  EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
+  EXPECT_EQ(isolate.heap().object_count() - baseline, 1U);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+}
+
+TEST(AsyncLifetimeTest, QueuedObserversRetainDiscardedActivationAcrossRepeatedAwait) {
+  runtime::Isolate isolate(1);
+  const auto compiled = test::CompileCleanSource(R"(
+let answer = 0;
+async func task(): Future<void> {
+  const saved = [40, 2];
+  await Future.value(0);
+  await 0;
+  answer = saved[0] + saved[1];
+}
+func main(): int { task(); return answer; }
+func read(): int { return answer; }
+)",
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto initial = test::ExecuteInteger(**compiled);
+  ASSERT_TRUE(initial) << initial.error();
+  EXPECT_EQ(*initial, 0);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 1U);
+  isolate.heap().Collect();
+  ASSERT_EQ(isolate.scheduler().PumpOne(), runtime::FuturePumpStep::Executed);
+  const auto result = test::Execute(**compiled, "read");
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  ASSERT_TRUE(result.value.IsInteger());
+  EXPECT_EQ(result.value.AsInteger(), 42);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
 }
@@ -168,7 +197,40 @@ func main(): int {
 INSTANTIATE_TEST_SUITE_P(
     AsyncSemantics,
     AsyncContractTest,
-    testing::Values(AsyncCase{"UnifiedInferenceAcrossFactoriesAndAsyncReturns", R"(
+    testing::Values(AsyncCase{"ScalarFactoryAwaitKeepsFifoAndEvaluatesPayloadOnce", R"(
+let order = 0;
+func payload(): int { order = order * 10 + 1; return 40; }
+async func child(): Future<int> {
+  const value = await Future.value(payload());
+  order = order * 10 + 3;
+  return value;
+}
+async func main(): Future<int> {
+  const task = child();
+  order = order * 10 + 2;
+  const value = await task;
+  return order == 123 && value == 40 ? 42 : 0;
+})",
+                              42},
+                    AsyncCase{"ScalarFactoryAwaitPreservesNullableBoolAndDouble", R"(
+async func main(): Future<int> {
+  const absent: int? = null;
+  const value = await Future.value(absent);
+  const real = await Future.value(40.0);
+  const flag = await Future.value(true);
+  return (value ?? 0) + (real == 40.0 && flag ? 42 : 0);
+})",
+                              42},
+                    AsyncCase{"ShadowedFutureFactoryStillInvokesUserMethod", R"(
+class Factory {
+  value(input: int): Future<int> { return Future.value(input + 1); }
+}
+async func main(): Future<int> {
+  const Future = Factory();
+  return await Future.value(41);
+})",
+                              42},
+                    AsyncCase{"UnifiedInferenceAcrossFactoriesAndAsyncReturns", R"(
 func empty<T>(): T[] { return []; }
 func ready(): Future<int> { return Future.value(40); }
 async func items(): Future<int[]> { return empty(); }

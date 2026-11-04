@@ -1,5 +1,8 @@
 config("vela_defaults") {
-  include_dirs = [ "//" ]
+  include_dirs = [
+    "//",
+    "//include",
+  ]
   cflags = []
   defines = []
   ldflags = []

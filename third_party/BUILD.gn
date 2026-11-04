@@ -46,6 +46,36 @@ source_set("llvm_jit") {
   public_deps = [ ":zstd" ]
 }
 
+config("clang_tooling_headers") {
+  defines = [ "CLANG_BUILD_STATIC" ]
+  clang_include = "$vela_clang_root/include"
+  if (target_os == "win") {
+    cflags = [ "/external:I$clang_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      clang_include,
+    ]
+  }
+}
+
+config("clang_tooling_libraries") {
+  libs = vela_clang_libraries + vela_llvm_tooling_libraries +
+         vela_llvm_tooling_system_libraries
+  if (target_os == "win") {
+    libs += [ "version.lib" ]
+  }
+}
+
+source_set("clang_tooling") {
+  public_configs = [
+    ":llvm_headers",
+    ":clang_tooling_headers",
+    ":clang_tooling_libraries",
+  ]
+  public_deps = [ ":zstd" ]
+}
+
 config("efsw_headers") {
   efsw_include = rebase_path("efsw/include", root_build_dir)
   if (target_os == "win") {

@@ -42,7 +42,7 @@ std::optional<Enum> Parser::ParseEnum() {
   return declaration;
 }
 
-std::optional<Class> Parser::ParseClass() {
+std::optional<Class> Parser::ParseClassHeader(ClassKind kind) {
   const auto name = Expect(TokenKind::Identifier, "expected class name");
   if (!name) {
     return std::nullopt;
@@ -50,6 +50,19 @@ std::optional<Class> Parser::ParseClass() {
   Class declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
+  if (kind == ClassKind::Native) {
+    if (!Expect(TokenKind::Equal, "expected '=' before native class key")) {
+      return std::nullopt;
+    }
+    const auto key = Expect(TokenKind::StringLiteral, "expected native class key string");
+    if (!key || !IsNativeTypeKey(key->lexeme)) {
+      AddDiagnostic(name->location,
+                    "native class key requires dot-separated non-keyword identifiers");
+      return std::nullopt;
+    }
+    declaration.native_key = key->lexeme;
+    declaration.constructor_kind = ConstructorKind::Unavailable;
+  }
   auto type_parameters = ParseTypeParameters();
   if (!type_parameters) {
     return std::nullopt;
@@ -74,6 +87,21 @@ std::optional<Class> Parser::ParseClass() {
       }
     }
   }
+  if (kind == ClassKind::Native && (!declaration.type_parameters.empty() ||
+                                    declaration.base_class || !declaration.interfaces.empty())) {
+    AddDiagnostic(declaration.location,
+                  "external classes cannot declare generics, bases or interfaces");
+    return std::nullopt;
+  }
+  return declaration;
+}
+
+std::optional<Class> Parser::ParseClass(ClassKind kind) {
+  auto header = ParseClassHeader(kind);
+  if (!header) {
+    return std::nullopt;
+  }
+  auto declaration = std::move(*header);
   if (!Expect(TokenKind::LeftBrace, "expected '{' after class name")) {
     return std::nullopt;
   }
@@ -152,6 +180,9 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
 }
 
 Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
+  if (!declaration.native_key.empty()) {
+    return ParseNativeClassMember(declaration);
+  }
   const auto modifiers = ParseMemberModifiers();
   const bool is_async = Match(TokenKind::Async);
   const auto append_method = [&declaration, modifiers](Function method) -> void {

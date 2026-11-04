@@ -170,6 +170,9 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
   }
   if (function.signature) {
     const auto& signature = *function.signature;
+    if (signature.receiver) {
+      Mark(NodeKind::Type, *signature.receiver, exposure);
+    }
     for (const auto& parameter : signature.parameters) {
       Mark(NodeKind::Type, parameter.type, exposure);
     }

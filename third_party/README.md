@@ -1,6 +1,6 @@
 # Third-party dependencies
 
-The AOT backend uses the LLVM 21.1.8 development SDK. Host archive names and SHA-256
+The AOT backend and binding generator use the LLVM/Clang 21.1.8 development SDK. Host archive names and SHA-256
 identities are pinned in `DEPS`; its `llvm_sdk` hook runs `python -m tools.llvm sync`.
 For an existing checkout, `python -m tools.vl llvm sync` acquires the same package.
 The acquisition keeps LLVM headers, static libraries, linking/archive tools, and
@@ -13,6 +13,13 @@ pinned at `f8745da6ff1ad1e7bab384bd1f9d742439278e99` and used under its
 The LLVM license is retained at `third_party/build_tools/llvm/21.1.8/<host>/LICENSE.TXT`;
 distribution packaging must include it. LLVM is a compiler dependency and must not
 enter the generated application's runtime closure.
+
+The `clang_sdk` DEPS hook runs `python -m tools.clang_sdk` to acquire Clang AST/Tooling
+headers, static libraries, and parser resource headers from the same checked release archive.
+The SDK and its Apache-2.0 WITH LLVM-exception license are retained beneath
+`third_party/build_tools/clang_sdk/21.1.8/<host>`. GN links this dependency only into
+`vela_bindgen`; runtime and generated applications do not link Clang. The parser version
+is recorded separately from the host build compiler revision.
 
 `gclient sync --no-history` obtains source dependencies and host tools from the
 immutable revisions in the root `DEPS`. Vela's GN integration lives in

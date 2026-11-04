@@ -170,6 +170,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
       RecordType<NativeClassDescription>("vela.class",
                                          std::to_array<llvm::Type*>({
                                              text_,
+                                             text_,
+                                             text_,
                                              table_,
                                              table_,
                                              table_,
@@ -184,6 +186,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                          }),
                                          std::array{
                                              offsetof(NativeClassDescription, name),
+                                             offsetof(NativeClassDescription, native_key),
+                                             offsetof(NativeClassDescription, native_contract),
                                              offsetof(NativeClassDescription, reference_fields),
                                              offsetof(NativeClassDescription, interfaces),
                                              offsetof(NativeClassDescription, dispatch_targets),
@@ -270,6 +274,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           word_,
           word_,
           word_,
+          word_,
           function_identity_,
           pointer_,
       }),
@@ -283,6 +288,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeFunctionDescription, parameter_count),
           offsetof(NativeFunctionDescription, result_type),
           offsetof(NativeFunctionDescription, hidden_parameters),
+          offsetof(NativeFunctionDescription, receiver_type),
           offsetof(NativeFunctionDescription, flags),
           offsetof(NativeFunctionDescription, identity),
           offsetof(NativeFunctionDescription, dependencies),
@@ -486,6 +492,8 @@ llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> cl
     }
     constants.push_back(Record(class_, {
                                            Text(type.name.text()),
+                                           Text(type.native_key.text()),
+                                           Text(type.native_contract.text()),
                                            Numbers(type.reference_fields.values()),
                                            Numbers(type.interfaces.values()),
                                            Numbers(type.dispatch_targets.values()),
@@ -571,6 +579,7 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
                                               Word(function.parameter_count),
                                               Word(function.result_type),
                                               Word(function.hidden_parameters),
+                                              Word(function.receiver_type),
                                               Word(function.flags),
                                               Identity(function.identity),
                                               Dependencies(function.dependencies),

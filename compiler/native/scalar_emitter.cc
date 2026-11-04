@@ -29,7 +29,9 @@ bool FunctionEmitter::CanInlineSquareRoot(const ir::Function& function) const {
   const auto standard = runtime::FindStandardNative(function.native_symbol);
   const auto& signature = function.signature;
   return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
-         signature && standard->IsSignatureCompatible(*signature, program_.layouts.types);
+         signature &&
+         standard->IsSignatureCompatible(*signature, program_.layouts.types,
+                                         program_.layouts.classes);
 }
 
 llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {

@@ -56,6 +56,8 @@ struct NativeFieldDescription final {
 
 struct NativeClassDescription final {
   NativeText name;
+  NativeText native_key;
+  NativeText native_contract;
   NativeTable<std::uint32_t> reference_fields;
   NativeTable<std::uint32_t> interfaces;
   NativeTable<std::uint32_t> dispatch_targets;
@@ -147,6 +149,7 @@ struct NativeFunctionDescription final {
   std::uint32_t parameter_count = 0;
   std::uint32_t result_type = kNoNativeIndex;
   std::uint32_t hidden_parameters = 0;
+  std::uint32_t receiver_type = kNoNativeIndex;
   std::uint32_t flags = 0;
   FunctionIdentity identity;
   const NativeFunctionDependencies* dependencies = nullptr;

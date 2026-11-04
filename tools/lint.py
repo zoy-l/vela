@@ -21,6 +21,7 @@ CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
 # File-scoped exceptions and their contracts are documented in .agents/cpp_style.md.
 SCOPED_CHECK_EXCEPTIONS = {
+    "compiler/bindgen/collector.cc": ("bugprone-derived-method-shadowing-base-method",),
     "compiler/frontend/builtins/async_builtins.cc": ("readability-qualified-auto",),
     "compiler/frontend/builtins/sdk_modules.cc": ("readability-qualified-auto",),
     "compiler/frontend/typing/type_name.cc": ("readability-qualified-auto",),
@@ -57,6 +58,7 @@ def is_project_file(path: Path) -> bool:
     return (
         path.is_relative_to(ROOT)
         and not path.is_relative_to(ROOT / "third_party")
+        and not path.is_relative_to(ROOT / "out")
         and path.suffix in CPP_SUFFIXES
     )
 

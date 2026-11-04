@@ -12,15 +12,31 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "base/testing/directory.h"
+#include "compiler/bindgen/fixture/bindingfixture_bindings.h"
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/repl/repl_source.h"
 #include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/isolate.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {
+
+TEST(ReplSourceTest, ExternalFunctionsAcceptAnOmittedSemicolonAlongsideExternalClasses) {
+  const ReplSource source;
+  for (const auto* const input : {
+           "external func answer(): int",
+           "export external func answer(): int",
+           "external class Counter = 'app.Counter' {}",
+       }) {
+    SCOPED_TRACE(input);
+    const auto candidate = source.Prepare(input);
+    ASSERT_TRUE(candidate);
+    EXPECT_FALSE(candidate->entry.wrapper);
+  }
+}
 
 class DevelopmentReplTest : public test::DirectoryTest {
  protected:
@@ -30,14 +46,17 @@ class DevelopmentReplTest : public test::DirectoryTest {
     LoadSession();
   }
 
-  void LoadSession() {
+  void LoadSession(runtime::NativeBindings bindings = {}) {
+    repl_.reset();
+    session_.reset();
     Write("main.vela", "func main(): void {}\n");
     files_ = std::make_unique<DevelopmentFiles>(Path("main.vela"));
     auto update = files_->Capture(CompiledSourceSnapshot{});
     ASSERT_TRUE(update);
     DevelopmentOptions options;
     options.gc_threshold = 1;
-    auto created = DevelopmentSession::Create(files_->entry(), {}, std::move(options));
+    auto created =
+        DevelopmentSession::Create(files_->entry(), std::move(bindings), std::move(options));
     ASSERT_TRUE(created);
     session_ = std::move(*created);
     session_->isolate().SetOutput(output_);
@@ -126,6 +145,29 @@ TEST_F(DevelopmentReplTest, BoundedGenericMethodsRetainApplicationsAfterRejected
   Execute("operation(Number()) + 1");
   Execute("mapper.map(Number()) + 1");
   EXPECT_EQ(output(), "42\n42\n");
+}
+
+TEST_F(DevelopmentReplTest, NativeClassDeclarationsAndBoundMethodsUseTheRegisteredSnapshot) {
+  runtime::Isolate registrations;
+  ASSERT_TRUE(bindings::module_bindingfixture::Register(registrations));
+  LoadSession(registrations.FreezeBindings());
+  // 交互声明与生成模块使用同一份完整公开契约。
+  Execute(R"(external class Counter = 'fixture.Counter' {
+    constructor(initial: int);
+    add(delta: int): int;
+    get value(): int;
+    set value(value: int): void;
+    Collect(delta: int): int;
+    Text(text: string): string;
+    Equal(other: Counter?): bool;
+    static Shared(initial: int): Counter?;
+    static Empty(): Counter?;
+    Checked(fail: bool): int;
+  })");
+  Execute("let counter = Counter(initial: 40);");
+  Execute("const bound = counter.Collect;");
+  Execute("bound(2)");
+  EXPECT_EQ(output(), "42\n");
 }
 
 TEST_F(DevelopmentReplTest, AppendsDeclarationsAndStatementsWithoutReplayingTheirEffects) {

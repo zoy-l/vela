@@ -83,9 +83,14 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       result.object_kind = ObjectKind::RegExpMatch;
       break;
     case Kind::Instance:
-    case Kind::Enum:
-      result.nominal = &classes_.at(type.index)->nominal_type();
+    case Kind::Enum: {
+      const auto* layout = classes_.at(type.index);
+      result.nominal = &layout->nominal_type();
+      if (layout->storage() == ClassStorage::Host) {
+        result.object_kind = ObjectKind::Host;
+      }
       break;
+    }
     case Kind::Interface:
       result.interface = interfaces_.at(type.index);
       break;
@@ -196,6 +201,9 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
 
 ClassLayout* LayoutInstantiation::Class(std::size_t index) {
   const auto& description = description_->classes.at(index);
+  if (description.kind == layout::Class::Kind::Host) {
+    return isolate_->FindNativeClass(description.native_key)->layout;
+  }
   if (const auto found = cache_->classes.find(description.name); found != cache_->classes.end()) {
     return found->second;
   }

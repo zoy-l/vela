@@ -120,6 +120,46 @@ class LanguageServerTest(CommandTestCase):
                 self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])
 
+    def test_external_classes_share_imported_hover_completion_and_definition_contracts(self) -> None:
+        native = self.write("counter.vela", """/// A native counter.
+export external class Counter = 'app.Counter' {
+  constructor(initial: int);
+  add(delta: int): int;
+  static Create(): Counter;
+  get value(): int;
+}
+export external class View = 'app.View' { get value(): int; }
+""")
+        source = """import 'counter';
+func main(): int {
+  const view: View? = null;
+  const counter = Counter(initial: 0);
+  counter.add(delta: 1);
+  return counter.value;
+}
+"""
+        messages = self.session([
+            self.open(source),
+            self.symbol_query("hover", source, source.index("Counter(initial"), "type"),
+            self.symbol_query("hover", source, source.index("View?"), "view"),
+            self.symbol_query("hover", source, source.index("add(delta"), "method"),
+            self.symbol_query("definition", source, source.index("add(delta"), "definition"),
+            self.symbol_query("completion", source, source.index("counter.add") + len("counter."), "members"),
+        ])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        hover = self.reply(messages, "type")["result"]["contents"]["value"]
+        self.assertIn("external class Counter = 'app.Counter'", hover)
+        self.assertIn("constructor(initial: int)", hover)
+        self.assertIn("A native counter.", hover)
+        self.assertNotIn("constructor", self.reply(messages, "view")["result"]["contents"]["value"])
+        self.assertIn("add(delta: int): int", self.reply(messages, "method")["result"]["contents"]["value"])
+        self.assertEqual(self.reply(messages, "definition")["result"]["uri"], native.as_uri())
+        members = {item["label"] for item in self.reply(messages, "members")["result"]}
+        self.assertTrue({"add", "value"} <= members, members)
+        self.assertNotIn("Create", members)
+        arguments = self.argument_completions("import 'counter'; func main(): void { Counter(¦); }")
+        self.assertEqual({item["label"] for item in arguments if item["label"].endswith(":")}, {"initial:"})
+
     def test_hover_signatures_inferred_bindings_and_documentation(self) -> None:
         source = ("/// Adds two values.\n/// Evaluates each argument once.\n"
                   "func add(left: int, right: int): int { return left + right; }\n"

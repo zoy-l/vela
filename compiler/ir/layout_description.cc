@@ -229,6 +229,8 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
 layout::Class LayoutDescription::DescribeClass(const Class& type) {
   layout::Class descriptor{
       .name = type.name,
+      .native_key = type.native_key,
+      .native_contract = type.native_contract,
       .field_count = static_cast<std::uint32_t>(type.field_types.size()),
       .reference_fields = {},
       .callable = type.callable,
@@ -247,6 +249,9 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
       break;
     case Class::Kind::Enum:
       descriptor.kind = layout::Class::Kind::Enum;
+      break;
+    case Class::Kind::Host:
+      descriptor.kind = layout::Class::Kind::Host;
       break;
   }
   for (std::size_t index = 0; index < type.field_types.size(); ++index) {

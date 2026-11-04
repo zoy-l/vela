@@ -1,0 +1,93 @@
+import("//build/native_bindings.gni")
+
+executable("vela_bindgen") {
+  sources = [
+    "collector.cc",
+    "collector.h",
+    "emitter.cc",
+    "emitter.h",
+    "input_files.cc",
+    "input_files.h",
+    "main.cc",
+    "model.cc",
+    "model.h",
+    "type_mapper.cc",
+    "type_mapper.h",
+  ]
+  deps = [
+    "//compiler:frontend",
+    "//compiler:tooling",
+    "//include:bindings",
+    "//third_party:clang_tooling",
+  ]
+}
+
+config("test_includes") {
+  include_dirs = [ root_gen_dir ]
+}
+
+generated_file("test_configuration") {
+  testonly = true
+  outputs = [ "$target_gen_dir/fixture.json" ]
+  output_conversion = "json"
+  contents = {
+    module = "bindingfixture"
+    headers = [ rebase_path("test_host.h", target_gen_dir) ]
+    translation_unit = rebase_path("test_input.cc", target_gen_dir)
+    compilation_database =
+        rebase_path("$root_build_dir/compile_commands.json", target_gen_dir)
+    output = "fixture"
+  }
+}
+
+vela_native_bindings("test_generation") {
+  testonly = true
+  config = "$target_gen_dir/fixture.json"
+  outputs = [
+    "$target_gen_dir/fixture/bindingfixture.vela",
+    "$target_gen_dir/fixture/bindingfixture_bindings.h",
+    "$target_gen_dir/fixture/bindingfixture_bindings.cc",
+    "$target_gen_dir/fixture/bindingfixture.bindings.json",
+  ]
+  depfile = "$target_gen_dir/fixture/bindingfixture.d"
+  deps = [ ":test_configuration" ]
+}
+
+generated_file("test_paths") {
+  testonly = true
+  outputs = [ "$target_gen_dir/fixture_paths.h" ]
+  module_path = rebase_path("$target_gen_dir/fixture/bindingfixture.vela")
+  contents = [
+    "#pragma once",
+    "#include <string_view>",
+    "namespace vela::binding_fixture {",
+    "inline constexpr std::string_view kModulePath = R\"($module_path)\";",
+    "}",
+    "",
+  ]
+}
+
+source_set("test_bindings") {
+  testonly = true
+  sources = [
+    "$target_gen_dir/fixture/bindingfixture_bindings.cc",
+    "test_host.h",
+    "test_input.cc",
+  ]
+  public = [
+    "$target_gen_dir/fixture/bindingfixture_bindings.h",
+    "$target_gen_dir/fixture_paths.h",
+    "test_host.h",
+  ]
+  public_deps = [
+    ":test_paths",
+    "//include:bindings",
+  ]
+  include_dirs = [ root_gen_dir ]
+  public_configs = [ ":test_includes" ]
+  deps = [
+    ":test_generation",
+    ":test_paths",
+    "//runtime",
+  ]
+}

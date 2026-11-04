@@ -24,6 +24,8 @@ source_set("base") {
     "layout_description.h",
     "member.h",
     "mock_operation.h",
+    "native_binding.cc",
+    "native_binding.h",
     "native_program_mode.h",
     "opcode.h",
     "path.cc",

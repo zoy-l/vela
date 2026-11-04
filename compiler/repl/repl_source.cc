@@ -80,6 +80,9 @@ bool IsBlockDeclaration(std::span<const frontend::Token> tokens) {
   while (tokens.front().kind == Kind::Export || tokens.front().kind == Kind::Async) {
     tokens = tokens.subspan(1);
   }
+  if (tokens.front().kind == Kind::External) {
+    return tokens.subspan(1).front().kind == Kind::Class;
+  }
   const auto kind = tokens.front().kind;
   return kind == Kind::Func || kind == Kind::Class || kind == Kind::Interface || kind == Kind::Enum;
 }

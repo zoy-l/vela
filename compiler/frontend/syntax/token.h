@@ -132,6 +132,10 @@ enum class TokenRole : std::uint8_t {
          kind == TokenKind::Match;
 }
 
+[[nodiscard]] constexpr bool IsDeclarationName(TokenKind kind) noexcept {
+  return kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set;
+}
+
 [[nodiscard]] constexpr bool IsDeclarationStart(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::Import:

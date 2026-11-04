@@ -20,6 +20,12 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   `runtime/heap/heap_string_case.cc` because its `auto*` fixes make those lookups platform-dependent.
   Keep explicit pointer qualification for actual pointer contracts in these files.
 - Use `#pragma once` in headers; do not use include guards.
+- `include/vela/bindings.h` uses `VELA_CLASS`, `VELA_NAME`, `VELA_GETTER`, `VELA_SETTER`,
+  `VELA_IGNORE`, and `VELA_DETAIL_ANNOTATE` as declaration annotations. The macro-usage check
+  permits only these names because functions cannot replace C++ attribute syntax.
+- `compiler/bindgen/collector.cc` implements Clang's `RecursiveASTVisitor` CRTP callbacks.
+  Its `VisitDecl` and `VisitCXXRecordDecl` must shadow the corresponding base methods;
+  `vl lint` excludes `bugprone-derived-method-shadowing-base-method` only for this file.
 - Use the repository's `.clang-format` for mechanical formatting, with a 100-column line limit.
 - For C++ enums and initializer lists, clang-tidy requires trailing commas in multiline constructs;
   clang-format controls their layout. Single-line comma policy is `Ignore`: the pinned checker

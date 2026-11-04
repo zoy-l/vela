@@ -33,7 +33,10 @@ action("sdk_sources") {
 
 source_set("frontend") {
   include_dirs = [ root_gen_dir ]
-  deps = [ ":sdk_sources" ]
+  deps = [
+    ":sdk_sources",
+    "//base:json",
+  ]
   sources = [
     "frontend/builtins/async_builtins.cc",
     "frontend/builtins/async_builtins.h",
@@ -65,6 +68,8 @@ source_set("frontend") {
     "frontend/modules/declaration_ids.h",
     "frontend/modules/module_binding.cc",
     "frontend/modules/module_binding.h",
+    "frontend/modules/native_binding_source.cc",
+    "frontend/modules/native_binding_source.h",
     "frontend/modules/source_file.h",
     "frontend/modules/source_loader.cc",
     "frontend/modules/source_loader.h",
@@ -76,12 +81,14 @@ source_set("frontend") {
     "frontend/syntax/integer_literal.h",
     "frontend/syntax/lexer.cc",
     "frontend/syntax/lexer.h",
+    "frontend/syntax/names.cc",
     "frontend/syntax/names.h",
     "frontend/syntax/parser.cc",
     "frontend/syntax/parser.h",
     "frontend/syntax/parser_collections.cc",
     "frontend/syntax/parser_declarations.cc",
     "frontend/syntax/parser_exception.cc",
+    "frontend/syntax/parser_native.cc",
     "frontend/syntax/parser_types.cc",
     "frontend/syntax/token.h",
     "frontend/typing/checker.cc",
@@ -345,6 +352,8 @@ source_set("native") {
     "native/function_emitter.cc",
     "native/function_emitter.h",
     "native/host_call_emitter.cc",
+    "native/integer_bit_optimizer.cc",
+    "native/integer_bit_optimizer.h",
     "native/integer_loop_optimizer.cc",
     "native/integer_loop_optimizer.h",
     "native/materialization_emitter.cc",
@@ -464,7 +473,10 @@ executable("vela_jit_tests") {
     "jit/compiler_unittest.cc",
     "jit/debugger_unittest.cc",
     "jit/gc_barrier_unittest.cc",
+    "jit/generated_native_class_unittest.cc",
     "jit/host_call_unittest.cc",
+    "jit/native_class_unittest.cc",
+    "jit/native_storage_unittest.cc",
     "jit/recursion_unittest.cc",
     "jit/source_cache_unittest.cc",
     "jit/state_evolution_unittest.cc",
@@ -479,6 +491,7 @@ executable("vela_jit_tests") {
     ":source_session",
     ":test_sources",
     "//base:test_directory",
+    "//compiler/bindgen:test_bindings",
     "//third_party:gtest_main",
   ]
   if (target_os == "win") {
@@ -531,6 +544,7 @@ executable("vela_aot_tests") {
     "aot/reachability_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/escape_analysis_unittest.cc",
+    "native/integer_bit_optimizer_unittest.cc",
     "native/integer_loop_optimizer_unittest.cc",
   ]
   deps = [
@@ -568,6 +582,7 @@ executable("vela_frontend_tests") {
     "frontend/typing/generic_contract_unittest.cc",
     "frontend/typing/generic_inference_unittest.cc",
     "frontend/typing/map_literal_unittest.cc",
+    "frontend/typing/native_class_unittest.cc",
     "frontend/typing/refinement_unittest.cc",
     "project/project_config_unittest.cc",
     "testing/settings_unittest.cc",

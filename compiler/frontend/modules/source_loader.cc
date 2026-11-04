@@ -22,6 +22,7 @@
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/module_binding.h"
+#include "compiler/frontend/modules/native_binding_source.h"
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
@@ -80,8 +81,14 @@ Diagnostics RegisterOverlays(std::span<const SourceInput> inputs,
 }
 
 std::expected<std::string, std::string> ReadSourceText(const std::filesystem::path& path,
-                                                       std::optional<std::string_view> overlay) {
+                                                       std::optional<std::string_view> overlay,
+                                                       SourceOrigin origin = SourceOrigin::Files) {
   if (overlay) {
+    if (origin == SourceOrigin::Files) {
+      if (auto result = VerifyNativeBindingSource(path, *overlay); !result) {
+        return std::unexpected(result.error());
+      }
+    }
     return std::string(*overlay);
   }
   const auto bytes = ReadBinaryFile(path);
@@ -89,7 +96,11 @@ std::expected<std::string, std::string> ReadSourceText(const std::filesystem::pa
     return std::unexpected(bytes.error());
   }
   const void* storage = bytes->data();
-  return std::string(static_cast<const char*>(storage), bytes->size());
+  const std::string_view source(static_cast<const char*>(storage), bytes->size());
+  if (auto result = VerifyNativeBindingSource(path, source); !result) {
+    return std::unexpected(result.error());
+  }
+  return std::string(source);
 }
 
 std::expected<std::filesystem::path, std::string> DiskImportPath(
@@ -128,12 +139,18 @@ std::expected<std::shared_ptr<const ParsedSource>, std::string> ReadCachedSource
     const std::filesystem::path& path,
     const std::string& key,
     std::optional<std::string_view> overlay,
-    ModuleCache& cache) {
+    ModuleCache& cache,
+    SourceOrigin origin = SourceOrigin::Files) {
   const auto cached = cache.sources.find(key);
   if (cached != cache.sources.end() && (!overlay || cached->second->source->text == *overlay)) {
+    if (origin == SourceOrigin::Files) {
+      if (auto result = VerifyNativeBindingSource(path, cached->second->source->text); !result) {
+        return std::unexpected(result.error());
+      }
+    }
     return cached->second;
   }
-  auto text = ReadSourceText(path, overlay);
+  auto text = ReadSourceText(path, overlay, origin);
   if (!text) {
     return std::unexpected(text.error());
   }
@@ -338,7 +355,7 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
   if (retention_ == SyntaxRetention::Cache) {
     const auto text = overlay == overlays_.end() ? std::nullopt
                                                  : std::optional<std::string_view>(overlay->second);
-    const auto parsed = ReadCachedSource(path, key, text, *cache_);
+    const auto parsed = ReadCachedSource(path, key, text, *cache_, origin_);
     if (!parsed) {
       return std::unexpected(parsed.error());
     }
@@ -346,7 +363,7 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
   }
   const auto supplied =
       overlay == overlays_.end() ? std::nullopt : std::optional<std::string_view>(overlay->second);
-  auto text = ReadSourceText(path, supplied);
+  auto text = ReadSourceText(path, supplied, origin_);
   if (!text) {
     return std::unexpected(text.error());
   }

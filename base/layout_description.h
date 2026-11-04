@@ -62,8 +62,10 @@ struct Signature final {
 };
 
 struct Class final {
-  enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum };
+  enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum, Host };
   std::string name;
+  std::string native_key;
+  std::string native_contract;
   Kind kind = Kind::Instance;
   std::uint32_t field_count = 0;
   std::vector<std::uint32_t> reference_fields;

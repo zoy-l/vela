@@ -35,6 +35,7 @@ English and Simplified Chinese editions are listed side by side below. Implement
 | **Async Functions & Futures** / 异步函数与 Future | [async_tasks.md](en/async_tasks.md) | [async_tasks.md](zh-CN/async_tasks.md) |
 | **Compilation Cache** / 编译缓存 | [compilation_cache.md](en/compilation_cache.md) | [compilation_cache.md](zh-CN/compilation_cache.md) |
 | **Native Embedding** / 原生嵌入与运行时诊断 | [native_embedding.md](en/native_embedding.md) | [native_embedding.md](zh-CN/native_embedding.md) |
+| **C++ Class Bindings & Header Generation** / C++ 类绑定与头文件生成 | — | [native_class_bindings.md](zh-CN/native_class_bindings.md) |
 | **Source Tools (fmt/doc/lsp)** / 源码工具链 | [source_tooling.md](en/source_tooling.md) | [source_tooling.md](zh-CN/source_tooling.md) |
 | **Interactive Debugger** / 调试器 | [debugger.md](en/debugger.md) | [debugger.md](zh-CN/debugger.md) |
 | **Persistent REPL** / 持久化 REPL | [repl.md](en/repl.md) | [repl.md](zh-CN/repl.md) |

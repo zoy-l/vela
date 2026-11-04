@@ -10,12 +10,14 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 
 from tools.config import BUILD_VARIANTS, ROOT, configure, executable_name, static_library_name, toolchain_tools
 from tools.llvm import sdk_directory, sdk_specification
+from tools.clang_sdk import sdk_directory as clang_sdk_directory
 
 
 def command(arguments: list[str | Path], *, environment: dict[str, str] | None = None,
@@ -38,6 +40,8 @@ def copy_file(source: Path, package: Path, relative: str, role: str, source_name
     destination = package / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    # 缓存中的只读属性不属于发行契约；新包拥有自己的文件并允许更新及删除。
+    destination.chmod(destination.stat().st_mode | stat.S_IWUSR)
     return {"path": "{package}/" + relative, "sha256": digest(destination), "role": role,
             "source": source_name, "license": license_name, "redistribution": "bundled"}
 
@@ -94,6 +98,35 @@ def verify_package(package: Path, workspace: Path, sdk_environment: dict[str, st
     if executed.stdout != marker or executed.stderr:
         raise RuntimeError("Native package self-check produced unexpected output: "
                            + executed.stdout + executed.stderr)
+
+
+def package_bindgen(executable: Path, package: Path) -> None:
+    resource = clang_sdk_directory() / "lib/clang/21"
+    paths = {
+        "generator": "bin/" + executable_name("vela_bindgen"),
+        "formatter": "libexec/" + executable_name("clang-format"),
+        "style": "share/vela/bindings.clang-format",
+        "resource_dir": "share/vela/clang/21",
+    }
+    inputs = {
+        paths["generator"]: executable,
+        paths["formatter"]: toolchain_tools()["clang_format"],
+        paths["style"]: ROOT / ".clang-format",
+        "tools/bindgen.py": ROOT / "tools/bindgen.py",
+        "bin/vela-bindgen.py": ROOT / "tools/bindgen_entry.py",
+    }
+    for path in resource.rglob("*"):
+        if path.is_file():
+            inputs[paths["resource_dir"] + "/" + path.relative_to(resource).as_posix()] = path
+    for relative, source in inputs.items():
+        owner = ("Vela" if source == executable or source.is_relative_to(ROOT / "tools")
+                 or source == ROOT / ".clang-format" else "LLVM")
+        license_name = "MIT" if owner == "Vela" else "Apache-2.0 WITH LLVM-exception"
+        copy_file(source, package, relative, "bindgen", owner, license_name)
+    manifest = {"format_version": 1, **paths,
+                "files": {name: digest(package / name) for name in inputs}}
+    (package / "share/vela/bindgen.json").write_text(json.dumps(manifest, indent=2) + "\n",
+                                                   encoding="utf-8", newline="\n")
 
 
 def windows_support(runtime: Path) -> tuple[dict, dict[str, str]]:
@@ -213,6 +246,9 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             for header in (ROOT / directory).rglob("*.h"):
                 relative = (Path("include") / header.relative_to(ROOT)).as_posix()
                 copy_file(header, package, relative, "header", "Vela", "MIT")
+        copy_file(ROOT / "include/vela/bindings.h", package,
+                  "include/vela/bindings.h", "header", "Vela", "MIT")
+        package_bindgen(executable.parent / executable_name("vela_bindgen"), package)
         for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
             if header.is_file() and header.suffix in {".h", ".inc"}:
                 relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()
@@ -253,7 +289,8 @@ def main(arguments: list[str] | None = None) -> int:
     runtime_name = static_library_name("vela_runtime")
     runtime = output / "obj/runtime" / runtime_name
     subprocess.run([str(toolchain_tools()["ninja"]), "-C", str(output),
-                    executable_name("vela"), "obj/runtime/" + runtime_name], check=True)
+                    executable_name("vela"), executable_name("vela_bindgen"),
+                    "obj/runtime/" + runtime_name], check=True)
     environment = create_package(output / executable_name("vela"), runtime,
                                  parsed.destination, parsed.support_spec)
     print(f"Created {parsed.destination.resolve()}")

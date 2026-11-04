@@ -100,6 +100,28 @@ entry that propagates errors and validates managed results, including Future com
 Both entries preserve logical frames, call-depth limits and GC roots during host execution.
 Dynamic callable boundaries validate their arguments before entering typed native code.
 
+Generated `external class` bindings use this same signature and calling convention. Clang tooling
+belongs to the independent binding generator; runtime code consumes immutable class descriptions,
+logical host keys and typed entries. Registration publishes a whole module atomically. Instantiation
+checks the complete public class contract, including unused members and parameter names, before
+publishing any imports. JIT reuse keys include the class key, contract and hidden receiver.
+
+Each Isolate owns its canonical host class layouts and a weak wrapper index. `ObjectKind::Host`
+stores a stable native pointer outside the script field layout and remains a GC leaf. A wrapper
+owns either a typed unique deleter or one shared owner; duplicate shared results reuse the wrapper
+only when their control blocks match. GC removes the weak entry before releasing ownership. Host
+storage, ownership records and reported external memory participate in heap accounting; construction
+reserves its budget before entering the C++ constructor and retains RAII ownership until publication.
+Typed method arguments borrow the pointer while the wrapper is rooted, without shared-owner copies.
+
+Binding snapshots share descriptions, never another Isolate's wrappers or nominal pointers. A
+development session freezes those bindings; script reload may retain wrappers but cannot change a
+host key or public contract, replace native implementations, or migrate native storage. Bound
+methods, asynchronous frames and typed AOT export handles retain the wrapper through the existing
+root contracts. Host destructors must be `noexcept` and must not allocate Vela objects or reenter
+script. See [native class bindings](../docs/zh-CN/native_class_bindings.md) for ownership and generator
+contracts.
+
 Each `NativeExecution` owns its `NativeContext`; it borrows the same Isolate for the execution's
 lifetime. Host calls borrow that context and their managed arguments for the duration of the call.
 The execution registers its exception root when it publishes an exception envelope, and releases

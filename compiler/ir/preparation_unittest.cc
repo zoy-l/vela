@@ -25,6 +25,35 @@ namespace {
 
 using test::Prepare;
 
+TEST(PreparationTest, ScalarValueAwaitSkipsOnlyAnUnobservableFactory) {
+  const auto prepared = Prepare(R"(
+func keep(value: Future<int>): Future<int> { return value; }
+async func integer(value: int): Future<int> { return await Future.value(value); }
+async func decimal(value: double): Future<double> { return await Future.value(value); }
+async func boolean(value: bool): Future<bool> { return await Future.value(value); }
+async func nullable(value: int?): Future<int?> { return await Future.value(value); }
+async func named(value: int): Future<int> {
+  const ready = Future.value(value); return await ready;
+}
+async func multiple(value: int): Future<int> {
+  const ready = Future.value(value); return await ready + await ready;
+}
+async func escaped(value: int): Future<int> { return await keep(Future.value(value)); }
+async func adopted(value: Future<int>): Future<int> { return await Future.value(value); }
+async func erased(value: dynamic): Future<int> { return await Future.value<int>(value); }
+async func failed(value: Error): Future<int> { return await Future.error<int>(value); }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  constexpr std::array<std::string_view, 6> kPreserved{
+      "named", "multiple", "escaped", "adopted", "erased", "failed",
+  };
+  for (const auto& function : prepared.program.functions) {
+    const auto factories =
+        std::ranges::count(function.instructions, Opcode::NewFuture, &Instruction::opcode);
+    EXPECT_EQ(factories, std::ranges::contains(kPreserved, function.name) ? 1 : 0) << function.name;
+  }
+}
+
 TEST(PreparationTest, FusesOnlyUnobservedScalarTextUsedForItsLength) {
   const auto prepared = Prepare(R"(
 func length(value: double): int { const text = value.toString(); return text.length; }

@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -13,6 +14,7 @@
 #include <span>
 #include <utility>
 #include <vector>
+#include "base/execution_status.h"
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
@@ -86,7 +88,9 @@ void RootRange::Detach() noexcept {
 }
 
 Heap::Heap(std::size_t gc_threshold) noexcept
-    : gc_threshold_(std::max<std::size_t>(gc_threshold, 1)), minimum_gc_threshold_(gc_threshold_) {}
+    : gc_threshold_(std::max<std::size_t>(gc_threshold, 1)),
+      minimum_gc_threshold_(gc_threshold_),
+      host_index_(*this) {}
 
 Heap::~Heap() {
   DestroyAll();
@@ -102,14 +106,32 @@ void* Heap::AllocateExternal(std::size_t bytes, std::size_t replaced_bytes) noex
   }
   auto* memory = ::operator new(bytes, std::nothrow);
   if (memory != nullptr) {
-    allocated_bytes_ += bytes;
-    committed_bytes_ += bytes;
-    allocation_statistics_.bytes += bytes;
-    ++allocation_statistics_.count;
-    allocation_statistics_.peak_live_bytes =
-        std::max(allocation_statistics_.peak_live_bytes, allocated_bytes_);
+    RecordExternalAllocation(bytes);
   }
   return memory;
+}
+
+void Heap::RecordExternalAllocation(std::size_t bytes) noexcept {
+  allocated_bytes_ += bytes;
+  committed_bytes_ += bytes;
+  allocation_statistics_.bytes += bytes;
+  ++allocation_statistics_.count;
+  allocation_statistics_.peak_live_bytes =
+      std::max(allocation_statistics_.peak_live_bytes, allocated_bytes_);
+}
+
+std::expected<void, ExecutionStatus> Heap::ReserveHostMemory(std::size_t bytes) noexcept {
+  MaybeCollect(bytes);
+  if (!CanAllocate(bytes) || bytes > std::numeric_limits<std::size_t>::max() - committed_bytes_) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  RecordExternalAllocation(bytes);
+  return {};
+}
+
+void Heap::ReleaseHostMemory(std::size_t bytes) noexcept {
+  allocated_bytes_ -= bytes;
+  committed_bytes_ -= bytes;
 }
 
 void* Heap::AllocateNative(std::size_t size) noexcept {
@@ -137,8 +159,7 @@ void Heap::FreeNative(void* pointer) noexcept {
 }
 
 void Heap::ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept {
-  allocated_bytes_ -= bytes;
-  committed_bytes_ -= bytes;
+  ReleaseHostMemory(bytes);
   ::operator delete(storage);
 }
 
@@ -528,6 +549,9 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   switch (object.kind) {
     case ObjectKind::Instance:
       ReleaseInstance(object);
+      break;
+    case ObjectKind::Host:
+      ReleaseHostObject(object);
       break;
     case ObjectKind::RegExp:
       ReleaseRegExp(object);

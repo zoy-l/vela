@@ -5,6 +5,7 @@ pool("console") {
 group("default") {
   deps = [
     "//compiler:vela",
+    "//compiler/bindgen:vela_bindgen",
     "//runtime:vela_runtime",
   ]
 }

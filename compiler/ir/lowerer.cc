@@ -32,6 +32,18 @@ namespace vela::ir {
 using frontend::TokenKind;
 namespace {
 
+bool IsFutureFactoryCall(const frontend::Expression& expression,
+                         const frontend::SemanticModel& model) {
+  using Expression = frontend::Expression;
+  if (expression.kind != Expression::Kind::Call) {
+    return false;
+  }
+  const auto& callee = *expression.callee;
+  const auto& receiver = callee.object;
+  return callee.kind == Expression::Kind::Member && receiver->kind == Expression::Kind::Name &&
+         receiver->text == frontend::kFutureTypeName && !model.bindings.contains(receiver.get());
+}
+
 Opcode SelectIntegerOpcode(TokenKind operation) {
   switch (operation) {
     case TokenKind::Plus:
@@ -126,6 +138,8 @@ LoweringResult Lowerer::Lower() && {
         .interfaces = {},
         .dispatch_targets = {},
         .kind = Class::Kind::CaptureCell,
+        .native_key = {},
+        .native_contract = {},
         .callable_type = {},
         .declaration = {},
         .fields = {},
@@ -237,6 +251,11 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
                           const frontend::ClassDescriptor& class_info) {
   Class output_class;
   output_class.name = source_class.name;
+  output_class.native_key = source_class.native_key;
+  if (!source_class.native_key.empty()) {
+    output_class.kind = Class::Kind::Host;
+    output_class.native_contract = BuildNativeClassContract(source_class, class_info);
+  }
   if (!source_.sources.empty() &&
       source_.sources.at(source_class.location.source_id).path == frontend::kErrorSourceName) {
     output_class.kind = Class::Kind::RuntimeError;
@@ -320,8 +339,9 @@ void Lowerer::BuildFunctionTable() {
       static_cast<void>(AddFunctionId(name));
     }
     const auto name = owner.name + ".$constructor";
-    if (native_mode_ == NativeProgramMode::Reloadable ||
-        (persistent_ != nullptr && persistent_->functions.Has(name))) {
+    if (owner.constructor_kind != frontend::ConstructorKind::Unavailable &&
+        (native_mode_ == NativeProgramMode::Reloadable ||
+         (persistent_ != nullptr && persistent_->functions.Has(name)))) {
       static_cast<void>(AddFunctionId(name));
       pending_constructors_.push_back(&owner);
     }
@@ -372,6 +392,9 @@ void Lowerer::RecordParameterValueTypes(Function& function) {
   function.value_types.resize(function.parameter_count);
   if (function.signature) {
     const auto& signature = *function.signature;
+    if (signature.receiver) {
+      function.value_types.front() = program_.runtime_types.at(*signature.receiver);
+    }
     for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
       const auto& parameter = signature.parameters.at(index);
       auto type = program_.runtime_types.at(parameter.type);
@@ -531,7 +554,7 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
   if (source.is_setter && function_info.setter_return_type) {
     function.return_type = *function_info.setter_return_type;
   }
-  if (owner != nullptr && source.name == frontend::kConstructorName) {
+  if (owner != nullptr && source.name == frontend::kConstructorName && owner->native_key.empty()) {
     function.return_type = {
         .kind = frontend::TypeDescriptor::Kind::Void,
         .name = frontend::kVoidTypeName,
@@ -544,6 +567,9 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
   function.parameter_count = static_cast<std::uint32_t>(
       source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0) + masks);
   auto& signature = RegisterFunctionSignature(function, source, function_info);
+  if (has_receiver) {
+    signature.receiver = RegisterRuntimeType(model_.classes.at(owner->name).type);
+  }
   if (masks != 0) {
     signature.hidden_parameters = 1;
     const auto integer = RegisterRuntimeType(
@@ -873,7 +899,18 @@ Lowerer::LoweredValue Lowerer::LowerName(const frontend::Expression& expression)
 }
 
 Lowerer::LoweredValue Lowerer::LowerAwait(const frontend::Expression& expression) {
-  const auto operand = LowerExpression(*expression.operand);
+  const auto& awaited = *expression.operand;
+  const auto* input = &awaited;
+  if (IsFutureFactoryCall(awaited, model_) && awaited.callee->text == "value") {
+    const auto& payload = *awaited.arguments.front().value;
+    const auto kind = model_.expression_types.at(&payload).kind;
+    using Kind = frontend::TypeDescriptor::Kind;
+    if (kind == Kind::Int || kind == Kind::Double || kind == Kind::Bool || kind == Kind::Null) {
+      // 直接 await 的标量工厂没有可观察的 Future 身份；保留一次载荷求值和 await 边界。
+      input = &payload;
+    }
+  }
+  const auto operand = LowerExpression(*input);
   const auto result = AllocateTemporary(expression.location);
   const auto& type = model_.expression_types.at(&expression);
   const bool converts_enum = type.kind == frontend::TypeDescriptor::Kind::Enum &&
@@ -1179,10 +1216,7 @@ Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression)
     return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
                                 expression.location, base, receiver->reg);
   }
-  if (expression.callee->kind == frontend::Expression::Kind::Member &&
-      expression.callee->object->kind == frontend::Expression::Kind::Name &&
-      expression.callee->object->text == frontend::kFutureTypeName &&
-      !model_.bindings.contains(expression.callee->object.get())) {
+  if (IsFutureFactoryCall(expression, model_)) {
     return LowerFutureCall(expression);
   }
   if (expression.callee->kind == frontend::Expression::Kind::Name) {

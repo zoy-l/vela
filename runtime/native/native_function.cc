@@ -8,38 +8,44 @@
 
 #include "base/callable.h"
 #include "base/layout_description.h"
+#include "base/native_binding.h"
 #include "base/utf8.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_class.h"
 #include "runtime/native/native_context.h"
+#include "runtime/native/native_type.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
 
-bool IsNativeTypeCompatible(const layout::Type& type, NativeType native) {
+bool IsNativeTypeCompatible(const layout::Type& type,
+                            NativeType native,
+                            std::span<const layout::Class> classes) {
   using Kind = layout::Type::Kind;
-  if (type.nullable) {
-    return native == NativeType::NullableString && type.kind == Kind::String;
+  if (type.nullable != native.nullable) {
+    return false;
   }
-  switch (native) {
-    case NativeType::Void:
-    case NativeType::NullableString:
+  switch (native.kind) {
+    case NativeKind::Void:
       return false;
-    case NativeType::Boolean:
+    case NativeKind::Boolean:
       return type.kind == Kind::Boolean;
-    case NativeType::Integer:
+    case NativeKind::Integer:
       return type.kind == Kind::Integer;
-    case NativeType::Double:
+    case NativeKind::Double:
       return type.kind == Kind::Double;
-    case NativeType::String:
+    case NativeKind::String:
       return type.kind == Kind::String;
-    case NativeType::Future:
+    case NativeKind::Future:
       return type.kind == Kind::Future;
-    case NativeType::CancellationToken:
+    case NativeKind::CancellationToken:
       return type.kind == Kind::CancellationToken;
+    case NativeKind::Host:
+      return type.kind == Kind::Instance && classes[type.index].native_key == native.host_key;
   }
   std::unreachable();
 }
@@ -47,19 +53,36 @@ bool IsNativeTypeCompatible(const layout::Type& type, NativeType native) {
 }  // namespace
 
 bool NativeFunction::IsSignatureCompatible(const CallSignature& signature,
-                                           std::span<const layout::Type> types) const {
+                                           std::span<const layout::Type> types,
+                                           std::span<const layout::Class> classes) const {
   const auto parameters = this->parameters();
+  const auto receiver_count = static_cast<std::size_t>(signature.receiver.has_value());
   const auto result_type = this->result_type();
   const bool matches_result =
       signature.result
-          ? IsNativeTypeCompatible(types.subspan(*signature.result).front(), result_type)
-          : result_type == NativeType::Void;
-  if (signature.parameters.size() != parameters.size() || !matches_result) {
+          ? IsNativeTypeCompatible(types.subspan(*signature.result).front(), result_type, classes)
+          : result_type.kind == NativeKind::Void;
+  if (signature.parameters.size() + receiver_count != parameters.size() || !matches_result) {
     return false;
   }
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    if (!IsNativeTypeCompatible(types.subspan(signature.parameters.at(index).type).front(),
-                                parameters.subspan(index).front())) {
+  if (signature.receiver &&
+      !IsNativeTypeCompatible(types[*signature.receiver], parameters.front(), classes)) {
+    return false;
+  }
+  if (member_ != nullptr) {
+    if (member_->parameter_names.size() != signature.parameters.size() ||
+        HasNativeReceiver(member_->kind) != signature.receiver.has_value()) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
+    const auto& parameter = signature.parameters[index];
+    if (member_ != nullptr && (member_->parameter_names[index] != parameter.name ||
+                               parameter.optional || parameter.rest)) {
+      return false;
+    }
+    if (!IsNativeTypeCompatible(types[parameter.type], parameters[index + receiver_count],
+                                classes)) {
       return false;
     }
   }

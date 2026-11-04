@@ -75,6 +75,10 @@ void Signature(BinaryWriter& writer, const ir::Function& function, const ir::Pro
   Put(writer, function.signature.has_value());
   if (function.signature) {
     const auto& signature = *function.signature;
+    Put(writer, signature.receiver.value_or(kInvalidFunctionTarget));
+    if (signature.receiver) {
+      Put(writer, program.layouts.types.at(*signature.receiver));
+    }
     Put(writer, signature.hidden_parameters);
     Put(writer, signature.result.value_or(kInvalidFunctionTarget));
     if (signature.result) {
@@ -97,6 +101,8 @@ std::vector<std::string> ClassInputs(const ir::Program& program) {
     const auto& layout = program.layouts.classes.at(index);
     BinaryWriter output;
     output.Write(type.name);
+    output.Write(type.native_key);
+    output.Write(type.native_contract);
     Put(output, type.kind);
     Put(output, type.declaration.value);
     Put(output, type.base_class.value);

@@ -16,7 +16,10 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
+#include "runtime/heap/host_index.h"
+#include "runtime/heap/host_memory.h"
 #include "runtime/isolate/external_resources.h"
+#include "runtime/value/host_object.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -159,6 +162,13 @@ class Heap final {
   PrepareInstanceMigration(HeapObject& object, const ClassLayout& layout) noexcept;
   [[nodiscard]] HeapObject* AllocateNativeProgram(
       std::unique_ptr<NativeProgramState> state) noexcept;
+  [[nodiscard]] std::expected<HeapObject*, HostObjectError> WrapHostObject(
+      const ClassLayout& layout,
+      std::size_t native_size,
+      HostObjectStorage storage) noexcept;
+  [[nodiscard]] HeapObject* FindHostObject(const NominalType& type, const void* pointer) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus> SetHostMemory(HeapObject& object,
+                                                                   std::size_t bytes) noexcept;
   [[nodiscard]] static NativeProgramState& NativeProgram(HeapObject& object) noexcept;
   void SetNativeProgramSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   void SetNativeEnvironment(HeapObject& callable,
@@ -364,6 +374,11 @@ class Heap final {
 
  private:
   friend class Isolate;
+  friend class HostMemory;
+  [[nodiscard]] std::expected<void, ExecutionStatus> ReserveHostMemory(std::size_t bytes) noexcept;
+  void ReleaseHostMemory(std::size_t bytes) noexcept;
+  void RecordExternalAllocation(std::size_t bytes) noexcept;
+  void ReleaseHostObject(HeapObject& object) noexcept;
   void TraceNativeMetadata(NativeMetadataTracer& tracer) const;
   Isolate* isolate_ = nullptr;
   void MarkByteData(HeapObject& object) noexcept;
@@ -490,6 +505,8 @@ class Heap final {
   std::size_t gc_threshold_ = 0;
   std::size_t minimum_gc_threshold_ = 0;
   GcBarrierState barrier_state_;
+  // Heap 析构体先释放所有包装，弱索引随后释放其自身预算。
+  HostIndex host_index_;
 };
 
 // 准备中的块和被迁移对象分别保根；销毁候选只释放新块，Commit 不分配也不执行用户代码。

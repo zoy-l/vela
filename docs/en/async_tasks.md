@@ -118,36 +118,16 @@ The language contract does not prescribe how native execution stores suspended e
 
 Async semantics flow through the AST, type checker, Typed IR, optimizer, native code generation, debugger, host API, and CLI. Await can suspend and throw, so it is observable; optimizers cannot remove it, move operations across it, or reorder it incorrectly. Direct calls, closure calls, and interface dispatch expose the same Future result.
 
+When await directly consumes the built-in `Future.value(value)` with a statically known `int`, `double`, `bool`, or `null` payload, lowering evaluates the payload once and emits the original await without an unobservable temporary GC Future wrapper. Nullable numeric and boolean payloads are also eligible. Stored or passed Futures, existing Future inputs, dynamic payloads, and error factories retain their ordinary construction. Microtask boundaries, FIFO order, exception handling, GC roots, and JIT recovery follow the same contracts.
+
 Required regressions cover synchronous effects before the first await, completion without await, asynchronous continuation of an already-complete Future, FIFO notification, multiple waiters, Future adoption, Future composition success and failure, timeout, Completer, catch/finally across await, all call forms, async main, unhandled errors, GC during suspension, host-thread completion, timer ordering, and idle/deadlock boundaries.
 
 Release benchmarks separately measure async calls without await, awaiting a completed Future, suspend/resume, concurrent Future count, GC pressure from suspended state, and timer scale. Report synchronous native regression, retained memory per suspended execution, and first async allocation cost.
 
-On 2026-10-26, the Windows x64 Release build with the pinned Clang toolchain on a
-Ryzen 9 7900X passed all 14 async benchmark cases, with seven repetitions each.
-Median wall times were:
-
-| Workload | Time (µs) |
-| --- | ---: |
-| Async call without await | 0.351 |
-| Await an already completed Future | 1.238 |
-| Pending microtask and continuation | 1.964 |
-| First async call in a fresh Isolate | 1.695 |
-
-The first-call case excludes compilation and destruction and includes timing
-pause/resume overhead. At 1,000 instances, concurrent tasks took 2.186 ms,
-tasks with an explicit collection while suspended took 8.797 ms, and zero-delay
-timers took 0.810 ms. All steady cases ended with zero suspended frames and no
-additional retained GC heap values after collection.
-
-Nonzero saved-state measurements ranged from 193 to 210 bytes per suspended
-frame. The first call without await allocated 64 GC-accounted bytes before
-pumping; these counters exclude native Future control blocks and allocator
-bookkeeping, so they do not measure total process memory. The synchronous
-`integer_loop`, `function_calls`, and `field_access` cases had median wall-time
-ratios of 0.942, 0.776, and 0.833 against the original workspace snapshot. No
-regression was observed in those three workloads. Full commands, source
-fingerprints, variation, counters, and measurement limits are retained in the
-[benchmark summary](../../benchmarks/results/rolling_summary.json).
+Current measurements, full commands, source fingerprints, variation, and memory
+counters are retained in the [rolling benchmark summary](../../benchmarks/results/rolling_summary.json).
+GC heap counters exclude native Future control blocks and allocator bookkeeping;
+they do not measure total process memory.
 
 ## Implementation References
 

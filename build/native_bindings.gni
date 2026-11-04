@@ -1,0 +1,29 @@
+import("//build/config/args.gni")
+
+# 配置拥有 TU、编译数据库和输出目录；显式列出产物，让 GN
+# 与绑定命令共享输出契约。
+template("vela_native_bindings") {
+  action(target_name) {
+    forward_variables_from(invoker, [ "testonly" ])
+    script = "//build/scripts/native_bindings.py"
+    deps = [ "//compiler/bindgen:vela_bindgen" ]
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+    inputs = [ invoker.config ]
+    outputs = invoker.outputs
+    depfile = invoker.depfile
+    generator = "$root_out_dir/vela_bindgen"
+    if (host_os == "win") {
+      generator += ".exe"
+    }
+    args = [
+      "--config",
+      rebase_path(invoker.config, root_build_dir),
+      "--generator",
+      rebase_path(generator, root_build_dir),
+      "--resource-dir",
+      "$vela_clang_root/lib/clang/21",
+    ]
+  }
+}

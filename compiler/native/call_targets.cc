@@ -89,10 +89,11 @@ bool CanCallDirectly(const ir::Instruction& instruction,
                      const ir::Function& caller,
                      const ir::Function& callee,
                      CallableMode mode) {
-  if (mode != CallableMode::Plain && mode != CallableMode::Closure) {
+  const bool bound_native = mode == CallableMode::BoundMethod && !callee.native_symbol.empty();
+  if (mode != CallableMode::Plain && mode != CallableMode::Closure && !bound_native) {
     return false;
   }
-  const auto hidden = mode == CallableMode::Closure ? 1U : 0U;
+  const auto hidden = mode == CallableMode::Closure || bound_native ? 1U : 0U;
   if (callee.parameter_count != instruction.index + hidden) {
     return false;
   }

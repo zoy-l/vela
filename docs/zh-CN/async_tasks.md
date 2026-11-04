@@ -120,30 +120,15 @@ CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没
 
 async 语义贯通 AST、类型检查、Typed IR、优化、原生代码生成、调试器、宿主 API 和 CLI。await 可挂起且可抛错，是可观察操作；优化不能删除、跨越或错误重排。直接调用、闭包调用和接口分派都提供一致的 Future 结果。
 
+当 await 直接消费内建 `Future.value(value)`，且载荷静态类型为 `int`、`double`、`bool` 或 `null` 时，lowering 只生成一次载荷求值和原有 await，省去无法观察身份的临时 GC Future 包装。可空的数值或布尔载荷同样适用。保存或传递 Future、等待已有 Future、dynamic 载荷以及失败工厂不采用这一融合。微任务边界、FIFO、异常处理、GC 保根与 JIT 恢复契约保持一致。
+
 必需回归覆盖：首个 await 前的同步副作用、无 await 的完成、已完成 Future 的异步续延、FIFO 通知、多 waiter、Future 采用、Future 组合的成功与失败、timeout、Completer、跨 await 的 catch/finally、所有调用形式、异步 main、未处理错误、挂起期间 GC、宿主线程完成、timer 顺序和 idle/deadlock 边界。
 
 Release 基准分别测量无 await 的 async 调用、已完成 Future 的 await、挂起/恢复、并发 Future 数量、挂起状态的 GC 压力和大量 timer。报告同步原生回归、每个挂起执行保留的内存和首次异步分配成本。
 
-2026-10-26，在 Ryzen 9 7900X 上使用固定 Clang 工具链构建的 Windows x64
-Release 版本通过了全部 14 个异步基准，每项重复七次。墙钟时间中位数如下：
-
-| 场景 | 时间（µs） |
-| --- | ---: |
-| 不含 await 的异步调用 | 0.351 |
-| await 已完成的 Future | 1.238 |
-| 待执行微任务与续延 | 1.964 |
-| 新 Isolate 中的首次异步调用 | 1.695 |
-
-首次调用不计编译和销毁，包含计时暂停与恢复的开销。规模为 1,000 时，并发任务耗时
-2.186 ms，挂起期间显式执行 GC 的任务耗时 8.797 ms，零延迟 timer 耗时 0.810 ms。
-所有稳态场景在最终回收后均无挂起帧，也未额外保留 GC 堆值。
-
-非零的挂起状态测量值为每帧 193 至 210 字节。不含 await 的首次调用在驱动事件循环前
-分配了 64 字节的 GC 计费内存；这些计数不包含原生 Future 控制块和分配器元数据，
-不能视作进程总内存。同步场景 `integer_loop`、`function_calls` 和 `field_access`
-相对原始工作区快照的墙钟中位数比值分别为 0.942、0.776 和 0.833，这三个场景未观察到
-性能回退。完整命令、源码指纹、波动、内存计数与测量边界保存在
-[基准摘要](../../benchmarks/results/rolling_summary.json)。
+当前测量值、完整命令、源码指纹、波动与内存计数统一保存在
+[滚动基准摘要](../../benchmarks/results/rolling_summary.json)。GC 堆计数不包含原生 Future
+控制块或分配器元数据，不能视作进程总内存。
 
 ## 实现参考
 

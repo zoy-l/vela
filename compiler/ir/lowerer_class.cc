@@ -1,3 +1,4 @@
+#include "base/native_binding.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/lowerer.h"
 
@@ -23,6 +24,43 @@ namespace {
 constexpr auto kConstructorMaskBits = std::numeric_limits<std::uint64_t>::digits;
 
 }  // namespace
+
+std::string Lowerer::BuildNativeClassContract(const frontend::Class& source_class,
+                                              const frontend::ClassDescriptor& class_info) {
+  const auto contract_type = [this](const frontend::TypeDescriptor& type) {
+    const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
+    return NativeContractType{
+        .key = type.kind == frontend::TypeDescriptor::Kind::Class
+                   ? model_.classes.at(name).declaration->native_key
+                   : std::string(name),
+        .nullable = type.nullable,
+    };
+  };
+  std::vector<NativeContractMember> members;
+  const auto append = [&](const frontend::Function& source,
+                          const frontend::FunctionDescriptor& descriptor) {
+    auto function = PrepareFunction(source, descriptor, &source_class, nullptr);
+    NativeContractMember member{
+        .key = source.native_symbol,
+        .parameters = {},
+        .result = contract_type(function.return_type),
+    };
+    for (const auto& parameter : function.signature->parameters) {
+      member.parameters.push_back({
+          .name = parameter.name,
+          .type = contract_type(program_.runtime_types.at(parameter.type)),
+      });
+    }
+    members.push_back(std::move(member));
+  };
+  if (source_class.constructor != nullptr) {
+    append(*source_class.constructor, class_info.constructor);
+  }
+  for (const auto& method : source_class.methods) {
+    append(method, class_info.methods.at(method.name));
+  }
+  return NativeClassContract(std::move(members)).Hex();
+}
 
 void Lowerer::LowerFieldDefaultInitializers(const frontend::Class& owner) {
   const auto& info = model_.classes.at(owner.name);
@@ -202,6 +240,18 @@ void Lowerer::LowerInitializer(std::string name,
 Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& expression,
                                                  const frontend::TypeDescriptor& expected) {
   const auto& info = model_.classes.at(expected.name);
+  if (!info.declaration->native_key.empty()) {
+    const auto name = std::string(info.type.name) + ".$constructor";
+    const auto existing = function_ids_.find(name);
+    std::uint32_t target = 0;
+    if (existing == function_ids_.end()) {
+      target = AddFunctionId(name);
+      pending_constructors_.push_back(info.declaration);
+    } else {
+      target = existing->second;
+    }
+    return LowerInvocation(expression, info.constructor, target, nullptr);
+  }
   std::vector<LoweredValue> evaluated;
   std::optional<Construction> construction;
   if (native_mode_ == NativeProgramMode::Reloadable) {

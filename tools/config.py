@@ -166,6 +166,7 @@ def compiler_build_identity() -> str:
 
 
 def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
+    from tools.clang_sdk import link_configuration as clang_link_configuration
     from tools.llvm import link_configuration
 
     tools = toolchain_tools()
@@ -190,6 +191,7 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
         "vela_python": Path(sys.executable).resolve().as_posix(),
     }
     args.update(link_configuration())
+    args.update(clang_link_configuration())
     if platform.system() == "Darwin":
         args["vela_sysroot"] = tools["sysroot"].as_posix()
         args["vela_linker_version"] = xcode_linker_version(tools["linker"])
@@ -203,6 +205,7 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
         f"--args={encoded_args}",
         "--root-target=//:default",
         "--check=system",
+        "--export-compile-commands",
     ]
     subprocess.run(command, cwd=ROOT, check=True)
     return output

@@ -69,7 +69,7 @@ class NominalType final {
   InstanceStorage* instances_ = nullptr;
 };
 
-enum class ClassStorage : std::uint8_t { Inline, Reloadable };
+enum class ClassStorage : std::uint8_t { Inline, Reloadable, Host };
 
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
@@ -96,6 +96,7 @@ class ClassLayout final {
     return callable_ ? &*callable_ : nullptr;
   }
   [[nodiscard]] const NominalType& nominal_type() const noexcept { return *nominal_; }
+  [[nodiscard]] NominalType& nominal_type() noexcept { return *nominal_; }
   [[nodiscard]] ClassStorage storage() const noexcept { return storage_; }
   [[nodiscard]] std::optional<std::uint32_t> FieldIndex(DeclarationId field) const noexcept;
   [[nodiscard]] std::span<const DeclarationId> field_declarations() const noexcept {
@@ -142,6 +143,7 @@ class ClassLayout final {
 
 enum class ObjectKind : std::uint8_t {
   Instance,
+  Host,
   Array,
   String,
   MutableString,
@@ -165,7 +167,7 @@ struct ArrayLayout;
 [[nodiscard]] constexpr bool IsLeafObject(ObjectKind kind) noexcept {
   return kind == ObjectKind::String || kind == ObjectKind::MutableString ||
          kind == ObjectKind::ByteArray || kind == ObjectKind::Timer ||
-         kind == ObjectKind::CancellationToken;
+         kind == ObjectKind::CancellationToken || kind == ObjectKind::Host;
 }
 
 [[nodiscard]] constexpr bool HasFuturePayload(ObjectKind kind) noexcept {
@@ -274,6 +276,7 @@ struct HeapObject final {
   friend class StringObject;
   friend struct NativeMemoryLayout;
   friend class InstanceMigration;
+  friend void* HostObjectPointer(const HeapObject& object) noexcept;
   friend std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept;
   friend std::span<const std::byte> ObjectFieldStorage(const HeapObject& object) noexcept;
 
@@ -318,6 +321,11 @@ struct HeapObject final {
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));
+
+// 调用者已验证宿主种类并保根包装；借用期间只需固定位置的一次指针读取。
+[[nodiscard]] inline void* HostObjectPointer(const HeapObject& object) noexcept {
+  return object.native_payload;
+}
 
 // 固定布局字段紧接对象头；可重载实例借用独立字段块，地址不得跨安全点保存。
 static_assert(sizeof(HeapObject) % alignof(Value) == 0);

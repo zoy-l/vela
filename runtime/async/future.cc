@@ -408,7 +408,7 @@ std::expected<void, FutureCompletionError> Future::Settle(FutureResult result) {
   return RequestCompletion(std::move(result));
 }
 
-std::expected<void, FutureCompletionError> Future::RequestCompletion(FutureResult result) {
+std::expected<void, FutureCompletionError> Future::RequestCompletion(FutureResult&& result) {
   if (state_->completion_requested.exchange(true, std::memory_order_acq_rel)) {
     return std::unexpected(FutureCompletionError::AlreadyCompleted);
   }

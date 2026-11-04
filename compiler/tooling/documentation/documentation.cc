@@ -127,7 +127,14 @@ void Documentation::Method(const frontend::Function& method) {
 
 void Documentation::ClassDeclaration(const frontend::Class& declaration) {
   const auto* constructor = declaration.constructor.get();
+  const auto& native_key = declaration.native_key;
+  if (!native_key.empty()) {
+    output_ << "external ";
+  }
   output_ << "class " << declaration.name;
+  if (!native_key.empty()) {
+    output_ << " = '" << native_key << '\'';
+  }
   TypeParameters(output_, declaration.type_parameters);
   if (!declaration.interfaces.empty()) {
     output_ << " implements ";
@@ -154,7 +161,7 @@ void Documentation::ClassDeclaration(const frontend::Class& declaration) {
     if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
       Parameters(output_, constructor->parameters);
     }
-    output_ << " { … }\n";
+    output_ << (native_key.empty() ? " { … }\n" : ";\n");
   }
   output_ << "}\n```\n\n";
 }
@@ -223,6 +230,9 @@ void Documentation::Initializer(const frontend::Expression& expression) {
 }
 
 void Documentation::Constructor(const frontend::Class& declaration) {
+  if (declaration.constructor_kind == frontend::ConstructorKind::Unavailable) {
+    return;
+  }
   if (declaration.constructor &&
       declaration.constructor->visibility == frontend::Visibility::Private) {
     return;

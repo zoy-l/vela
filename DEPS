@@ -119,4 +119,8 @@ hooks = [{
   "name": "llvm_sdk",
   "pattern": ".",
   "action": ["python3", "-m", "tools.llvm", "sync"],
+}, {
+  "name": "clang_sdk",
+  "pattern": ".",
+  "action": ["python3", "-m", "tools.clang_sdk"],
 }]

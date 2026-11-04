@@ -611,6 +611,24 @@ TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginal
   EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
+TEST_P(JitDebuggerTest, FusedScalarAwaitKeepsSavedReferencesAndItsVersionAfterReload) {
+  Initialize(native::NativeDebugging::Instructions);
+  Load(
+      "func read(): int { return 1; } "
+      "export async func task(): Future<int> { const saved = ['4', '0'].join(''); "
+      "await Future.value(0); await Future.value(0); return int.parse(saved) + read(); }");
+  const auto started = session_->Invoke("main.vela", "task");
+  ASSERT_TRUE(started);
+  const runtime::RootedValue root(session_->isolate(), *started);
+  Load("func read(): int { return 2; } export async func task(): Future<int> { return 100; }");
+  session_->isolate().heap().Collect();
+  ASSERT_TRUE(test::CompletesWithInteger(session_->isolate(), root.value(), 42));
+  EXPECT_EQ(session_->isolate().scheduler().suspended_frame_count(), 0U);
+  const auto latest = session_->Invoke("main.vela", "task");
+  ASSERT_TRUE(latest);
+  ASSERT_TRUE(test::CompletesWithInteger(session_->isolate(), *latest, 100));
+}
+
 TEST_P(JitDebuggerTest, LargeFramesRestoreFromStorageReservedBeforePublication) {
   constexpr std::int64_t kLocals = 128;
   std::string source =

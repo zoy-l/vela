@@ -277,6 +277,7 @@ class FunctionEmitter final {
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
   llvm::Value* result_ = nullptr;
+  llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
   llvm::Value* root_slots_ = nullptr;
   llvm::Value* frame_storage_ = nullptr;
@@ -303,6 +304,7 @@ class FunctionEmitter final {
   llvm::StructType* frame_type_ = nullptr;
   std::vector<std::optional<unsigned>> frame_locals_;
   unsigned temporary_field_ = 0;
+  std::optional<unsigned> leaf_result_field_;
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;

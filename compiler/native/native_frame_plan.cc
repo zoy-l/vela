@@ -6,11 +6,13 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 #include "base/async_operation.h"
 #include "base/builtin.h"
+#include "base/callable.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
@@ -24,6 +26,23 @@
 #include "runtime/value/value.h"
 namespace vela::compiler::native {
 namespace {
+bool HasLeafCalls(const ir::Function& function,
+                  const ir::Program& program,
+                  std::span<const GeneratedFunction> generated,
+                  std::span<const std::optional<CallableTarget>> direct_calls) {
+  if (program.native_mode != NativeProgramMode::Closed) {
+    return false;
+  }
+  for (const auto& instruction : function.instructions) {
+    if (instruction.opcode == Opcode::Call && generated[instruction.index].leaf != nullptr) {
+      return true;
+    }
+  }
+  return std::ranges::any_of(direct_calls, [&](const auto& target) {
+    return target && generated[target->function].leaf != nullptr;
+  });
+}
+
 std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::CallIndirect:
@@ -99,13 +118,19 @@ std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& s
   return scratch_count;
 }
 
-std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& module,
-                                                              const ir::Program& program,
-                                                              const EscapePlan& escape,
-                                                              const NativeRootPlan& roots,
-                                                              NativeFrameRecovery recovery,
-                                                              NativeEntryKind kind) {
+std::expected<NativeFrameLayout, std::string> PlanNativeFrame(
+    llvm::Module& module,
+    const ir::Program& program,
+    const EscapePlan& escape,
+    const NativeRootPlan& roots,
+    NativeFrameRecovery recovery,
+    NativeEntryKind kind,
+    std::span<const GeneratedFunction> generated,
+    std::span<const std::optional<CallableTarget>> direct_calls) {
   const auto& function = escape.function.get();
+  const auto has_checkpoints = !escape.checkpoints.empty();
+  const auto reference_count = has_checkpoints ? escape.reference_count : 0;
+  const auto virtual_state_bytes = has_checkpoints ? sizeof(runtime::NativeVirtualState) : 0;
   auto& context = module.getContext();
   const auto scratch_count = PlanTemporaryCount(function, program, roots);
   if (!scratch_count) {
@@ -121,7 +146,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
         addressed.at(reg) = 1;
       }
     }
-    if (!escape.checkpoints.empty() && allocation.can_scalar_replace) {
+    if (has_checkpoints && allocation.can_scalar_replace) {
       addressed.at(allocation.reference) = 1;
     }
   }
@@ -152,11 +177,8 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
         llvm::ArrayType::get(llvm::Type::getInt8Ty(context), sizeof(runtime::NativeCheckpoint)));
     fields.push_back(llvm::ArrayType::get(NativeRecordType(context), function.register_count));
     fields.push_back(recovery_storage);
-    fields.push_back(llvm::ArrayType::get(llvm::PointerType::getUnqual(context),
-                                          escape.checkpoints.empty() ? 0 : escape.reference_count));
-    fields.push_back(
-        llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
-                             escape.checkpoints.empty() ? 0 : sizeof(runtime::NativeVirtualState)));
+    fields.push_back(llvm::ArrayType::get(llvm::PointerType::getUnqual(context), reference_count));
+    fields.push_back(llvm::ArrayType::get(llvm::Type::getInt8Ty(context), virtual_state_bytes));
   }
   if (kind == NativeEntryKind::RecoverInitial || kind == NativeEntryKind::RecoverResume) {
     auto* type = llvm::StructType::get(context, recovery_fields);
@@ -165,6 +187,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
         .bytes =
             module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
         .local_fields = {},
+        .leaf_result_field = std::nullopt,
     };
   }
   for (const auto& site : escape.allocations) {
@@ -172,6 +195,11 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
       fields.push_back(
           llvm::ArrayType::get(llvm::PointerType::getUnqual(context), site.fields.size()));
     }
+  }
+  std::optional<unsigned> leaf_result_field;
+  if (HasLeafCalls(function, program, generated, direct_calls)) {
+    leaf_result_field = static_cast<unsigned>(fields.size());
+    fields.push_back(NativeRecordType(context));
   }
   if (roots.debug_values) {
     fields.push_back(debug_storage);
@@ -183,6 +211,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
           module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
       .local_fields = std::move(local_fields),
       .temporary_field = temporary_field,
+      .leaf_result_field = leaf_result_field,
   };
 }
 

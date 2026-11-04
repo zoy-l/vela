@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -11,6 +12,26 @@ from tools.package import copy_file, load_support_specification
 
 
 class SupportSpecificationTest(unittest.TestCase):
+    def test_packaged_files_are_writable_without_changing_cached_sources(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-support-") as temporary:
+            root = Path(temporary)
+            source = root / "cached-tool"
+            source.write_bytes(b"tool")
+            mode = source.stat().st_mode
+            source.chmod(mode & ~stat.S_IWUSR)
+            try:
+                package = root / "package"
+                copy_file(source, package, "bin/tool", "bindgen", "LLVM", "license")
+                installed = package / "bin/tool"
+                self.assertEqual(installed.read_bytes(), b"tool")
+                self.assertTrue(installed.stat().st_mode & stat.S_IWUSR)
+                self.assertFalse(source.stat().st_mode & stat.S_IWUSR)
+                self.assertEqual(installed.stat().st_mode & stat.S_IXUSR,
+                                 source.stat().st_mode & stat.S_IXUSR)
+                installed.unlink()
+            finally:
+                source.chmod(mode)
+
     def test_requires_target_and_auditable_sdk_and_redistribution_inputs(self) -> None:
         support = {
             "target": "x86_64-unknown-linux-gnu", "minimum_os": "Linux; audited libc baseline",

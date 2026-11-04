@@ -1,3 +1,93 @@
+import("//build/native_bindings.gni")
+
+generated_file("native_class_configuration") {
+  testonly = true
+  outputs = [ "$target_gen_dir/native_class.json" ]
+  output_conversion = "json"
+  contents = {
+    module = "nativeclass"
+    headers = [ rebase_path("native_class_host.h", target_gen_dir) ]
+    translation_unit = rebase_path("native_class_host.cc", target_gen_dir)
+    compilation_database =
+        rebase_path("$root_build_dir/compile_commands.json", target_gen_dir)
+    output = "native_class"
+  }
+}
+
+vela_native_bindings("native_class_generation") {
+  testonly = true
+  config = "$target_gen_dir/native_class.json"
+  outputs = [
+    "$target_gen_dir/native_class/nativeclass.vela",
+    "$target_gen_dir/native_class/nativeclass_bindings.h",
+    "$target_gen_dir/native_class/nativeclass_bindings.cc",
+    "$target_gen_dir/native_class/nativeclass.bindings.json",
+  ]
+  depfile = "$target_gen_dir/native_class/nativeclass.d"
+  deps = [ ":native_class_configuration" ]
+}
+
+source_set("native_class_host") {
+  testonly = true
+  sources = [
+    "$target_gen_dir/native_class/nativeclass_bindings.cc",
+    "native_class_host.cc",
+    "native_class_host.h",
+  ]
+  include_dirs = [ root_gen_dir ]
+  public_deps = [
+    ":native_class_generation",
+    "//include:bindings",
+    "//runtime",
+  ]
+  deps = [ "//third_party:benchmark" ]
+}
+
+native_class_object = "$target_gen_dir/native_class/workload.o"
+native_class_compiler = "$root_out_dir/vela"
+if (target_os == "win") {
+  native_class_object = "$target_gen_dir/native_class/workload.obj"
+  native_class_compiler += ".exe"
+}
+
+action("native_class_inputs") {
+  testonly = true
+  script = "//tools/native_class_benchmarks.py"
+  inputs = [ "//tools/aot_benchmarks.py" ]
+  outputs = [
+    native_class_object,
+    "$native_class_object.h",
+    "$native_class_object.aot.json",
+    "$target_gen_dir/native_class/entries.h",
+    "$target_gen_dir/native_class/workloads.vela",
+    "$target_gen_dir/native_class/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(native_class_compiler, root_build_dir),
+    "--output",
+    rebase_path("$target_gen_dir/native_class", root_build_dir),
+  ]
+  deps = [
+    ":native_class_generation",
+    "//compiler:vela",
+  ]
+}
+
+generated_file("native_class_paths") {
+  testonly = true
+  outputs = [ "$target_gen_dir/native_class/paths.h" ]
+  workload_path = rebase_path("$target_gen_dir/native_class/workloads.vela")
+  contents = [
+    "#pragma once",
+    "#include <string_view>",
+    "namespace vela::benchmarks::native_class {",
+    "inline constexpr std::string_view kWorkloadPath = R\"($workload_path)\";",
+    "}",
+    "",
+  ]
+}
+
 executable("vela_benchmarks") {
   testonly = true
   sources = [
@@ -172,11 +262,13 @@ executable("vela_aot_benchmarks") {
     "generics_benchmark.cc",
     "map_literal_benchmark.cc",
     "map_literal_benchmark.h",
+    "native_class_benchmark.cc",
     "reload_benchmark.cc",
     "reload_scaling_benchmark.cc",
     aot_object,
     dasprofile_object,
     map_literal_object,
+    native_class_object,
   ]
   include_dirs = [ root_gen_dir ]
   benchmark_source = rebase_path("aot_workloads.vela", "")
@@ -190,6 +282,9 @@ executable("vela_aot_benchmarks") {
     ":dasprofile_native_inputs",
     ":jit_benchmark_support",
     ":map_literal_native_inputs",
+    ":native_class_host",
+    ":native_class_inputs",
+    ":native_class_paths",
     "//compiler:aot",
     "//compiler:checkpoint_publication",
     "//compiler:development",

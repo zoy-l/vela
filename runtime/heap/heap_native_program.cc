@@ -24,7 +24,8 @@ NativeProgramState::~NativeProgramState() {
   delete[] global_caches;
 }
 
-NativeProgramState::GlobalState& NativeProgramState::global_state(std::size_t index) const noexcept {
+NativeProgramState::GlobalState& NativeProgramState::global_state(
+    std::size_t index) const noexcept {
   return std::span(global_states, image->global_initializers.size)[index];
 }
 
@@ -102,6 +103,7 @@ void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
   for (auto* object = objects_; object != nullptr; object = object->next) {
     switch (object->kind) {
       case ObjectKind::Instance:
+      case ObjectKind::Host:
         tracer.Mark(object->layout);
         break;
       case ObjectKind::Array:

@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_set.h>
+
 #include "base/regexp.h"
 #include "compiler/frontend/syntax/ast.h"
 
@@ -104,6 +106,7 @@ void TypeChecker::CollectTypes(const Program& program) {
     }
     ClassInfo info;
     info.type = type;
+    info.declaration = &class_declaration;
     classes_.emplace(class_declaration.name, std::move(info));
   }
   for (const auto& alias : program.aliases) {
@@ -116,7 +119,12 @@ void TypeChecker::CollectTypes(const Program& program) {
 
 void TypeChecker::ResolveDeclarations(const Program& program) {
   functions_.reserve(program.functions.size());
+  absl::flat_hash_set<std::string> native_keys;
   for (const Class& class_declaration : program.classes) {
+    const auto& native_key = class_declaration.native_key;
+    if (!native_key.empty() && !native_keys.insert(native_key).second) {
+      AddDiagnostic(class_declaration.location, "duplicate native class key '" + native_key + "'");
+    }
     const auto class_info = classes_.find(class_declaration.name);
     if (class_info == classes_.end()) {
       continue;
@@ -148,6 +156,10 @@ void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInf
     const auto base = ResolveType(*class_declaration.base_class, VoidTypePolicy::Forbidden);
     if (base.kind != Type::Kind::Class || base.nullable) {
       AddDiagnostic(class_declaration.base_class->location, "extends requires a class type");
+    } else if (const auto& base_info = classes_.at(base.name);
+               base_info.declaration != nullptr && !base_info.declaration->native_key.empty()) {
+      AddDiagnostic(class_declaration.base_class->location,
+                    "scripts cannot extend an external class");
     } else {
       info.base_class = base.name;
     }
@@ -296,6 +308,10 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(
     const ClassInfo& class_info,
     const Expression& expression,
     std::span<const std::optional<Type>> checked_arguments) {
+  if (class_info.declaration->constructor_kind == ConstructorKind::Unavailable) {
+    AddDiagnostic(expression.location, "external class has no public constructor");
+    return InvalidType();
+  }
   CheckAccess(class_info.constructor.visibility, class_info.type.name, expression.location);
   for (const CallArgument& argument : expression.arguments) {
     if (class_info.declaration->constructor_kind == ConstructorKind::Generated &&
@@ -519,6 +535,9 @@ void TypeChecker::CheckFieldInitializers(const Class& owner, const ClassInfo& in
 }
 
 void TypeChecker::CheckClassBody(const Class& source, const ClassInfo& info) {
+  if (!source.native_key.empty()) {
+    return;
+  }
   const auto errors = ErrorCount(diagnostics_);
   CheckFieldInitializers(source, info);
   for (const auto& method : source.methods) {

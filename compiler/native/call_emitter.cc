@@ -18,6 +18,7 @@
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_symbols.h"
+#include "runtime/value/object.h"
 namespace vela::compiler::native {
 bool FunctionEmitter::IsEntrySlotRequired(std::size_t callee) const {
   return tier_ == NativeCodeTier::Optimized &&
@@ -68,14 +69,23 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
   const auto& callee = program_.functions.at(selected.function);
   std::vector<llvm::Value*> arguments{body_->getArg(0)};
   const auto closure = selected.mode == CallableMode::Closure;
+  const auto bound = selected.mode == CallableMode::BoundMethod;
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     if (index == 0 && borrowed) {
       arguments.push_back(records_.at(*borrowed));
       continue;
     }
-    const auto reg = closure && index == 0
-                         ? instruction.rhs
-                         : static_cast<ir::RegisterId>(instruction.lhs + index - (closure ? 1 : 0));
+    if (bound && index == 0) {
+      // 目标来自当前函数中单次定义的 callable；第一个字段是已保根的固定 receiver。
+      arguments.push_back(LoadMemory(
+          builder_.getPtrTy(), ByteAddress(Reference(instruction.rhs), sizeof(runtime::HeapObject)),
+          MemoryRegion::FieldPayloads));
+      continue;
+    }
+    const auto reg =
+        closure && index == 0
+            ? instruction.rhs
+            : static_cast<ir::RegisterId>(instruction.lhs + index - ((closure || bound) ? 1 : 0));
     arguments.push_back(
         Convert(builder_, Load(reg), source_.value_types.at(reg), callee.value_types.at(index)));
   }
@@ -119,8 +129,10 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
   const auto& target = generated_.subspan(selected.function).front();
+  auto* result = target.leaf == nullptr ? result_ : leaf_result_;
+  arguments.back() = result;
+  auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
   llvm::Value* status = nullptr;
   if (IsEntrySlotRequired(selected.function)) {
     // 槽属于本次发布的不可变映像；复用的机器码从执行实例读取新目标。
@@ -155,7 +167,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
         failed, llvm::MDBuilder(context).createLikelyBranchWeights());
     builder_.SetInsertPoint(failed);
     PrepareObservableCall();
-    auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result_);
+    auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result);
     auto failure = module_.getOrInsertFunction(
         runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
@@ -176,7 +188,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     CheckStatus(called);
     if (callee.return_type.kind != Kind::Void) {
       Store(instruction.dst,
-            builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
+            builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
             callee.return_type);
     }
     PollAfterRuntimeCall();
@@ -199,7 +211,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     Store(instruction.dst, builder_.getFalse(), callee.return_type);
   } else {
     Store(instruction.dst,
-          builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
+          builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
           callee.return_type);
   }
   if (import_done != nullptr) {

@@ -9,35 +9,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.config import BUILD_VARIANTS, ROOT, configure, toolchain_tools
+from tools.config import BUILD_VARIANTS, ROOT, configure
 
 
 def compilation_database(output: Path) -> list[dict[str, object]]:
-    tools = toolchain_tools()
-    result = subprocess.run(
-        [
-            str(tools["ninja"]),
-            "-C",
-            str(output),
-            "-t",
-            "compdb",
-            "cc",
-            "cxx",
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
     try:
-        database = json.loads(result.stdout)
+        database = json.loads((output / "compile_commands.json").read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
-        raise RuntimeError("Ninja produced an invalid compilation database") from error
+        raise RuntimeError("GN produced an invalid compilation database") from error
     if not isinstance(database, list) or any(
         not isinstance(entry, dict) for entry in database
     ):
-        raise RuntimeError("Ninja produced an invalid compilation database root")
+        raise RuntimeError("GN produced an invalid compilation database root")
     return database
 
 
@@ -54,7 +37,6 @@ def generate(variant: str) -> None:
     database = compilation_database(output)
     output_database = output / "compile_commands.json"
     root_database = ROOT / "compile_commands.json"
-    write_database(output_database, database)
     write_database(root_database, database)
     print(f"clangd compilation database: {root_database.relative_to(ROOT)}")
     print(f"entries: {len(database)} ({output_database.relative_to(ROOT)})")

@@ -55,6 +55,7 @@
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/integer_bit_optimizer.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_image_data.h"
 #include "compiler/native/native_image_emitter.h"
@@ -240,7 +241,14 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager calls;
   llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder passes(&machine);
+  llvm::PipelineTuningOptions tuning;
+  // LLVM 库接口默认关闭 SLP；独立字段计算可安全并行，浮点仍沿用严格 IEEE 语义。
+  tuning.SLPVectorization = true;
+  llvm::PassBuilder passes(&machine, tuning);
+  passes.registerPeepholeEPCallback(
+      [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        AddIntegerBitPasses(pipeline);
+      });
   // 宿主调用约定随实例固定；允许 O2 克隆循环，将 direct/checked 分派移到循环外。
   // 使用 LLVM 自带的体积阈值控制复制，不改变循环内错误和逻辑栈帧语义。
   passes.registerLateLoopOptimizationsEPCallback(
@@ -461,8 +469,9 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         AddResumeEntry(module, function, module_name + "_resume_" + std::to_string(index));
     GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
     auto current = baseline;
-    if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
-      // 直接调用、虚拟对象和字段布局假设失败后，从当前规范指令进入基线恢复。
+    if (program.native_mode == NativeProgramMode::Reloadable && tier == NativeCodeTier::Optimized &&
+        function.native_symbol.empty()) {
+      // 仅可重载映像存在版本失效；封闭映像的调用目标和字段布局在实例期内固定。
       if (HasVersionAssumptions(function, program)) {
         current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
       }

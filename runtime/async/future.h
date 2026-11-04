@@ -158,7 +158,7 @@ class Future final {
   void Unroot() noexcept;
   void ReportUnhandledError() const;
   explicit Future(std::shared_ptr<SharedState> state, Rooting rooting);
-  std::expected<void, FutureCompletionError> RequestCompletion(FutureResult result);
+  std::expected<void, FutureCompletionError> RequestCompletion(FutureResult&& result);
   void Publish(FutureResult result);
   void NotifyObserver(std::function<void(const FutureResult&)> callback,
                       std::shared_ptr<std::vector<::vela::runtime::Value>> references,

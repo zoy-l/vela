@@ -52,6 +52,26 @@ TEST(SourceSessionTest, PreparingAndDroppingCandidateLeavesTheCommittedSnapshotU
   EXPECT_TRUE(baseline->identities.records().empty());
 }
 
+TEST(SourceSessionTest, ExternalClassesWithoutPublicConstructorsDoNotGainGeneratedOnes) {
+  SourceSession session("main.vela");
+  const auto candidate = session.Prepare({
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "external class Counter = 'app.Counter' {} "
+                          "export func identity(value: Counter): Counter { return value; }",
+              },
+          },
+      .added_roots = {},
+  });
+  ASSERT_TRUE(candidate);
+  const auto& program = candidate->snapshot().program;
+  EXPECT_NE(Class(program, "Counter"), nullptr);
+  EXPECT_NE(Function(program, "identity"), nullptr);
+  EXPECT_EQ(Function(program, "Counter.$constructor"), nullptr);
+}
+
 TEST(SourceSessionTest, FailedCandidateDoesNotConsumeIdentitiesOrReplaceAcceptedSources) {
   SourceSession session("main.vela");
   const auto first = session.Prepare({

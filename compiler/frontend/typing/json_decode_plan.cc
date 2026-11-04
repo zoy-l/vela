@@ -81,6 +81,10 @@ Diagnostics BuildJSONDecodePlans(SemanticModel& model) {
       }
       case Kind::Class: {
         const auto& owner = model.classes.at(type.name);
+        if (!owner.declaration->native_key.empty()) {
+          supported = false;
+          break;
+        }
         supported =
             owner.constructor.visibility == Visibility::Public && !IsStandardName(type.name);
         std::vector<JSONDecodeParameter> parameters;

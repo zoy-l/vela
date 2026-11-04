@@ -23,6 +23,7 @@
 #include <llvm/IR/Module.h>
 
 #include "base/execution_status.h"
+#include "base/fingerprint.h"
 #include "compiler/aot/native_compiler.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
@@ -108,11 +109,15 @@ std::string COutputType(Shape shape) {
   return shape == Shape::Record ? "VelaAotValue*" : std::string(CParameterType(shape)) + '*';
 }
 
-std::string CppType(const SourceType& type) {
+std::string HostTag(std::string_view key) {
+  return "NativeClass_" + ContentFingerprint(key).Hex();
+}
+
+std::string CppType(const SourceType& type, const ir::Program& program) {
   if (IsPublicOptional(type)) {
     auto required = type;
     required.nullable = false;
-    return "std::optional<" + CppType(required) + ">";
+    return "std::optional<" + CppType(required, program) + ">";
   }
   switch (PublicShape(type)) {
     case Shape::Integer:
@@ -124,6 +129,13 @@ std::string CppType(const SourceType& type) {
     case Shape::Record:
       return "vela::runtime::aot::Value";
     case Shape::Handle:
+      if (type.kind == Kind::Class) {
+        const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
+        const auto host = std::ranges::find(program.classes, name, &ir::Class::name);
+        if (host != program.classes.end() && host->kind == ir::Class::Kind::Host) {
+          return "vela::runtime::aot::Handle<" + HostTag(host->native_key) + ">";
+        }
+      }
       return type.kind == Kind::String ? "vela::runtime::aot::String"
                                        : "vela::runtime::aot::Handle<vela::runtime::aot::AnyTag>";
     case Shape::Void:
@@ -284,9 +296,10 @@ void CDeclaration(std::ostream& output,
 }
 
 void CppDeclaration(std::ostream& output,
+                    const ir::Program& program,
                     const ir::Function& source,
                     const NativeExport& description) {
-  const auto result_type = CppType(source.return_type);
+  const auto result_type = CppType(source.return_type, program);
   output << "inline vela::runtime::aot::Result<" << result_type << "> " << CppName(description.name)
          << "(VelaAotInstance* instance";
   std::vector<std::string> arguments;
@@ -296,8 +309,8 @@ void CppDeclaration(std::ostream& output,
     const auto argument = "argument" + std::to_string(index);
     const auto borrowed =
         shape == Shape::Handle || (shape == Shape::Record && !IsPublicOptional(type));
-    output << ", " << (borrowed ? "const " : "") << CppType(type) << (borrowed ? "& " : " ")
-           << argument;
+    output << ", " << (borrowed ? "const " : "") << CppType(type, program)
+           << (borrowed ? "& " : " ") << argument;
     arguments.push_back(argument);
   }
   output << ") {\n";
@@ -348,7 +361,7 @@ void CppDeclaration(std::ostream& output,
       if (IsPublicOptional(source.return_type)) {
         auto required = source.return_type;
         required.nullable = false;
-        output << "  return vela::runtime::aot::DecodeNullable<" << CppType(required)
+        output << "  return vela::runtime::aot::DecodeNullable<" << CppType(required, program)
                << ">(result);\n";
       } else {
         output << "  return vela::runtime::aot::Value::Adopt(result);\n";
@@ -423,8 +436,13 @@ std::expected<NativeExportInterface, std::string> EmitNativeExports(
          << "  if (status != VELA_AOT_RETURNED) { return vela::runtime::aot::Failure(status, "
             "error); }\n"
          << "  return vela::runtime::aot::Instance(instance);\n}\n";
+  for (const auto& type : program.classes) {
+    if (type.kind == ir::Class::Kind::Host) {
+      header << "struct " << HostTag(type.native_key) << " final {};\n";
+    }
+  }
   for (const auto& description : exports) {
-    CppDeclaration(header, program.functions.at(description.function), description);
+    CppDeclaration(header, program, program.functions.at(description.function), description);
   }
   header << "}\n#endif\n";
   return NativeExportInterface{

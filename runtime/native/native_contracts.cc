@@ -18,6 +18,17 @@
 namespace vela::runtime {
 namespace {
 
+bool IsSameOptionalType(const NativeImage& left_image,
+                        std::uint32_t left,
+                        const NativeImage& right_image,
+                        std::uint32_t right) {
+  if (left == kNoNativeIndex || right == kNoNativeIndex) {
+    return left == right;
+  }
+  return IsSameNativeType(left_image, left_image.types.values()[left], right_image,
+                          right_image.types.values()[right]);
+}
+
 bool IsSameSignature(const NativeImage& left_image,
                      const NativeSignatureDescription& left,
                      const NativeImage& right_image,
@@ -146,6 +157,13 @@ bool IsSameNativeType(const NativeImage& left_image,
     case Kind::Enum: {
       const auto& first = left_image.classes.values().subspan(left.index).front();
       const auto& second = right_image.classes.values().subspan(right.index).front();
+      if (static_cast<layout::Class::Kind>(first.kind) == layout::Class::Kind::Host ||
+          static_cast<layout::Class::Kind>(second.kind) == layout::Class::Kind::Host) {
+        return first.kind == second.kind && first.native_key.text() == second.native_key.text();
+      }
+      if (first.native_key.text() != second.native_key.text()) {
+        return false;
+      }
       if (first.declaration != DeclarationId{} || second.declaration != DeclarationId{}) {
         return first.declaration == second.declaration;
       }
@@ -205,11 +223,12 @@ std::expected<void, std::string> CheckNativeCallContract(
   const auto candidate_types = candidate_image.types.values();
   const auto first_result = previous.result_type;
   const auto second_result = candidate.result_type;
-  if ((first_result == kNoNativeIndex) != (second_result == kNoNativeIndex) ||
-      (first_result != kNoNativeIndex &&
-       !IsSameNativeType(previous_image, previous_types.subspan(first_result).front(),
-                         candidate_image, candidate_types.subspan(second_result).front()))) {
+  if (!IsSameOptionalType(previous_image, first_result, candidate_image, second_result)) {
     return std::unexpected("function return type changed; Reload is required");
+  }
+  if (!IsSameOptionalType(previous_image, previous.receiver_type, candidate_image,
+                          candidate.receiver_type)) {
+    return std::unexpected("function receiver type changed; Reload is required");
   }
   const auto first_parameters = previous.parameters.values();
   const auto second_parameters = candidate.parameters.values();
@@ -254,6 +273,13 @@ std::expected<void, NativeContractViolation> CheckNativeNominalContracts(
       continue;
     }
     const auto& replacement = *found->second;
+    if (type.native_key.text() != replacement.native_key.text() ||
+        type.native_contract.text() != replacement.native_contract.text()) {
+      return std::unexpected(NativeContractViolation{
+          .declaration = type.declaration,
+          .message = "native class binding changed; a new host session is required",
+      });
+    }
     if (type.kind != replacement.kind || type.base_class != replacement.base_class ||
         InterfaceSet(previous, type) != InterfaceSet(candidate, replacement)) {
       return std::unexpected(NativeContractViolation{

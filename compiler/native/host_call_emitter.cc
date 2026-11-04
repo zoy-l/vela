@@ -1,6 +1,5 @@
 #include "compiler/native/function_emitter.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -12,6 +11,7 @@
 
 #include "base/callable.h"
 #include "base/execution_status.h"
+#include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
@@ -107,9 +107,27 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
       callee.return_type.nullable) {
     return false;
   }
-  // 标量实参不需要独立根区间；宿主仍可能重入或触发 GC，调用者的根必须保持登记。
-  return std::ranges::all_of(std::span(callee.value_types).first(callee.parameter_count),
-                             [](const auto& type) { return IsScalar(type) && !type.nullable; });
+  // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接入口的
+  // host codec 从包装对象固定位置借用指针，原生调用期间仍保留调用者的根登记。
+  const auto& signature = *callee.signature;
+  const auto receiver_count = static_cast<std::size_t>(signature.receiver.has_value());
+  for (std::size_t index = 0; index < callee.parameter_count; ++index) {
+    const auto& type = callee.value_types[index];
+    if (IsScalar(type) && !type.nullable) {
+      continue;
+    }
+    if (type.kind != Kind::Class) {
+      return false;
+    }
+    const auto type_index = receiver_count != 0 && index == 0
+                                ? *signature.receiver
+                                : signature.parameters[index - receiver_count].type;
+    const auto& type_layout = program_.layouts.types[type_index];
+    if (program_.layouts.classes[type_layout.index].kind != layout::Class::Kind::Host) {
+      return false;
+    }
+  }
+  return true;
 }
 
 llvm::BasicBlock* FunctionEmitter::EmitInlineImportCall(const ir::Instruction& instruction,

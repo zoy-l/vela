@@ -89,7 +89,8 @@ std::expected<void, std::string> CheckStandaloneImports(const ir::Program& progr
     if (!signature) {
       std::unreachable();
     }
-    if (!binding->IsSignatureCompatible(*signature, program.layouts.types)) {
+    if (!binding->IsSignatureCompatible(*signature, program.layouts.types,
+                                        program.layouts.classes)) {
       return std::unexpected("external declaration does not match standard native signature for '" +
                              function.native_symbol + "'");
     }

@@ -152,6 +152,8 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
   }
   return {
       .name = Text(type.name),
+      .native_key = Text(type.native_key),
+      .native_contract = Text(type.native_contract),
       .reference_fields = Copy(type.reference_fields),
       .interfaces = Copy(type.interfaces),
       .dispatch_targets = Copy(type.dispatch_targets),
@@ -304,6 +306,7 @@ runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Functi
     const auto& signature = *function.signature;
     result.flags |= runtime::kNativeTypedFunction;
     result.hidden_parameters = signature.hidden_parameters;
+    result.receiver_type = signature.receiver.value_or(runtime::kNoNativeIndex);
     result.result_type = signature.result.value_or(runtime::kNoNativeIndex);
     std::vector<runtime::NativeCallParameter> parameters;
     parameters.reserve(signature.parameters.size());

@@ -15,6 +15,7 @@ import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 from tools.config import BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform
 
@@ -55,7 +56,8 @@ def selected_member(path: PurePosixPath) -> bool:
     return parts[0] == "share" and "license" in str(path).lower()
 
 
-def extract_sdk(archive: Path, destination: Path) -> None:
+def extract_sdk(archive: Path, destination: Path,
+                selector: Callable[[PurePosixPath], bool] = selected_member) -> None:
     with tarfile.open(archive, mode="r|xz") as package:
         root_name = None
         links = []
@@ -70,7 +72,7 @@ def extract_sdk(archive: Path, destination: Path) -> None:
             if original.parts[0] != root_name:
                 raise RuntimeError("LLVM archive contains multiple roots")
             relative = PurePosixPath(*original.parts[1:])
-            if not selected_member(relative):
+            if not selector(relative):
                 continue
             target = destination.joinpath(*relative.parts)
             if member.isdir():
@@ -183,13 +185,19 @@ def link_configuration() -> dict[str, str | list[str]]:
     libraries, system = select(core)
     jit_libraries, jit_system = select(core + ("orcjit", "orcdebugging", "jitlink",
                                              "orctargetprocess"))
+    tooling_libraries, tooling_system = select((
+        "bitreader", "bitstreamreader", "option", "profiledata", "targetparser",
+        "binaryformat", "mc", "mcparser", "object", "windowsdriver", "frontendhlsl",
+        "frontendopenmp", "core", "demangle", "support"))
     return {"vela_llvm_root": directory.as_posix(),
             "vela_llvm_rtti": query("--has-rtti")[0],
             "vela_llvm_target": query("--host-target")[0],
             "vela_llvm_libraries": libraries,
             "vela_llvm_jit_libraries": jit_libraries,
+            "vela_llvm_tooling_libraries": tooling_libraries,
             "vela_llvm_system_libraries": system,
-            "vela_llvm_jit_system_libraries": jit_system}
+            "vela_llvm_jit_system_libraries": jit_system,
+            "vela_llvm_tooling_system_libraries": tooling_system}
 
 
 def main(arguments: list[str] | None = None) -> int:

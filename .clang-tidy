@@ -19,6 +19,7 @@ HeaderFilterRegex: '.*'
 ExcludeHeaderFilterRegex: '(^|[/\\])third_party[/\\]'
 FormatStyle: file
 CheckOptions:
+  cppcoreguidelines-macro-usage.AllowedRegexp: '^VELA_(DETAIL_ANNOTATE|CLASS|NAME|GETTER|SETTER|IGNORE)$'
   readability-function-cognitive-complexity.IgnoreMacros: true
   readability-trailing-comma.SingleLineCommaPolicy: Ignore
   readability-trailing-comma.MultiLineCommaPolicy: Append

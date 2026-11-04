@@ -1,5 +1,6 @@
 #include "compiler/aot/native_compiler.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
@@ -177,6 +179,104 @@ export func read(values: int[], index: int): int { return values[index]; }
   EXPECT_EQ(text.find("@vela_native_v1_frame_release"), std::string::npos);
   EXPECT_NE(text.find("@vela_native_v2_leaf_failure"), std::string::npos);
   EXPECT_EQ(text.find("source.position"), std::string::npos);
+}
+
+std::vector<const llvm::Value*> EscapedRuntimeResults(const llvm::Function& function) {
+  std::vector<const llvm::Value*> escaped;
+  for (const auto& instruction : llvm::instructions(function)) {
+    const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+    if (call != nullptr && call->isIndirectCall() &&
+        call->getType()->isIntegerTy(std::numeric_limits<std::uint8_t>::digits)) {
+      const auto* output = call->getArgOperand(call->arg_size() - 1);
+      escaped.push_back(llvm::getUnderlyingObject(output));
+    }
+  }
+  return escaped;
+}
+
+TEST(NativeCompilerTest, KeepsInlinedScalarResultsOutOfEscapedRuntimeScratch) {
+  const auto prepared = Prepare(R"(
+external func text(): string;
+func mix(value: int): int { return (value ^ 42) & 65535; }
+export func run(values: int[]): int {
+  const retained = text();
+  let result = 0;
+  for (let index = 0; index < 64; index++) {
+    result ^= mix(values[index]) ^ mix(index);
+  }
+  return result + retained.length;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"run"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << result.error().front().message;
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  std::size_t checked_calls = 0;
+  std::size_t loops_seen = 0;
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    const auto escaped = EscapedRuntimeResults(function);
+    checked_calls += escaped.size();
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      ++loops_seen;
+      for (const auto* block : loop->blocks()) {
+        for (const auto& instruction : *block) {
+          const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+          if (store != nullptr && store->getValueOperand()->getType()->isIntegerTy(
+                                      std::numeric_limits<std::int64_t>::digits + 1)) {
+            const auto* owner = llvm::getUnderlyingObject(store->getPointerOperand());
+            EXPECT_EQ(std::ranges::find(escaped, owner), escaped.end()) << result->llvm_ir;
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(checked_calls, 0U);
+  EXPECT_GT(loops_seen, 0U);
+}
+
+TEST(NativeCompilerTest, UsesWordRotationsForProvenLoopValues) {
+  const auto prepared = Prepare(R"(
+func rotate(value: int, bits: int): int {
+  return ((value >>> bits) | (value << (32 - bits))) & 4294967295;
+}
+export func iterate(seed: int, count: int): int {
+  let value = seed & 4294967295;
+  for (let i = 0; i < count; i++) {
+    value = (rotate(value, 7) + 42) & 4294967295;
+  }
+  return value;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"iterate"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_TRUE(result->llvm_ir.contains("@llvm.fshr.i32") ||
+              result->llvm_ir.contains("@llvm.fshl.i32"))
+      << result->llvm_ir;
+}
+
+TEST(NativeCompilerTest, VectorizesIndependentObjectFieldUpdates) {
+  const auto prepared = Prepare(R"(
+class Particle { x: double; y: double; z: double; vx: double; vy: double; vz: double; }
+export func update(points: Particle[]): void {
+  for (const point in points) {
+    point.x += point.vx;
+    point.y += point.vy;
+    point.z += point.vz;
+  }
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_TRUE(result->llvm_ir.contains("fadd <2 x double>")) << result->llvm_ir;
 }
 
 struct LoopHostCalls {

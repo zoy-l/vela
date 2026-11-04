@@ -116,6 +116,14 @@ void Parser::ParseDeclaration(Program& program) {
   }
   switch (kind) {
     case TokenKind::External:
+      if (current_ + 1 < tokens_.size() && tokens_[current_ + 1].kind == TokenKind::Class) {
+        Advance();
+        Advance();
+        append(ParseClass(ClassKind::Native), program.classes);
+      } else {
+        append(ParseFunction(), program.functions);
+      }
+      break;
     case TokenKind::Async:
       append(ParseFunction(), program.functions);
       break;
@@ -229,7 +237,7 @@ bool Parser::Match(TokenKind kind) {
 
 std::optional<Token> Parser::TakeName() {
   const auto kind = Peek().kind;
-  if (kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set) {
+  if (IsDeclarationName(kind)) {
     return Advance();
   }
   return std::nullopt;

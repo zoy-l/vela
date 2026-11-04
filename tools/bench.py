@@ -11,6 +11,7 @@ import sys
 
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 from tools.escape_benchmark_report import escape_comparison_report
+from tools.native_class_benchmark_report import native_class_comparison_report
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
@@ -22,6 +23,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     comparison = parser.add_mutually_exclusive_group()
     comparison.add_argument("--compare", action="store_true", help="Compare Vela, C++, LuaJIT and LuaJIT interpreter")
     comparison.add_argument("--native-compare", action="store_true", help="Compare JIT native calls with direct and indirect C++ calls")
+    comparison.add_argument("--native-class-compare", action="store_true", help="Compare generated class bindings across JIT, AOT and reloadable modes")
     comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT and C++ workloads")
     comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT and C++")
     comparison.add_argument("--escape-compare", action="store_true", help="Compare heap, scalar replacement and private borrowing with virtual-frame reload")
@@ -29,7 +31,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     options, forwarded = split_forwarded_arguments(arguments)
     parsed = parser.parse_args(options)
     parsed.benchmark_arguments = forwarded
-    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.native_class_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if parsed.report and not comparing:
         parser.error("--report requires a comparison mode")
     if parsed.report and parsed.report.suffix != ".json":
@@ -57,15 +59,17 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     build(parsed.variant, "benchmarks")
-    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare else "vela_benchmarks"
+    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare or parsed.native_class_compare else "vela_benchmarks"
     executable = output_directory(parsed.variant) / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
-    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.native_class_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if comparing:
         filename = "comparison.json"
         filter_pattern = "^(compare/|first/(jit|luajit|luajit_interp)/|compile/(representative|luajit)/)"
         if parsed.native_compare:
             filename, filter_pattern = "native_comparison.json", "^native/"
+        elif parsed.native_class_compare:
+            filename, filter_pattern = "native_class_comparison.json", "^native_class/"
         elif parsed.aot_compare:
             filename, filter_pattern = "aot_comparison.json", "^aot/"
         elif parsed.jit_compare:
@@ -108,6 +112,8 @@ def run(parsed: argparse.Namespace) -> None:
         summarize = comparison_report
         if parsed.native_compare:
             summarize = native_call_report
+        elif parsed.native_class_compare:
+            summarize = native_class_comparison_report
         elif parsed.aot_compare:
             summarize = aot_comparison_report
         elif parsed.jit_compare:

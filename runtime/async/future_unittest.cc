@@ -380,6 +380,44 @@ TEST(FutureTest, ObserversBorrowOneCompletion) {
   EXPECT_EQ(first, late);
 }
 
+TEST(FutureTest, PostedCompletionAndMultipleAdoptionsPreserveErrorDiagnostic) {
+  constexpr std::size_t kMessageSize = 128;
+  FutureScheduler scheduler;
+  Future source(&scheduler);
+  Future first(&scheduler);
+  Future second(&scheduler);
+  first.MarkObserved();
+  second.MarkObserved();
+  const FutureDiagnostic diagnostic{
+      .message = std::string(kMessageSize, 'e'),
+      .stack_trace = {{.function = "source", .source_path = "input.vela", .identity = {}}},
+      .origin = {},
+  };
+  std::optional<FutureCompletionError> completion_error;
+  std::thread host([copy = source, diagnostic, &completion_error]() mutable {
+    if (const auto completion = copy.CompleteError(Value::Integer(kErrorValue), diagnostic);
+        !completion) {
+      completion_error = completion.error();
+    }
+  });
+  host.join();
+  ASSERT_FALSE(completion_error.has_value());
+  ASSERT_TRUE(first.Adopt(source));
+  ASSERT_TRUE(second.Adopt(source));
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  const auto error_identity = source.result().diagnostic.origin.identity;
+  const std::array observed{&source, &first, &second};
+  for (const auto* future : observed) {
+    const auto& result = future->result();
+    EXPECT_EQ(result.state, FutureState::Failed);
+    EXPECT_EQ(result.value.AsInteger(), kErrorValue);
+    EXPECT_EQ(result.diagnostic.message, diagnostic.message);
+    ASSERT_EQ(result.diagnostic.stack_trace.size(), 1U);
+    EXPECT_EQ(result.diagnostic.stack_trace.front().function, "source");
+    EXPECT_EQ(result.diagnostic.origin.identity, error_identity);
+  }
+}
+
 TEST(FutureTest, ObserverReferencesSurviveQueuedAndActiveCollection) {
   Isolate isolate(1);
   auto& heap = isolate.heap();

@@ -17,6 +17,7 @@
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/library/random.h"
+#include "runtime/native/native_class.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
@@ -29,7 +30,15 @@ struct NativeImage;
 class NativeInstance;
 class TestBridge;
 
-enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName, BindingsFrozen };
+enum class NativeRegistrationError : std::uint8_t {
+  InvalidName,
+  DuplicateName,
+  BindingsFrozen,
+  InvalidClass,
+  InvalidMember,
+  UnknownClass,
+  TypeMismatch,
+};
 
 // 会话内固定的宿主实现与签名；复制快照只共享不可变 NativeFunction 包装。
 class NativeBindings final {
@@ -39,6 +48,7 @@ class NativeBindings final {
  private:
   friend class Isolate;
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> functions_;
+  absl::flat_hash_map<std::string, std::shared_ptr<const NativeClass>> classes_;
 };
 
 struct LayoutCounts final {
@@ -100,10 +110,16 @@ class Isolate final {
       NativeFunction function);
   [[nodiscard]] std::shared_ptr<const NativeFunction> FindNative(std::string_view name) const;
   [[nodiscard]] NativeBindings FreezeBindings();
+  [[nodiscard]] std::expected<void, NativeRegistrationError> RegisterNativeModule(
+      std::vector<NativeClass> classes);
+  [[nodiscard]] const NativeClassBinding* FindNativeClass(std::string_view key) const noexcept;
   [[nodiscard]] LayoutCounts layout_counts() const noexcept;
 
  private:
   friend class Heap;
+  [[nodiscard]] ClassLayout* CreateNativeClassLayout();
+  [[nodiscard]] std::expected<void, NativeRegistrationError> ValidateNativeSignature(
+      const NativeFunction& function) const;
   friend class LayoutTransaction;
   friend class NativeInstance;
   [[nodiscard]] LayoutCounts PersistentLayoutCounts() const noexcept;
@@ -124,6 +140,7 @@ class Isolate final {
   absl::flat_hash_map<CollectionLayout, const CollectionLayout*> collection_layout_index_;
   absl::flat_hash_map<TypeSignature, const TypeSignature*> type_signature_index_;
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
+  absl::flat_hash_map<std::string, NativeClassBinding> native_classes_;
   bool bindings_frozen_ = false;
   struct NativeImageCache final {
     LayoutCache layouts;

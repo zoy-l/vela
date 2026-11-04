@@ -20,6 +20,7 @@
 #include "runtime/isolate/external_resources.h"
 #include "runtime/library/date.h"
 #include "runtime/library/standard_library.h"
+#include "runtime/native/native_class.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/object.h"
 
@@ -52,6 +53,9 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunct
   if (natives_.contains(name)) {
     return std::unexpected(NativeRegistrationError::DuplicateName);
   }
+  if (auto result = ValidateNativeSignature(function); !result) {
+    return result;
+  }
   std::string key(name);
   natives_.emplace(std::move(key), std::make_unique<const NativeFunction>(std::move(function)));
   return {};
@@ -60,6 +64,9 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunct
 NativeBindings Isolate::FreezeBindings() {
   NativeBindings result;
   result.functions_ = natives_;
+  for (const auto& [key, binding] : native_classes_) {
+    result.classes_.emplace(key, binding.description);
+  }
   bindings_frozen_ = true;
   return result;
 }
@@ -79,6 +86,12 @@ Isolate::Isolate(std::size_t gc_threshold) noexcept
 Isolate::Isolate(NativeBindings bindings, std::size_t gc_threshold) noexcept
     : Isolate(gc_threshold) {
   natives_ = std::move(bindings.functions_);
+  for (auto& [key, description] : bindings.classes_) {
+    native_classes_.emplace(key, NativeClassBinding{
+                                     .description = std::move(description),
+                                     .layout = CreateNativeClassLayout(),
+                                 });
+  }
   bindings_frozen_ = true;
 }
 
@@ -160,7 +173,7 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
       result->field_indices_.emplace(field, static_cast<std::uint32_t>(index));
     }
   }
-  if (options.storage == ClassStorage::Inline && nominal->fixed_layout_ == nullptr) {
+  if (options.storage != ClassStorage::Reloadable && nominal->fixed_layout_ == nullptr) {
     // 名义身份由本 Isolate 创建；仅在它的第一个固定布局建立时绑定分配描述。
     nominal->fixed_layout_ = result;
   }

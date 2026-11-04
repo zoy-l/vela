@@ -105,7 +105,7 @@ enum class BindingKind : std::uint8_t {
 
 enum class Visibility : std::uint8_t { Public, Private };
 enum class MemberStorage : std::uint8_t { Instance, Static };
-enum class ConstructorKind : std::uint8_t { Generated, Explicit };
+enum class ConstructorKind : std::uint8_t { Generated, Explicit, Unavailable };
 enum class ExportKind : std::uint8_t { Local, Exported };
 
 struct CallArgument final {
@@ -293,6 +293,7 @@ struct Enum final {
 
 struct Class final {
   std::string name;
+  std::string native_key;
   std::vector<Field> fields;
   std::vector<Function> methods;
   // 声明了自身类型参数的方法不进入执行用方法表；调用点的具体应用在检查结束时追加到 methods。

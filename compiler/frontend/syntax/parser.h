@@ -76,12 +76,16 @@ class Parser final {
   MemberModifiers ParseMemberModifiers();
   enum class MemberParseResult : std::uint8_t { Parsed, Failed };
   MemberParseResult ParseClassMember(Class& declaration);
+  MemberParseResult ParseNativeClassMember(Class& declaration);
+  MemberParseResult ParseNativeConstructor(Class& declaration);
   std::unique_ptr<Function> ParseConstructor(Class& declaration, MemberModifiers modifiers);
   std::optional<Field> ParseField(const Token& name, MemberModifiers modifiers);
 
   std::optional<Enum> ParseEnum();
   std::optional<Program::Import> ParseImport();
-  std::optional<Class> ParseClass();
+  enum class ClassKind : std::uint8_t { Script, Native };
+  std::optional<Class> ParseClassHeader(ClassKind kind);
+  std::optional<Class> ParseClass(ClassKind kind = ClassKind::Script);
   std::optional<Interface> ParseInterface();
   std::optional<Function> ParseInterfaceMethod();
   std::optional<Function> ParseFunction();

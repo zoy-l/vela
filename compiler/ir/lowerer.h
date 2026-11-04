@@ -99,6 +99,8 @@ class Lowerer final {
   void BuildClassTable();
   [[nodiscard]] Class BuildClass(const frontend::Class& source_class,
                                  const frontend::ClassDescriptor& class_info);
+  [[nodiscard]] std::string BuildNativeClassContract(const frontend::Class& source_class,
+                                                     const frontend::ClassDescriptor& class_info);
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name,

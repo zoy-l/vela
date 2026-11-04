@@ -14,9 +14,41 @@ from unittest.mock import patch
 from tools.bench import parse_arguments, run
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 from tools.escape_benchmark_report import aggregate_escape_results
+from tools.native_class_benchmark_report import aggregate_native_class_results
 
 
 BACKENDS = ("cpp", "jit", "luajit_interp", "luajit")
+
+
+class NativeClassReportTest(unittest.TestCase):
+    def rows(self) -> tuple[list[str], list[dict]]:
+        names = [f"native_class/aot/{path}/integer/real_time" for path in ("class", "free")]
+        rows = [{"name": name, "real_time": 100 + index, "time_unit": "ns",
+                 "repetitions": 3, "repetition_index": index, "calls_per_iteration": 10,
+                 "allocations_per_iteration": 0, "shared_owner_delta": 0}
+                for name in names for index in range(3)]
+        return names, rows
+
+    def test_pairs_medians_and_variation_only_after_complete_correct_samples(self) -> None:
+        names, rows = self.rows()
+        summary = aggregate_native_class_results({"benchmarks": rows}, names, 3)
+        self.assertAlmostEqual(summary[names[0]]["ns_per_call"], 10.1)
+        self.assertEqual(summary[names[0]]["class_to_free"], 1)
+        self.assertGreater(summary[names[0]]["combined_stddev_ns"], 0)
+        for field, value, diagnostic in (("error_occurred", True, "benchmark failed"),
+                                         ("allocations_per_iteration", 1, "allocated"),
+                                         ("shared_owner_delta", 1, "shared owner")):
+            invalid = [dict(row) for row in rows]
+            invalid[-1][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, diagnostic):
+                aggregate_native_class_results({"benchmarks": invalid}, names, 3)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            aggregate_native_class_results({"benchmarks": rows[:-1]}, names, 3)
+        repeated_names = [name.replace("integer", "repeated") for name in names]
+        repeated = [dict(row, name=row["name"].replace("integer", "repeated")) for row in rows]
+        repeated[-1]["allocations_per_iteration"] = 1
+        with self.assertRaisesRegex(ValueError, "allocated"):
+            aggregate_native_class_results({"benchmarks": repeated}, repeated_names, 3)
 
 
 def case(backend: str, phase: str = "compare") -> str:

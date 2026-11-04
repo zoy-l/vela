@@ -31,6 +31,19 @@ CompletionKind MethodKind(const frontend::Function& method) {
   return method.is_getter || method.is_setter ? CompletionKind::Property : CompletionKind::Method;
 }
 
+Completion StandardClassCompletion(const frontend::Class& declaration) {
+  const auto& name = declaration.name;
+  return {
+      .label = name,
+      .detail =
+          name == "ByteArray" || name == "ByteData" || name == "RegExp" || name == "RegExpMatch"
+              ? std::string(BuiltinTypeDetail(name))
+              : name,
+      .kind = CompletionKind::Type,
+      .documentation = {},
+  };
+}
+
 std::string MethodDetail(const frontend::Function& method) {
   if (method.is_getter) {
     return TypeText(method.return_type);
@@ -235,17 +248,24 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
 
 Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
   if (frontend::IsStandardTypeNamespace(program_, declaration)) {
-    return {
-        .label = declaration.name,
-        .detail = declaration.name == "ByteArray" || declaration.name == "ByteData" ||
-                          declaration.name == "RegExp" || declaration.name == "RegExpMatch"
-                      ? std::string(BuiltinTypeDetail(declaration.name))
-                      : declaration.name,
-        .kind = CompletionKind::Type,
-        .documentation = {},
-    };
+    return StandardClassCompletion(declaration);
   }
-  auto text = "class " + GenericName(declaration.name, declaration.type_parameters) + " {\n  ";
+  Completion result{
+      .label = declaration.name,
+      .detail = std::string(declaration.native_key.empty() ? "class " : "external class ") +
+                GenericName(declaration.name, declaration.type_parameters),
+      .kind = CompletionKind::Class,
+      .documentation = {},
+  };
+  auto& text = result.detail;
+  if (!declaration.native_key.empty()) {
+    text += " = '" + declaration.native_key + '\'';
+  }
+  if (declaration.constructor_kind == frontend::ConstructorKind::Unavailable) {
+    text += " {}";
+    return result;
+  }
+  text += " {\n  ";
   if (declaration.constructor &&
       declaration.constructor->visibility == frontend::Visibility::Private) {
     text += "private ";
@@ -266,12 +286,8 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) co
       }
     }
   }
-  return {
-      .label = declaration.name,
-      .detail = text + ");\n}",
-      .kind = CompletionKind::Class,
-      .documentation = {},
-  };
+  text += ");\n}";
+  return result;
 }
 
 }  // namespace vela::tooling

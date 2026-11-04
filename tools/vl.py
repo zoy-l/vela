@@ -10,6 +10,7 @@ import sys
 COMMAND_MODULES = {
     "build": "tools.build",
     "bench": "tools.bench",
+    "bindgen": "tools.bindgen",
     "clangd": "tools.clangd",
     "config": "tools.config",
     "doctor": "tools.doctor",
@@ -28,6 +29,7 @@ def print_help() -> None:
     print("Commands:")
     print("  build       Configure and build a target")
     print("  bench       Run Release benchmarks; comparison modes include --escape-compare")
+    print("  bindgen     Generate or verify native class bindings from C++ headers")
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")

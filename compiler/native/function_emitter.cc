@@ -471,13 +471,15 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
     builder_.CreateStore(builder_.getInt32(0), construction_depth_);
   }
   const auto recovery = HasRecovery() ? NativeFrameRecovery::Required : NativeFrameRecovery::None;
-  const auto frame = PlanNativeFrame(module_, program_, escape_, roots_, recovery, kind_);
+  const auto frame = PlanNativeFrame(module_, program_, escape_, roots_, recovery, kind_,
+                                     generated_, direct_calls_);
   if (!frame) {
     return std::unexpected(frame.error());
   }
   frame_type_ = frame->type;
   frame_locals_ = frame->local_fields;
   temporary_field_ = frame->temporary_field;
+  leaf_result_field_ = frame->leaf_result_field;
   const std::vector<llvm::Type*> fields(frame_type_->element_begin(), frame_type_->element_end());
   storage_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
   frame_bytes_ = frame->bytes;
@@ -495,6 +497,11 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
   if (!IsRecovering() && on_stack) {
     arguments_ = allocation.CreateAlloca(fields.at(temporary_field_));
     result_ = allocation.CreateAlloca(fields.at(temporary_field_ + 1));
+    if (leaf_result_field_) {
+      // 纯计算结果不与会传入运行时的 ABI 暂存槽共享地址，内联后可提升为 SSA。
+      leaf_result_ =
+          allocation.CreateAlloca(fields.at(*leaf_result_field_), nullptr, "leaf.result");
+    }
     if (roots_.debug_values) {
       auto* values = allocation.CreateAlloca(fields.back());
       values->setAlignment(llvm::Align(alignof(runtime::NativeDebugValue)));
@@ -572,6 +579,9 @@ void FunctionEmitter::BindFrameStorage() {
   const auto scratch = temporary_field_;
   arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch);
   result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 1);
+  if (leaf_result_field_) {
+    leaf_result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, *leaf_result_field_);
+  }
   if (roots_.debug_values) {
     debug_values_ =
         builder_.CreateStructGEP(frame_type_, frame_storage_, frame_type_->getNumElements() - 1);
@@ -822,9 +832,10 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   const auto& function = generated.subspan(function_index).front();
   const auto frame_recovery =
       function.HasRecovery(tier) ? NativeFrameRecovery::Required : NativeFrameRecovery::None;
+  const auto facts = PlanEmissionFacts(program, function_index, escape, roots, tier);
   if (std::ranges::any_of(escape.allocations, &AllocationSite::stack_record)) {
-    const auto frame =
-        PlanNativeFrame(module, program, escape, roots, frame_recovery, NativeEntryKind::Initial);
+    const auto frame = PlanNativeFrame(module, program, escape, roots, frame_recovery,
+                                       NativeEntryKind::Initial, generated, facts.direct_calls);
     if (!frame) {
       return std::unexpected(frame.error());
     }
@@ -837,7 +848,6 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   body_dependencies.insert(body_dependencies.end(), escape.body_dependencies.begin(),
                            escape.body_dependencies.end());
-  const auto facts = PlanEmissionFacts(program, function_index, escape, roots, tier);
   FunctionEmitter initial(module, program, calls, image, function_index, escape, generated, roots,
                           facts, NativeEntryKind::Initial, tier);
   if (const auto emitted = initial.Emit(); !emitted) {

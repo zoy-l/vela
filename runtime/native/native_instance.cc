@@ -78,6 +78,8 @@ layout::Type DescribeType(const NativeTypeDescription& type) {
 layout::Class DescribeClass(const NativeClassDescription& source) {
   layout::Class result{
       .name = Text(source.name),
+      .native_key = Text(source.native_key),
+      .native_contract = Text(source.native_contract),
       .kind = static_cast<layout::Class::Kind>(source.kind),
       .field_count = source.field_count,
       .reference_fields = CopyTable(source.reference_fields),
@@ -253,6 +255,11 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
   for (std::size_t index = 0; index < classes.size(); ++index) {
     const auto& type = classes[index];
     const auto kind = static_cast<layout::Class::Kind>(type.kind);
+    if (kind == layout::Class::Kind::Host) {
+      auto* layout = isolate.FindNativeClass(type.native_key.text())->layout;
+      identities.classes.try_emplace(type.declaration, &layout->nominal_type());
+      continue;
+    }
     if (type.declaration == DeclarationId{} || kind == layout::Class::Kind::RuntimeError ||
         kind == layout::Class::Kind::DateParts) {
       continue;
@@ -323,6 +330,7 @@ CallSignature DescribeCall(const NativeFunctionDescription& source) {
           }),
       .result = OptionalIndex(source.result_type),
       .hidden_parameters = static_cast<std::uint8_t>(source.hidden_parameters),
+      .receiver = OptionalIndex(source.receiver_type),
       .parameter_name_order = {},
   };
   result.IndexParameters();
@@ -372,6 +380,25 @@ void NativeInstance::StoreGlobal(std::size_t index, Value value) noexcept {
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
     const layout::Program& description) {
+  for (const auto& type : description.classes) {
+    if (type.kind != layout::Class::Kind::Host) {
+      continue;
+    }
+    const auto* binding = data_->isolate->FindNativeClass(type.native_key);
+    if (binding == nullptr) {
+      return std::unexpected(NativeInstantiationError{
+          .status = NativeInstantiationStatus::MissingImport,
+          .message = "unregistered native class '" + type.native_key + "'",
+      });
+    }
+    if (binding->description->contract != type.native_contract) {
+      return std::unexpected(NativeInstantiationError{
+          .status = NativeInstantiationStatus::ImportSignatureMismatch,
+          .message = "external class contract does not match registered native class '" +
+                     type.native_key + "'",
+      });
+    }
+  }
   const auto functions = data_->image->functions.values();
   data_->signatures.reserve(functions.size());
   data_->imports.resize(functions.size());
@@ -389,7 +416,8 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
           .message = "unregistered native function '" + std::string(symbol) + "'",
       });
     }
-    if (!binding->IsSignatureCompatible(data_->signatures.back(), description.types)) {
+    if (!binding->IsSignatureCompatible(data_->signatures.back(), description.types,
+                                        description.classes)) {
       return std::unexpected(NativeInstantiationError{
           .status = NativeInstantiationStatus::ImportSignatureMismatch,
           .message = "external declaration does not match native signature for '" +

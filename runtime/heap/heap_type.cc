@@ -58,7 +58,8 @@ std::optional<TypeConstraint> TypeSignature::FlattenedResult() const noexcept {
 }
 
 const ClassLayout* Heap::ClassOf(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::Instance ? object.layout : nullptr;
+  return object.kind == ObjectKind::Instance || object.kind == ObjectKind::Host ? object.layout
+                                                                                : nullptr;
 }
 
 TypeConstraint Heap::TypeOf(Value value) noexcept {

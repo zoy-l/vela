@@ -348,6 +348,7 @@ Interface AstCloner::CloneInterface(const Interface& source) {
 Class AstCloner::CloneClass(const Class& source) {
   Class result;
   result.name = source.name;
+  result.native_key = source.native_key;
   result.location = Relocate(source.location);
   result.type_parameters = CloneTypeParameters(source.type_parameters);
   result.constructor_kind = source.constructor_kind;

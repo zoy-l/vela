@@ -128,13 +128,13 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
       destination[index] = DecodeNativeValue(saved[index]);
     }
     Reference(SuspensionReference::Source) = source;
-    auto self = shared_from_this();
     // 别名共享持有激活及其固定 vector，排队的 RootRange 始终指向同一存储。
     // 激活只保存 Future 的托管指针，不能反向持有强 Future 句柄形成 C++ 所有权环。
-    const std::shared_ptr<std::vector<Value>> references(self, &values_);
+    std::shared_ptr<std::vector<Value>> references(shared_from_this(), &values_);
     result().KeepAlive(references);
-    future.ObserveResult([self](const FutureResult& completion) { self->Resume(completion); },
-                         references);
+    // references 已覆盖回调执行期，回调借用激活，无需重复持有同一个控制块。
+    future.ObserveResult([this](const FutureResult& completion) { Resume(completion); },
+                         std::move(references));
   }
 
   void ReleaseSaved() {
