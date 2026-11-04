@@ -354,7 +354,7 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
   }
 }
 
-TEST(NativeHostTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
+TEST(NativeHostTest, RepeatedScalarValueAwaitAllocatesOnlyTheResultFuture) {
   Isolate isolate(std::numeric_limits<std::size_t>::max());
   RegisterComposition(isolate);
   const auto instance = NativeInstance::Instantiate(isolate, *COMPOSITION_IMAGE());
@@ -367,8 +367,8 @@ TEST(NativeHostTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
   auto future = Heap::GetFuture(*DecodeNativeValue(output).AsObject())->Rooted();
   ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
   EXPECT_EQ(future.value()->AsInteger(), 42);
-  // 64 个 awaited Future + 整次函数调用的一个结果 Future；没有恢复转接 Future。
-  EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
+  // 标量 Future.value 已融合到 await；整次激活只分配一个结果 Future。
+  EXPECT_EQ(isolate.heap().object_count() - baseline, 1U);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
 }

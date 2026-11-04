@@ -6,3 +6,41 @@ Index:
 
 Diagnostics:
   UnusedIncludes: Strict
+
+# 与 tools/lint.py 的文件级例外保持一致；理由见 .agents/cpp_style.md。
+---
+If:
+  PathMatch: runtime/native/native_instance\.cc
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - cppcoreguidelines-avoid-c-arrays
+      - modernize-avoid-c-arrays
+
+---
+If:
+  PathMatch:
+    - compiler/frontend/builtins/async_builtins\.cc
+    - compiler/frontend/builtins/sdk_modules\.cc
+    - compiler/frontend/typing/type_name\.cc
+    - runtime/heap/heap_string_case\.cc
+Diagnostics:
+  ClangTidy:
+    Remove: readability-qualified-auto
+
+---
+If:
+  PathMatch:
+    - compiler/jit/platform_support_win\.cc
+    - compiler/jit/code_resources\.cc
+    - runtime/native/native_operations\.cc
+Diagnostics:
+  ClangTidy:
+    Remove: bugprone-easily-swappable-parameters
+
+---
+If:
+  PathMatch: compiler/bindgen/collector\.cc
+Diagnostics:
+  ClangTidy:
+    Remove: bugprone-derived-method-shadowing-base-method
