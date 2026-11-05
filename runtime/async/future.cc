@@ -95,7 +95,9 @@ struct FutureObservation::State final {
       return;
     }
     assert(scheduler->IsOwnerThread());
-    assert(future.has_value());
+    if (!future) {
+      std::unreachable();
+    }
     future->state_->subscriptions.erase(order);
     scheduler->observations_.erase(identity);
     scheduler = nullptr;
@@ -108,7 +110,9 @@ struct FutureObservation::State final {
     if (scheduler == nullptr) {
       return;
     }
-    assert(future.has_value());
+    if (!future) {
+      std::unreachable();
+    }
     auto source = future->Retained();
     auto action = std::move(callback);
     Cancel();

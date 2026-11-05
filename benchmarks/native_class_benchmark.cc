@@ -269,6 +269,18 @@ void RecordEntryMetrics(benchmark::State& state, const Prepared& prepared, std::
   state.counters["entry_root_stores"] = static_cast<double>(entry.root_stores);
 }
 
+void ReportHeapRetention(benchmark::State& state, runtime::Heap& heap, std::size_t baseline) {
+  // 先结束计时期间的增量轮次，再以当前根启动完整回收，排除旧标记留下的浮动垃圾。
+  heap.FinishCollection();
+  heap.Collect();
+  const auto retained = heap.allocated_bytes();
+  state.counters["retained_bytes_delta"] =
+      static_cast<double>(retained) - static_cast<double>(baseline);
+  if (retained != baseline) {
+    state.SkipWithError("native class benchmark retained heap storage after full GC");
+  }
+}
+
 void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
   const auto& prepared = Prepare(mode);
   if (!prepared.image) {
@@ -377,11 +389,7 @@ void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
       static_cast<double>(finished.constructed - counts.constructed) / iterations;
   state.counters["peak_live_bytes"] = static_cast<double>(allocations.peak_live_bytes);
   state.counters["shared_owner_delta"] = static_cast<double>(repeated.use_count() - owners);
-  // 先结束计时期间的增量轮次，再以当前根启动完整回收，排除旧标记留下的浮动垃圾。
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["retained_bytes_delta"] =
-      static_cast<double>(heap.allocated_bytes()) - static_cast<double>(baseline);
+  ReportHeapRetention(state, heap, baseline);
   const auto destroyed = NativeClassHost::AllocationCounts().destroyed - counts.destroyed;
   state.counters["destroyed_per_iteration"] = static_cast<double>(destroyed) / iterations;
   if (destroyed != finished.constructed - counts.constructed) {

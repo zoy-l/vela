@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -56,7 +55,9 @@ void Lowerer::BuildNativeClassContracts() {
   for (const auto& contract : contracts) {
     std::vector<NativeContractMember> members;
     for (const auto& function : contract.members) {
-      assert(function.signature.has_value());
+      if (!function.signature) {
+        std::unreachable();
+      }
       const auto& signature = *function.signature;
       NativeContractMember member{
           .key = function.native_symbol,

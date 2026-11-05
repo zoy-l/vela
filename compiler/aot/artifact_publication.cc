@@ -37,11 +37,12 @@ std::string_view ReadText(const yyjson_val* object, std::string_view key) {
 std::expected<void, std::string> VerifyLibraryIdentity(const yyjson_val* root) {
   const auto kind = ReadText(root, "kind");
   const auto optimization = ReadText(root, "optimization");
-  if (optimization != "O2" && optimization != "O0") {
+  const auto release = NativeOptimizationName(NativeOptimization::Release);
+  if (optimization != release && optimization != NativeOptimizationName(NativeOptimization::None)) {
     return std::unexpected("unsupported native library optimization settings");
   }
   const auto toolchain_identity = NativeToolchainBuildIdentity(
-      optimization == "O2" ? NativeOptimization::Release : NativeOptimization::None);
+      optimization == release ? NativeOptimization::Release : NativeOptimization::None);
   if (yyjson_get_uint(GetJsonField(root, "format_version")) != 1 ||
       (kind != "obj" && kind != "staticlib") ||
       ReadText(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
@@ -210,8 +211,7 @@ class Manifest final {
     Add(root, "target", Text(artifact.target));
     Add(root, "instantiate", Text(artifact.instantiate_symbol));
     Add(root, "image", Text(artifact.image_symbol));
-    Add(root, "optimization",
-        Text(artifact.optimization == NativeOptimization::Release ? "O2" : "O0"));
+    Add(root, "optimization", Text(NativeOptimizationName(artifact.optimization)));
     Add(root, "cpu", Text("generic"));
     Add(root, "relocation", Text("pic"));
     const auto binary_hash = ContentFingerprint(binary).Hex();

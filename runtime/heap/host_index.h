@@ -27,6 +27,7 @@ class HostIndex final {
   void Insert(const NominalType& type, const void* pointer, HeapObject& object) noexcept;
   void Erase(const NominalType& type, const void* pointer) noexcept;
   void ReleaseEmpty() noexcept;
+  void CompactAfterCollection() noexcept;
 
  private:
   enum class State : std::uint8_t { Empty, Live, Removed };
@@ -38,6 +39,7 @@ class HostIndex final {
   };
   [[nodiscard]] Entry* FindEntry(const NominalType& type, const void* pointer) noexcept;
   static State InsertEntry(Entry* entries, std::size_t capacity, Entry value) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus> Rehash(std::size_t capacity) noexcept;
 
   Heap* heap_;
   Entry* entries_ = nullptr;

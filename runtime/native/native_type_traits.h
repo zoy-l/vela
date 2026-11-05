@@ -1,13 +1,13 @@
 #pragma once
 
 #include <array>
-#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <vela/types.h>
@@ -90,9 +90,12 @@ struct NativeLogicalType<Nullable<T>> final {
   [[nodiscard]] static NativeType Get() {
     auto type = NativeTypeOf<T>();
     static_assert(!std::is_void_v<T>, "void cannot be nullable");
-    assert(type.type.has_value());
-    if (type.type->kind != layout::Type::Kind::Dynamic) {
-      type.type->nullable = true;
+    if (!type.type) {
+      std::unreachable();
+    }
+    auto& descriptor = *type.type;
+    if (descriptor.kind != layout::Type::Kind::Dynamic) {
+      descriptor.nullable = true;
     }
     return type;
   }

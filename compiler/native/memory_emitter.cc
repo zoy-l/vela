@@ -2,12 +2,15 @@
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <utility>
+
+#include <absl/container/flat_hash_map.h>
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/IR/BasicBlock.h>
@@ -489,6 +492,60 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   }
 }
 
+void FunctionEmitter::CacheGlobals() {
+  if (std::ranges::none_of(source_.instructions, [](const auto& instruction) {
+        return instruction.opcode == Opcode::GetGlobal || instruction.opcode == Opcode::SetGlobal;
+      })) {
+    return;
+  }
+  using runtime::NativeMemoryLayout;
+  auto* pointer = builder_.getPtrTy();
+  auto* data = LoadProgramData(builder_, body_->getArg(0));
+  // 当前函数版本的全局存储固定；闭包和宿主重入临时切换实例，返回前恢复。
+  // 只复用地址，槽内值和 reloadable 缓存的代数仍在每次访问时读取。
+  if (program_.native_mode == NativeProgramMode::Reloadable) {
+    global_caches_ =
+        builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalCaches));
+    return;
+  }
+  global_owner_ = builder_.CreateLoad(
+      pointer,
+      ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
+  global_values_ = builder_.CreateLoad(
+      pointer, ByteAddress(global_owner_, NativeMemoryLayout::kObjectNativePayload));
+  global_states_ =
+      builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
+  absl::flat_hash_map<std::uint32_t, std::size_t> accesses;
+  for (const auto& instruction : source_.instructions) {
+    if (instruction.opcode == Opcode::GetGlobal || instruction.opcode == Opcode::SetGlobal) {
+      ++accesses[instruction.index];
+    }
+  }
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  // 按源指令顺序生成存储，避免散列表迭代顺序影响产物的确定性。
+  for (const auto& instruction : source_.instructions) {
+    const auto index = instruction.index;
+    if ((instruction.opcode != Opcode::GetGlobal && instruction.opcode != Opcode::SetGlobal) ||
+        global_ready_.contains(index)) {
+      continue;
+    }
+    if (accesses.at(index) == 1) {
+      if (instruction.opcode == Opcode::GetGlobal) {
+        // 入口已 Ready 的事实在本次调用内固定，允许 LLVM 把循环初始化分派外提。
+        auto* state = builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(global_states_, index));
+        global_initial_ready_.emplace(
+            index,
+            builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(
+                                             runtime::NativeProgramState::GlobalState::Ready))));
+      }
+      continue;
+    }
+    auto* ready = allocation.CreateAlloca(builder_.getInt1Ty(), nullptr, "global.ready");
+    builder_.CreateStore(builder_.getFalse(), ready);
+    global_ready_.emplace(index, ready);
+  }
+}
+
 void FunctionEmitter::EmitGlobal(const ir::Instruction& instruction) {
   if (program_.native_mode == NativeProgramMode::Reloadable) {
     EmitReloadableGlobal(instruction);
@@ -503,12 +560,8 @@ void FunctionEmitter::EmitGlobal(const ir::Instruction& instruction) {
 
 void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
   using runtime::NativeGlobalCache;
-  using runtime::NativeMemoryLayout;
   const bool reading = instruction.opcode == Opcode::GetGlobal;
-  auto* caches = builder_.CreateLoad(builder_.getPtrTy(),
-                                     ByteAddress(LoadProgramData(builder_, body_->getArg(0)),
-                                                 NativeMemoryLayout::kProgramGlobalCaches));
-  auto* cache = ByteAddress(caches, instruction.index * sizeof(NativeGlobalCache));
+  auto* cache = ByteAddress(global_caches_, instruction.index * sizeof(NativeGlobalCache));
   auto* epoch_address =
       LoadMemory(builder_.getPtrTy(), ByteAddress(cache, offsetof(NativeGlobalCache, epoch)),
                  MemoryRegion::GlobalCache);
@@ -584,30 +637,34 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
-  using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* execution = body_->getArg(0);
-  auto* data = LoadProgramData(builder_, body_->getArg(0));
-  auto* states =
-      builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
-  auto* state = builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(states, instruction.index));
+  const auto cached = global_ready_.find(instruction.index);
+  auto* known_ready = cached != global_ready_.end() ? cached->second : nullptr;
   auto* ready = llvm::BasicBlock::Create(module_.getContext(), "global.ready", body_);
   auto* initialize = llvm::BasicBlock::Create(module_.getContext(), "global.initialize", body_);
   auto* loaded = llvm::BasicBlock::Create(module_.getContext(), "global.loaded", body_);
+  // 本次调用成功读取或写入后，该槽不会重新执行初始化；宿主重入仍可修改槽内值。
+  // 局部标记由 LLVM 提升为 SSA，异常初始化不发布 Ready，恢复入口从未知状态重新开始。
+  auto* established = known_ready != nullptr
+                          ? builder_.CreateLoad(builder_.getInt1Ty(), known_ready)
+                          : global_initial_ready_.at(instruction.index);
+  auto* inspect = llvm::BasicBlock::Create(module_.getContext(), "global.inspect", body_);
+  builder_.CreateCondBr(established, ready, inspect);
+  builder_.SetInsertPoint(inspect);
+  auto* state =
+      builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(global_states_, instruction.index));
   builder_.CreateCondBr(
       builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(
                                        runtime::NativeProgramState::GlobalState::Ready))),
       ready, initialize, llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
   builder_.SetInsertPoint(ready);
   // Ready 之后只读 GC 管理的固定槽；分支内不调用、不分配，不需要解码或额外保根。
-  auto* globals = builder_.CreateLoad(
-      pointer,
-      ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
-  auto* values =
-      builder_.CreateLoad(pointer, ByteAddress(globals, NativeMemoryLayout::kObjectNativePayload));
   const auto& type = source_.value_types.at(instruction.dst);
-  Store(instruction.dst,
-        ReadHeapValue(ByteAddress(values, instruction.index * sizeof(runtime::Value)), type), type);
+  Store(
+      instruction.dst,
+      ReadHeapValue(ByteAddress(global_values_, instruction.index * sizeof(runtime::Value)), type),
+      type);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(initialize);
   // 惰性初始化、循环初始化与失败重试仍由状态所有者处理。
@@ -628,25 +685,22 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   Unpack(instruction.dst);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(loaded);
+  if (known_ready != nullptr) {
+    builder_.CreateStore(builder_.getTrue(), known_ready);
+  }
 }
 
 void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
-  using runtime::NativeMemoryLayout;
-  auto* pointer = builder_.getPtrTy();
-  auto* data = LoadProgramData(builder_, body_->getArg(0));
-  auto* globals = builder_.CreateLoad(
-      pointer,
-      ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
-  auto* values =
-      builder_.CreateLoad(pointer, ByteAddress(globals, NativeMemoryLayout::kObjectNativePayload));
-  WriteHeapValue(ByteAddress(values, instruction.index * sizeof(runtime::Value)), instruction.lhs);
-  EmitWriteBarrier(globals, instruction.lhs);
+  WriteHeapValue(ByteAddress(global_values_, instruction.index * sizeof(runtime::Value)),
+                 instruction.lhs);
+  EmitWriteBarrier(global_owner_, instruction.lhs);
   // 赋值直接建立 Ready 状态，不执行原初始化器；写屏障仍由槽所属对象承担。
-  auto* states =
-      builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
   builder_.CreateStore(
       builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeProgramState::GlobalState::Ready)),
-      ByteAddress(states, instruction.index));
+      ByteAddress(global_states_, instruction.index));
+  if (const auto cached = global_ready_.find(instruction.index); cached != global_ready_.end()) {
+    builder_.CreateStore(builder_.getTrue(), cached->second);
+  }
 }
 
 const layout::Type& FunctionEmitter::ArrayElement(const ir::Instruction& instruction) const {

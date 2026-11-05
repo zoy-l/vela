@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -212,6 +213,45 @@ TEST_F(HostObjectTest, WeakIndexGrowthPreservesRootsAndDoesNotRetainCollectedObj
   heap.Collect();
   EXPECT_EQ(destroyed_, 0U);
   values.fill(Value::Null());
+  heap.Collect();
+  EXPECT_EQ(destroyed_, kObjectCount);
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST_F(HostObjectTest, WeakIndexCompactionKeepsLiveIdentityWhenAllocationFails) {
+  constexpr std::size_t kObjectCount = 64;
+  std::array<Value, kObjectCount> values;
+  auto& heap = isolate_.heap();
+  const RootRange roots(heap, values.data(), values.size());
+  const auto wrap = [&]() {
+    auto owned = std::make_unique<TrackedHost>(destroyed_);
+    return heap.WrapHostObject(*layout_, sizeof(TrackedHost),
+                               HostObjectStorage(owned.release(), &DeleteHost));
+  };
+  const auto first = wrap();
+  ASSERT_TRUE(first);
+  values.front() = Value::Object(*first);
+  heap.Collect();
+  const auto baseline = heap.allocated_bytes();
+  auto* pointer = HostObjectPointer(**first);
+  for (auto& value : std::span(values).subspan(1)) {
+    const auto wrapped = wrap();
+    ASSERT_TRUE(wrapped);
+    value = Value::Object(*wrapped);
+    heap.WriteRootBarrier(std::span(&value, 1));
+  }
+  heap.FinishCollection();
+  std::ranges::fill(std::span(values).subspan(1), Value::Null());
+  heap.SetAllocationCountLimit(0);
+  heap.Collect();
+  EXPECT_EQ(destroyed_, kObjectCount - 1);
+  EXPECT_EQ(heap.FindHostObject(layout_->nominal_type(), pointer), *first);
+  EXPECT_GT(heap.allocated_bytes(), baseline);
+  heap.SetAllocationCountLimit(std::numeric_limits<std::uint64_t>::max());
+  heap.Collect();
+  EXPECT_EQ(heap.FindHostObject(layout_->nominal_type(), pointer), *first);
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+  values.front() = Value::Null();
   heap.Collect();
   EXPECT_EQ(destroyed_, kObjectCount);
   EXPECT_EQ(heap.allocated_bytes(), 0U);

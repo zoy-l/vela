@@ -6,6 +6,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/native_program_mode.h"
@@ -27,6 +28,10 @@ namespace vela::compiler {
 
 enum class NativeOptimization : std::uint8_t { None, Release };
 enum class NativeCodePlacement : std::uint8_t { Linked, Dynamic };
+
+[[nodiscard]] constexpr std::string_view NativeOptimizationName(NativeOptimization optimization) {
+  return optimization == NativeOptimization::Release ? "O3" : "O0";
+}
 
 namespace native {
 

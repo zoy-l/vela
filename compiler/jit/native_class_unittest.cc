@@ -160,6 +160,21 @@ export func run(): int {
   if (!(dynamicCounter is Counter)) { return -7; }
   return values[0].value;
 }
+
+let active = Counter(initial: 1);
+export func loopedBorrow(): int {
+  const first = Counter(initial: 1);
+  const second = Counter(initial: 2);
+  let sum = 0;
+  for (let index = 0; index < 21; index++) {
+    active = index % 2 == 0 ? first : second;
+    sum += active.gcAdd(0);
+    let argument: Counter? = null;
+    if (index % 2 == 0) { argument = active; }
+    sum += Counter.Read(argument);
+  }
+  return sum;
+}
 )";
 
 class NativeClassJitTest : public testing::TestWithParam<NativeCodeTier> {};
@@ -176,7 +191,7 @@ TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCall
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   runtime::NativeExecution execution(**instance);
-  for (const auto* const name : {"run", "boundOnly"}) {
+  for (const auto* const name : {"run", "boundOnly", "loopedBorrow"}) {
     const auto function = (*instance)->FindFunction(name);
     if (!function) {
       FAIL() << "expected exported function " << name;

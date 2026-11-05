@@ -366,6 +366,31 @@ struct NativeAbiCodec final {
   }
 };
 
+template <class T>
+struct NativeDirectArgument {
+  using Codec = NativeAbiCodec<T>;
+  using Type = Codec::Type;
+  static T Decode(Codec::Argument value) { return Codec::Decode(value); }
+};
+
+template <>
+struct NativeDirectArgument<bool> final {
+  using Type = bool;
+  static bool Decode(Type value) noexcept { return value; }
+};
+
+template <NativeHostClass T>
+struct NativeDirectArgument<T&> final {
+  using Type = T*;
+  static T& Decode(Type value) noexcept { return *value; }
+};
+
+template <NativeHostClass T>
+struct NativeDirectArgument<T*> final {
+  using Type = T*;
+  static T* Decode(Type value) noexcept { return value; }
+};
+
 template <auto Function, class R, class... Args>
 struct NativeAdapterBase {
   using Result = NativeReturn<R>::Type;
@@ -379,13 +404,6 @@ struct NativeAdapterBase {
        std::is_same_v<Result, std::int64_t> || std::is_same_v<Result, double>) &&
       !(NativeCodec<Args>::kNeedsScope || ...) &&
       !(std::is_same_v<typename NativeAbiCodec<Args>::Type, NativeValue> || ...);
-  using DirectResult =
-      std::conditional_t<std::is_void_v<R>, void, typename NativeAbiCodec<Result>::Type>;
-  static constexpr bool kExactAbi =
-      std::is_same_v<R, DirectResult> &&
-      (std::is_same_v<Args, typename NativeAbiCodec<Args>::Type> && ...);
-  static constexpr bool kDirectContext = kNeedsScope || !kExactAbi;
-
   struct EmptyScope final {
     explicit EmptyScope(NativeContext& /*unused*/) noexcept {}
   };
@@ -458,23 +476,13 @@ struct NativeAdapterBase {
     }
   }
 
-  static DirectResult DirectCall(NativeContext& context,
-                                 NativeAbiCodec<Args>::Type... arguments) noexcept {
+  static R DirectCall(NativeContext& context,
+                      NativeDirectArgument<Args>::Type... arguments) noexcept {
     Scope scope(context);
     if constexpr (std::is_void_v<R>) {
-      InvokeFunction(context, NativeAbiCodec<Args>::Decode(arguments)...);
+      InvokeFunction(context, NativeDirectArgument<Args>::Decode(arguments)...);
     } else {
-      return static_cast<DirectResult>(
-          InvokeFunction(context, NativeAbiCodec<Args>::Decode(arguments)...));
-    }
-  }
-
-  static constexpr auto DirectEntry() {
-    // 基本标量签名完全一致时直接保留原函数指针；bool 和托管参数仍由 codec 转换。
-    if constexpr (kExactAbi && !kNeedsScope) {
-      return Function;
-    } else {
-      return &DirectCall;
+      return InvokeFunction(context, NativeDirectArgument<Args>::Decode(arguments)...);
     }
   }
 };
@@ -498,7 +506,7 @@ class NativeFunction final {
   // 指向静态的精确函数指针槽；只擦除槽的对象类型，不转换函数指针类型。
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
-  enum class AotCallKind : std::uint8_t { Checked, Direct, DirectWithContext };
+  enum class AotCallKind : std::uint8_t { Checked, Direct };
   enum class Intrinsic : std::uint8_t { None, SquareRoot };
   struct AotEntry final {
     AotEntrySlot slot = nullptr;
@@ -510,10 +518,11 @@ class NativeFunction final {
     using Adapter = internal::NativeAdapter<Function>;
     static constexpr AotEntry kEntry = [] {
       if constexpr (Adapter::kDirect) {
-        static constexpr auto kTarget = Adapter::DirectEntry();
+        // 直接入口统一携带上下文；适配器在编译期决定 C++ 函数是否消费它。
+        static constexpr auto kTarget = &Adapter::DirectCall;
         return AotEntry{
             .slot = static_cast<AotEntrySlot>(&kTarget),
-            .kind = Adapter::kDirectContext ? AotCallKind::DirectWithContext : AotCallKind::Direct,
+            .kind = AotCallKind::Direct,
         };
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;

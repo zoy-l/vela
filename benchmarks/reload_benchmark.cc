@@ -438,11 +438,16 @@ int RegisterReloadBenchmarks() {
   const auto cpu = compiler::native::TargetCpu(compiler::NativeCodePlacement::Dynamic);
   benchmark::AddCustomContext("jit_cpu", cpu.name);
   benchmark::AddCustomContext("jit_cpu_features", cpu.features);
-  benchmark::AddCustomContext("jit_baseline",
-                              "LLVM O2; host CPU; current dispatch; precise roots; safepoints");
+  const auto optimization =
+      "LLVM " +
+      std::string(compiler::NativeOptimizationName(compiler::NativeOptimization::Release));
+  benchmark::AddCustomContext("jit_baseline", optimization +
+                                                  "; host CPU; current dispatch; precise "
+                                                  "roots; safepoints");
   benchmark::AddCustomContext("jit_optimized",
-                              "LLVM O2; host CPU; typed slots; SCC direct calls/inlining; body "
-                              "dependencies; selective recovery");
+                              optimization +
+                                  "; host CPU; typed slots; SCC direct calls/inlining; "
+                                  "body dependencies; selective recovery");
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     const auto prefix =
         std::string("hot/") + (tier == NativeCodeTier::Baseline ? "baseline/" : "optimized/");

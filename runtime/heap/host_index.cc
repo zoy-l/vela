@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <tuple>
 
 #include <absl/hash/hash.h>
 
@@ -78,6 +79,10 @@ std::expected<void, ExecutionStatus> HostIndex::PrepareInsert() noexcept {
   if (capacity > std::numeric_limits<std::size_t>::max() / sizeof(Entry)) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
+  return Rehash(capacity);
+}
+
+std::expected<void, ExecutionStatus> HostIndex::Rehash(std::size_t capacity) noexcept {
   auto* prepared = static_cast<Entry*>(heap_->AllocateNative(capacity * sizeof(Entry)));
   if (prepared == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -124,6 +129,17 @@ void HostIndex::ReleaseEmpty() noexcept {
     entries_ = nullptr;
     capacity_ = 0;
     removed_ = 0;
+  }
+}
+
+void HostIndex::CompactAfterCollection() noexcept {
+  auto capacity = kInitialCapacity;
+  while (size_ > capacity / kLoadFactorDivisor) {
+    capacity *= kLoadFactorDivisor;
+  }
+  if (capacity < capacity_) {
+    // GC 已结束并按旧存量重设阈值，缩表分配不会递归触发回收。OOM 时原索引仍有效。
+    std::ignore = Rehash(capacity);
   }
 }
 

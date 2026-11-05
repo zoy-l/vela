@@ -647,11 +647,16 @@ void Heap::FinishSweep() noexcept {
   }
   barrier_state_.phase = GcPhase::Idle;
   sweep_link_ = nullptr;
-  const std::size_t doubled_live_size =
-      allocated_bytes_ > std::numeric_limits<std::size_t>::max() / 2
-          ? std::numeric_limits<std::size_t>::max()
-          : allocated_bytes_ * 2;
-  gc_threshold_ = std::max(minimum_gc_threshold_, doubled_live_size);
+  const auto threshold = [&] {
+    const auto doubled_live_size = allocated_bytes_ > std::numeric_limits<std::size_t>::max() / 2
+                                       ? std::numeric_limits<std::size_t>::max()
+                                       : allocated_bytes_ * 2;
+    return std::max(minimum_gc_threshold_, doubled_live_size);
+  };
+  // 先允许缩表分配，再按缩表后的实际存量确定下一轮回收阈值。
+  gc_threshold_ = threshold();
+  host_index_.CompactAfterCollection();
+  gc_threshold_ = threshold();
 }
 
 void Heap::DestroyAll() noexcept {

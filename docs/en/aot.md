@@ -68,6 +68,11 @@ source and import graph
 
 `compiler/frontend` owns language semantics; `compiler/ir` owns shared lowering, control flow, and semantic optimization. `compiler/native` supplies shared LLVM conversion, root-slot planning, and native ABI calls for AOT and JIT. `compiler/aot` owns closed-program optimization, exports, and object emission. The build driver selects platforms, links, archives, and publishes artifacts. LLVM headers and types stay inside the compiler's native backends; runtime does not depend on LLVM.
 
+The shared Release backend uses LLVM O3 and Aggressive target-code optimization while preserving
+checked integer arithmetic, strict floating-point semantics, and precise roots. The optimization
+level participates in toolchain and JIT cache identities, AOT manifests, and benchmark metadata.
+Artifacts built for an earlier level or ABI must be rebuilt.
+
 `runtime` supplies objects, GC, Futures, errors and execution services. Native support
 owns instances, calls and source traces. Runtime has no dependency on frontend,
 IR or LLVM. The CLI links JIT and AOT compiler components; a standalone AOT
@@ -159,13 +164,18 @@ Instantiation validates target and ABI, resolves all native imports, establishes
 
 Generated global reads inspect the instance's fixed initialization-state storage and read Ready values directly from their existing GC slots. Other states call the runtime initializer; failed initialization restores Uninitialized for retry. Global writes retain the shared write barrier and publish Ready afterward. These paths use offsets derived from C++ layout facts without exposing standard-library container layouts.
 
+Each closed function invocation or resumption reuses global-storage addresses and records slots it
+has successfully read or written as Ready, eliminating repeated initialization checks. It does not
+cache slot values: reads after host reentry still observe later assignments. Failed initialization
+does not publish the local Ready fact. Reloadable access continues to validate publication epochs.
+
 External instance/function handles retain required code descriptors and roots. Internal async references trace globals and constants through Future graphs without permanently rooting unreachable suspended tasks. The Isolate outlives instances, managed handles, continuations, and native producers; destruction and root operations stay on its thread. Code is statically linked into the process in this release, with no runtime unloading.
 
 ## Host binding and dynamic calls
 
 Source `external func` declarations suffice for offline checking and import generation. Building a library does not run the host or create an Isolate. Instantiation resolves logical symbols and exact signatures once against registered host implementations, rejecting missing or mismatched imports before publishing the instance. Each native function invocation caches the immutable import targets and calling conventions it directly uses, including across loops. LLVM can move selection between direct and checked calls outside a loop.
 
-Signature descriptors and codecs used by `NativeFunction::Bind` are the common source for typed JIT/AOT entries. Hosts may include or omit a leading `NativeContext&`. Plain scalar results use register returns; exact scalar signatures retain the original function pointer, and boolean or managed arguments use ABI codecs. Fallible or managed results use a checked entry with status propagation and a caller output slot. Both conventions preserve logical frames, depth limits and GC roots. native failures, UTF-8 checks, Future payload validation and thread ownership remain shared.
+Signature descriptors and codecs used by `NativeFunction::Bind` are the common source for typed JIT/AOT entries. Hosts may include or omit a leading `NativeContext&`. Direct entries use one context-first ABI; the C++ adapter decides at compile time whether to pass that context to the host function. Plain scalar results use register returns, booleans follow the C++ `bool` ABI with LLVM zero-extension attributes, and host-class arguments borrow native pointers from rooted wrappers. Fallible or managed results use a checked entry with status propagation and a caller output slot; booleans retain their byte encoding and host-class arguments retain their wrapper representation there. Both conventions preserve logical frames, depth limits and GC roots. Native failures, UTF-8 checks, Future payload validation and thread ownership remain shared.
 
 Standalone startup registers only standard bindings supplied by the distribution. Initially, building an executable requiring custom host bindings fails at build time. Such applications emit libraries, and the host registers bindings before instantiation. Any later host-object input feature must define a registration entry and signature manifest; a system linker finding a same-named symbol is insufficient.
 

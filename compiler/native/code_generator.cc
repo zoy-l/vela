@@ -237,6 +237,7 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
 }
 
 void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
+  machine.setOptLevel(llvm::CodeGenOptLevel::Aggressive);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager calls;
@@ -249,7 +250,7 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
       [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         AddIntegerBitPasses(pipeline);
       });
-  // 宿主调用约定随实例固定；允许 O2 克隆循环，将 direct/checked 分派移到循环外。
+  // 宿主调用约定随实例固定；允许克隆循环，将 direct/checked 分派移到循环外。
   // 使用 LLVM 自带的体积阈值控制复制，不改变循环内错误和逻辑栈帧语义。
   passes.registerLateLoopOptimizationsEPCallback(
       [](llvm::LoopPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
@@ -270,7 +271,7 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   llvm::ModulePassManager preparation;
   preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
   preparation.run(module, modules);
-  auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+  auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
   pipeline.run(module, modules);
 }
 

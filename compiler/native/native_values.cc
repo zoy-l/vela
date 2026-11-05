@@ -170,7 +170,7 @@ llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& t
                                 builder.getInt8(NativeKind(Kind::Null)));
   }
   if (IsReferenceKind(type.kind)) {
-    return builder.CreateIsNotNull(value);
+    return type.nullable ? builder.CreateIsNotNull(value) : builder.getTrue();
   }
   return builder.getInt1(type.kind != Kind::Null && type.kind != Kind::Void);
 }

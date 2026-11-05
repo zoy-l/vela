@@ -1,7 +1,6 @@
 #include "runtime/native/native_type_traits.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -17,7 +16,9 @@ namespace vela::runtime::internal {
 namespace {
 
 layout::Type Import(NativeTypeDescription& target, NativeType source) {
-  assert(source.type.has_value());
+  if (!source.type) {
+    std::unreachable();
+  }
   for (const auto& host : source.hosts) {
     if (std::ranges::find(target.hosts, host.key, &NativeHostIdentity::key) == target.hosts.end()) {
       target.hosts.push_back(host);
@@ -27,7 +28,9 @@ layout::Type Import(NativeTypeDescription& target, NativeType source) {
 }
 
 void NameRoot(NativeTypeDescription& description) {
-  assert(description.type.has_value());
+  if (!description.type) {
+    std::unreachable();
+  }
   const auto type = *description.type;
   const auto name = layout::TypeKey(description.layouts, type);
   using Kind = layout::Type::Kind;

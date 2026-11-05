@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -164,7 +163,9 @@ Result<void> ExecuteHostCollection(HandleScope& scope,
     std::ranges::copy(arguments, stored.begin());
     stored[1] = *key;
     if (builtin == Builtin::MapSet) {
-      assert(layout.values.has_value());
+      if (!layout.values) {
+        std::unreachable();
+      }
       auto value = StoreElementValue(arguments[2], *layout.values);
       if (!value) {
         return std::unexpected(std::move(value.error()));
@@ -186,7 +187,9 @@ Result<HostPresence> ReadHostMap(HandleScope& scope,
                                  runtime::Value key,
                                  runtime::Value& output) {
   const auto& layout = *runtime::Heap::CollectionTypeOf(map);
-  assert(layout.values.has_value());
+  if (!layout.values) {
+    std::unreachable();
+  }
   auto stored = StoreElementValue(key, layout.keys);
   if (!stored) {
     return std::unexpected(std::move(stored.error()));
@@ -216,7 +219,9 @@ Result<void> ProjectHostCollection(HandleScope& scope,
   runtime::LayoutTransaction transaction(isolate, runtime::LayoutLifetime::Collectible);
   const auto* elements = &layout.keys;
   if (projection == runtime::CollectionProjection::Values) {
-    assert(layout.values.has_value());
+    if (!layout.values) {
+      std::unreachable();
+    }
     elements = &*layout.values;
   }
   const auto* array_type = isolate.CreateArrayLayout(*elements);

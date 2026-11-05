@@ -4,8 +4,8 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 
@@ -58,7 +58,7 @@ func makeCounter(): () => int {
 }
 func main(): int { return counter(); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto results = test::ExecuteRepeated(*compiled.instance);
   ASSERT_TRUE(results) << results.error();
@@ -73,7 +73,7 @@ const first: int = second;
 const second: int = first;
 func main(): int { return first; }
 )",
-                                        isolate);
+                                              isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto result = test::Execute(**entry);
   EXPECT_EQ(result.status, ExecutionStatus::CyclicInitialization);
@@ -86,6 +86,31 @@ const first = second + 1;
 const second = 40;
 func add(first: int): int { return first + 1; }
 func main(): int { return add(first); }
+)",
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(GlobalTest, FailedInitializationRetriesAndReadyReadsObserveLaterWrites) {
+  runtime::Isolate isolate(1);
+  const auto result = test::RunInteger(R"(
+let attempts = 0;
+let value = initialize();
+func initialize(): int {
+  attempts += 1;
+  if (attempts == 1) { throw Error(message: 'retry'); }
+  return 40;
+}
+func update(): void { value += 1; }
+func main(): int {
+  let caught = 0;
+  try { if (value != 40) { return -1; } }
+  catch (error: Error) { caught += 1; }
+  if (value != 40) { return -2; }
+  for (let index = 0; index < 2; index++) { update(); }
+  return attempts == 2 && caught == 1 ? value : -3;
+}
 )",
                                        isolate);
   ASSERT_TRUE(result) << result.error();

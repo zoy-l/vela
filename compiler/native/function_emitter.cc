@@ -687,6 +687,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   BindFrameStorage();
   InitializeCheckpoint();
   CacheImports();
+  CacheGlobals();
   CacheFields();
   BindArguments();
   InitializeRecords();

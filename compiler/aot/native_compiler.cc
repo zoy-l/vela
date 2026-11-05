@@ -136,7 +136,8 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
 
 std::string NativeToolchainBuildIdentity(NativeOptimization optimization) {
   std::string identity(runtime::NativeRuntimeAbiIdentity());
-  identity += optimization == NativeOptimization::Release ? "/O2" : "/O0";
+  identity += '/';
+  identity += NativeOptimizationName(optimization);
   return ContentFingerprint(identity).Hex();
 }
 

@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <sstream>
 #include <string>
@@ -127,7 +127,9 @@ std::optional<layout::Type> MemberType(const ir::Program& program, const MemberD
   }
   if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
     const auto& getter = program.functions.at(member.target);
-    assert(getter.signature.has_value());
+    if (!getter.signature) {
+      std::unreachable();
+    }
     const auto& signature = *getter.signature;
     if (signature.result) {
       return program.layouts.types.at(*signature.result);
@@ -141,7 +143,9 @@ std::expected<void, std::string> EmitConstructor(std::ostringstream& output,
                                                  std::string_view name_space,
                                                  const ir::Function& constructor,
                                                  std::string_view logical) {
-  assert(constructor.signature.has_value());
+  if (!constructor.signature) {
+    std::unreachable();
+  }
   const auto& signature = *constructor.signature;
   const auto count = signature.parameters.size() / 2;
   std::vector<std::string> parameters;
@@ -214,7 +218,9 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
     write_type = member_type;
   } else if (member.setter) {
     const auto& setter = program.functions.at(*member.setter);
-    assert(setter.signature.has_value());
+    if (!setter.signature) {
+      std::unreachable();
+    }
     const auto& signature = *setter.signature;
     write_type = program.layouts.types.at(signature.parameters.back().type);
   }
@@ -277,11 +283,10 @@ std::expected<void, std::string> EmitEntries(std::ostringstream& output,
   for (const auto& declaration : program.declarations) {
     declarations.emplace(declaration.identity, &declaration);
   }
-  for (const auto& function : program.functions) {
-    if (!function.is_exported) {
-      continue;
+  for (const auto& function : program.functions | std::views::filter(&ir::Function::is_exported)) {
+    if (!function.signature) {
+      std::unreachable();
     }
-    assert(function.signature.has_value());
     const auto& signature = *function.signature;
     auto result = signature.result
                       ? HostLogicalType(program.layouts,

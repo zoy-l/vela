@@ -56,7 +56,7 @@ def aggregate_escape_results(report: dict, expected_cases: list[str], repetition
 
 def escape_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
     results = aggregate_escape_results(report, expected_cases, repetitions)
-    lines = ["逃逸优化：同一源码、LLVM O2、generic CPU、动态地址模型的封闭 AOT 机器码。",
+    lines = ["逃逸优化：同一源码、LLVM O3、generic CPU、动态地址模型的封闭 AOT 机器码。",
              "普通堆 = 关闭逃逸优化；标量替换 = 字段拆分及按需物化；内部借用 = 再启用私有栈记录。",
              f"全部选定用例通过 {repetitions} 次重复及结果检查。执行计时排除编译、加载和实例化。",
              "分配量来自单独预热实例的一次执行，关闭自动 GC；计时实例使用普通 GC。",

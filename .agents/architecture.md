@@ -90,11 +90,15 @@ and complete field block before releasing the previous storage.
 C++ function. Native instantiation validates that signature against the external declaration before
 publishing the instance. The binding is immutable for the instance's lifetime; generated functions
 resolve each used import once per invocation, including resumed invocations.
-Host functions may take `NativeContext&` as their first argument or omit it. A context is supplied
-only when the function or its codecs require it; scripts see the same external signature.
+Host functions may take `NativeContext&` as their first argument or omit it; scripts see the same
+external signature. Direct entries use one context-first ABI, and the generated C++ adapter decides
+at compile time whether the host function consumes that context.
 
 Functions use a direct AOT entry with register results only when their argument codecs, return
-conversion and call cannot fail. Exact scalar signatures retain the original C++ function pointer.
+conversion and call cannot fail. Direct host-class arguments borrow native pointers from rooted
+wrappers; checked arguments retain the managed wrapper representation.
+Direct booleans follow the C++ `bool` ABI, including LLVM zero-extension attributes; checked
+entries continue to encode booleans as bytes.
 Context-dependent managed decoding, `std::expected` results and managed return values use a checked
 entry that propagates errors and validates results, including complete Future payload contracts.
 Both entries preserve logical frames, call-depth limits and GC roots during host execution.
@@ -128,6 +132,9 @@ only when their control blocks match. GC removes the weak entry before releasing
 storage, ownership records and reported external memory participate in heap accounting; construction
 reserves its budget before entering the C++ constructor and retains RAII ownership until publication.
 Typed method arguments borrow the pointer while the wrapper is rooted, without shared-owner copies.
+After collection, the weak index shrinks to the capacity needed by its live entries. If allocating
+the smaller table fails, the live index remains valid and a later collection can reclaim its excess
+capacity. The next GC threshold uses the actual heap size after compaction.
 
 Binding snapshots share descriptions, never another Isolate's wrappers or nominal pointers. A
 development session freezes those bindings; script reload may retain wrappers but cannot change a

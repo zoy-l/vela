@@ -65,6 +65,7 @@ void FunctionEmitter::EmitFrameEntry() {
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
   auto* depth = builder_.CreateLoad(word, depth_address);
+  entry_depth_ = depth;
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
   builder_.CreateCondBr(HasStackBudget(depth), available, failed,
@@ -192,8 +193,7 @@ void FunctionEmitter::PrepareTraceFrame() {
                                               offsetof(runtime::TracePosition, function)));
   builder_.CreateStore(frame, frame_address);
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  auto* depth = builder_.CreateLoad(builder_.getInt64Ty(), depth_address);
-  builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt64(1)), depth_address);
+  builder_.CreateStore(builder_.CreateAdd(entry_depth_, builder_.getInt64(1)), depth_address);
   InitializeDebugValues();
   builder_.CreateStore(builder_.getTrue(), trace_initialized_);
   builder_.CreateBr(ready);

@@ -20,6 +20,7 @@
 #include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
+#include "compiler/native/code_generator.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -419,8 +420,11 @@ int RegisterAotBenchmarks() {
   const auto optimized =
       std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
   benchmark::AddCustomContext("aot_runtime_abi", std::string(runtime::NativeRuntimeAbiIdentity()));
-  benchmark::AddCustomContext("aot_codegen",
-                              "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots");
+  benchmark::AddCustomContext(
+      "aot_codegen",
+      "LLVM " +
+          std::string(compiler::NativeOptimizationName(compiler::NativeOptimization::Release)) +
+          "; generic CPU; PIC; checked arithmetic; explicit roots");
   benchmark::RegisterBenchmark("entry/stack_bounds", NativeEntryCost<EntryOperation::StackBounds>)
       ->UseRealTime();
   benchmark::RegisterBenchmark("entry/execution", NativeEntryCost<EntryOperation::Execution>)

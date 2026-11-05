@@ -1,12 +1,14 @@
 #include "compiler/native/function_emitter.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/MDBuilder.h>
 
@@ -26,6 +28,21 @@ namespace {
 bool HasDirectHostResult(const SourceType& type) {
   return !type.nullable && (type.kind == Kind::Void || type.kind == Kind::Bool ||
                             type.kind == Kind::Int || type.kind == Kind::Double);
+}
+
+bool IsHostParameter(const layout::Program& layouts,
+                     const CallSignature& signature,
+                     const SourceType& type,
+                     std::size_t index) {
+  if (type.kind != Kind::Class) {
+    return false;
+  }
+  const auto receiver_count = static_cast<std::size_t>(signature.receiver.has_value());
+  const auto type_index = signature.receiver && index == 0
+                              ? *signature.receiver
+                              : signature.parameters[index - receiver_count].type;
+  const auto& parameter = layouts.types[type_index];
+  return layouts.classes[parameter.index].kind == layout::Class::Kind::Host;
 }
 
 }  // namespace
@@ -53,64 +70,79 @@ void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
   builder_.CreateStore(updated, address);
 }
 
+llvm::Value* FunctionEmitter::EmitHostPointer(llvm::Value* wrapper, const SourceType& type) {
+  const auto load = [&] {
+    auto* pointer = builder_.CreateLoad(
+        builder_.getPtrTy(),
+        ByteAddress(wrapper, runtime::NativeMemoryLayout::kObjectNativePayload));
+    // 宿主包装在保根期间不移动，原生指针直到包装销毁都不改变，允许循环复用这次借用。
+    pointer->setMetadata(llvm::LLVMContext::MD_invariant_load,
+                         llvm::MDNode::get(module_.getContext(), {}));
+    return pointer;
+  };
+  if (!type.nullable) {
+    return load();
+  }
+  auto& context = module_.getContext();
+  auto* origin = builder_.GetInsertBlock();
+  auto* present = llvm::BasicBlock::Create(context, "host.argument.present", body_);
+  auto* done = llvm::BasicBlock::Create(context, "host.argument.done", body_);
+  builder_.CreateCondBr(builder_.CreateIsNotNull(wrapper), present, done);
+  builder_.SetInsertPoint(present);
+  auto* pointer = load();
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(done);
+  auto* result = builder_.CreatePHI(builder_.getPtrTy(), 2, "host.argument");
+  result->addIncoming(llvm::ConstantPointerNull::get(builder_.getPtrTy()), origin);
+  result->addIncoming(pointer, present);
+  return result;
+}
+
 llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
                                                  llvm::Value* entries,
                                                  std::span<llvm::Value* const> arguments) {
-  using AotCallKind = runtime::NativeFunction::AotCallKind;
   auto& context = module_.getContext();
   const auto& return_type = callee.return_type;
   const auto return_kind = return_type.kind;
   auto* result_type = builder_.getVoidTy();
   if (return_kind != Kind::Void) {
-    result_type =
-        return_kind == Kind::Bool ? builder_.getInt8Ty() : ValueType(context, return_type);
+    result_type = ValueType(context, return_type);
   }
   auto* target = builder_.CreateExtractValue(entries, 0);
-  auto* call_kind = builder_.CreateExtractValue(entries, 1);
-  auto* with_context = llvm::BasicBlock::Create(context, "import.context", body_);
-  auto* plain = llvm::BasicBlock::Create(context, "import.plain", body_);
-  auto* done = llvm::BasicBlock::Create(context, "import.returned", body_);
-  builder_.CreateCondBr(
-      builder_.CreateICmpEQ(
-          call_kind, builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::DirectWithContext))),
-      with_context, plain);
-  const auto emit = [&](AotCallKind kind) {
-    std::vector<llvm::Value*> values(arguments.begin(), arguments.end());
-    for (std::size_t index = 0; index < values.size(); ++index) {
-      if (callee.value_types.at(index).kind == Kind::Bool) {
-        values.at(index) = builder_.CreateZExt(values.at(index), builder_.getInt8Ty());
-      }
+  if (!callee.signature) {
+    std::unreachable();
+  }
+  const auto& call_signature = *callee.signature;
+  std::vector<llvm::Value*> parameters(arguments.begin(), arguments.end());
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto& type = callee.value_types[index];
+    if (IsHostParameter(program_.layouts, call_signature, type, index)) {
+      parameters[index] = EmitHostPointer(parameters[index], type);
     }
-    if (kind == AotCallKind::DirectWithContext) {
-      values.insert(values.begin(),
+  }
+  parameters.insert(parameters.begin(),
                     ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionContext));
+  std::vector<llvm::Type*> types;
+  types.reserve(parameters.size());
+  for (auto* value : parameters) {
+    types.push_back(value->getType());
+  }
+  auto* signature = llvm::FunctionType::get(result_type, types, false);
+  EmitHostBoundary(HostBorrow::Enter);
+  auto* result = builder_.CreateCall(signature, target, parameters);
+  // 直接 ABI 与 C++ bool 使用相同的 i1 / zeroext 约定，避免字节 codec 阻断尾调用。
+  if (return_kind == Kind::Bool) {
+    result->addRetAttr(llvm::Attribute::ZExt);
+  }
+  for (std::size_t index = 1; index < parameters.size(); ++index) {
+    if (parameters[index]->getType()->isIntegerTy(1)) {
+      result->addParamAttr(static_cast<unsigned>(index), llvm::Attribute::ZExt);
     }
-    std::vector<llvm::Type*> types;
-    types.reserve(values.size());
-    for (auto* value : values) {
-      types.push_back(value->getType());
-    }
-    auto* signature = llvm::FunctionType::get(result_type, types, false);
-    EmitHostBoundary(HostBorrow::Enter);
-    llvm::Value* result = builder_.CreateCall(signature, target, values);
-    EmitHostBoundary(HostBorrow::Exit);
-    if (return_kind == Kind::Bool) {
-      result = builder_.CreateICmpNE(result, builder_.getInt8(0));
-    }
-    builder_.CreateBr(done);
-    return result;
-  };
-  builder_.SetInsertPoint(with_context);
-  auto* contextual = emit(AotCallKind::DirectWithContext);
-  builder_.SetInsertPoint(plain);
-  auto* ordinary = emit(AotCallKind::Direct);
-  builder_.SetInsertPoint(done);
+  }
+  EmitHostBoundary(HostBorrow::Exit);
   if (return_kind == Kind::Void) {
     return builder_.getFalse();
   }
-  auto* result = builder_.CreatePHI(contextual->getType(), 2, "import.result");
-  result->addIncoming(contextual, with_context);
-  result->addIncoming(ordinary, plain);
   return result;
 }
 
@@ -119,24 +151,18 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
       callee.native_symbol.empty() || !HasDirectHostResult(callee.return_type)) {
     return false;
   }
-  // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接入口的
-  // host codec 从包装对象固定位置借用指针，原生调用期间仍保留调用者的根登记。
-  assert(callee.signature.has_value());
+  // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接调用
+  // 从包装对象固定位置借用原生指针，原生调用期间仍保留调用者的根登记。
+  if (!callee.signature) {
+    std::unreachable();
+  }
   const auto& signature = *callee.signature;
-  const auto receiver_count = static_cast<std::size_t>(signature.receiver.has_value());
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     const auto& type = callee.value_types[index];
     if (IsScalar(type) && !type.nullable) {
       continue;
     }
-    if (type.kind != Kind::Class) {
-      return false;
-    }
-    const auto type_index = signature.receiver && index == 0
-                                ? *signature.receiver
-                                : signature.parameters[index - receiver_count].type;
-    const auto& type_layout = program_.layouts.types[type_index];
-    if (program_.layouts.classes[type_layout.index].kind != layout::Class::Kind::Host) {
+    if (!IsHostParameter(program_.layouts, signature, type, index)) {
       return false;
     }
   }
@@ -166,7 +192,8 @@ llvm::BasicBlock* FunctionEmitter::EmitInlineImportCall(const ir::Instruction& i
   builder_.SetInsertPoint(direct);
   auto* execution = body_->getArg(0);
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  auto* depth = builder_.CreateLoad(builder_.getInt64Ty(), depth_address);
+  // 调用者逻辑帧已经物化；嵌套调用返回时恢复深度，因此复用本次入口保存的值。
+  auto* depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(1));
   Check(HasStackBudget(depth), ExecutionStatus::StackOverflow);
   // 元数据由调用者初始化一次；位置必须逐次重置，因为宿主可修改当前指令位置。
   builder_.CreateStore(builder_.getInt32(selected.function),

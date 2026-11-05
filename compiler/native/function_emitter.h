@@ -128,6 +128,7 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void PrepareTraceFrame();
+  void CacheGlobals();
   void SetPosition();
   void PrepareRuntimeCall();
   bool IsEntrySlotRequired(std::size_t callee) const;
@@ -137,6 +138,7 @@ class FunctionEmitter final {
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
   void EmitHostBoundary(HostBorrow change);
+  llvm::Value* EmitHostPointer(llvm::Value* wrapper, const SourceType& type);
   llvm::Value* EmitDirectHostCall(const ir::Function& callee,
                                   llvm::Value* entries,
                                   std::span<llvm::Value* const> arguments);
@@ -277,6 +279,13 @@ class FunctionEmitter final {
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
   llvm::Value* host_parent_ = nullptr;
+  llvm::Value* entry_depth_ = nullptr;
+  llvm::Value* global_owner_ = nullptr;
+  llvm::Value* global_values_ = nullptr;
+  llvm::Value* global_states_ = nullptr;
+  llvm::Value* global_caches_ = nullptr;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> global_ready_;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> global_initial_ready_;
   llvm::Value* result_ = nullptr;
   llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
