@@ -287,6 +287,25 @@ TEST(NativeBindingTest, NativeFuturePayloadChecksSurviveFreshIsolateImageLoading
   EXPECT_EQ(*result, kNativeFutureValue);
 }
 
+TEST(NativeBindingTest, NativeFutureContractsSurviveRepeatedCallsAndMetadataCollection) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(BindFutureContract(isolate));
+  const auto compiled = test::CompileCleanSource(kNativeFutureContract, isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto first = test::ExecuteFutureInteger(**compiled);
+  ASSERT_TRUE(first) << first.error();
+  isolate.heap().Collect();
+  const auto layouts = isolate.layout_counts();
+  constexpr int kCalls = 8;
+  for (int call = 0; call < kCalls; ++call) {
+    const auto result = test::ExecuteFutureInteger(**compiled);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, kNativeFutureValue);
+    isolate.heap().Collect();
+    EXPECT_EQ(isolate.layout_counts(), layouts);
+  }
+}
+
 Result<Local<vela::Future<std::int64_t>>> WaitForCancellation(
     NativeContext& context,
     runtime::CancellationToken token) noexcept {

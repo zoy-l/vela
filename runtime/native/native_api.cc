@@ -17,6 +17,7 @@
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_async.h"
@@ -27,7 +28,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_buffer.h"
 
 struct VelaAotPersistent final {
   vela::runtime::HostRoot root;
@@ -44,16 +44,20 @@ bool IsOwner(const VelaAotScope* scope) {
   return scope != nullptr && scope->isolate().scheduler().IsOwnerThread();
 }
 
-Result<Value> ReadLocal(VelaAotLocal local) {
-  if (!IsOwner(local.scope)) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
-  }
+Result<Value> ReadSlot(VelaAotLocal local) {
   if (local.slot == nullptr) {
     return std::unexpected(
         Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
   }
   return *static_cast<const Value*>(local.slot);
+}
+
+Result<Value> ReadLocal(VelaAotLocal local) {
+  if (!IsOwner(local.scope)) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+  }
+  return ReadSlot(local);
 }
 
 VelaAotStatus StoreError(Error detail, VelaAotError** output) {
@@ -81,13 +85,13 @@ Result<Value> Invoke(NativeExecution& execution,
                      HandleScope& scope,
                      std::uint32_t function,
                      std::span<const VelaAotValue> input) {
-  ValueBuffer storage(input.size());
+  constexpr std::size_t kInlineArguments = 8;
+  NativeBuffer<Value, kInlineArguments> storage(scope.isolate().heap(), input.size());
   if (!storage.IsAllocated()) {
     return std::unexpected(
         Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
   }
   const auto values = storage.values();
-  const RootRange roots(scope.isolate().heap(), values.data(), values.size(), RootOwner::Runtime);
   for (std::size_t index = 0; index < input.size(); ++index) {
     auto value = aot::Decode(scope, input[index]);
     if (!value) {
@@ -170,7 +174,7 @@ Result<Value> Decode(HandleScope& scope, const VelaAotValue& input) {
         return std::unexpected(
             Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
       }
-      return ReadLocal(input.local);
+      return ReadSlot(input.local);
     default:
       break;
   }
@@ -389,7 +393,7 @@ extern "C" VelaAotStatus vela_aot_v2_future_wait(VelaAotScope* scope,
   if (error != nullptr) {
     *error = nullptr;
   }
-  const auto value = ReadLocal(future);
+  const auto value = ReadSlot(future);
   if (!value) {
     return ToNativeStatus(value.error().status);
   }

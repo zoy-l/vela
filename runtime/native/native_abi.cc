@@ -1,4 +1,5 @@
 #include "runtime/native/native_abi.h"
+#include <optional>
 
 #include <algorithm>
 #include <cstddef>
@@ -162,7 +163,7 @@ extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
                                            RootRange* range) noexcept {
   const auto size = static_cast<std::size_t>(count);
   std::uninitialized_value_construct_n(roots, size);
-  std::construct_at(range, execution->isolate().heap(), roots, size, RootOwner::Runtime);
+  std::construct_at(range, execution->isolate().heap(), roots, size, std::nullopt);
 }
 
 extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
@@ -172,7 +173,7 @@ extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
 ExecutionStatus NativeExecution::HandleLeafFailure(TracePosition position,
                                                    ExecutionStatus status,
                                                    std::span<const Value> roots) {
-  const RootRange retained(isolate().heap(), roots.data(), roots.size(), RootOwner::Runtime);
+  const RootRange retained(isolate().heap(), roots.data(), roots.size(), std::nullopt);
   NativeTraceFrame frame;
   MaterializeFrame(frame, position.function);
   frame.position.instruction = position.instruction;

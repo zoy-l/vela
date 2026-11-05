@@ -139,7 +139,8 @@ Result<HostEntry> HostEntry::Capture() const {
 Result<void> HostEntry::Invoke(HandleScope& scope,
                                std::span<const Value> arguments,
                                Value& output) const {
-  if (&scope.isolate() != &isolate()) {
+  auto& owner = isolate();
+  if (&scope.isolate() != &owner) {
     return std::unexpected(
         Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
   }
@@ -152,7 +153,7 @@ Result<void> HostEntry::Invoke(HandleScope& scope,
     return checked;
   }
   auto instance = NativeInstance::Borrow(*target->state);
-  auto* parent = isolate().native_control().state().host_execution;
+  auto* parent = owner.native_control().state().host_execution;
   if (parent != nullptr && (&parent->instance().code_identity() != &instance.code_identity())) {
     return std::unexpected(
         Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
@@ -162,7 +163,7 @@ Result<void> HostEntry::Invoke(HandleScope& scope,
   if (!result) {
     return std::unexpected(vela::internal::CaptureHostError(execution, result.error()));
   }
-  vela::internal::StoreHostResult(isolate().heap(), output, *result);
+  vela::internal::StoreHostResult(owner.heap(), output, *result);
   return {};
 }
 

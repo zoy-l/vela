@@ -5,6 +5,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -16,9 +17,17 @@ namespace vela::runtime {
 
 struct FutureCompletionEndpoint::State final {
   State(FutureScheduler& owner, std::uint64_t completion_identity, Completer target)
-      : scheduler(&owner),
-        identity(completion_identity),
-        completer(std::make_unique<Completer>(std::move(target))) {}
+      : scheduler(&owner), identity(completion_identity), completer(std::move(target)) {}
+
+  std::expected<void, FutureCompletionError> CheckRequest() const {
+    if (completed) {
+      return std::unexpected(FutureCompletionError::AlreadyCompleted);
+    }
+    if (scheduler == nullptr) {
+      return std::unexpected(FutureCompletionError::Closed);
+    }
+    return {};
+  }
 
   void Retire() const {
     auto* owner = scheduler;
@@ -30,7 +39,7 @@ struct FutureCompletionEndpoint::State final {
   std::mutex mutex;
   FutureScheduler* scheduler;
   std::uint64_t identity;
-  std::unique_ptr<Completer> completer;
+  std::optional<Completer> completer;
   bool completed = false;
 };
 
@@ -63,10 +72,10 @@ FutureCompletionEndpoint FutureCompletionEndpoint::Create(FutureScheduler& sched
 }
 
 void FutureCompletionEndpoint::Close(State& state, CloseReason reason) {
-  std::unique_ptr<Completer> retired;
+  std::optional<Completer> retired;
   {
     const std::scoped_lock lock(state.mutex);
-    retired = std::move(state.completer);
+    retired = std::exchange(state.completer, std::nullopt);
     state.scheduler = nullptr;
     if (reason == CloseReason::Shutdown) {
       state.completed = false;
@@ -90,13 +99,10 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteTex
   }
   auto state = lease_->state;
   const std::scoped_lock lock(state->mutex);
-  if (state->completed) {
-    return std::unexpected(FutureCompletionError::AlreadyCompleted);
+  if (auto checked = state->CheckRequest(); !checked) {
+    return checked;
   }
   auto* scheduler = state->scheduler;
-  if (scheduler == nullptr) {
-    return std::unexpected(FutureCompletionError::Closed);
-  }
   state->completed = true;
   scheduler->PostMicrotask([state, text = std::move(text)] {
     const std::scoped_lock completion_lock(state->mutex);
@@ -141,11 +147,8 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Settle(
   }
   auto& state = *lease_->state;
   const std::scoped_lock lock(state.mutex);
-  if (state.completed) {
-    return std::unexpected(FutureCompletionError::AlreadyCompleted);
-  }
-  if (state.scheduler == nullptr) {
-    return std::unexpected(FutureCompletionError::Closed);
+  if (auto checked = state.CheckRequest(); !checked) {
+    return checked;
   }
   auto& completer = *state.completer;
   if (expected_heap != nullptr && &completer.future().heap() != expected_heap) {

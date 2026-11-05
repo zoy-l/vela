@@ -1,6 +1,5 @@
 #include "runtime/dynamic/dynamic_value.h"
 
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -44,11 +43,11 @@ Result Equality(Opcode operation, internal::NumericOperands operands) {
 
 Result Binary(std::span<const Value> arguments, Heap& heap) {
   const auto selector = arguments.front();
-  if (!selector.IsInteger() || selector.AsInteger() < 0 ||
-      selector.AsInteger() > static_cast<std::int64_t>(Opcode::Return)) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto decoded = DecodeOperation<Opcode::Return>(selector);
+  if (!decoded) {
+    return std::unexpected(decoded.error());
   }
-  const auto operation = static_cast<Opcode>(selector.AsInteger());
+  const auto operation = *decoded;
   const auto left = arguments.subspan(1).front();
   const auto right = arguments.subspan(2).front();
   if (operation == Opcode::EqualInt || operation == Opcode::NotEqualInt) {
@@ -118,10 +117,10 @@ Result ArrayIndex(Builtin builtin, std::span<const Value> arguments, Heap& heap)
     if (!value.IsNull() && element != nullptr && element->IsEnum()) {
       value = Heap::LoadField(*value.AsObject(), 0);
     }
-    const auto written = WriteIndex(heap, &object, index.AsInteger(), value);
+    const auto written = WriteIndex(heap, object, index.AsInteger(), value);
     return written ? Result(original) : std::unexpected(written.error());
   }
-  const auto value = ReadIndex(&object, index.AsInteger());
+  const auto value = ReadIndex(object, index.AsInteger());
   return value ? BoxDynamicValue(heap, *value, layout.element) : value;
 }
 

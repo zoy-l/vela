@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <expected>
+#include <span>
 #include <string>
 #include <string_view>
 
 #include "base/execution_status.h"
 #include "base/layout_description.h"
+#include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/layout_transaction.h"
 #include "runtime/isolate/program_layouts.h"
@@ -25,8 +27,12 @@ bool NativeType::IsHost() const noexcept {
 }
 
 std::string_view NativeType::host_key() const noexcept {
-  return type && IsHost() ? std::string_view(layouts().classes[type->index].native_key)
-                          : std::string_view();
+  if (!type || type->kind != layout::Type::Kind::Instance) {
+    return {};
+  }
+  const auto& nominal = layouts().classes[type->index];
+  return nominal.kind == layout::Class::Kind::Host ? std::string_view(nominal.native_key)
+                                                   : std::string_view();
 }
 
 const void* NativeType::cpp_identity() const noexcept {
@@ -56,9 +62,15 @@ std::expected<TypeConstraint, ExecutionStatus> ResolveBuiltinNativeType(Isolate&
       return std::unexpected(ExecutionStatus::InvalidEntry);
     }
   }
-  LayoutTransaction transaction(isolate, LayoutLifetime::Collectible);
   LayoutCache cache;
-  const auto result = InstantiateLayoutType(source, *type.type, isolate, cache);
+  return InstantiateNativeType(isolate, type, cache);
+}
+
+TypeConstraint InstantiateNativeType(Isolate& isolate, NativeType type, LayoutCache& cache) {
+  TypeConstraint result;
+  const RootRange root(isolate.heap(), std::span(&result, 1));
+  LayoutTransaction transaction(isolate, LayoutLifetime::Collectible);
+  result = InstantiateLayoutType(type.layouts(), *type.type, isolate, cache);
   transaction.CommitStructural();
   return result;
 }

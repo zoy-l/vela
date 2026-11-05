@@ -1,6 +1,8 @@
 #include "base/declaration.h"
 #include "runtime/heap/heap.h"
 
+#include <absl/functional/function_ref.h>
+
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -99,15 +101,19 @@ void Heap::AccumulateNativeLayouts(LayoutCounts& counts) const noexcept {
   }
 }
 
-void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
+void Heap::VisitRootTypes(absl::FunctionRef<void(TypeConstraint)> visit) const {
   for (auto* root = roots_; root != nullptr; root = root->next_) {
     if (root->kind_ == RootRange::Kind::Types) {
       for (const auto type :
            std::span(static_cast<const TypeConstraint*>(root->data_), root->count_)) {
-        tracer.Mark(type);
+        visit(type);
       }
     }
   }
+}
+
+void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
+  VisitRootTypes([&tracer](TypeConstraint type) { tracer.Mark(type); });
   for (auto* object = objects_; object != nullptr; object = object->next) {
     switch (object->kind) {
       case ObjectKind::Instance:
@@ -124,31 +130,16 @@ void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
       case ObjectKind::Completer:
         tracer.Mark(object->future_signature());
         break;
-      case ObjectKind::NativeProgram:
-        tracer.Mark(NativeProgram(*object).layouts);
+      case ObjectKind::NativeProgram: {
+        const auto& state = NativeProgram(*object);
+        tracer.Mark(state.layouts);
+        for (const auto& [description, type] : state.native_future_types) {
+          tracer.Mark(type);
+        }
         break;
+      }
       default:
         break;
-    }
-  }
-}
-
-void Heap::AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& functions) const {
-  for (auto* object = objects_; object != nullptr; object = object->next) {
-    if (object->kind == ObjectKind::NativeProgram) {
-      const auto& state = NativeProgram(*object);
-      for (auto* root = state.function_roots; root != nullptr; root = root->next_) {
-        functions.push_back({
-            .image = state.image,
-            .function = root->function_,
-            .instruction = root->instruction_,
-        });
-      }
-    } else if (auto* environment = NativeEnvironment(*object)) {
-      const auto& state = NativeProgram(*environment);
-      if (state.dispatch != nullptr) {
-        functions.push_back({.image = state.image, .function = NativeFunctionIndex(*object)});
-      }
     }
   }
 }
@@ -187,7 +178,8 @@ void VisitNativeType(TypeConstraint type,
 
 }  // namespace
 
-void Heap::AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const {
+void Heap::AppendRetainedNative(std::vector<NativeRetainedFunction>& functions,
+                                std::vector<DeclarationId>& declarations) const {
   absl::flat_hash_set<TypeConstraint> visited;
   std::vector<TypeConstraint> pending;
   const auto append = [&](TypeConstraint type) {
@@ -195,16 +187,27 @@ void Heap::AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) c
       pending.push_back(type);
     }
   };
-  for (auto* root = roots_; root != nullptr; root = root->next_) {
-    if (root->kind_ == RootRange::Kind::Types) {
-      for (const auto type :
-           std::span(static_cast<const TypeConstraint*>(root->data_), root->count_)) {
-        append(type);
-      }
-    }
-  }
+  VisitRootTypes(append);
   for (auto* object = objects_; object != nullptr; object = object->next) {
     append(TypeOf(Value::Object(object)));
+    if (object->kind == ObjectKind::NativeProgram) {
+      const auto& state = NativeProgram(*object);
+      for (const auto& [description, type] : state.native_future_types) {
+        append(type);
+      }
+      for (auto* root = state.function_roots; root != nullptr; root = root->next_) {
+        functions.push_back({
+            .image = state.image,
+            .function = root->function_,
+            .instruction = root->instruction_,
+        });
+      }
+    } else if (auto* environment = NativeEnvironment(*object)) {
+      const auto& state = NativeProgram(*environment);
+      if (state.dispatch != nullptr) {
+        functions.push_back({.image = state.image, .function = NativeFunctionIndex(*object)});
+      }
+    }
   }
   while (!pending.empty()) {
     const auto type = pending.back();

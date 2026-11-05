@@ -5,6 +5,7 @@
 #include <cstring>
 #include <expected>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -27,11 +28,16 @@ struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 17;
+inline constexpr std::uint32_t kNativeAbiVersion = 18;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {
   return static_cast<std::uint8_t>(status);
+}
+
+[[nodiscard]] constexpr std::uint8_t ToNativeStatus(
+    std::expected<void, ExecutionStatus> result) noexcept {
+  return ToNativeStatus(result ? ExecutionStatus::Returned : result.error());
 }
 
 // 函数与指令编号属于当前执行持有的 NativeImage；异常保存前解析成独立的源码诊断。
@@ -51,6 +57,7 @@ struct TracePosition final {
       .instruction = static_cast<std::uint32_t>(position),
   };
 }
+
 inline constexpr std::size_t kNativeValueBytes = 16;
 
 enum class NativeValueKind : std::uint8_t {
@@ -115,7 +122,7 @@ class NativeFrame final {
 
  private:
   std::span<Value> roots_;
-  RootRange root_range_{RootOwner::Runtime};
+  RootRange root_range_{std::nullopt};
   std::size_t allocation_bytes_ = 0;
   void* allocation_ = nullptr;
   void* storage_ = nullptr;
@@ -181,7 +188,7 @@ class NativeExecution final {
                                                   std::span<const Value> roots);
   [[nodiscard]] FutureDiagnostic Diagnostic(ExecutionStatus status, std::string_view message) const;
   [[nodiscard]] std::vector<FutureTraceFrame> CaptureTrace() const;
-  [[nodiscard]] FutureDiagnostic ExceptionDiagnostic() const;
+  [[nodiscard]] const FutureDiagnostic& ExceptionDiagnostic() const;
   // 未发布异常时返回空载荷与给定状态；不捕获第二份原生栈。
   [[nodiscard]] Value ExceptionPayload() const noexcept;
   [[nodiscard]] FutureDiagnostic FailureDiagnostic(ExecutionStatus status) const;
@@ -191,7 +198,6 @@ class NativeExecution final {
   [[nodiscard]] ExecutionStatus Throw(Value payload);
   [[nodiscard]] ExecutionStatus Rethrow(Value exception) noexcept;
   [[nodiscard]] Value TakeException() noexcept;
-  [[nodiscard]] Value pending_exception() const noexcept { return pending_exception_; }
   [[nodiscard]] bool HasException() const noexcept {
     return !exception_allocation_failed_ && !pending_exception_.IsNull();
   }
@@ -211,7 +217,7 @@ class NativeExecution final {
   ExecutionStatus stack_status_ = ExecutionStatus::NativeFailure;
   Value pending_exception_;
   // 成功执行没有异常根；仅在异常封套发布后登记，到移交或执行结束时释放。
-  RootRange exception_root_{RootOwner::Runtime};
+  RootRange exception_root_{std::nullopt};
   bool exception_allocation_failed_ = false;
   ExternalResource execution_resource_;
   NativeExecution* version_next_ = nullptr;

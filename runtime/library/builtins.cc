@@ -44,20 +44,14 @@ Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
   }
   const auto joined = heap.JoinArray(*object, separator.AsString()->value());
   if (!joined) {
-    return std::unexpected(joined.error() == StringJoinError::TypeMismatch
-                               ? ExecutionStatus::TypeError
-                               : ExecutionStatus::OutOfMemory);
+    return std::unexpected(StringJoinStatus(joined.error()));
   }
   return Value::String(*joined);
 }
 
 Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   if (builtin == Builtin::NewMutableString) {
-    auto* builder = heap.AllocateMutableString();
-    if (builder == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    return Value::Object(builder);
+    return AllocatedValue(heap.AllocateMutableString());
   }
   const auto value = arguments.front();
   auto* object = value.AsObjectOrNull();
@@ -198,13 +192,9 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
       if (!source.IsString()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
-      auto* converted = heap.ConvertStringCase(
+      return AllocatedValue(heap.ConvertStringCase(
           *source.AsString(),
-          builtin == Builtin::StringToLowerCase ? StringCase::Lower : StringCase::Upper);
-      if (converted == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      return Value::String(converted);
+          builtin == Builtin::StringToLowerCase ? StringCase::Lower : StringCase::Upper));
     }
     case Builtin::ArraySlice:
     case Builtin::ArrayFill:

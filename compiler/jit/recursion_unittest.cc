@@ -185,12 +185,15 @@ TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions
   execution.MaterializeFrame(outer, *identity);
   ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
             ExecutionStatus::DivisionByZero);
-  const auto exception = execution.pending_exception();
+  const auto exception = execution.TakeException();
   ASSERT_FALSE(exception.IsNull());
+  EXPECT_EQ(execution.Rethrow(exception), ExecutionStatus::DivisionByZero);
   ASSERT_EQ(entry(&execution, arguments.data(), arguments.size(), &result),
             static_cast<std::uint8_t>(ExecutionStatus::Returned));
   EXPECT_EQ(runtime::DecodeNativeValue(result).AsInteger(), 42);
-  EXPECT_EQ(execution.pending_exception().AsObject(), exception.AsObject());
+  const auto preserved = execution.TakeException();
+  EXPECT_EQ(preserved.AsObject(), exception.AsObject());
+  EXPECT_EQ(execution.Rethrow(preserved), ExecutionStatus::DivisionByZero);
   EXPECT_EQ(execution.current_frame(), &outer);
   execution.Exit();
   ASSERT_EQ(entry(&execution, arguments.data(), arguments.size(), &result),

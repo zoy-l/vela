@@ -5,6 +5,7 @@
 
 #include "runtime/heap/heap.h"
 #include "runtime/heap/intrusive_link_internal.h"
+#include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/value/object.h"
@@ -14,7 +15,7 @@ namespace vela::runtime {
 
 NativeFunctionRoot::NativeFunctionRoot(HeapObject& state,
                                        std::uint32_t function,
-                                       RootOwner owner,
+                                       std::optional<ExternalResourceKind> owner,
                                        std::optional<std::uint32_t> instruction) noexcept
     : state_(Value::Object(&state)), function_(function), instruction_(instruction), root_(owner) {
   auto& program = Heap::NativeProgram(state);

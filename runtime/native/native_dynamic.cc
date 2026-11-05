@@ -1,14 +1,14 @@
 #include "runtime/native/native_dynamic.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include "base/builtin.h"
 #include "base/callable.h"
@@ -17,6 +17,7 @@
 #include "runtime/dynamic/dynamic_array.h"
 #include "runtime/dynamic/dynamic_call.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
@@ -27,11 +28,29 @@
 #include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_buffer.h"
 #include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
+
+template <class Action>
+auto InCurrentInstance(NativeExecution& execution, const Action& action) {
+  if (auto* dispatch = execution.instance().dispatch()) {
+    auto current = NativeInstance::Borrow(dispatch->current_state());
+    const NativeInstanceScope scope(execution, current);
+    return action();
+  }
+  return action();
+}
+
+const MemberDefinition* FindMember(const NativeInstance& instance,
+                                   Value receiver,
+                                   std::string_view name,
+                                   const TypeConstraint& contract) {
+  const auto& members = instance.members();
+  return contract.interface != nullptr ? members.Find(contract, name)
+                                       : members.Find(receiver, name);
+}
 
 std::expected<Value, ExecutionStatus> CreatePlan(
     NativeExecution& execution,
@@ -57,34 +76,32 @@ std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  if (const auto checked = CheckDynamicArguments(signature, types, arguments, *bound); !checked) {
-    return std::unexpected(checked.error());
-  }
   const auto hidden = callable.implicit ? 1U : 0U;
-  ValueBuffer storage(bound->source_indices.size() + hidden);
+  auto& heap = execution.isolate().heap();
+  constexpr std::size_t kInlineArguments = 8;
+  NativeBuffer<Value, kInlineArguments> storage(heap, bound->source_indices.size() + hidden);
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto values = storage.values();
-  const RootRange roots(execution.isolate().heap(), values.data(), values.size(),
-                        RootOwner::Runtime);
+  std::uninitialized_value_construct_n(values.data(), values.size());
+  const RootRange roots(heap, values.data(), values.size(), std::nullopt);
   if (callable.implicit) {
     values.front() = *callable.implicit;
   }
   for (std::size_t index = 0; index < bound->source_indices.size(); ++index) {
-    const auto value =
-        ReadDynamicArgument(execution.isolate().heap(), signature, types, arguments, *bound, index);
+    const auto value = ReadDynamicArgument(heap, signature, types, arguments, *bound, index);
     if (!value) {
       return std::unexpected(value.error());
     }
     values.subspan(index + hidden).front() = *value;
   }
-  std::vector<NativeValue> input;
-  input.reserve(values.size());
-  for (const auto value : values) {
-    input.push_back(EncodeNativeValue(value));
+  NativeBuffer<NativeValue, kInlineArguments> input(heap, values.size());
+  if (!input.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  return InvokeNativeTarget(execution, callable.function, input);
+  std::ranges::transform(values, input.values().begin(), EncodeNativeValue);
+  return InvokeNativeTarget(execution, callable.function, input.values());
 }
 
 std::expected<Value, ExecutionStatus> InvokeFunction(NativeExecution& execution,
@@ -111,9 +128,6 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
   switch (member.kind) {
     case MemberKind::Field: {
       const auto& type = member.type;
-      if (!type) {
-        std::unreachable();
-      }
       auto& object = *receiver.AsObject();
       const auto* layout = Heap::ClassOf(object);
       auto* dispatch = instance.dispatch();
@@ -131,9 +145,6 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
     case MemberKind::Method: {
       const auto& wrapper = *layouts.classes.at(member.target);
       const auto* const target = wrapper.callable();
-      if (target == nullptr) {
-        std::unreachable();
-      }
       if (resolving && instance.dispatch() == nullptr) {
         return CreatePlan(execution, receiver, target->function);
       }
@@ -160,19 +171,15 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
 }
 
 std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
+                                                  Value receiver,
                                                   const MemberDefinition& member,
-                                                  std::span<const Value> arguments) {
-  const auto receiver = arguments.front();
-  const auto original = arguments.subspan(2).front();
+                                                  Value original) {
   const auto& instance = execution.instance();
   const auto& types = instance.layouts().types;
   const auto setter = member.setter;
   const TypeConstraint* type = nullptr;
   if (member.kind == MemberKind::Field) {
     const auto& field_type = member.type;
-    if (!field_type) {
-      std::unreachable();
-    }
     type = &types.at(*field_type);
   } else if (member.kind == MemberKind::Property && setter) {
     type = &types.at(instance.call_signature(*setter).parameters.front().type);
@@ -198,9 +205,6 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     });
   }
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
-  if (!setter) {
-    std::unreachable();
-  }
   const auto result = InvokeNativeTarget(execution, *setter, input);
   return result ? std::expected<Value, ExecutionStatus>(original) : std::unexpected(result.error());
 }
@@ -210,18 +214,15 @@ std::expected<Value, ExecutionStatus> MethodCall(NativeExecution& execution,
                                                  const HeapObject& arguments,
                                                  const HeapObject& names) {
   const auto plan = ReadDynamicCallPlan(plan_value);
-  if (!plan) {
-    return std::unexpected(plan.error());
-  }
-  const auto& method = plan->method;
+  const auto& method = plan.method;
   if (method) {
     const ResolvedCallable target{
         .function = *method,
-        .implicit = plan->value,
+        .implicit = plan.value,
     };
     return InvokeDynamic(execution, target, arguments, names, DynamicCallStyle::Method);
   }
-  return InvokeFunction(execution, plan->value, arguments, names);
+  return InvokeFunction(execution, plan.value, arguments, names);
 }
 
 std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
@@ -236,8 +237,9 @@ std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
   if (member == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return builtin == Builtin::DynamicMemberSet ? WriteMember(execution, *member, arguments)
-                                              : ReadMember(execution, *member, receiver, builtin);
+  return builtin == Builtin::DynamicMemberSet
+             ? WriteMember(execution, receiver, *member, arguments[2])
+             : ReadMember(execution, *member, receiver, builtin);
 }
 
 }  // namespace
@@ -247,19 +249,11 @@ std::expected<Value, ExecutionStatus> ReadNativeMember(NativeExecution& executio
                                                        std::string_view name,
                                                        const TypeConstraint& contract) {
   const auto read = [&]() -> std::expected<Value, ExecutionStatus> {
-    const auto& members = execution.instance().members();
-    const auto* member =
-        contract.interface != nullptr ? members.Find(contract, name) : members.Find(receiver, name);
+    const auto* member = FindMember(execution.instance(), receiver, name, contract);
     return member != nullptr ? ReadMember(execution, *member, receiver, Builtin::DynamicMemberGet)
                              : std::unexpected(ExecutionStatus::InvalidField);
   };
-  auto* dispatch = execution.instance().dispatch();
-  if (dispatch != nullptr) {
-    auto current = NativeInstance::Borrow(dispatch->current_state());
-    const NativeInstanceScope scope(execution, current);
-    return read();
-  }
-  return read();
+  return InCurrentInstance(execution, read);
 }
 
 std::expected<void, ExecutionStatus> WriteNativeMember(NativeExecution& execution,
@@ -268,22 +262,13 @@ std::expected<void, ExecutionStatus> WriteNativeMember(NativeExecution& executio
                                                        Value value,
                                                        const TypeConstraint& contract) {
   const auto write = [&]() -> std::expected<void, ExecutionStatus> {
-    const auto& members = execution.instance().members();
-    const auto* member =
-        contract.interface != nullptr ? members.Find(contract, name) : members.Find(receiver, name);
+    const auto* member = FindMember(execution.instance(), receiver, name, contract);
     if (member == nullptr) {
       return std::unexpected(ExecutionStatus::InvalidField);
     }
-    const std::array input{receiver, Value::Null(), value};
-    return WriteMember(execution, *member, input).transform([](Value) {});
+    return WriteMember(execution, receiver, *member, value).transform([](Value) {});
   };
-  auto* dispatch = execution.instance().dispatch();
-  if (dispatch != nullptr) {
-    auto current = NativeInstance::Borrow(dispatch->current_state());
-    const NativeInstanceScope scope(execution, current);
-    return write();
-  }
-  return write();
+  return InCurrentInstance(execution, write);
 }
 
 std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& execution,
@@ -303,18 +288,13 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
     const auto plan =
         PrepareDynamicArray(execution.isolate(), arguments, instance.layouts().classes, *signature);
     if (!plan) {
-      return plan;
+      return std::unexpected(plan.error());
     }
-    const std::array input{*plan};
-    const auto thunk = ReadDynamicArrayOperation(Builtin::DynamicArrayCallback, input);
-    if (!thunk) {
-      return std::unexpected(thunk.error());
-    }
-    auto& thunk_object = *thunk->AsObject();
+    auto& thunk_object = *plan->thunk;
     execution.isolate().heap().SetNativeEnvironment(
         thunk_object, *instance.state().front().AsObject(),
         Heap::ClassOf(thunk_object)->callable()->function);
-    return plan;
+    return plan->plan;
   }
   if (builtin == Builtin::DynamicArrayInvoke) {
     const auto request = PrepareDynamicArrayInvocation(execution.isolate().heap(), arguments);
@@ -336,13 +316,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
                ? InvokeFunction(execution, first, *second.AsObject(), *names.AsObject())
                : MethodCall(execution, first, *second.AsObject(), *names.AsObject());
   }
-  auto* dispatch = execution.instance().dispatch();
-  if (dispatch != nullptr) {
-    auto current = NativeInstance::Borrow(dispatch->current_state());
-    const NativeInstanceScope scope(execution, current);
-    return AccessMember(execution, builtin, arguments);
-  }
-  return AccessMember(execution, builtin, arguments);
+  return InCurrentInstance(execution, [&] { return AccessMember(execution, builtin, arguments); });
 }
 
 }  // namespace vela::runtime

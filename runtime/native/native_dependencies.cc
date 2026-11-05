@@ -108,6 +108,8 @@ struct MemberName final {
 class RetainedContracts final {
  public:
   RetainedContracts(const NativeImage* previous, const NativeImage& candidate);
+  [[nodiscard]] std::expected<void, NativeContractViolation> CheckTypes(
+      std::span<const DeclarationId> types) const;
   [[nodiscard]] std::expected<void, NativeContractViolation> Check(
       const NativeFunctionDescription& function,
       const DeclarationIndex& source,
@@ -406,9 +408,13 @@ void AppendDeclarations(const NativeFunctionDependencies& dependencies,
 
 std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
     std::span<const NativeRetainedFunction> retained,
+    std::span<const DeclarationId> types,
     const NativeImage* previous,
     const NativeImage& candidate) {
   const RetainedContracts contracts(previous, candidate);
+  if (auto checked = contracts.CheckTypes(types); !checked) {
+    return checked;
+  }
   std::vector<NativeRetainedFunction> pending(retained.begin(), retained.end());
   absl::flat_hash_set<
       std::tuple<const NativeImage*, std::uint32_t, std::uint32_t, NativeDependencyPhase>>
@@ -473,26 +479,17 @@ std::vector<DeclarationId> RetainedNativeDeclarations(
   return {declarations.begin(), declarations.end()};
 }
 
-std::expected<void, NativeContractViolation> CheckRetainedNativeTypes(
-    std::span<const DeclarationId> declarations,
-    const NativeImage& candidate) {
-  absl::flat_hash_set<DeclarationId> classes;
-  for (const auto& type : candidate.classes.values()) {
-    classes.insert(type.declaration);
-  }
-  DeclarationIndex descriptions;
-  for (const auto& declaration : candidate.declarations.values()) {
-    descriptions.emplace(declaration.identity, &declaration);
-  }
-  for (const auto identity : declarations) {
-    const auto found = descriptions.find(identity);
-    if (found == descriptions.end()) {
+std::expected<void, NativeContractViolation> RetainedContracts::CheckTypes(
+    std::span<const DeclarationId> types) const {
+  for (const auto identity : types) {
+    const auto found = declarations_.find(identity);
+    if (found == declarations_.end()) {
       // 真正删除由名义契约及存留字段/调用检查报告；此处只区分特化裁剪。
       continue;
     }
     const auto& description = *found->second;
     if (description.kind == static_cast<std::uint32_t>(DeclarationKind::Class) &&
-        description.definition != DeclarationId{} && !classes.contains(identity)) {
+        description.definition != DeclarationId{} && !classes_.contains(identity)) {
       return std::unexpected(NativeContractViolation{
           .declaration = identity,
           .message = "retained generic type needs compilation in the candidate",

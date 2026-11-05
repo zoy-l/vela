@@ -380,6 +380,34 @@ TEST(FutureTest, ObserversBorrowOneCompletion) {
   EXPECT_EQ(first, late);
 }
 
+TEST(FutureTest, MixedObserversPreserveOrderAfterPendingCompactionAndQueuedCancellation) {
+  Isolate isolate(1);
+  Future future(&isolate.scheduler());
+  future.AttachHeap(isolate.heap());
+  std::vector<int> calls;
+  future.ObserveResult([&](const FutureResult&) { calls.push_back(1); });
+  constexpr std::size_t kObservers = 8;
+  constexpr int kLastObserver = 10;
+  constexpr int kSurvivingObserver = 5;
+  constexpr std::size_t kQueuedCancellation = 5;
+  std::array<FutureObservation, kObservers> observations;
+  for (std::size_t index = 0; index < observations.size(); ++index) {
+    auto observation = future.SubscribeResult(
+        [&, index](const FutureResult&) { calls.push_back(static_cast<int>(index) + 2); });
+    ASSERT_TRUE(observation.has_value());
+    observations[index] = std::move(*observation);
+  }
+  for (const auto index : {0U, 2U, 4U, 6U, 7U, 1U}) {
+    observations[index].Cancel();
+  }
+  future.ObserveResult([&](const FutureResult&) { calls.push_back(kLastObserver); });
+  ASSERT_TRUE(future.Complete(Value::Integer(kExpectedValue)));
+  observations[kQueuedCancellation].Cancel();
+  isolate.heap().Collect();
+  Drain(isolate.scheduler());
+  EXPECT_EQ(calls, (std::vector<int>{1, kSurvivingObserver, kLastObserver}));
+}
+
 TEST(FutureTest, PostedCompletionAndMultipleAdoptionsPreserveErrorDiagnostic) {
   constexpr std::size_t kMessageSize = 128;
   FutureScheduler scheduler;

@@ -25,13 +25,13 @@ std::unexpected<vela::Error> Failure(std::string message) {
   return std::unexpected(vela::Error{.message = std::move(message), .stack_trace = {}});
 }
 
-double PerformanceNow([[maybe_unused]] NativeContext& context) noexcept {
+double PerformanceNow() noexcept {
   return std::chrono::duration<double, std::milli>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
 
-std::int64_t DateNow([[maybe_unused]] NativeContext& context) noexcept {
+std::int64_t DateNow() noexcept {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -47,51 +47,45 @@ double NextDouble(NativeContext& context) noexcept {
 
 std::expected<std::int64_t, vela::Error> NextInt(NativeContext& context,
                                                  std::int64_t bound) noexcept {
-  const auto value = context.isolate().random().NextInt(bound);
-  if (!value) {
+  if (bound <= 0) {
     return Failure("random bound must be positive");
   }
-  return *value;
+  return context.isolate().random().NextInt(bound);
 }
 
 template <auto Operation>
-double Unary([[maybe_unused]] NativeContext& context, double value) noexcept {
+double Unary(double value) noexcept {
   return Operation(value);
 }
 
 template <auto Operation>
-double Binary([[maybe_unused]] NativeContext& context, double left, double right) noexcept {
+double Binary(double left, double right) noexcept {
   return Operation(left, right);
 }
 
-bool IsFinite([[maybe_unused]] NativeContext& context, double value) noexcept {
+bool IsFinite(double value) noexcept {
   return std::isfinite(value);
 }
 
-bool IsNaN([[maybe_unused]] NativeContext& context, double value) noexcept {
+bool IsNaN(double value) noexcept {
   return std::isnan(value);
 }
 
-std::expected<double, vela::Error> Clamp([[maybe_unused]] NativeContext& context,
-                                         double value,
-                                         double lower,
-                                         double upper) noexcept {
+std::expected<double, vela::Error> Clamp(double value, double lower, double upper) noexcept {
   if (std::isnan(lower) || std::isnan(upper) || lower > upper) {
     return Failure("clamp bounds must be ordered and not NaN");
   }
   return std::fmin(std::fmax(value, lower), upper);
 }
 
-std::expected<double, vela::Error> Sqrt([[maybe_unused]] NativeContext& context,
-                                        double value) noexcept {
+std::expected<double, vela::Error> Sqrt(double value) noexcept {
   if (value < 0.0) {
     return Failure("sqrt argument must be nonnegative");
   }
   return std::sqrt(value);
 }
 
-std::expected<double, vela::Error> Log([[maybe_unused]] NativeContext& context,
-                                       double value) noexcept {
+std::expected<double, vela::Error> Log(double value) noexcept {
   if (value <= 0.0) {
     return Failure("log argument must be positive");
   }

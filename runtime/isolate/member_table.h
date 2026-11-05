@@ -16,7 +16,7 @@
 
 namespace vela::runtime {
 
-// 类型表借用实例的稳定布局；成员描述由本表拥有，索引中的名称视图随其存活。
+// 名义身份借用实例的稳定布局；成员描述由本表拥有，索引中的名称视图随其存活。
 class MemberTable final {
  public:
   MemberTable() = default;
@@ -43,8 +43,9 @@ class MemberTable final {
                                  const TypeSignature*,
                                  const InterfaceType*>;
   [[nodiscard]] static ReceiverKey Key(const TypeConstraint& type);
-  std::span<const TypeConstraint> types_;
   std::vector<MemberDefinition> members_;
+  absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::size_t>
+      nominal_members_;
   absl::flat_hash_map<ReceiverKey, std::uint32_t> receiver_indices_;
   absl::flat_hash_map<std::pair<std::uint32_t, std::string_view>, std::size_t> member_indices_;
 };

@@ -228,6 +228,7 @@ TEST(RuntimeTest, WritesDoubleWithRoundTripPrecisionAndSignedZero) {
 TEST(RuntimeTest, FutureBindingStoresThePayloadSignatureAndRejectsRetyping) {
   Isolate isolate;
   auto& heap = isolate.heap();
+  const auto initial_array_layouts = isolate.layout_counts().arrays;
   const auto* integer = isolate.CreateTypeSignature(
       {.parameters = {}, .result = TypeConstraint{.kind = ValueKind::Integer}});
   const auto* text = isolate.CreateTypeSignature(
@@ -243,7 +244,7 @@ TEST(RuntimeTest, FutureBindingStoresThePayloadSignatureAndRejectsRetyping) {
   EXPECT_EQ(Heap::TypeOf(value).signature, nullptr);
   ASSERT_TRUE(Heap::BindRuntimeType(object, type));
   EXPECT_EQ(Heap::TypeOf(value), type);
-  EXPECT_EQ(isolate.layout_counts().arrays, 0U);
+  EXPECT_EQ(isolate.layout_counts().arrays, initial_array_layouts);
   ASSERT_TRUE(Heap::BindRuntimeType(object, type));
   EXPECT_EQ(
       Heap::BindRuntimeType(

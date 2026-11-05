@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -27,7 +28,7 @@ class NativeFunctionRoot final {
  public:
   NativeFunctionRoot(HeapObject& state,
                      std::uint32_t function,
-                     RootOwner owner = RootOwner::Runtime,
+                     std::optional<ExternalResourceKind> owner = std::nullopt,
                      std::optional<std::uint32_t> instruction = std::nullopt) noexcept;
   ~NativeFunctionRoot();
   NativeFunctionRoot(const NativeFunctionRoot&) = delete;

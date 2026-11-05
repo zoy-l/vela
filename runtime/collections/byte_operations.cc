@@ -1,4 +1,5 @@
 #include "runtime/collections/byte_operations.h"
+#include <optional>
 
 #include <algorithm>
 #include <bit>
@@ -81,16 +82,14 @@ Result FromArray(Value input, Heap& heap) {
   if (!std::ranges::all_of(*numbers, IsByte)) {
     return std::unexpected(ExecutionStatus::InvalidNumericConversion);
   }
-  RootRange root(heap, &input, 1, RootOwner::Runtime);
+  RootRange root(heap, &input, 1, std::nullopt);
   const auto result = AllocatedValue(heap.AllocateByteArray(numbers->size()));
   if (!result) {
     return result;
   }
-  auto bytes = Heap::ByteArrayBytes(*result->AsObject());
-  for (const auto number : *numbers) {
-    bytes.front() = static_cast<std::uint8_t>(number);
-    bytes = bytes.subspan(1);
-  }
+  const auto bytes = Heap::ByteArrayBytes(*result->AsObject());
+  std::ranges::transform(*numbers, bytes.begin(),
+                         [](std::int64_t number) { return static_cast<std::uint8_t>(number); });
   return result;
 }
 
@@ -101,7 +100,7 @@ Result Slice(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto input = Value::Object(&owner);
-  RootRange root(heap, &input, 1, RootOwner::Runtime);
+  RootRange root(heap, &input, 1, std::nullopt);
   const auto bytes = Heap::ByteArrayBytes(owner);
   const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), bytes.size());
   const auto result = AllocatedValue(heap.AllocateByteArray(end - start));

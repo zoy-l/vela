@@ -1,7 +1,6 @@
 #include "compiler/ir/lowerer.h"
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>

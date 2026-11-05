@@ -1,4 +1,5 @@
 #include "runtime/exceptions/error.h"
+#include <optional>
 
 #include <array>
 #include <expected>
@@ -24,7 +25,7 @@ std::expected<Value, ExecutionStatus> CreateError(Heap& heap,
                                                   const ClassLayout& layout,
                                                   ErrorFields fields) {
   std::array<Value, kErrorFieldCount> values;
-  RootRange roots(heap, values.data(), values.size(), RootOwner::Runtime);
+  RootRange roots(heap, values.data(), values.size(), std::nullopt);
   auto* text = heap.AllocateString(fields.message);
   if (text == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);

@@ -7,7 +7,6 @@
 #include <string_view>
 #include <tuple>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 #include <vela/types.h>
@@ -90,9 +89,6 @@ struct NativeLogicalType<Nullable<T>> final {
   [[nodiscard]] static NativeType Get() {
     auto type = NativeTypeOf<T>();
     static_assert(!std::is_void_v<T>, "void cannot be nullable");
-    if (!type.type) {
-      std::unreachable();
-    }
     auto& descriptor = *type.type;
     if (descriptor.kind != layout::Type::Kind::Dynamic) {
       descriptor.nullable = true;
@@ -157,16 +153,21 @@ struct NativeLogicalType<vela::Completer<T>> final {
 };
 
 template <class Tag>
+NativeType NativeNominalTypeOf() {
+  using Traits = ScriptTypeTraits<Tag>;
+  static const auto kDescription = []<class... Args>(std::tuple<Args...>*) {
+    return DescribeNativeNominal(Traits::kModule, Traits::kName, Traits::kKind,
+                                 std::array<NativeType, sizeof...(Args)>{NativeTypeOf<Args>()...});
+  }(static_cast<Traits::Arguments*>(nullptr));
+  return kDescription.View();
+}
+
+template <class Tag>
 struct NativeLogicalType<Object<Tag>> final {
   [[nodiscard]] static NativeType Get() {
     using Traits = ScriptTypeTraits<Tag>;
     static_assert(Traits::kKind != ScriptTypeKind::Enum, "use Enum<Tag> for enum declarations");
-    static const auto kDescription = []<class... Args>(std::tuple<Args...>*) {
-      return DescribeNativeNominal(
-          Traits::kModule, Traits::kName, Traits::kKind,
-          std::array<NativeType, sizeof...(Args)>{NativeTypeOf<Args>()...});
-    }(static_cast<Traits::Arguments*>(nullptr));
-    return kDescription.View();
+    return NativeNominalTypeOf<Tag>();
   }
 };
 
@@ -175,12 +176,7 @@ struct NativeLogicalType<Enum<Tag>> final {
   [[nodiscard]] static NativeType Get() {
     using Traits = ScriptTypeTraits<Tag>;
     static_assert(Traits::kKind == ScriptTypeKind::Enum, "Enum<Tag> requires an enum declaration");
-    static const auto kDescription = []<class... Args>(std::tuple<Args...>*) {
-      return DescribeNativeNominal(
-          Traits::kModule, Traits::kName, Traits::kKind,
-          std::array<NativeType, sizeof...(Args)>{NativeTypeOf<Args>()...});
-    }(static_cast<Traits::Arguments*>(nullptr));
-    return kDescription.View();
+    return NativeNominalTypeOf<Tag>();
   }
 };
 

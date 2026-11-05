@@ -165,8 +165,7 @@ func main(): int {
     const auto& caller = frames.subspan(1).front();
     EXPECT_EQ(caller.name(), "main");
     EXPECT_EQ(caller.source_path(), "main.vela");
-    ASSERT_TRUE(caller.location());
-    EXPECT_EQ(caller.location()->line, 6U);
+    EXPECT_EQ(caller.location().line, 6U);
     context.RequestStop();
   });
   EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::ExecutionStopped);

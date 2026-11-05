@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/functional/any_invocable.h>
 
 #include "base/declaration.h"
@@ -29,6 +30,7 @@
 namespace vela::runtime {
 
 class FutureScheduler;
+class Completer;
 class Heap;
 class RootRange;
 class FutureCompletionEndpoint;
@@ -329,8 +331,7 @@ class FutureScheduler final {
   friend class FutureCompletionEndpoint;
   friend class FutureObservation;
   void CloseObservations();
-  std::uint64_t next_observation_identity_ = 0;
-  absl::flat_hash_map<std::uint64_t, std::weak_ptr<FutureObservation::State>> observations_;
+  absl::flat_hash_set<FutureObservation::State*> observations_;
   ExternalResources external_resources_;
   std::atomic_size_t host_accesses_{0};
   void RetireCompletionEndpoint(std::uint64_t identity);

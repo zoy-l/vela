@@ -48,7 +48,6 @@ HOST_TESTS = r'''
 #include <vela/host.h>
 #include "base/execution_status.h"
 #include "base/execution_limits.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
@@ -158,9 +157,9 @@ void ExpectPendingException(Isolate& isolate, NativeExecution& execution,
   EXPECT_EQ(execution.current_frame(), nullptr);
   ASSERT_TRUE(execution.HasException());
   isolate.heap().Collect();
-  const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-  EXPECT_EQ(exception.status, status);
-  EXPECT_EQ(exception.message(), message);
+  const auto& diagnostic = execution.ExceptionDiagnostic();
+  EXPECT_EQ(diagnostic.status, status);
+  EXPECT_EQ(diagnostic.message, message);
 }
 
 void ExpectIntegerOperations(Entry entry, NativeExecution& execution,
@@ -291,9 +290,13 @@ TEST(NativeHostTest, ScalarEntryPreservesNestedExceptionsAndChecksDepthBeforeExe
   execution.MaterializeFrame(frames.front(), 0);
   ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
             ExecutionStatus::DivisionByZero);
-  const auto pending = execution.pending_exception().AsObject();
+  const auto pending = execution.TakeException();
+  ASSERT_EQ(execution.Rethrow(pending), ExecutionStatus::DivisionByZero);
   ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-  EXPECT_EQ(execution.pending_exception().AsObject(), pending);
+  ASSERT_TRUE(execution.HasException());
+  const auto retained = execution.TakeException();
+  EXPECT_EQ(retained.AsObject(), pending.AsObject());
+  ASSERT_EQ(execution.Rethrow(retained), ExecutionStatus::DivisionByZero);
   for (std::size_t index = 1; index < frames.size(); ++index) {
     execution.MaterializeFrame(frames[index], 0);
   }

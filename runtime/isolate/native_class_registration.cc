@@ -130,9 +130,23 @@ Registration ValidateMembers(const NativeClass& owner, const Classes& classes) {
 
 }  // namespace
 
-std::expected<void, NativeRegistrationError> Isolate::ValidateNativeSignature(
-    const NativeFunction& function) const {
-  return ValidateSignature(function, native_classes_);
+std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunction function) {
+  if (bindings_frozen_) {
+    return std::unexpected(NativeRegistrationError::BindingsFrozen);
+  }
+  const auto name = function.name();
+  if (!IsName(name)) {
+    return std::unexpected(NativeRegistrationError::InvalidName);
+  }
+  if (natives_.contains(name)) {
+    return std::unexpected(NativeRegistrationError::DuplicateName);
+  }
+  if (auto result = ValidateSignature(function, native_classes_); !result) {
+    return result;
+  }
+  std::string key(name);
+  natives_.emplace(std::move(key), std::make_unique<const NativeFunction>(std::move(function)));
+  return {};
 }
 
 const NativeClassBinding* Isolate::FindNativeClass(std::string_view key) const noexcept {

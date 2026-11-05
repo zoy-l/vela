@@ -225,7 +225,7 @@ class VELA_CLASS("app.Service") Service final { public:
         manifest_path = generate(self.binding_config(), self.collector, self.resource)
         manifest = verify_manifest(manifest_path)
         shape = manifest["bindings"]["classes"][0]["members"][0]["result"]
-        self.assertEqual((shape["module"], shape["declaration"]), (str(dependency), "Box"))
+        self.assertEqual((Path(shape["module"]), shape["declaration"]), (dependency, "Box"))
         self.assertEqual(shape["arguments"][0]["kind"], "int")
         self.assertIn(str(dependency), manifest["inputs"])
         self.assertIn("scriptDependency1.Box<int>", (manifest_path.parent / "app.vela").read_text())

@@ -1,6 +1,6 @@
 #include "runtime/native/host_object.h"
+#include <optional>
 
-#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <span>
@@ -52,8 +52,9 @@ Result<runtime::HeapObject*> ResolveHostProgram(HandleScope& scope, const runtim
 
 Result<runtime::HeapObject*> ResolveMemberProgram(HandleScope& scope,
                                                   const runtime::HostType& type,
-                                                  runtime::Value receiver) {
-  if (!runtime::Heap::IsValueOfType(receiver, type.constraint())) {
+                                                  runtime::Value receiver,
+                                                  const runtime::TypeConstraint& contract) {
+  if (!runtime::Heap::IsValueOfType(receiver, contract)) {
     return std::unexpected(
         Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
   }
@@ -132,14 +133,12 @@ Result<void> ReadHostEnum(HandleScope& scope,
         Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
   }
   const auto& state = runtime::Heap::NativeProgram(**program);
-  const auto index = state.class_indices.at(contract.nominal);
-  const auto names = state.image->classes.values()[index].enum_members.values();
-  const auto member = std::ranges::find(names, name, &runtime::NativeText::text);
-  if (member == names.end()) {
+  const auto member = state.enum_members.find(std::pair(contract.nominal, name));
+  if (member == state.enum_members.end()) {
     return std::unexpected(
         Error{.status = ExecutionStatus::InvalidField, .message = {}, .stack_trace = {}});
   }
-  const auto ordinal = runtime::Value::Integer(member - names.begin());
+  const auto ordinal = runtime::Value::Integer(member->second);
   const auto value = runtime::BoxDynamicValue(scope.isolate().heap(), ordinal, contract);
   if (!value) {
     return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
@@ -154,7 +153,8 @@ Result<void> ReadHostMember(HandleScope& scope,
                             std::string_view name,
                             runtime::NativeType result_type,
                             runtime::Value& output) {
-  const auto program = ResolveMemberProgram(scope, type, receiver);
+  const auto contract = type.constraint();
+  const auto program = ResolveMemberProgram(scope, type, receiver, contract);
   if (!program) {
     return std::unexpected(program.error());
   }
@@ -164,10 +164,10 @@ Result<void> ReadHostMember(HandleScope& scope,
     return std::unexpected(Error{.status = expected.error(), .message = {}, .stack_trace = {}});
   }
   const runtime::RootRange result_type_root(scope.isolate().heap(), std::span(&*expected, 1),
-                                            runtime::RootOwner::Runtime);
+                                            std::nullopt);
   runtime::NativeExecution execution(instance,
                                      scope.isolate().native_control().state().host_execution);
-  const auto result = runtime::ReadNativeMember(execution, receiver, name, type.constraint());
+  const auto result = runtime::ReadNativeMember(execution, receiver, name, contract);
   if (!result) {
     return std::unexpected(CaptureHostError(execution, result.error()));
   }
@@ -179,15 +179,15 @@ Result<void> WriteHostMember(HandleScope& scope,
                              runtime::Value receiver,
                              std::string_view name,
                              runtime::Value value) {
-  const auto program = ResolveMemberProgram(scope, type, receiver);
+  const auto contract = type.constraint();
+  const auto program = ResolveMemberProgram(scope, type, receiver, contract);
   if (!program) {
     return std::unexpected(program.error());
   }
   auto instance = runtime::NativeInstance::Borrow(**program);
   runtime::NativeExecution execution(instance,
                                      scope.isolate().native_control().state().host_execution);
-  const auto result =
-      runtime::WriteNativeMember(execution, receiver, name, value, type.constraint());
+  const auto result = runtime::WriteNativeMember(execution, receiver, name, value, contract);
   if (!result) {
     return std::unexpected(CaptureHostError(execution, result.error()));
   }

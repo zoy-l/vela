@@ -23,7 +23,7 @@ namespace vela::runtime {
 
 std::expected<Value, ExecutionStatus> CreateDynamicCallPlan(Heap& heap,
                                                             const DynamicCallPlan& plan) {
-  const RootRange root(heap, &plan.value, 1, RootOwner::Runtime);
+  const RootRange root(heap, &plan.value, 1, std::nullopt);
   auto* storage = heap.AllocateValueSlots(2);
   if (storage == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -35,18 +35,9 @@ std::expected<Value, ExecutionStatus> CreateDynamicCallPlan(Heap& heap,
   return Value::Object(storage);
 }
 
-std::expected<DynamicCallPlan, ExecutionStatus> ReadDynamicCallPlan(Value value) {
-  if (!value.IsObject() || Heap::KindOf(*value.AsObject()) != ObjectKind::ValueSlots) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
+DynamicCallPlan ReadDynamicCallPlan(Value value) {
   const auto storage = Heap::ValueSlots(*value.AsObject());
-  if (storage.size() != 2) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
   const auto method = storage.subspan(1).front();
-  if (!method.IsNull() && !method.IsInteger()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
   return DynamicCallPlan{
       .value = storage.front(),
       .method = method.IsNull() ? std::nullopt
@@ -101,6 +92,11 @@ std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
                                                const HeapObject& arguments,
                                                const BoundArguments& bound,
                                                const ArrayLayout& type) {
+  for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
+    if (!Heap::IsValueOfType(*Heap::GetElement(arguments, bound.rest_start + item), type.element)) {
+      return std::unexpected(ExecutionStatus::InvalidCast);
+    }
+  }
   auto* array = heap.AllocateArray(type, bound.rest_count);
   if (array == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -132,7 +128,7 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
     return std::unexpected(ExecutionStatus::TypeError);
   }
   BoundArguments bound{
-      .source_indices = std::vector<std::uint32_t>(parameters.size() - skipped, kUnassigned),
+      .source_indices = BoundArguments::SourceIndices(parameters.size() - skipped, kUnassigned),
       .skipped = skipped,
       .rest_start = *count,
   };
@@ -156,29 +152,6 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
   return bound;
 }
 
-std::expected<void, ExecutionStatus> CheckDynamicArguments(const CallSignature& signature,
-                                                           std::span<const TypeConstraint> types,
-                                                           const HeapObject& arguments,
-                                                           const BoundArguments& bound) {
-  for (std::size_t index = 0; index < bound.source_indices.size(); ++index) {
-    const auto& parameter = signature.parameters.at(bound.skipped + index);
-    const auto& type = types.subspan(parameter.type).front();
-    if (parameter.rest) {
-      for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
-        const auto value = *Heap::GetElement(arguments, bound.rest_start + item);
-        if (!Heap::IsValueOfType(value, type.array->element)) {
-          return std::unexpected(ExecutionStatus::InvalidCast);
-        }
-      }
-    } else if (const auto source = bound.source_indices.at(index); source != kUnassigned) {
-      if (!Heap::IsValueOfType(*Heap::GetElement(arguments, source), type)) {
-        return std::unexpected(ExecutionStatus::InvalidCast);
-      }
-    }
-  }
-  return {};
-}
-
 std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
                                                           const CallSignature& signature,
                                                           std::span<const TypeConstraint> types,
@@ -191,8 +164,13 @@ std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
     return PackRest(heap, arguments, bound, *type.array);
   }
   const auto source = bound.source_indices.at(index);
-  return source == kUnassigned ? Value::Null()
-                               : UnboxDynamicValue(*Heap::GetElement(arguments, source), type);
+  if (source == kUnassigned) {
+    return Value::Null();
+  }
+  const auto value = *Heap::GetElement(arguments, source);
+  return Heap::IsValueOfType(value, type)
+             ? std::expected<Value, ExecutionStatus>(UnboxDynamicValue(value, type))
+             : std::unexpected(ExecutionStatus::InvalidCast);
 }
 
 }  // namespace vela::runtime

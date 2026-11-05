@@ -14,6 +14,7 @@
 #include <tuple>
 
 #include "base/execution_status.h"
+#include "base/json.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
@@ -44,9 +45,9 @@ struct JsonEncodeFrame final {
   }
   JsonEncodeFrame* parent = nullptr;
   std::array<Value, 2> values{};
-  RootRange roots{RootOwner::Runtime};
+  RootRange roots{std::nullopt};
   JsonFrameKind kind = JsonFrameKind::Conversion;
-  const ArrayLayout* elements = nullptr;
+  bool enum_elements = false;
   CollectionIterator iterator;
   std::uint64_t mutation = 0;
   std::uint32_t index = 0;
@@ -56,7 +57,7 @@ JsonEncoder::JsonEncoder(Isolate& isolate, Value input)
     : heap_(&isolate.heap()),
       active_type_(isolate.CreateCollectionLayout({.keys = {.element = {.dynamic = true}}})),
       values_{input, Value::Null(), Value::Null()},
-      roots_(*heap_, values_.data(), values_.size(), RootOwner::Runtime),
+      roots_(*heap_, values_.data(), values_.size(), std::nullopt),
       frames_(*heap_) {}
 
 JsonEncoder::~JsonEncoder() {
@@ -110,7 +111,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Append(std::string_view text)
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) {
-  constexpr std::size_t kUnicodeEscapeLength = 6;
+  constexpr std::size_t kUnicodeEscapeLength = JSONByteEscape(0).size();
   if (text.size() > kMaximumStringLength - 2) {
     return std::unexpected(OomError(Allocation::Output));
   }
@@ -135,8 +136,6 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) 
   auto output = *storage;
   output.front() = '"';
   output = output.subspan(1);
-  constexpr std::string_view kHex = "0123456789abcdef";
-  constexpr unsigned kHexDigitMask = 15;
   const auto copy = [&output](std::string_view part) {
     if (!part.empty()) {
       std::memcpy(output.data(), part.data(), part.size());
@@ -150,14 +149,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) 
       continue;
     }
     copy(text.substr(begin, index - begin));
-    std::array<char, kUnicodeEscapeLength> escape{
-        '\\',
-        'u',
-        '0',
-        '0',
-        kHex.substr(byte >> 4U, 1).front(),
-        kHex.substr(byte & kHexDigitMask, 1).front(),
-    };
+    auto escape = JSONByteEscape(byte);
     std::string_view encoded(escape.data(), escape.size());
     if (byte == '"' || byte == '\\') {
       escape.at(1) = static_cast<char>(byte);
@@ -187,7 +179,8 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value,
     return std::unexpected(OomError(Allocation::Traversal));
   }
   frame_ = *frame;
-  frame_->elements = elements;
+  const auto* nominal = elements == nullptr ? nullptr : elements->element.nominal;
+  frame_->enum_elements = nominal != nullptr && nominal->IsEnum();
   auto& object = *value.AsObject();
   if (kind == JsonFrameKind::Array) {
     frame_->mutation = *Heap::ArrayMutation(object);
@@ -290,9 +283,8 @@ std::expected<std::optional<Value>, JsonRuntimeError> JsonEncoder::EncodeValue()
   return std::nullopt;
 }
 
-std::expected<void, JsonRuntimeError> JsonEncoder::CheckElement(const ArrayLayout& layout) const {
-  const auto* instance = layout.element.nominal;
-  if (instance != nullptr && instance->IsEnum() && !values_.at(kPending).IsNull()) {
+std::expected<void, JsonRuntimeError> JsonEncoder::CheckElement() const {
+  if (frame_->enum_elements && !values_.at(kPending).IsNull()) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "enum is not JSON encodable"));
   }
   return {};
@@ -319,7 +311,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceArray() {
   }
   values_.at(kPending) = *Heap::GetElement(object, frame.index++);
   pending_ = true;
-  return CheckElement(*frame.elements);
+  return CheckElement();
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceMap() {
@@ -337,7 +329,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceMap() {
   }
   frame.values.at(1) = (**entry).key;
   values_.at(kPending) = (**entry).value;
-  if (auto checked = CheckElement(*frame.elements); !checked) {
+  if (auto checked = CheckElement(); !checked) {
     return checked;
   }
   if (!frame.values.at(1).IsString()) {

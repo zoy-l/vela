@@ -83,7 +83,7 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeBuiltinSymbol, &runtime::vela_native_v1_builtin);
   bind(runtime::kNativeConcatSymbol, &runtime::vela_native_v1_concat);
   bind(runtime::kNativeInterpolateSymbol, &runtime::vela_native_v1_interpolate);
-  bind(runtime::kNativeCompareStringsSymbol, &runtime::vela_native_v1_compare_strings);
+  bind(runtime::kNativeCompareStringsSymbol, &runtime::vela_native_v2_compare_strings);
   bind(runtime::kNativeEqualSymbol, &runtime::vela_native_v1_equal);
   bind(runtime::kNativePrintSymbol, &runtime::vela_native_v1_print);
   return jit.getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(symbols)));

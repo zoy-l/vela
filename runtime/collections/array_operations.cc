@@ -1,4 +1,5 @@
 #include "runtime/collections/array_operations.h"
+#include <optional>
 
 #include <algorithm>
 #include <array>
@@ -38,22 +39,6 @@ ExecutionStatus ArrayExecutionStatus(ArrayAccessError error) {
 
 namespace {
 
-template <class T, class Convert>
-std::expected<Value, ExecutionStatus> Result(std::expected<T, ArrayAccessError> result,
-                                             const Convert& convert) {
-  if (!result) {
-    return std::unexpected(ArrayExecutionStatus(result.error()));
-  }
-  return convert(*result);
-}
-
-std::expected<Value, ExecutionStatus> MutationResult(std::expected<void, ArrayAccessError> result) {
-  if (!result) {
-    return std::unexpected(ArrayExecutionStatus(result.error()));
-  }
-  return Value::Null();
-}
-
 std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
                                                 std::span<const Value> arguments,
                                                 Heap& heap) {
@@ -67,8 +52,9 @@ std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), *length);
-  return Result(heap.SliceArray(array, start, end),
-                [](HeapObject* copy) -> Value { return Value::Object(copy); });
+  return heap.SliceArray(array, start, end)
+      .transform([](HeapObject* copy) { return Value::Object(copy); })
+      .transform_error(ArrayExecutionStatus);
 }
 
 std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
@@ -98,7 +84,10 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
         std::clamp<std::int64_t>(deleted.AsInteger(), 0, *length - start));
   }
   auto roots = std::to_array({Value::Null(), Value::Null()});
-  RootRange root_range(heap, roots.data(), roots.size(), RootOwner::Runtime);
+  RootRange root_range(std::nullopt);
+  if (splice || items == &array) {
+    root_range.Attach(heap, roots.data(), roots.size());
+  }
   // 输入可能复用 receiver；先快照，避免后缀移动覆盖待插入值。
   if (items == &array) {
     const auto copy = heap.SliceArray(array, 0, *length);
@@ -211,12 +200,11 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
   const auto integer = [](auto value) -> Value {
     return Value::Integer(static_cast<std::int64_t>(value));
   };
-  const auto identity = [](Value value) -> Value { return value; };
   switch (builtin) {
     case Builtin::ArraySortDefault:
       return SortByDefault(array, heap);
     case Builtin::ArrayLength:
-      return Result(Heap::ArrayLength(array), integer);
+      return Heap::ArrayLength(array).transform(integer).transform_error(ArrayExecutionStatus);
     case Builtin::ArraySlice:
       return CopyArray(array, arguments, heap);
     case Builtin::ArrayFill: {
@@ -241,23 +229,19 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       return receiver;
     }
     case Builtin::ArrayCapacity:
-      return Result(Heap::ArrayCapacity(array), integer);
+      return Heap::ArrayCapacity(array).transform(integer).transform_error(ArrayExecutionStatus);
     case Builtin::ArrayPush:
-      return Result(heap.PushArray(array, arguments[1]), integer);
+      return heap.PushArray(array, arguments[1])
+          .transform(integer)
+          .transform_error(ArrayExecutionStatus);
     case Builtin::ArrayPop:
-      return Result(Heap::PopArray(array), identity);
-    case Builtin::ArrayShift: {
-      const auto length = Heap::ArrayLength(array);
-      if (!length) {
-        return std::unexpected(ArrayExecutionStatus(length.error()));
-      }
-      if (*length == 0) {
-        return Value::Null();
-      }
-      return Result(Heap::RemoveArrayElement(array, 0), identity);
-    }
+      return Heap::PopArray(array).transform_error(ArrayExecutionStatus);
+    case Builtin::ArrayShift:
+      return Heap::ShiftArray(array).transform_error(ArrayExecutionStatus);
     case Builtin::ArrayClear:
-      return MutationResult(Heap::ClearArray(array));
+      return Heap::ClearArray(array)
+          .transform([] { return Value::Null(); })
+          .transform_error(ArrayExecutionStatus);
     case Builtin::ArrayReserve: {
       const auto capacity = arguments[1];
       if (!capacity.IsInteger()) {
@@ -266,17 +250,20 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       if (capacity.AsInteger() < 0) {
         return std::unexpected(ExecutionStatus::IndexOutOfBounds);
       }
-      return MutationResult(
-          heap.ReserveArray(array, static_cast<std::size_t>(capacity.AsInteger())));
+      return heap.ReserveArray(array, static_cast<std::size_t>(capacity.AsInteger()))
+          .transform([] { return Value::Null(); })
+          .transform_error(ArrayExecutionStatus);
     }
     case Builtin::ArrayPushMany:
     case Builtin::ArrayUnshift:
     case Builtin::ArraySplice:
       return ReplaceRange(builtin, array, arguments, heap);
     case Builtin::ArrayMutation:
-      return Result(Heap::ArrayMutation(array), [](std::uint64_t mutation) -> Value {
-        return Value::Integer(std::bit_cast<std::int64_t>(mutation));
-      });
+      return Heap::ArrayMutation(array)
+          .transform([](std::uint64_t mutation) {
+            return Value::Integer(std::bit_cast<std::int64_t>(mutation));
+          })
+          .transform_error(ArrayExecutionStatus);
     case Builtin::ArrayCheckMutation: {
       const auto mutation = Heap::ArrayMutation(array);
       const auto expected = arguments[1];

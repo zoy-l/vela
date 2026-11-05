@@ -16,17 +16,22 @@ namespace vela::runtime {
 
 MemberTable::MemberTable(std::span<const TypeConstraint> types,
                          std::vector<MemberDefinition> members)
-    : types_(types), members_(std::move(members)) {
-  for (std::size_t index = 0; index < types_.size(); ++index) {
-    const auto& type = types_.subspan(index).front();
+    : members_(std::move(members)) {
+  for (std::size_t index = 0; index < types.size(); ++index) {
+    const auto& type = types[index];
     if (!type.nullable && !type.dynamic && !type.callable) {
       receiver_indices_.try_emplace(Key(type), static_cast<std::uint32_t>(index));
     }
   }
   for (std::size_t index = 0; index < members_.size(); ++index) {
-    const auto& member = members_.at(index);
+    const auto& member = members_[index];
     member_indices_.try_emplace(std::pair(member.receiver_type, std::string_view(member.name)),
                                 index);
+    const auto& type = types[member.receiver_type];
+    if (type.nominal != nullptr && !type.nullable && !type.dynamic && !type.callable &&
+        receiver_indices_.at(Key(type)) == member.receiver_type) {
+      nominal_members_.try_emplace(std::pair(type.nominal, std::string_view(member.name)), index);
+    }
   }
 }
 
@@ -36,6 +41,12 @@ MemberTable::ReceiverKey MemberTable::Key(const TypeConstraint& type) {
 }
 
 const MemberDefinition* MemberTable::Find(Value receiver, std::string_view name) const {
+  if (receiver.IsObject()) {
+    if (const auto* layout = Heap::ClassOf(*receiver.AsObject())) {
+      const auto found = nominal_members_.find(std::pair(&layout->nominal_type(), name));
+      return found == nominal_members_.end() ? nullptr : &members_[found->second];
+    }
+  }
   return Find(Heap::TypeOf(receiver), name);
 }
 
@@ -47,7 +58,7 @@ const MemberDefinition* MemberTable::Find(const TypeConstraint& receiver,
     return nullptr;
   }
   const auto member = member_indices_.find(std::pair(type->second, name));
-  return member == member_indices_.end() ? nullptr : &members_.at(member->second);
+  return member == member_indices_.end() ? nullptr : &members_[member->second];
 }
 
 Value MemberTable::ReadPublicField(Value receiver, std::string_view name) const {

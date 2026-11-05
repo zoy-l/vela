@@ -9,13 +9,11 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
-#include "base/utf8.h"
 #include "runtime/exceptions/error.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/library/date.h"
@@ -23,6 +21,7 @@
 #include "runtime/native/native_class.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
@@ -42,25 +41,6 @@ const T* InternLayout(T layout,
 
 }  // namespace
 
-std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunction function) {
-  if (bindings_frozen_) {
-    return std::unexpected(NativeRegistrationError::BindingsFrozen);
-  }
-  const auto name = function.name();
-  if (name.empty() || name.contains('\0') || InvalidUtf8Offset(name)) {
-    return std::unexpected(NativeRegistrationError::InvalidName);
-  }
-  if (natives_.contains(name)) {
-    return std::unexpected(NativeRegistrationError::DuplicateName);
-  }
-  if (auto result = ValidateNativeSignature(function); !result) {
-    return result;
-  }
-  std::string key(name);
-  natives_.emplace(std::move(key), std::make_unique<const NativeFunction>(std::move(function)));
-  return {};
-}
-
 NativeBindings Isolate::FreezeBindings() {
   NativeBindings result;
   result.functions_ = natives_;
@@ -77,7 +57,14 @@ std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name)
 }
 
 Isolate::Isolate(std::size_t gc_threshold) noexcept
-    : heap_(*this, gc_threshold), native_dispatch_(*this) {
+    : dynamic_array_layout_(CreateArrayLayout({.element = {.dynamic = true}})),
+      string_array_layout_(CreateArrayLayout({.element = {.kind = ValueKind::String}})),
+      dynamic_map_layout_(CreateCollectionLayout({
+          .keys = {.element = {.kind = ValueKind::String}},
+          .values = *dynamic_array_layout_,
+      })),
+      heap_(*this, gc_threshold),
+      native_dispatch_(*this) {
   constexpr auto references = std::to_array({kErrorMessageField, kErrorCodeField});
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
   date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});

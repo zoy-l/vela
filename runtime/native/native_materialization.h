@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 
 #include "base/declaration.h"
@@ -74,7 +75,7 @@ class NativeMaterialization final {
   void* storage_ = nullptr;
   std::span<Value> objects_;
   std::span<Work> work_;
-  RootRange roots_{RootOwner::Runtime};
+  RootRange roots_{std::nullopt};
   std::size_t queued_ = 0;
   std::size_t object_count_ = 0;
 };

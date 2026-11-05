@@ -55,7 +55,7 @@ struct ExportName final {
 // 共享槽只拥有状态及 GC 值，不拥有初始化器或代码映像。初始化器始终由当前快照选择。
 struct GlobalSlot final {
   GlobalSlot(Isolate& isolate, HeapObject& source)
-      : storage(Value::Object(&source)), root(isolate.heap(), &storage, 1, RootOwner::Runtime) {}
+      : storage(Value::Object(&source)), root(isolate.heap(), &storage, 1, std::nullopt) {}
   Value storage;
   RootRange root;
   NativeProgramState::GlobalState state = NativeProgramState::GlobalState::Uninitialized;
@@ -66,6 +66,14 @@ struct GlobalEntry final {
   std::uint32_t initializer = 0;
   std::uint32_t index = 0;
 };
+
+std::unexpected<NativePublicationError> StalePublication() {
+  return std::unexpected(NativePublicationError{
+      .status = NativePublicationStatus::Stale,
+      .message = "native publication baseline is stale",
+      .declaration = {},
+  });
+}
 
 NativeGlobalCache CacheGlobalSlot(GlobalSlot& slot,
                                   const std::uint64_t* epoch,
@@ -84,7 +92,7 @@ NativeGlobalCache CacheGlobalSlot(GlobalSlot& slot,
 struct NativeDispatchSnapshot final {
   NativeDispatchSnapshot(Isolate& isolate, Value source)
       : state(source),
-        root(isolate.heap(), &state, 1, RootOwner::Runtime),
+        root(isolate.heap(), &state, 1, std::nullopt),
         preparation(isolate.external_resources(), ExternalResourceKind::NativePreparedPublication) {
   }
   std::expected<void, NativePublicationError> IndexFunctions(
@@ -293,7 +301,7 @@ NativePreparedPublication& NativePreparedPublication::operator=(
     NativePreparedPublication&&) noexcept = default;
 
 NativeVersionEntry::Storage::Storage(Value source, std::uint32_t target)
-    : version(*source.AsObject(), target, RootOwner::NativeHandle) {}
+    : version(*source.AsObject(), target, ExternalResourceKind::NativeHandle) {}
 NativeVersionEntry::NativeVersionEntry(std::shared_ptr<const Storage> storage)
     : storage_(std::move(storage)) {}
 
@@ -386,7 +394,6 @@ std::uint64_t NativeDispatch::revision() const noexcept {
 }
 
 std::expected<void, NativePublicationError> NativeDispatch::CheckPublication(
-    const NativeDispatch* owner,
     std::uint64_t base_revision) const {
   if (closed_ || isolate_->native_control().IsStopRequested()) {
     return std::unexpected(NativePublicationError{
@@ -395,12 +402,8 @@ std::expected<void, NativePublicationError> NativeDispatch::CheckPublication(
         .declaration = {},
     });
   }
-  if (owner != this || base_revision != revision()) {
-    return std::unexpected(NativePublicationError{
-        .status = NativePublicationStatus::Stale,
-        .message = "native publication baseline is stale",
-        .declaration = {},
-    });
+  if (base_revision != revision()) {
+    return StalePublication();
   }
   return {};
 }
@@ -409,7 +412,7 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
     std::uint64_t base_revision,
     std::shared_ptr<const NativeImage> image) {
   const auto started = std::chrono::steady_clock::now();
-  if (const auto checked = CheckPublication(this, base_revision); !checked) {
+  if (const auto checked = CheckPublication(base_revision); !checked) {
     return std::unexpected(checked.error());
   }
   if (!image->IsReloadable() || image->revision != base_revision + 1) {
@@ -475,8 +478,11 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   const auto started = Clock::now();
   NativePublicationTimings timings;
   timings.instantiation = candidate.preparation_;
-  if (const auto checked = CheckPublication(candidate.owner_, candidate.base_revision_); !checked) {
+  if (const auto checked = CheckPublication(candidate.base_revision_); !checked) {
     return std::unexpected(checked.error());
+  }
+  if (candidate.owner_ != this) {
+    return StalePublication();
   }
   if (!isolate_->native_control().CanPublish()) {
     return std::unexpected(NativePublicationError{
@@ -500,22 +506,14 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   }
   timings.materialization = Clock::now() - materializing;
   std::vector<NativeRetainedFunction> retained;
-  heap.AppendRetainedNativeFunctions(retained);
+  std::vector<DeclarationId> required;
+  heap.AppendRetainedNative(retained, required);
   AppendExecutionFunctions(retained);
   const auto& image = candidate.snapshot_->image();
-  auto required = RetainedNativeDeclarations(retained);
-  heap.AppendRetainedNativeTypes(required);
-  if (const auto checked = CheckRetainedNativeTypes(required, image); !checked) {
-    const auto& error = checked.error();
-    return std::unexpected(NativePublicationError{
-        .status = NativePublicationStatus::NeedsCompilation,
-        .message = error.message,
-        .declaration = error.declaration,
-        .dependency = error.dependency,
-    });
-  }
+  const auto retained_declarations = RetainedNativeDeclarations(retained);
+  required.insert(required.end(), retained_declarations.begin(), retained_declarations.end());
   const auto* previous_image = current_ == nullptr ? nullptr : &current_->image();
-  if (const auto checked = CheckRetainedNativeContracts(retained, previous_image, image);
+  if (const auto checked = CheckRetainedNativeContracts(retained, required, previous_image, image);
       !checked) {
     const auto& error = checked.error();
     return std::unexpected(NativePublicationError{
@@ -558,26 +556,36 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
 std::expected<std::vector<std::unique_ptr<InstanceMigration>>, NativePublicationError>
 NativeDispatch::PrepareMigrations(const NativeDispatchSnapshot& candidate) {
   auto& heap = isolate_->heap();
+  struct MigrationPlan final {
+    const ClassLayout* layout;
+    std::vector<std::pair<std::size_t, DeclarationId>> required;
+  };
+  absl::flat_hash_map<const NominalType*, MigrationPlan> plans;
   std::vector<Value> objects;
   for (const auto& [type, layout] : candidate.classes) {
+    auto& plan = plans.emplace(type, MigrationPlan{.layout = layout, .required = {}}).first->second;
+    const auto declarations = layout->field_declarations();
+    for (std::size_t index = 0; index < declarations.size(); ++index) {
+      const auto field = declarations[index];
+      if (field != DeclarationId{} && candidate.field_initializers.at(field) == kNoNativeIndex) {
+        plan.required.emplace_back(index, field);
+      }
+    }
     Heap::AppendInstances(*type, objects);
   }
-  const RootRange roots(heap, objects.data(), objects.size(), RootOwner::Runtime);
+  const RootRange roots(heap, objects.data(), objects.size(), std::nullopt);
   std::vector<std::unique_ptr<InstanceMigration>> migrations;
   migrations.reserve(objects.size());
   for (const auto value : objects) {
     auto& object = *value.AsObject();
     const auto* previous = Heap::ClassOf(object);
-    const auto* layout = candidate.classes.at(&previous->nominal_type());
-    const auto declarations = layout->field_declarations();
+    const auto& plan = plans.at(&previous->nominal_type());
     auto& old_fields = Heap::InstanceFields(object);
     const auto old_states = old_fields.states();
     const auto old_declarations = previous->field_declarations();
-    for (std::size_t index = 0; index < declarations.size(); ++index) {
-      const auto field = declarations[index];
-      if (field != DeclarationId{} && candidate.field_initializers.at(field) == kNoNativeIndex &&
-          (index >= old_states.size() || old_declarations[index] != field ||
-           old_states[index] != FieldState::Ready)) {
+    for (const auto& [index, field] : plan.required) {
+      if (index >= old_states.size() || old_declarations[index] != field ||
+          old_states[index] != FieldState::Ready) {
         return std::unexpected(NativePublicationError{
             .status = NativePublicationStatus::RequiresReload,
             .message = "a live instance has no initialized value or default for field " +
@@ -586,7 +594,7 @@ NativeDispatch::PrepareMigrations(const NativeDispatchSnapshot& candidate) {
         });
       }
     }
-    auto migration = heap.PrepareInstanceMigration(object, *layout);
+    auto migration = heap.PrepareInstanceMigration(object, *plan.layout);
     if (!migration) {
       return std::unexpected(NativePublicationError{
           .status = NativePublicationStatus::InstantiationFailed,
@@ -604,10 +612,11 @@ std::vector<DeclarationId> NativeDispatch::RetainedDeclarations() {
   heap.FinishCollection();
   heap.Collect();
   std::vector<NativeRetainedFunction> functions;
-  heap.AppendRetainedNativeFunctions(functions);
+  std::vector<DeclarationId> declarations;
+  heap.AppendRetainedNative(functions, declarations);
   AppendExecutionFunctions(functions);
-  auto declarations = RetainedNativeDeclarations(functions);
-  heap.AppendRetainedNativeTypes(declarations);
+  const auto retained = RetainedNativeDeclarations(functions);
+  declarations.insert(declarations.end(), retained.begin(), retained.end());
   return declarations;
 }
 
@@ -723,7 +732,7 @@ extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
   auto& cache = program.global_cache(index);
   const auto declaration = program.image->global_declarations.values()[index];
   const auto stored = program.dispatch->StoreGlobal(declaration, DecodeNativeValue(*value), &cache);
-  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored);
 }
 
 void NativeDispatch::Close() noexcept {
@@ -807,7 +816,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
   }
   const NativeInitializationScope initialization(isolate_->native_control());
   const auto anchor = Value::Object(&object);
-  const RootRange root(isolate_->heap(), &anchor, 1, RootOwner::Runtime);
+  const RootRange root(isolate_->heap(), &anchor, 1, std::nullopt);
   auto instance = NativeInstance::Borrow(*current_->state.AsObject());
   const NativeInstanceScope scope(execution, instance);
   storage.SetFieldState(slot, FieldState::Initializing);
@@ -915,7 +924,7 @@ extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,
   auto& state = execution->instance().program();
   const auto stored = state.dispatch->StoreField(
       *object, DeclarationId{field}, DecodeNativeValue(*value), state.field_cache(access));
-  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored);
 }
 
 extern "C" std::uint8_t vela_native_v7_store_materialized_field(NativeExecution* execution,
@@ -925,7 +934,7 @@ extern "C" std::uint8_t vela_native_v7_store_materialized_field(NativeExecution*
   auto& state = execution->instance().program();
   const auto stored =
       state.dispatch->StoreField(*object, DeclarationId{field}, DecodeNativeValue(*value));
-  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored);
 }
 
 }  // namespace vela::runtime

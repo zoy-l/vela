@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 
 #include <vela/error.h>
@@ -93,13 +94,14 @@ Result<void> ExecuteHostBuiltin(HandleScope& scope,
   if (IsRegExpBuiltin(builtin)) {
     const runtime::ArrayLayout* layout = nullptr;
     runtime::TypeConstraint contract;
-    const runtime::RootRange type_root(heap, std::span(&contract, 1));
+    std::optional<runtime::RootRange> type_root;
     if (HasRegExpArrayLayout(builtin)) {
       const auto type = OutputArrayType(isolate, builtin);
       if (!type) {
         return std::unexpected(Error{.status = type.error(), .message = {}, .stack_trace = {}});
       }
       contract = *type;
+      type_root.emplace(heap, std::span(&contract, 1));
       layout = contract.array;
     }
     const auto result = runtime::ExecuteRegExpBuiltin(builtin, arguments, heap, layout);

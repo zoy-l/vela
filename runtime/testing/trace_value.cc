@@ -13,6 +13,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 
@@ -31,12 +32,12 @@ std::expected<Value, ExecutionStatus> CaptureTestTrace(Heap& heap,
     writer.Write(frame.identity.local);
   }
   const auto bytes = writer.bytes();
-  auto* object = heap.AllocateByteArray(bytes.size());
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  const auto value = AllocatedValue(heap.AllocateByteArray(bytes.size()));
+  if (!value) {
+    return value;
   }
-  std::memcpy(Heap::ByteArrayBytes(*object).data(), bytes.data(), bytes.size());
-  return Value::Object(object);
+  std::memcpy(Heap::ByteArrayBytes(*value->AsObject()).data(), bytes.data(), bytes.size());
+  return value;
 }
 
 std::expected<std::vector<FutureTraceFrame>, ExecutionStatus> ReadTestTrace(Value value) {
@@ -54,8 +55,8 @@ std::expected<std::vector<FutureTraceFrame>, ExecutionStatus> ReadTestTrace(Valu
   for (std::size_t index = 0; index < *count; ++index) {
     auto function = reader.Text();
     auto path = reader.Text();
-    const auto fields = reader.Record<std::uint32_t, std::uint32_t, std::uint64_t,
-                                      std::uint64_t, std::uint64_t, std::uint32_t>();
+    const auto fields = reader.Record<std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t,
+                                      std::uint64_t, std::uint32_t>();
     if (!function || !path || !fields) {
       return std::unexpected(ExecutionStatus::TypeError);
     }

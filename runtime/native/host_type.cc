@@ -1,4 +1,6 @@
 #include "runtime/native/host_type.h"
+#include <optional>
+#include "runtime/isolate/external_resources.h"
 
 #include <cassert>
 #include <cstddef>
@@ -14,7 +16,6 @@
 #include "base/layout_description.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "runtime/isolate/layout_transaction.h"
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
@@ -81,12 +82,7 @@ std::expected<TypeConstraint, ExecutionStatus> ResolveInstanceNativeType(NativeI
   if (!cache) {
     return std::unexpected(cache.error());
   }
-  auto& isolate = instance.isolate();
-  LayoutTransaction transaction(isolate, LayoutLifetime::Collectible);
-  const auto constraint =
-      InstantiateLayoutType(description.layouts(), *description.type, isolate, *cache);
-  transaction.CommitStructural();
-  return constraint;
+  return InstantiateNativeType(instance.isolate(), description, *cache);
 }
 
 HostType::Storage::Storage(Isolate& owner,
@@ -97,8 +93,8 @@ HostType::Storage::Storage(Isolate& owner,
       constraint(contract),
       anchor(state),
       dispatch(session),
-      program_root(owner.heap(), &anchor, 1, RootOwner::Runtime),
-      type_root(owner.heap(), std::span(&constraint, 1), RootOwner::Type) {}
+      program_root(owner.heap(), &anchor, 1, std::nullopt),
+      type_root(owner.heap(), std::span(&constraint, 1), ExternalResourceKind::Type) {}
 
 std::expected<HostType, ExecutionStatus> HostType::Create(Isolate& isolate,
                                                           TypeConstraint constraint,
@@ -106,7 +102,7 @@ std::expected<HostType, ExecutionStatus> HostType::Create(Isolate& isolate,
                                                           NativeDispatch* dispatch) {
   assert(isolate.scheduler().IsOwnerThread());
   auto& heap = isolate.heap();
-  const RootRange program_root(heap, &anchor, 1, RootOwner::Runtime);
+  const RootRange program_root(heap, &anchor, 1, std::nullopt);
   const RootRange type_root(heap, std::span(&constraint, 1));
   auto* memory = heap.AllocateNative(sizeof(Storage));
   if (memory == nullptr) {

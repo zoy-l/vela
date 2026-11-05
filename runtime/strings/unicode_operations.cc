@@ -17,6 +17,7 @@
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -103,9 +104,7 @@ Result GraphemeSlice(std::string_view text, std::span<const Value> arguments, He
   if (!first || !last) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  auto* result = heap.AllocateString(text.substr(*first, *last - *first));
-  return result == nullptr ? Result(std::unexpected(ExecutionStatus::OutOfMemory))
-                           : Result(Value::String(result));
+  return AllocatedValue(heap.AllocateString(text.substr(*first, *last - *first)));
 }
 
 }  // namespace

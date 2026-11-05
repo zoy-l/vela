@@ -130,7 +130,7 @@ std::expected<Value, ExecutionStatus> CheckFutureCompletion(Isolate& isolate,
                                                             std::optional<TypeConstraint> payload,
                                                             const FutureDiagnostic& diagnostic,
                                                             std::span<const Value> retained) {
-  RootRange source_root(isolate.heap(), &source, 1, RootOwner::Runtime);
+  RootRange source_root(isolate.heap(), &source, 1, std::nullopt);
   Future result(&isolate.scheduler());
   auto* object = isolate.heap().AllocateFuture(result);
   if (object == nullptr) {
@@ -145,6 +145,19 @@ std::expected<Value, ExecutionStatus> CheckFutureCompletion(Isolate& isolate,
   ObserveCheckedCompletion(isolate, result.Internal(), *Heap::GetFuture(*source.AsObject()),
                            payload, diagnostic, references);
   return Value::Object(object);
+}
+
+std::expected<Value, ExecutionStatus> BindFutureCompletion(Isolate& isolate,
+                                                           Value source,
+                                                           TypeConstraint type,
+                                                           const FutureDiagnostic& diagnostic) {
+  const RootRange type_root(isolate.heap(), std::span(&type, 1));
+  const auto checked =
+      CheckFutureCompletion(isolate, source, type.signature->result, diagnostic, {});
+  if (!checked) {
+    return checked;
+  }
+  return Heap::BindRuntimeType(*checked->AsObject(), type).transform([&] { return *checked; });
 }
 
 }  // namespace vela::runtime

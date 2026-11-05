@@ -231,7 +231,7 @@ class DevelopmentSession final {
   runtime::Value entry_value_;
   std::optional<runtime::FutureDiagnostic> last_diagnostic_;
   std::optional<EntryLookup> entry_lookup_;
-  runtime::RootRange entry_root_{runtime::RootOwner::Runtime};
+  runtime::RootRange entry_root_{std::nullopt};
   mutable std::mutex source_mutex_;
   std::uint64_t generation_ = 1;
   std::uint64_t next_request_ = 1;

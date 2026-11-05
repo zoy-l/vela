@@ -103,10 +103,6 @@ OperationResult CheckFutureCall(FutureCall& call,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   if (operation == AsyncOperation::Timeout) {
-    if (!timeout_index.IsInteger() || timeout_index.AsInteger() < 0 ||
-        static_cast<std::size_t>(timeout_index.AsInteger()) >= types.size()) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
     call.runtime_type = types.subspan(static_cast<std::size_t>(timeout_index.AsInteger())).front();
   }
   return CheckFutureCallbacks(call, *type.signature);

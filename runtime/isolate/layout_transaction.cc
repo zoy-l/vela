@@ -16,8 +16,28 @@ namespace {
 template <class Target, class Storage>
 void RetainNew(Target& target, const Storage& storage, std::size_t first) {
   for (auto index = first; index < storage.size(); ++index) {
-    target.insert(storage.at(index).get());
+    target.insert(storage[index].get());
   }
+}
+
+template <class T, class Retain>
+void TransferNew(std::vector<std::unique_ptr<T>>& storage,
+                 std::size_t first,
+                 std::vector<std::unique_ptr<T>>& owned,
+                 const Retain& retain) {
+  auto retained = first;
+  for (auto index = first; index < storage.size(); ++index) {
+    auto& item = storage[index];
+    if (retain(*item)) {
+      if (retained != index) {
+        storage[retained] = std::move(item);
+      }
+      ++retained;
+    } else {
+      owned.push_back(std::move(item));
+    }
+  }
+  storage.resize(retained);
 }
 
 }  // namespace
@@ -56,40 +76,26 @@ void LayoutTransaction::CommitNative(HeapObject& owner) {
   auto& state = Heap::NativeProgram(owner);
   auto& metadata = isolate_->native_metadata_;
   RetainStructuralMetadata();
-  auto& layouts = isolate_->class_layouts_;
-  auto retained = initial_.classes;
-  for (auto index = initial_.classes; index < layouts.size(); ++index) {
-    auto& layout = layouts.at(index);
-    if (layout->IsEnum()) {
-      metadata.classes.insert(layout.get());
-      if (retained != index) {
-        layouts.at(retained) = std::move(layout);
-      }
-      ++retained;
-    } else {
-      layout->program_owner_ = &owner;
-      state.owned_classes.push_back(std::move(layout));
-    }
-  }
-  layouts.resize(retained);
-  auto& nominals = isolate_->nominal_types_;
-  retained = initial_.nominal_types;
-  for (auto index = initial_.nominal_types; index < nominals.size(); ++index) {
-    auto& nominal = nominals.at(index);
-    if (nominal->declaration() != DeclarationId{}) {
-      metadata.nominals.insert(nominal.get());
-      if (retained != index) {
-        nominals.at(retained) = std::move(nominal);
-      }
-      ++retained;
-    } else {
-      state.owned_nominals.push_back(std::move(nominal));
-    }
-  }
-  nominals.resize(retained);
+  TransferNew(isolate_->class_layouts_, initial_.classes, state.owned_classes,
+              [&](ClassLayout& layout) {
+                if (layout.IsEnum()) {
+                  metadata.classes.insert(&layout);
+                  return true;
+                }
+                layout.program_owner_ = &owner;
+                return false;
+              });
+  TransferNew(isolate_->nominal_types_, initial_.nominal_types, state.owned_nominals,
+              [&](const NominalType& nominal) {
+                if (nominal.declaration() == DeclarationId{}) {
+                  return false;
+                }
+                metadata.nominals.insert(&nominal);
+                return true;
+              });
   auto& identities = isolate_->code_identities_;
   for (auto index = initial_.code_identities; index < identities.size(); ++index) {
-    state.owned_code_identities.push_back(std::move(identities.at(index)));
+    state.owned_code_identities.push_back(std::move(identities[index]));
   }
   identities.resize(initial_.code_identities);
   committed_ = true;
@@ -99,20 +105,20 @@ LayoutTransaction::~LayoutTransaction() {
   if (!committed_) {
     for (std::size_t index = initial_.signatures; index < isolate_->type_signatures_.size();
          ++index) {
-      isolate_->type_signature_index_.erase(*isolate_->type_signatures_.at(index));
+      isolate_->type_signature_index_.erase(*isolate_->type_signatures_[index]);
     }
     for (std::size_t index = initial_.collections; index < isolate_->collection_layouts_.size();
          ++index) {
-      isolate_->collection_layout_index_.erase(*isolate_->collection_layouts_.at(index));
+      isolate_->collection_layout_index_.erase(*isolate_->collection_layouts_[index]);
     }
     for (std::size_t index = initial_.arrays; index < isolate_->array_layouts_.size(); ++index) {
-      isolate_->array_layout_index_.erase(*isolate_->array_layouts_.at(index));
+      isolate_->array_layout_index_.erase(*isolate_->array_layouts_[index]);
     }
     isolate_->collection_layouts_.resize(initial_.collections);
     isolate_->array_layouts_.resize(initial_.arrays);
     auto& layouts = isolate_->class_layouts_;
     for (auto index = initial_.classes; index < layouts.size(); ++index) {
-      auto* layout = layouts.at(index).get();
+      auto* layout = layouts[index].get();
       auto* nominal = layout->nominal_;
       if (nominal->fixed_layout_ == layout) {
         nominal->fixed_layout_ = nullptr;

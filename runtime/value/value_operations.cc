@@ -15,10 +15,7 @@
 namespace vela::runtime {
 namespace {
 
-std::expected<std::uint32_t, ExecutionStatus> ArrayIndex(HeapObject* object, std::int64_t index) {
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
+std::expected<std::uint32_t, ExecutionStatus> ArrayIndex(std::int64_t index) {
   if (index < 0 || std::cmp_greater(index, std::numeric_limits<std::uint32_t>::max())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
@@ -83,35 +80,22 @@ bool IsEqualValue(Value left, Value right) noexcept {
 
 std::expected<Value, ExecutionStatus> ConcatenateValues(Heap& heap, Value left, Value right) {
   if (left.IsString() && right.IsString()) {
-    auto* string = heap.AllocateString(left.AsString()->value(), right.AsString()->value());
-    if (string == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    return Value::String(string);
+    return AllocatedValue(heap.AllocateString(left.AsString()->value(), right.AsString()->value()));
   }
   const std::array parts{left, right};
   const auto string = heap.JoinValues(parts);
   if (!string) {
-    return std::unexpected(string.error() == StringJoinError::TypeMismatch
-                               ? ExecutionStatus::TypeError
-                               : ExecutionStatus::OutOfMemory);
+    return std::unexpected(StringJoinStatus(string.error()));
   }
   return Value::String(*string);
 }
 
-std::expected<bool, ExecutionStatus> CompareStrings(Value left, Value right) {
-  if (!left.IsString() || !right.IsString()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return left.AsString()->value() == right.AsString()->value();
-}
-
-std::expected<Value, ExecutionStatus> ReadIndex(HeapObject* object, std::int64_t index) {
-  const auto offset = ArrayIndex(object, index);
+std::expected<Value, ExecutionStatus> ReadIndex(HeapObject& object, std::int64_t index) {
+  const auto offset = ArrayIndex(index);
   if (!offset) {
     return std::unexpected(offset.error());
   }
-  const auto value = Heap::GetElement(*object, *offset);
+  const auto value = Heap::GetElement(object, *offset);
   if (!value) {
     return std::unexpected(IndexError(value.error()));
   }
@@ -119,14 +103,14 @@ std::expected<Value, ExecutionStatus> ReadIndex(HeapObject* object, std::int64_t
 }
 
 std::expected<void, ExecutionStatus> WriteIndex(Heap& heap,
-                                                HeapObject* object,
+                                                HeapObject& object,
                                                 std::int64_t index,
                                                 Value value) {
-  const auto offset = ArrayIndex(object, index);
+  const auto offset = ArrayIndex(index);
   if (!offset) {
     return std::unexpected(offset.error());
   }
-  const auto written = heap.SetElement(*object, *offset, value);
+  const auto written = heap.SetElement(object, *offset, value);
   if (!written) {
     return std::unexpected(IndexError(written.error()));
   }

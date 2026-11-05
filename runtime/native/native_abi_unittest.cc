@@ -1,4 +1,5 @@
 #include "runtime/native/native_abi.h"
+#include <optional>
 
 #include <array>
 #include <bit>
@@ -255,7 +256,7 @@ TEST(NativeAbiTest, ExceptionRootsFollowPublicationTransferAndRethrow) {
   EXPECT_EQ(execution.ExceptionDiagnostic().status, ExecutionStatus::DivisionByZero);
   const auto exception = execution.TakeException();
   {
-    const RootRange retained(heap, &exception, 1, RootOwner::Runtime);
+    const RootRange retained(heap, &exception, 1, std::nullopt);
     heap.Collect();
     EXPECT_FALSE(execution.HasException());
     EXPECT_EQ(execution.Rethrow(exception), ExecutionStatus::DivisionByZero);

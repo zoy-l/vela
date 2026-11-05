@@ -1,4 +1,5 @@
 #include <vela/handles.h>
+#include <optional>
 
 #include <array>
 #include <cassert>
@@ -49,7 +50,7 @@ std::expected<runtime::Value*, ExecutionStatus> HandleScope::Store(runtime::Valu
     slot = &inline_values_[inline_count_++];
   } else {
     if (blocks_ == nullptr || blocks_->count == Block::kCapacity) {
-      const runtime::RootRange source_root(heap, &value, 1, runtime::RootOwner::Runtime);
+      const runtime::RootRange source_root(heap, &value, 1, std::nullopt);
       auto* memory = heap.AllocateNative(sizeof(Block));
       if (memory == nullptr) {
         return std::unexpected(ExecutionStatus::OutOfMemory);

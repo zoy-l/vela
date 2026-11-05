@@ -1,4 +1,6 @@
 #include "runtime/heap/host_root.h"
+#include <optional>
+#include "runtime/isolate/external_resources.h"
 
 #include <cassert>
 #include <cstddef>
@@ -14,7 +16,9 @@ namespace vela::runtime {
 
 struct HostRoot::Storage final {
   Storage(Isolate& owner, Value source) noexcept
-      : isolate(&owner), value(source), root(owner.heap(), &value, 1, RootOwner::Persistent) {}
+      : isolate(&owner),
+        value(source),
+        root(owner.heap(), &value, 1, ExternalResourceKind::Persistent) {}
   Isolate* isolate;
   Value value;
   RootRange root;
@@ -24,7 +28,7 @@ struct HostRoot::Storage final {
 std::expected<HostRoot, ExecutionStatus> HostRoot::Create(Isolate& isolate, Value value) noexcept {
   assert(isolate.scheduler().IsOwnerThread());
   auto& heap = isolate.heap();
-  const RootRange source_root(heap, &value, 1, RootOwner::Runtime);
+  const RootRange source_root(heap, &value, 1, std::nullopt);
   auto* memory = heap.AllocateNative(sizeof(Storage));
   if (memory == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);

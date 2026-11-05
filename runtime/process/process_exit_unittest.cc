@@ -4,7 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "base/process_exit.h"
-#include "runtime/process/process_exit.h"
+#include "runtime/process/process_entry.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {

@@ -86,7 +86,7 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       break;
     case Kind::Instance:
     case Kind::Enum: {
-      const auto* layout = classes_.at(type.index);
+      const auto* layout = classes_[type.index];
       result.nominal = &layout->nominal_type();
       if (layout->storage() == ClassStorage::Host) {
         result.object_kind = ObjectKind::Host;
@@ -94,7 +94,7 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       break;
     }
     case Kind::Interface:
-      result.interface = interfaces_.at(type.index);
+      result.interface = interfaces_[type.index];
       break;
     case Kind::Array:
       result.object_kind = ObjectKind::Array;
@@ -136,11 +136,11 @@ ArrayLayout LayoutInstantiation::Element(const layout::Type& type) {
 }
 
 const ArrayLayout* LayoutInstantiation::Array(std::uint32_t index) {
-  auto*& stored = arrays_.at(index);
+  auto*& stored = arrays_[index];
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_->arrays.at(index);
+  const auto& description = description_->arrays[index];
   if (const auto found = cache_->arrays.find(description.name); found != cache_->arrays.end()) {
     stored = found->second;
   } else {
@@ -151,11 +151,11 @@ const ArrayLayout* LayoutInstantiation::Array(std::uint32_t index) {
 }
 
 const CollectionLayout* LayoutInstantiation::Collection(std::uint32_t index) {
-  auto*& stored = collections_.at(index);
+  auto*& stored = collections_[index];
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_->collections.at(index);
+  const auto& description = description_->collections[index];
   if (const auto found = cache_->collections.find(description.name);
       found != cache_->collections.end()) {
     stored = found->second;
@@ -171,11 +171,11 @@ const CollectionLayout* LayoutInstantiation::Collection(std::uint32_t index) {
 }
 
 const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
-  auto*& stored = signatures_.at(index);
+  auto*& stored = signatures_[index];
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_->signatures.at(index);
+  const auto& description = description_->signatures[index];
   if (!description.name.empty()) {
     if (const auto found = cache_->signatures.find(description.name);
         found != cache_->signatures.end()) {
@@ -202,7 +202,7 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
 }
 
 ClassLayout* LayoutInstantiation::Class(std::size_t index) {
-  const auto& description = description_->classes.at(index);
+  const auto& description = description_->classes[index];
   if (description.kind == layout::Class::Kind::Host) {
     return isolate_->FindNativeClass(description.native_key)->layout;
   }
@@ -218,7 +218,7 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
   std::vector<const InterfaceType*> interfaces;
   interfaces.reserve(description.interfaces.size());
   for (const auto interface : description.interfaces) {
-    interfaces.push_back(interfaces_.at(interface));
+    interfaces.push_back(interfaces_[interface]);
   }
   auto options =
       class_options_.empty() ? ClassLayoutOptions{} : class_options_.subspan(index).front();
@@ -252,8 +252,8 @@ void LayoutInstantiation::PrepareNominals() {
   }
   // 先创建全部名义布局，再建立结构签名；允许类的签名引用自身或后声明的类。
   for (std::size_t index = 0; index < description_->classes.size(); ++index) {
-    const auto& description = description_->classes.at(index);
-    auto* stored = classes_.at(index);
+    const auto& description = description_->classes[index];
+    auto* stored = classes_[index];
     if (description.callable_type) {
       stored->BindCallableType(*Signature(*description.callable_type));
     }

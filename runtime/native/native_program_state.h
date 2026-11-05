@@ -5,7 +5,10 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
+#include <utility>
 #include <vector>
+#include "base/layout_description.h"
 
 #include <absl/container/flat_hash_map.h>
 
@@ -59,6 +62,8 @@ struct NativeProgramState final {
   ProgramLayouts layouts;
   MemberTable members;
   absl::flat_hash_map<const NominalType*, std::uint32_t> class_indices;
+  absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::uint32_t> enum_members;
+  absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;
   const CodeIdentity* code_identity = nullptr;
   std::vector<CallSignature> signatures;
   std::vector<std::shared_ptr<const NativeFunction>> imports;

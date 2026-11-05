@@ -1,7 +1,9 @@
 #pragma once
 
+#include <expected>
 #include <functional>
 #include <iosfwd>
+#include <string_view>
 
 namespace vela::runtime {
 
@@ -9,6 +11,8 @@ class Isolate;
 class Value;
 class Future;
 struct FutureDiagnostic;
+
+[[nodiscard]] std::expected<int, std::string_view> ProcessExitCode(Value value) noexcept;
 
 void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagnostic);
 

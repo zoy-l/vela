@@ -77,6 +77,15 @@ class Isolate final {
 
   [[nodiscard]] Heap& heap() noexcept { return heap_; }
   [[nodiscard]] const Heap& heap() const noexcept { return heap_; }
+  [[nodiscard]] const ArrayLayout& dynamic_array_layout() const noexcept {
+    return *dynamic_array_layout_;
+  }
+  [[nodiscard]] const ArrayLayout& string_array_layout() const noexcept {
+    return *string_array_layout_;
+  }
+  [[nodiscard]] const CollectionLayout& dynamic_map_layout() const noexcept {
+    return *dynamic_map_layout_;
+  }
   [[nodiscard]] ClassLayout& error_layout() noexcept { return *error_layout_; }
   [[nodiscard]] const ClassLayout& error_layout() const noexcept { return *error_layout_; }
   [[nodiscard]] ClassLayout& date_parts_layout() noexcept { return *date_parts_layout_; }
@@ -119,8 +128,6 @@ class Isolate final {
  private:
   friend class Heap;
   [[nodiscard]] ClassLayout* CreateNativeClassLayout();
-  [[nodiscard]] std::expected<void, NativeRegistrationError> ValidateNativeSignature(
-      const NativeFunction& function) const;
   friend class LayoutTransaction;
   friend class NativeInstance;
   [[nodiscard]] LayoutCounts PersistentLayoutCounts() const noexcept;
@@ -149,6 +156,9 @@ class Isolate final {
     bool static_lifetime = true;
   };
   absl::flat_hash_map<const NativeImage*, NativeImageCache> native_images_;
+  const ArrayLayout* dynamic_array_layout_;
+  const ArrayLayout* string_array_layout_;
+  const CollectionLayout* dynamic_map_layout_;
   ClassLayout* error_layout_ = nullptr;
   ClassLayout* date_parts_layout_ = nullptr;
   Random random_;

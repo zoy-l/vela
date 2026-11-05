@@ -20,7 +20,7 @@ def generate(compiler: Path, source: Path, output: Path) -> None:
               'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + '() noexcept;',
               "namespace vela::benchmarks::interop {", f"namespace api = {module};",
               "inline const auto* const kImage = " + manifest["image"] + "();",
-              "inline constexpr std::string_view kSource = " + json.dumps(str(source)) + ";",
+              "inline constexpr std::string_view kSource = " + json.dumps(source.as_posix()) + ";",
               "}", ""]
     (output / "entries.h").write_text("\n".join(header), encoding="utf-8", newline="\n")
 

@@ -1,4 +1,5 @@
 #include "runtime/native/native_instance.h"
+#include "runtime/isolate/external_resources.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -310,8 +311,8 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
         .name = std::string(member.name.text()),
         .kind = static_cast<MemberKind>(member.kind),
         .target = target,
-        .type = member.type == kNoNativeIndex ? std::nullopt : std::optional(member.type),
-        .setter = member.setter == kNoNativeIndex ? std::nullopt : std::optional(member.setter),
+        .type = OptionalIndex(member.type),
+        .setter = OptionalIndex(member.setter),
     });
   }
   return members;
@@ -348,11 +349,13 @@ std::string_view NativeTargetIdentity() noexcept {
   return kNativeTargetIdentity;
 }
 
-NativeInstance::NativeInstance(NativeProgramState& data, Value anchor, RootOwner root_owner)
+NativeInstance::NativeInstance(NativeProgramState& data,
+                               Value anchor,
+                               std::optional<ExternalResourceKind> root_owner)
     : data_(&data), anchor_(anchor), anchor_root_(data.isolate->heap(), &anchor_, 1, root_owner) {}
 
 NativeInstance NativeInstance::Borrow(HeapObject& state) {
-  return {Heap::NativeProgram(state), Value::Object(&state), RootOwner::Runtime};
+  return {Heap::NativeProgram(state), Value::Object(&state), std::nullopt};
 }
 
 Value NativeInstance::constant(std::size_t index) const noexcept {
@@ -368,15 +371,10 @@ std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExe
   if (!value) {
     return value;
   }
-  StoreGlobal(index, *value);
-  return value;
-}
-
-void NativeInstance::StoreGlobal(std::size_t index, Value value) noexcept {
-  auto& state = data_->global_state(index);
   internal::StoreNativeGlobal(data_->isolate->heap(),
                               *data_->values[NativeProgramState::kGlobals].AsObject(), index, state,
-                              value);
+                              *value);
+  return value;
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
@@ -511,8 +509,8 @@ NativeInstance::Instantiate(Isolate& isolate,
   if (!closed) {
     PrepareFieldCaches(*data);
   }
-  std::unique_ptr<NativeInstance> instance(
-      new (std::nothrow) NativeInstance(*data, Value::Null(), RootOwner::NativeInstance));
+  std::unique_ptr<NativeInstance> instance(new (std::nothrow) NativeInstance(
+      *data, Value::Null(), ExternalResourceKind::NativeInstance));
   if (instance == nullptr) {
     return OutOfMemory("out of memory creating native program instance");
   }
@@ -544,8 +542,13 @@ NativeInstance::Instantiate(Isolate& isolate,
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
   for (std::size_t index = 0; index < state.layouts.classes.size(); ++index) {
-    state.class_indices.emplace(&state.layouts.classes[index]->nominal_type(),
-                                static_cast<std::uint32_t>(index));
+    const auto* nominal = &state.layouts.classes[index]->nominal_type();
+    state.class_indices.emplace(nominal, static_cast<std::uint32_t>(index));
+    const auto names = image.classes.values()[index].enum_members.values();
+    for (std::size_t ordinal = 0; ordinal < names.size(); ++ordinal) {
+      state.enum_members.emplace(std::pair(nominal, names[ordinal].text()),
+                                 static_cast<std::uint32_t>(ordinal));
+    }
   }
   for (auto* type : state.layouts.classes) {
     if (type->callable() != nullptr) {

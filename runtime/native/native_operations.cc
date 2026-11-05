@@ -183,7 +183,7 @@ extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
                                                 const NativeValue* value) noexcept {
   const auto inserted = execution->isolate().heap().StoreMapValue(*map, DecodeNativeValue(*key),
                                                                   DecodeNativeValue(*value));
-  return ToNativeStatus(inserted ? ExecutionStatus::Returned : inserted.error());
+  return ToNativeStatus(inserted);
 }
 
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
@@ -263,23 +263,17 @@ extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,
   }
   const auto string = execution->isolate().heap().JoinValues(values);
   if (!string) {
-    return ToNativeStatus(string.error() == StringJoinError::TypeMismatch
-                              ? ExecutionStatus::TypeError
-                              : ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(StringJoinStatus(string.error()));
   }
   *result = EncodeNativeValue(Value::String(*string));
   return ToNativeStatus(ExecutionStatus::Returned);
 }
 
-extern "C" std::uint8_t vela_native_v1_compare_strings(const NativeValue* left,
-                                                       const NativeValue* right,
-                                                       NativeValue* result) {
-  const auto compared = CompareStrings(DecodeNativeValue(*left), DecodeNativeValue(*right));
-  if (!compared) {
-    return ToNativeStatus(compared.error());
-  }
-  *result = EncodeNativeValue(Value::Boolean(*compared));
-  return ToNativeStatus(ExecutionStatus::Returned);
+extern "C" std::uint8_t vela_native_v2_compare_strings(const NativeValue* left,
+                                                       const NativeValue* right) noexcept {
+  const auto first = DecodeNativeValue(*left).AsString()->value();
+  const auto second = DecodeNativeValue(*right).AsString()->value();
+  return first == second ? 1 : 0;
 }
 
 extern "C" std::uint8_t vela_native_v1_equal(const NativeValue* left,

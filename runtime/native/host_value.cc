@@ -17,7 +17,6 @@
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_instance.h"
-#include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -53,10 +52,6 @@ Error CaptureHostError(runtime::NativeExecution& execution, ExecutionStatus stat
 void StoreHostResult(runtime::Heap& heap, runtime::Value& output, runtime::Value value) noexcept {
   output = value;
   heap.WriteRootBarrier(std::span(&output, 1));
-}
-
-std::string_view HostStringUtf8(runtime::Value value) noexcept {
-  return value.AsString()->value();
 }
 
 Result<void> CreateHostString(HandleScope& scope, std::string_view text, runtime::Value& output) {

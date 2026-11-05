@@ -135,7 +135,7 @@ class DecodeSession final {
   NativeBuffer<std::size_t> order_;
   NativeBuffer<Value> values_;
   NativeBuffer<ParameterSlot> parameters_;
-  RootRange roots_{RootOwner::Runtime};
+  RootRange roots_{std::nullopt};
   std::size_t count_ = 1;
   std::size_t completed_ = 0;
 };
@@ -434,16 +434,12 @@ std::expected<Value, ExecutionStatus> DecodeSession::MaterializeContainer(std::s
   const auto& layouts = execution_->instance().layouts();
   HeapObject* object = nullptr;
   if (yyjson_is_arr(task.value)) {
-    const auto* layout = plan.kind == JSONDecodeKind::Dynamic
-                             ? isolate.CreateArrayLayout({.element = {.dynamic = true}})
-                             : layouts.types.at(plan.type).array;
+    const auto* layout = plan.kind == JSONDecodeKind::Dynamic ? &isolate.dynamic_array_layout()
+                                                              : layouts.types.at(plan.type).array;
     object = heap_->AllocateArray(*layout, yyjson_get_len(task.value));
   } else {
     const auto* layout = plan.kind == JSONDecodeKind::Dynamic
-                             ? isolate.CreateCollectionLayout({
-                                   .keys = {.element = {.kind = ValueKind::String}},
-                                   .values = ArrayLayout{.element = {.dynamic = true}},
-                               })
+                             ? &isolate.dynamic_map_layout()
                              : layouts.types.at(plan.type).collection;
     object = heap_->AllocateCollection(*layout);
   }
@@ -451,7 +447,7 @@ std::expected<Value, ExecutionStatus> DecodeSession::MaterializeContainer(std::s
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   auto container = Value::Object(object);
-  RootRange root(*heap_, &container, 1, RootOwner::Runtime);
+  RootRange root(*heap_, &container, 1, std::nullopt);
   for (auto child = task.first_child; child != kNoTask; child = tasks_.values()[child].next) {
     const auto& entry = tasks_.values()[child];
     const auto value = values_.values()[child];
@@ -467,7 +463,7 @@ std::expected<Value, ExecutionStatus> DecodeSession::MaterializeContainer(std::s
         return std::unexpected(ExecutionStatus::OutOfMemory);
       }
       auto key = Value::String(string);
-      RootRange key_root(*heap_, &key, 1, RootOwner::Runtime);
+      RootRange key_root(*heap_, &key, 1, std::nullopt);
       if (auto stored = heap_->InsertCollection(*object, key, value); !stored) {
         return std::unexpected(stored.error());
       }
@@ -511,13 +507,13 @@ std::expected<Value, ExecutionStatus> Record(NativeExecution& execution,
                                              std::uint32_t type,
                                              std::span<Value> fields) {
   auto& heap = execution.isolate().heap();
-  RootRange roots(heap, fields.data(), fields.size(), RootOwner::Runtime);
+  RootRange roots(heap, fields.data(), fields.size(), std::nullopt);
   auto* object = heap.AllocateInstance(*execution.instance().layouts().classes.at(type));
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   auto result = Value::Object(object);
-  RootRange record(heap, &result, 1, RootOwner::Runtime);
+  RootRange record(heap, &result, 1, std::nullopt);
   for (std::size_t index = 0; index < fields.size(); ++index) {
     if (auto stored = heap.SetField(*object, static_cast<std::uint32_t>(index), fields[index]);
         !stored) {
@@ -532,7 +528,7 @@ std::expected<Value, ExecutionStatus> InputError(NativeExecution& execution,
                                                  const JsonRuntimeError& error) {
   auto& heap = execution.isolate().heap();
   std::array<Value, kErrorFieldCount> fields;
-  RootRange roots(heap, fields.data(), fields.size(), RootOwner::Runtime);
+  RootRange roots(heap, fields.data(), fields.size(), std::nullopt);
   const std::array<std::optional<std::string_view>, kErrorFieldCount> texts{
       ErrorCode(error.kind), error.path, error.expected, error.actual, std::nullopt, error.message,
   };
@@ -580,7 +576,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeTypedJSON(NativeExecution& ex
     return std::unexpected(status);
   }
   auto source = arguments.front();
-  RootRange root(execution.isolate().heap(), &source, 1, RootOwner::Runtime);
+  RootRange root(execution.isolate().heap(), &source, 1, std::nullopt);
   auto document = ParsedJSON::Parse(source.AsString()->value(), execution.isolate().heap());
   if (!document) {
     return Failure(execution, builtin, arguments, document.error());

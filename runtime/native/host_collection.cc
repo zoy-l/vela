@@ -26,13 +26,13 @@ namespace vela::internal {
 namespace {
 
 Result<runtime::Value> StoreElementValue(runtime::Value value, const runtime::ArrayLayout& layout) {
-  const auto* nominal = layout.element_type().nominal;
+  const auto* nominal = layout.element.nominal;
   if (nominal != nullptr && nominal->IsEnum() &&
       !runtime::Heap::IsValueOfType(value, layout.value_type())) {
     return std::unexpected(
         Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
   }
-  return runtime::UnboxDynamicValue(value, layout.element_type());
+  return runtime::UnboxDynamicValue(value, layout.element);
 }
 
 Result<void> ReceiveStoredElement(HandleScope& scope,
@@ -40,7 +40,7 @@ Result<void> ReceiveStoredElement(HandleScope& scope,
                                   const runtime::ArrayLayout& layout,
                                   runtime::Value& output) {
   auto& heap = scope.isolate().heap();
-  const auto boxed = runtime::BoxDynamicValue(heap, value, layout.element_type());
+  const auto boxed = runtime::BoxDynamicValue(heap, value, layout.element);
   if (!boxed) {
     return std::unexpected(Error{.status = boxed.error(), .message = {}, .stack_trace = {}});
   }
@@ -54,7 +54,7 @@ Result<void> ReadHostArray(HandleScope& scope,
                            runtime::Value array,
                            std::int64_t index,
                            runtime::Value& output) {
-  const auto value = runtime::ReadIndex(array.AsObject(), index);
+  const auto value = runtime::ReadIndex(*array.AsObject(), index);
   if (!value) {
     return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
   }
@@ -72,17 +72,11 @@ Result<void> WriteHostArray(HandleScope& scope,
     return std::unexpected(std::move(stored.error()));
   }
   const auto written =
-      runtime::WriteIndex(scope.isolate().heap(), array.AsObject(), index, *stored);
+      runtime::WriteIndex(scope.isolate().heap(), *array.AsObject(), index, *stored);
   if (!written) {
     return std::unexpected(Error{.status = written.error(), .message = {}, .stack_trace = {}});
   }
   return {};
-}
-
-std::int64_t HostContainerSize(runtime::Value container) noexcept {
-  const auto& object = *container.AsObject();
-  return runtime::Heap::ArrayTypeOf(object) != nullptr ? *runtime::Heap::ArrayLength(object)
-                                                       : *runtime::Heap::CollectionLength(object);
 }
 
 std::int64_t HostArrayCapacity(runtime::Value array) noexcept {
@@ -163,9 +157,6 @@ Result<void> ExecuteHostCollection(HandleScope& scope,
     std::ranges::copy(arguments, stored.begin());
     stored[1] = *key;
     if (builtin == Builtin::MapSet) {
-      if (!layout.values) {
-        std::unreachable();
-      }
       auto value = StoreElementValue(arguments[2], *layout.values);
       if (!value) {
         return std::unexpected(std::move(value.error()));
@@ -187,9 +178,6 @@ Result<HostPresence> ReadHostMap(HandleScope& scope,
                                  runtime::Value key,
                                  runtime::Value& output) {
   const auto& layout = *runtime::Heap::CollectionTypeOf(map);
-  if (!layout.values) {
-    std::unreachable();
-  }
   auto stored = StoreElementValue(key, layout.keys);
   if (!stored) {
     return std::unexpected(std::move(stored.error()));
@@ -217,13 +205,7 @@ Result<void> ProjectHostCollection(HandleScope& scope,
   const auto& object = *collection.AsObject();
   const auto& layout = *runtime::Heap::CollectionTypeOf(object);
   runtime::LayoutTransaction transaction(isolate, runtime::LayoutLifetime::Collectible);
-  const auto* elements = &layout.keys;
-  if (projection == runtime::CollectionProjection::Values) {
-    if (!layout.values) {
-      std::unreachable();
-    }
-    elements = &*layout.values;
-  }
+  const auto* elements = layout.element_layout(projection);
   const auto* array_type = isolate.CreateArrayLayout(*elements);
   auto* array = heap.AllocateArray(*array_type, *runtime::Heap::CollectionLength(object));
   if (array == nullptr) {

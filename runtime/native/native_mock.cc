@@ -1,6 +1,6 @@
 #include "runtime/native/native_mock.h"
+#include <optional>
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -31,10 +31,10 @@ std::expected<Value, ExecutionStatus> ExpandTrace(NativeExecution& execution,
                                                   std::span<const FutureTraceFrame> frames,
                                                   Value callback) {
   auto& heap = execution.isolate().heap();
-  RootRange callback_root(heap, &callback, 1, RootOwner::Runtime);
+  RootRange callback_root(heap, &callback, 1, std::nullopt);
   constexpr std::size_t kFrameWidth = 5;
   std::array<Value, kFrameWidth> arguments;
-  RootRange argument_roots(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
+  RootRange argument_roots(heap, arguments.data(), arguments.size(), std::nullopt);
   for (const auto& frame : frames) {
     const std::array texts{std::string_view(frame.function), std::string_view(frame.source_path)};
     for (std::size_t index = 0; index < texts.size(); ++index) {
@@ -149,9 +149,7 @@ std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
       const auto valid_parameters =
           !parameters.empty() &&
           Heap::IsValueOfType(value, types.subspan(parameters.front().type).front()) &&
-          std::ranges::all_of(parameters.subspan(1), [](const auto& parameter) {
-            return parameter.optional || parameter.rest;
-          });
+          !contract.HasRequiredParameters(1);
       return Value::Boolean(valid_result && valid_parameters);
     }
     default:

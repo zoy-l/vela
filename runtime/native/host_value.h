@@ -19,6 +19,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/handle_access.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -38,7 +39,9 @@ enum class HostPresence : std::uint8_t { Missing, Present };
 
 void StoreHostResult(runtime::Heap& heap, runtime::Value& output, runtime::Value value) noexcept;
 
-[[nodiscard]] std::string_view HostStringUtf8(runtime::Value value) noexcept;
+[[nodiscard]] inline std::string_view HostStringUtf8(runtime::Value value) noexcept {
+  return value.AsString()->value();
+}
 [[nodiscard]] Result<void> CreateHostString(HandleScope& scope,
                                             std::string_view text,
                                             runtime::Value& output);
@@ -81,16 +84,27 @@ HostValue<T> DecodeHostLocal(Local<Value> value) {
 }
 
 template <class T>
-Result<runtime::Value> EncodeHostValue(HandleScope& scope, const HostValue<T>& value) {
+runtime::Value EncodeHostScalar(const HostValue<T>& value) {
   if constexpr (requires { typename HostValueType<T>::Payload; }) {
-    return value ? EncodeHostValue<typename HostValueType<T>::Payload>(scope, *value)
-                 : Result<runtime::Value>(runtime::Value::Null());
+    return value ? EncodeHostScalar<typename HostValueType<T>::Payload>(*value)
+                 : runtime::Value::Null();
   } else if constexpr (std::is_same_v<T, bool>) {
     return runtime::Value::Boolean(value);
   } else if constexpr (std::is_same_v<T, std::int64_t>) {
     return runtime::Value::Integer(value);
-  } else if constexpr (std::is_same_v<T, double>) {
+  } else {
+    static_assert(std::is_same_v<T, double>);
     return runtime::Value::Double(value);
+  }
+}
+
+template <class T>
+Result<runtime::Value> EncodeHostValue(HandleScope& scope, const HostValue<T>& value) {
+  if constexpr (requires { typename HostValueType<T>::Payload; }) {
+    return value ? EncodeHostValue<typename HostValueType<T>::Payload>(scope, *value)
+                 : Result<runtime::Value>(runtime::Value::Null());
+  } else if constexpr (!HostValueType<T>::kManaged) {
+    return EncodeHostScalar<T>(value);
   } else {
     if (&scope.isolate() != &value.isolate()) {
       return std::unexpected(
@@ -106,81 +120,65 @@ Result<std::array<runtime::Value, sizeof...(Args)>> EncodeHostArguments(
     const HostValue<Args>&... arguments) {
   std::array<runtime::Value, sizeof...(Args)> values{};
   if constexpr (sizeof...(Args) != 0) {
-    std::optional<Error> failure;
     std::size_t index = 0;
     const auto encode = [&]<class T>(const HostValue<T>& value) {
-      if (failure) {
-        return;
-      }
       auto encoded = EncodeHostValue<T>(scope, value);
       if (!encoded) {
-        failure = std::move(encoded.error());
-      } else {
-        values[index++] = *encoded;
+        return false;
       }
+      values[index++] = *encoded;
+      return true;
     };
-    (encode.template operator()<Args>(arguments), ...);
-    if (failure) {
-      return std::unexpected(std::move(*failure));
+    if (!(encode.template operator()<Args>(arguments) && ...)) {
+      return std::unexpected(
+          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
     }
   }
   return values;
 }
 
-// 托管结果直接写入目标作用域，生产者释放执行根前已建立最终根；标量不占用句柄槽。
 template <class T, class Operation>
-Result<HostValue<T>> ReceiveHostValue(HandleScope& scope, Operation&& operation) {
-  if constexpr (HostValueType<T>::kManaged) {
-    auto destination = HandleAccess::Root<Value>(scope, runtime::Value::Null());
-    if (!destination) {
-      return std::unexpected(std::move(destination.error()));
-    }
-    auto result = std::forward<Operation>(operation)(HandleAccess::Slot(*destination));
-    if (!result) {
-      return std::unexpected(std::move(result.error()));
-    }
-    return DecodeHostLocal<T>(*destination);
-  } else {
-    runtime::Value value;
+using HostReceivedValue = std::conditional_t<
+    std::is_same_v<typename std::invoke_result_t<Operation, runtime::Value&>::value_type,
+                   HostPresence>,
+    std::optional<HostValue<T>>,
+    HostValue<T>>;
+
+// 托管结果直接写入目标作用域；HostPresence 使缺失与存在的 null 各占一层。
+template <class T, class Operation>
+Result<HostReceivedValue<T, Operation>> ReceiveHostValue(HandleScope& scope,
+                                                         Operation&& operation) {
+  using Output = HostReceivedValue<T, Operation>;
+  const auto receive = [&](runtime::Value& value, const auto& decode) -> Result<Output> {
     auto result = std::forward<Operation>(operation)(value);
     if (!result) {
       return std::unexpected(std::move(result.error()));
     }
-    if constexpr (std::is_void_v<T>) {
+    if constexpr (std::is_same_v<typename decltype(result)::value_type, HostPresence>) {
+      if (*result == HostPresence::Missing) {
+        return std::nullopt;
+      }
+      return Output(std::in_place, decode());
+    } else if constexpr (std::is_void_v<T>) {
       return {};
     } else {
-      return DecodeHostScalar<T>(value);
+      return decode();
     }
-  }
-}
-
-// 缺失与存在的 null 各占一层，Map 和移除操作不会把二者合并。
-template <class T, class Operation>
-Result<std::optional<HostValue<T>>> ReceiveOptionalHostValue(HandleScope& scope,
-                                                             Operation&& operation) {
+  };
   if constexpr (HostValueType<T>::kManaged) {
     auto destination = HandleAccess::Root<Value>(scope, runtime::Value::Null());
     if (!destination) {
       return std::unexpected(std::move(destination.error()));
     }
-    auto result = std::forward<Operation>(operation)(HandleAccess::Slot(*destination));
-    if (!result) {
-      return std::unexpected(std::move(result.error()));
-    }
-    if (*result == HostPresence::Missing) {
-      return std::nullopt;
-    }
-    return std::optional<HostValue<T>>(std::in_place, DecodeHostLocal<T>(*destination));
+    return receive(HandleAccess::Slot(*destination),
+                   [&] { return DecodeHostLocal<T>(*destination); });
   } else {
     runtime::Value value;
-    auto result = std::forward<Operation>(operation)(value);
-    if (!result) {
-      return std::unexpected(std::move(result.error()));
-    }
-    if (*result == HostPresence::Missing) {
-      return std::nullopt;
-    }
-    return std::optional<HostValue<T>>(std::in_place, DecodeHostScalar<T>(value));
+    return receive(value, [&]() -> HostValue<T> {
+      if constexpr (!std::is_void_v<T>) {
+        return DecodeHostScalar<T>(value);
+      }
+    });
   }
 }
 

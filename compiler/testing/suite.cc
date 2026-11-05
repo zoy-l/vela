@@ -493,8 +493,7 @@ void Suite::Invoke(const Callback& callback,
   if (result.stack_trace.empty() && !result.Succeeded()) {
     result.stack_trace = callback.trace;
   }
-  const runtime::RootRange result_root(isolate_->heap(), &result.value, 1,
-                                       runtime::RootOwner::Runtime);
+  const runtime::RootRange result_root(isolate_->heap(), &result.value, 1, std::nullopt);
   if (!result.Succeeded()) {
     RecordError(result, phase, errors);
   }
@@ -659,8 +658,7 @@ SuiteResult Suite::Run() {
   }
   const auto registered = Await(runtime::ExecuteNativeFunction(*instance_, *main), *load_timeout,
                                 root_, TestPhase::Registration);
-  const runtime::RootRange registration_root(isolate_->heap(), &registered.value, 1,
-                                             runtime::RootOwner::Runtime);
+  const runtime::RootRange registration_root(isolate_->heap(), &registered.value, 1, std::nullopt);
   if (!registered.Succeeded()) {
     RecordError(registered, TestPhase::Registration, result_.errors);
     return Finish();

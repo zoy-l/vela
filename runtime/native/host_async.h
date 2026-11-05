@@ -2,7 +2,6 @@
 
 #include <expected>
 
-#include <absl/functional/any_invocable.h>
 #include <vela/error.h>
 #include <vela/handles.h>
 
@@ -14,16 +13,9 @@
 namespace vela::internal {
 
 [[nodiscard]] runtime::FutureState HostFutureState(runtime::Value future) noexcept;
-[[nodiscard]] Result<runtime::FutureObservation> ObserveHostFuture(
-    HandleScope& scope,
-    runtime::Value future,
-    absl::AnyInvocable<void(HandleScope&, const runtime::FutureResult&)> callback);
 [[nodiscard]] Result<void> ReadHostCompletion(HandleScope& scope,
                                               const runtime::FutureResult& result,
                                               runtime::Value& output);
-[[nodiscard]] Result<void> CompleteHostEndpoint(HandleScope& scope,
-                                                const runtime::FutureCompletionEndpoint& endpoint,
-                                                runtime::Value value);
 
 [[nodiscard]] Result<void> CreateHostCompleter(HandleScope& scope,
                                                runtime::TypeConstraint type,
@@ -40,12 +32,8 @@ CreateHostCompletion(HandleScope& scope, runtime::TypeConstraint type, runtime::
 [[nodiscard]] Result<void> GetHostFuture(HandleScope& scope,
                                          runtime::Value completer,
                                          runtime::Value& output);
-[[nodiscard]] Result<void> CompleteHostFuture(HandleScope& scope,
-                                              runtime::HeapObject& completer,
-                                              runtime::Value value);
-[[nodiscard]] Result<void> AdoptHostFuture(HandleScope& scope,
-                                           runtime::HeapObject& completer,
-                                           runtime::Value future);
+[[nodiscard]] Result<void> CompleteHostFuture(runtime::HeapObject& completer, runtime::Value value);
+[[nodiscard]] Result<void> AdoptHostFuture(runtime::HeapObject& completer, runtime::Value future);
 [[nodiscard]] Result<void> FailHostFuture(HandleScope& scope,
                                           runtime::Value completer,
                                           Error error);

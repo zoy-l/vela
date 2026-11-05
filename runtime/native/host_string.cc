@@ -24,7 +24,7 @@ Result<Local<String>> CreateString(HandleScope& scope, std::string_view text) {
 }
 
 std::string CopyString(Local<String> text) {
-  return std::string(internal::HandleAccess::Read(text).AsString()->value());
+  return std::string(text.Utf8());
 }
 
 std::int64_t StringLength(Local<String> text) noexcept {
@@ -32,7 +32,7 @@ std::int64_t StringLength(Local<String> text) noexcept {
 }
 
 std::int64_t StringByteLength(Local<String> text) noexcept {
-  return static_cast<std::int64_t>(internal::HandleAccess::Read(text).AsString()->value().size());
+  return static_cast<std::int64_t>(text.Utf8().size());
 }
 
 Result<HostValue<String>> StringSlice(HandleScope& scope,

@@ -61,7 +61,6 @@ class NativeContext final {
     return vela::internal::HandleAccess::Rebind<vela::Future<T>>(*value);
   }
   [[nodiscard]] Completer CreateCompleter() const;
-  [[nodiscard]] NativeResult CancellationValue(const CancellationToken& token) const;
 
   template <NativeHostClass T, class... Args>
   [[nodiscard]] std::expected<NativeConstructed<T>, vela::Error> Construct(

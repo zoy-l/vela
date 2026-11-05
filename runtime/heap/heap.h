@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/functional/function_ref.h>
+
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
@@ -36,28 +38,23 @@ class InstanceMigration;
 struct NativeRetainedFunction;
 struct LayoutCounts;
 
-enum class RootOwner : std::uint8_t {
-  Runtime,
-  Host,
-  NativeInstance,
-  NativeHandle,
-  Persistent,
-  Type,
-};
-
 class RootRange final {
  public:
-  explicit RootRange(RootOwner owner = RootOwner::Host) noexcept : owner_(owner) {}
-  RootRange(Heap& heap,
-            const Value* values,
-            std::size_t count,
-            RootOwner owner = RootOwner::Host) noexcept;
-  RootRange(Heap& heap,
-            std::span<StringObject* const> strings,
-            RootOwner owner = RootOwner::Host) noexcept;
+  explicit RootRange(
+      std::optional<ExternalResourceKind> resource_kind = ExternalResourceKind::RootRange) noexcept
+      : resource_kind_(resource_kind) {}
+  RootRange(
+      Heap& heap,
+      const Value* values,
+      std::size_t count,
+      std::optional<ExternalResourceKind> resource_kind = ExternalResourceKind::RootRange) noexcept;
+  RootRange(
+      Heap& heap,
+      std::span<StringObject* const> strings,
+      std::optional<ExternalResourceKind> resource_kind = ExternalResourceKind::RootRange) noexcept;
   RootRange(Heap& heap,
             std::span<const TypeConstraint> types,
-            RootOwner owner = RootOwner::Runtime) noexcept;
+            std::optional<ExternalResourceKind> resource_kind = std::nullopt) noexcept;
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
@@ -81,7 +78,7 @@ class RootRange final {
   RootRange* next_ = nullptr;
   RootRange** previous_link_ = nullptr;
   Kind kind_ = Kind::Values;
-  RootOwner owner_;
+  std::optional<ExternalResourceKind> resource_kind_;
   std::uint64_t identity_ = 0;
 };
 
@@ -117,6 +114,11 @@ enum class ArrayAccessError : std::uint8_t {
 
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 
+[[nodiscard]] constexpr ExecutionStatus StringJoinStatus(StringJoinError error) noexcept {
+  return error == StringJoinError::TypeMismatch ? ExecutionStatus::TypeError
+                                                : ExecutionStatus::OutOfMemory;
+}
+
 enum class StringCase : std::uint8_t { Lower, Upper };
 
 struct CollectionEntry final {
@@ -141,7 +143,6 @@ class CollectionIterator final {
 };
 enum class CollectionInsert : std::uint8_t { Inserted, Updated };
 enum class CollectionRemove : std::uint8_t { Removed, Missing };
-enum class CollectionProjection : std::uint8_t { Keys, Values };
 enum class SetOperation : std::uint8_t { Union, Intersection, Difference };
 
 struct ByteViewRange final {
@@ -165,8 +166,8 @@ class Heap final {
   // 返回弱登记中的对象；调用者在可能分配前统一保根，并按需完成一次新根追踪。
   static void AppendInstances(const NominalType& type, std::vector<Value>& instances);
   // 调用者先完成当前根的一致追踪；仅返回实际可达闭包及 C++ 版本根的函数集合。
-  void AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& functions) const;
-  void AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const;
+  void AppendRetainedNative(std::vector<NativeRetainedFunction>& functions,
+                            std::vector<DeclarationId>& declarations) const;
   void AccumulateNativeLayouts(LayoutCounts& counts) const noexcept;
   [[nodiscard]] std::expected<std::unique_ptr<InstanceMigration>, ExecutionStatus>
   PrepareInstanceMigration(HeapObject& object, const ClassLayout& layout) noexcept;
@@ -293,9 +294,8 @@ class Heap final {
                                                                         std::uint32_t start,
                                                                         std::uint32_t count,
                                                                         HeapObject& items) noexcept;
-  [[nodiscard]] static std::expected<Value, ArrayAccessError> RemoveArrayElement(
-      HeapObject& array,
-      std::uint32_t index) noexcept;
+  [[nodiscard]] static std::expected<Value, ArrayAccessError> ShiftArray(
+      HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<void, ArrayAccessError> ClearArray(HeapObject& array) noexcept;
   [[nodiscard]] std::expected<HeapObject*, ArrayAccessError> SliceArray(HeapObject& array,
                                                                         std::uint32_t start,
@@ -421,6 +421,7 @@ class Heap final {
   void RegisterRoot(RootRange& root) noexcept;
   static void UnregisterRoot(RootRange& root) noexcept;
   void MarkRoots() noexcept;
+  void VisitRootTypes(absl::FunctionRef<void(TypeConstraint)> visit) const;
   void MarkRoot(const RootRange& root) noexcept;
   void MarkValue(Value value) noexcept;
   void MarkReference(Value value) noexcept { MarkValue(value); }
@@ -456,6 +457,7 @@ class Heap final {
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
+  void RecordAllocation(std::size_t bytes) noexcept;
   // 调用者在分配边界推进 GC；replaced_bytes 只抵扣本次即将替换的已计费存储。
   [[nodiscard]] void* AllocateExternal(std::size_t bytes, std::size_t replaced_bytes = 0) noexcept;
   void ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept;
@@ -506,7 +508,10 @@ class Heap final {
   Future::Root* future_roots_ = nullptr;
   std::size_t instance_type_count_ = 0;
   NativeProgramState* retired_programs_ = nullptr;
-  std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
+  struct FreeBlock final {
+    FreeBlock* next;
+  };
+  std::array<FreeBlock*, kSizeClasses.size()> free_blocks_{};
 
   std::size_t object_count_ = 0;
   std::size_t allocated_bytes_ = 0;

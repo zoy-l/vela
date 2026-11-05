@@ -245,7 +245,6 @@ struct ArrayLayout final {
     return element.dynamic || element.kind == ValueKind::Object ||
            element.kind == ValueKind::String;
   }
-  [[nodiscard]] const TypeConstraint& element_type() const noexcept { return element; }
   [[nodiscard]] TypeConstraint value_type() const noexcept {
     auto type = element;
     if (type.nominal != nullptr && type.nominal->IsEnum()) {
@@ -260,9 +259,17 @@ struct ArrayLayout final {
   }
 };
 
+enum class CollectionProjection : std::uint8_t { Keys, Values };
+
 struct CollectionLayout final {
   ArrayLayout keys;
   std::optional<ArrayLayout> values = std::nullopt;
+  [[nodiscard]] const ArrayLayout* element_layout(CollectionProjection projection) const noexcept {
+    if (projection == CollectionProjection::Keys) {
+      return &keys;
+    }
+    return values ? &*values : nullptr;
+  }
   bool operator==(const CollectionLayout&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const CollectionLayout& layout) {

@@ -39,13 +39,14 @@ void SweepInterned(std::vector<std::unique_ptr<T>>& storage,
                    absl::flat_hash_map<T, const T*>& index,
                    absl::flat_hash_set<const T*>& reclaimable,
                    const absl::flat_hash_set<const T*>& reached) {
-  for (const auto& item : storage) {
+  std::erase_if(storage, [&](const auto& item) {
     const auto* pointer = item.get();
-    if (reclaimable.contains(pointer) && !reached.contains(pointer)) {
+    if (!reached.contains(pointer) && reclaimable.erase(pointer) != 0) {
       index.erase(*pointer);
+      return true;
     }
-  }
-  SweepMetadata(storage, reclaimable, reached);
+    return false;
+  });
 }
 
 }  // namespace

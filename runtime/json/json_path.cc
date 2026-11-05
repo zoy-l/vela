@@ -91,18 +91,15 @@ void AppendJSONKey(std::string& path, std::string_view key) {
     return;
   }
   path += "[\"";
-  constexpr std::string_view kHex = "0123456789abcdef";
   constexpr unsigned char kFirstPrintableByte = 0x20;
-  constexpr unsigned char kHexDigitMask = 0xf;
   for (const auto character : key) {
     const auto byte = static_cast<unsigned char>(character);
     if (character == '"' || character == '\\') {
       path += '\\';
       path += character;
     } else if (byte < kFirstPrintableByte) {
-      path += "\\u00";
-      path += kHex[byte >> 4U];
-      path += kHex[byte & kHexDigitMask];
+      const auto escape = JSONByteEscape(byte);
+      path.append(escape.data(), escape.size());
     } else {
       path += character;
     }

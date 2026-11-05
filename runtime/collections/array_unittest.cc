@@ -21,14 +21,13 @@ TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(Heap::GetElement(*object, 0).error(), ArrayAccessError::NotArray);
   EXPECT_EQ(heap.SetElement(*object, 0, Value::Null()).error(), ArrayAccessError::NotArray);
-  EXPECT_EQ(Heap::RemoveArrayElement(*object, 0).error(), ArrayAccessError::NotArray);
+  EXPECT_EQ(Heap::ShiftArray(*object).error(), ArrayAccessError::NotArray);
   const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   auto* array = heap.AllocateArray(*layout, 1);
   ASSERT_NE(array, nullptr);
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Integer(42)));
   EXPECT_EQ(Heap::GetElement(*array, 1).error(), ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.SetElement(*array, 1, Value::Null()).error(), ArrayAccessError::OutOfBounds);
-  EXPECT_EQ(Heap::RemoveArrayElement(*array, 1).error(), ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.FillArray(*array, Value::Null(), 1, 2).error(),
             ArrayAccessError::ElementTypeMismatch);
   EXPECT_EQ(Heap::ArrayLength(*array), 1U);
@@ -189,7 +188,7 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
   RootRange input_roots(heap, &input, 1);
   ASSERT_TRUE(heap.SetElement(*input.AsObject(), 0, Value::Integer(42)));
   ASSERT_TRUE(heap.ReplaceArrayRange(array, 1, 0, *input.AsObject()));
-  EXPECT_EQ(Heap::RemoveArrayElement(array, 0)->AsInteger(), 40);
+  EXPECT_EQ(Heap::ShiftArray(array)->AsInteger(), 40);
   EXPECT_EQ(Heap::GetElement(array, 0)->AsInteger(), 42);
   EXPECT_TRUE(Heap::PopArray(array)->IsNull());
   EXPECT_EQ(Heap::PopArray(array)->AsInteger(), 42);
@@ -199,7 +198,7 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
             ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.PushArray(array, Value::Double(1.0)).error(),
             ArrayAccessError::ElementTypeMismatch);
-  EXPECT_EQ(Heap::RemoveArrayElement(array, 0).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_TRUE(Heap::ShiftArray(array)->IsNull());
   EXPECT_EQ(Heap::ArrayMutation(array), mutation);
   EXPECT_EQ(Heap::ArrayLength(array), 0U);
 }
@@ -233,7 +232,7 @@ TEST_F(DynamicStringArrayTest, RootsPendingReferencesDuringGrowthAndDropsRemoved
   heap.Collect();
   EXPECT_EQ(heap.object_count(), kCount + 1);
   ASSERT_TRUE(Heap::PopArray(array));
-  ASSERT_TRUE(Heap::RemoveArrayElement(array, 0));
+  ASSERT_TRUE(Heap::ShiftArray(array));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), kCount - 1);
 }

@@ -1,8 +1,8 @@
 #include "runtime/library/random.h"
 
 #include <bit>
+#include <cassert>
 #include <cstdint>
-#include <expected>
 
 namespace vela::runtime {
 namespace {
@@ -53,10 +53,8 @@ double Random::NextDouble() noexcept {
   return static_cast<double>(Next() >> kDiscardedBits) * kUnitScale;
 }
 
-std::expected<std::int64_t, RandomError> Random::NextInt(std::int64_t bound) noexcept {
-  if (bound <= 0) {
-    return std::unexpected(RandomError::NonPositiveBound);
-  }
+std::int64_t Random::NextInt(std::int64_t bound) noexcept {
+  assert(bound > 0);
   const auto range = static_cast<std::uint64_t>(bound);
   const auto threshold = (std::uint64_t{0} - range) % range;
   auto value = Next();

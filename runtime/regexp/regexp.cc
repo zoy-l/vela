@@ -27,6 +27,7 @@
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -40,13 +41,15 @@ std::unexpected<RegExpFailure> Failure(ExecutionStatus status, std::string messa
   return std::unexpected(RegExpFailure{.status = status, .message = std::move(message)});
 }
 
-Result Allocated(HeapObject* object) {
-  return object != nullptr ? Result(Value::Object(object)) : Failure(ExecutionStatus::OutOfMemory);
+template <class T>
+Result Allocated(T* object) {
+  return AllocatedValue(object).transform_error([](ExecutionStatus status) {
+    return RegExpFailure{.status = status, .message = std::string(ExecutionStatusName(status))};
+  });
 }
 
 Result Text(Heap& heap, std::string_view text) {
-  auto* result = heap.AllocateString(text);
-  return result != nullptr ? Result(Value::String(result)) : Failure(ExecutionStatus::OutOfMemory);
+  return Allocated(heap.AllocateString(text));
 }
 
 void* AllocatePcre(std::size_t size, void* data) {
@@ -280,7 +283,7 @@ Result Enumerate(Builtin builtin,
                  std::size_t start,
                  const ArrayLayout* layout) {
   Value output = Value::Null();
-  RootRange root(*search.heap, &output, 1, RootOwner::Runtime);
+  RootRange root(*search.heap, &output, 1, std::nullopt);
   if (builtin == Builtin::RegExpAllMatches) {
     const auto allocated = Allocated(search.heap->AllocateArray(*layout, 0));
     if (!allocated) {
@@ -306,7 +309,7 @@ Result Enumerate(Builtin builtin,
     if (!result || builtin != Builtin::RegExpAllMatches) {
       return result;
     }
-    RootRange match_root(*search.heap, &*result, 1, RootOwner::Runtime);
+    RootRange match_root(*search.heap, &*result, 1, std::nullopt);
     if (!search.heap->PushArray(*output.AsObject(), *result)) {
       return Failure(ExecutionStatus::OutOfMemory);
     }
@@ -485,7 +488,7 @@ Result Snapshot(Builtin builtin,
   if (!output) {
     return output;
   }
-  RootRange root(heap, &*output, 1, RootOwner::Runtime);
+  RootRange root(heap, &*output, 1, std::nullopt);
   const auto names = NameTable(match);
   const auto count = builtin == Builtin::RegExpMatchGroups ? indices.size() : names.count();
   if (!heap.ReserveArray(*output->AsObject(), count)) {
@@ -507,7 +510,7 @@ Result Snapshot(Builtin builtin,
     if (!value) {
       return value;
     }
-    RootRange value_root(heap, &*value, 1, RootOwner::Runtime);
+    RootRange value_root(heap, &*value, 1, std::nullopt);
     if (!heap.PushArray(*output->AsObject(), *value)) {
       return Failure(ExecutionStatus::OutOfMemory);
     }
@@ -580,7 +583,13 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
                             std::span<const Value> arguments,
                             Heap& heap,
                             const ArrayLayout* output_layout) {
-  RootRange roots(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
+  const auto property =
+      (builtin >= Builtin::RegExpPattern && builtin <= Builtin::RegExpIsUnicode) ||
+      (builtin >= Builtin::RegExpMatchStart && builtin <= Builtin::RegExpMatchGroupCount);
+  RootRange roots(std::nullopt);
+  if (!property) {
+    roots.Attach(heap, arguments.data(), arguments.size());
+  }
   if (builtin == Builtin::NewRegExp) {
     return Compile(arguments, heap);
   }
@@ -593,9 +602,8 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
     return Failure(ExecutionStatus::TypeError);
   }
   if (builtin >= Builtin::RegExpMatchStart) {
-    return Heap::IsRegExpMatch(*object)
-               ? MatchOperation(builtin, arguments, heap, output_layout)
-               : Failure(ExecutionStatus::TypeError);
+    return Heap::IsRegExpMatch(*object) ? MatchOperation(builtin, arguments, heap, output_layout)
+                                        : Failure(ExecutionStatus::TypeError);
   }
   if (!Heap::IsRegExp(*object)) {
     return Failure(ExecutionStatus::TypeError);

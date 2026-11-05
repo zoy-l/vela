@@ -131,24 +131,19 @@ bool IsNewLine(const Point& current, const Point& previous) {
 
 Point CurrentPoint(const runtime::NativeDebugFrame& frame, std::size_t depth) {
   Point point{
-      .path = std::string_view(),
+      .path = frame.source_path(),
       .function = frame.name(),
-      .line = 0,
+      .line = frame.location().line,
       .depth = depth,
       .instruction = frame.instruction(),
   };
-  if (const auto location = frame.location()) {
-    point.path = frame.source_path();
-    point.line = location->line;
-  }
   return point;
 }
 
 void WriteFrame(std::ostream& output, const runtime::NativeDebugFrame& frame) {
   output << frame.name() << " pc=" << frame.instruction();
-  if (const auto source = frame.location()) {
-    output << " at " << frame.source_path() << ':' << source->line << ':' << source->column;
-  }
+  const auto source = frame.location();
+  output << " at " << frame.source_path() << ':' << source.line << ':' << source.column;
   output << '\n';
 }
 
@@ -434,11 +429,6 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
 void ConsoleDebugger::AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame) {
   text = Unquote(text);
   if (const auto line = ParseConsoleIndex(text)) {
-    const auto source = frame.location();
-    if (!source) {
-      *output_ << "selected frame has no source mapping\n";
-      return;
-    }
     AddSourceBreakpoint(frame.source_path(), *line);
     return;
   }

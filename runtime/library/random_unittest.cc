@@ -27,12 +27,6 @@ TEST(RandomTest, MatchesXoroshiro128PlusPlusReferenceSequenceAfterSplitMixSeedin
   EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11) * 0x1.0p-53);
 }
 
-TEST(RandomTest, RejectsNonPositiveBounds) {
-  Random random;
-  EXPECT_FALSE(random.NextInt(0));
-  EXPECT_FALSE(random.NextInt(-1));
-}
-
 class BoundedRandomTest : public testing::TestWithParam<std::int64_t> {};
 
 TEST_P(BoundedRandomTest, SamplesStayInHalfOpenRange) {
@@ -41,7 +35,8 @@ TEST_P(BoundedRandomTest, SamplesStayInHalfOpenRange) {
   constexpr int kIterations = 1000;
   for (int index = 0; index < kIterations; ++index) {
     const auto value = random.NextInt(bound);
-    EXPECT_TRUE(value && *value >= 0 && *value < bound);
+    EXPECT_GE(value, 0);
+    EXPECT_LT(value, bound);
   }
 }
 

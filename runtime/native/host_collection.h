@@ -9,7 +9,6 @@
 #include <vela/handles.h>
 
 #include "base/builtin.h"
-#include "runtime/heap/heap.h"
 #include "runtime/native/host_value.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -26,7 +25,6 @@ namespace vela::internal {
                                           std::int64_t index,
                                           runtime::Value value);
 
-[[nodiscard]] std::int64_t HostContainerSize(runtime::Value container) noexcept;
 [[nodiscard]] std::int64_t HostArrayCapacity(runtime::Value array) noexcept;
 [[nodiscard]] Result<void> CreateHostContainer(HandleScope& scope,
                                                runtime::TypeConstraint type,
@@ -78,9 +76,9 @@ Result<std::optional<HostValue<typename ArrayType<T>::Element>>> TakeHostElement
   if (!receiver) {
     return std::unexpected(std::move(receiver.error()));
   }
-  return ReceiveOptionalHostValue<typename ArrayType<T>::Element>(
-      scope,
-      [&](runtime::Value& output) { return TakeHostArray(scope, builtin, *receiver, output); });
+  return ReceiveHostValue<typename ArrayType<T>::Element>(scope, [&](runtime::Value& output) {
+    return TakeHostArray(scope, builtin, *receiver, output);
+  });
 }
 
 }  // namespace vela::internal

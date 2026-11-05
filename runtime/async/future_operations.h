@@ -47,4 +47,10 @@ void ObserveCheckedCompletion(Isolate& isolate,
     const FutureDiagnostic& diagnostic,
     std::span<const Value> retained);
 
+[[nodiscard]] std::expected<Value, ExecutionStatus> BindFutureCompletion(
+    Isolate& isolate,
+    Value source,
+    TypeConstraint type,
+    const FutureDiagnostic& diagnostic);
+
 }  // namespace vela::runtime

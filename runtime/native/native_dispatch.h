@@ -195,8 +195,8 @@ class NativeDispatch final {
 
  private:
   friend class Isolate;
-  std::expected<void, NativePublicationError> CheckPublication(const NativeDispatch* owner,
-                                                               std::uint64_t base_revision) const;
+  [[nodiscard]] std::expected<void, NativePublicationError> CheckPublication(
+      std::uint64_t base_revision) const;
   void TraceMetadata(NativeMetadataTracer& tracer) const;
   friend class NativeExecution;
   void RegisterExecution(NativeExecution& execution) noexcept;

@@ -1,11 +1,11 @@
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
-#include <vector>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
@@ -28,10 +28,12 @@ struct DynamicCallPlan final {
 [[nodiscard]] std::expected<Value, ExecutionStatus> CreateDynamicCallPlan(
     Heap& heap,
     const DynamicCallPlan& plan);
-[[nodiscard]] std::expected<DynamicCallPlan, ExecutionStatus> ReadDynamicCallPlan(Value value);
+[[nodiscard]] DynamicCallPlan ReadDynamicCallPlan(Value value);
 
 struct BoundArguments final {
-  std::vector<std::uint32_t> source_indices;
+  static constexpr std::size_t kInlineCapacity = 8;
+  using SourceIndices = absl::InlinedVector<std::uint32_t, kInlineCapacity>;
+  SourceIndices source_indices;
   std::uint32_t skipped = 0;
   std::uint32_t rest_start = 0;
   std::uint32_t rest_count = 0;
@@ -43,11 +45,6 @@ struct BoundArguments final {
     const HeapObject& arguments,
     const HeapObject& names,
     DynamicCallStyle style);
-[[nodiscard]] std::expected<void, ExecutionStatus> CheckDynamicArguments(
-    const CallSignature& signature,
-    std::span<const TypeConstraint> types,
-    const HeapObject& arguments,
-    const BoundArguments& bound);
 // 返回原生调用参数表示，包含 enum 解箱、缺省空值和 rest 数组分配。
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(
     Heap& heap,

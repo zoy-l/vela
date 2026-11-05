@@ -143,8 +143,8 @@ InstanceMigration::InstanceMigration(Heap& heap,
     : heap_(&heap),
       object_(Value::Object(&object)),
       layout_(&layout),
-      object_root_(heap, &object_, 1, RootOwner::Runtime),
-      field_roots_(RootOwner::Runtime) {}
+      object_root_(heap, &object_, 1, std::nullopt),
+      field_roots_(std::nullopt) {}
 
 InstanceMigration::~InstanceMigration() {
   if (storage_ != nullptr) {

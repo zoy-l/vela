@@ -104,9 +104,8 @@ void DevelopmentDebugger::PrintFrame(std::size_t index,
                                      const runtime::NativeDebugFrame& frame) const {
   *errors_ << '#' << index << ' ' << frame.name() << " revision " << frame.identity().revision
            << " at " << frame.source_path();
-  if (const auto location = frame.location()) {
-    *errors_ << ':' << location->line << ':' << location->column;
-  }
+  const auto location = frame.location();
+  *errors_ << ':' << location.line << ':' << location.column;
   *errors_ << (frame.tier() == NativeCodeTier::Optimized ? " [optimized]\n" : " [baseline]\n");
 }
 
@@ -149,12 +148,9 @@ void DevelopmentDebugger::Source(std::string_view argument) const {
 
 bool DevelopmentDebugger::IsBreakpoint(const runtime::NativeDebugFrame& frame) const {
   const auto location = frame.location();
-  if (!location) {
-    return false;
-  }
   const auto path = frame.source_path();
   const auto source = breakpoints_.find(path);
-  return source != breakpoints_.end() && source->second.contains(location->line) &&
+  return source != breakpoints_.end() && source->second.contains(location.line) &&
          frame.identity().revision == session_->snapshot()->revision;
 }
 
@@ -172,7 +168,7 @@ void DevelopmentDebugger::AtSafepoint(const runtime::NativeDebugContext& context
   const auto source_location = frame.location();
   const BreakLocation location{
       .identity = frame.identity(),
-      .line = source_location ? source_location->line : 0,
+      .line = source_location.line,
       .generation = breakpoint ? session_->generation() : 0,
   };
   const auto hit = breakpoint && last_break_ != location;

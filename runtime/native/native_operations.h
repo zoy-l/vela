@@ -61,9 +61,8 @@ extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,
                                                    const NativeValue* arguments,
                                                    std::uint64_t count,
                                                    NativeValue* result);
-extern "C" std::uint8_t vela_native_v1_compare_strings(const NativeValue* left,
-                                                       const NativeValue* right,
-                                                       NativeValue* result);
+extern "C" std::uint8_t vela_native_v2_compare_strings(const NativeValue* left,
+                                                       const NativeValue* right) noexcept;
 extern "C" std::uint8_t vela_native_v1_equal(const NativeValue* left,
                                              const NativeValue* right) noexcept;
 extern "C" void vela_native_v1_print(NativeExecution* execution, const NativeValue* value);

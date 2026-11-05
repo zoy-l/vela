@@ -79,11 +79,7 @@ std::expected<Value, ExecutionStatus> InspectTestValue(std::span<const Value> ar
     return Value::Integer(static_cast<std::int64_t>(KindOf(value)));
   }
   const auto text = Display(value);
-  auto* string = heap.AllocateString(text);
-  if (string == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  return Value::String(string);
+  return AllocatedValue(heap.AllocateString(text));
 }
 
 }  // namespace vela::runtime

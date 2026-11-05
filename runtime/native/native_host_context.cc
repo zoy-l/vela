@@ -18,6 +18,13 @@
 namespace vela::runtime {
 namespace {
 
+const NativeClassBinding* FindHostBinding(Isolate& isolate, NativeType type) {
+  const auto* binding = isolate.FindNativeClass(type.host_key());
+  return binding != nullptr && binding->description->type.cpp_identity() == type.cpp_identity()
+             ? binding
+             : nullptr;
+}
+
 vela::Error HostError(HostObjectError error) {
   switch (error) {
     case HostObjectError::OutOfMemory:
@@ -65,8 +72,8 @@ NativeResult NativeContext::PublishHost(NativeType type, HostObjectStorage stora
         .stack_trace = {},
     });
   }
-  const auto* binding = isolate_->FindNativeClass(type.host_key());
-  if (binding == nullptr || binding->description->type.cpp_identity() != type.cpp_identity()) {
+  const auto* binding = FindHostBinding(*isolate_, type);
+  if (binding == nullptr) {
     return std::unexpected(vela::Error{
         .status = vela::ExecutionStatus::TypeError,
         .message = "native result has an unregistered host type",
@@ -84,8 +91,8 @@ NativeResult NativeContext::PublishHost(NativeType type, HostObjectStorage stora
 std::expected<void, vela::Error> NativeContext::SetHostMemory(NativeType type,
                                                               const void* object,
                                                               std::size_t extra_bytes) const {
-  const auto* binding = isolate_->FindNativeClass(type.host_key());
-  if (binding == nullptr || binding->description->type.cpp_identity() != type.cpp_identity()) {
+  const auto* binding = FindHostBinding(*isolate_, type);
+  if (binding == nullptr) {
     return std::unexpected(vela::Error{
         .status = vela::ExecutionStatus::TypeError,
         .message = "native memory report has an unregistered host type",

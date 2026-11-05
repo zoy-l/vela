@@ -123,9 +123,8 @@ TEST(NativeNumericTest, DoubleConversionsTruncateAndRejectNonFiniteOrOutOfRangeV
     EXPECT_EQ(execution.current_frame(), nullptr);
     ASSERT_TRUE(execution.HasException());
     isolate.heap().Collect();
-    const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
-    EXPECT_EQ(error.status, ExecutionStatus::InvalidNumericConversion);
-    const auto diagnostic = execution.ExceptionDiagnostic();
+    const auto& diagnostic = execution.ExceptionDiagnostic();
+    EXPECT_EQ(diagnostic.status, ExecutionStatus::InvalidNumericConversion);
     const auto& trace = diagnostic.stack_trace;
     ASSERT_FALSE(trace.empty());
     const auto& frame = trace.front();

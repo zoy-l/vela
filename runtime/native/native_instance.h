@@ -17,6 +17,7 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/member_table.h"
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/native/native_abi.h"
@@ -77,10 +78,10 @@ class NativeInstance final {
   [[nodiscard]] const MemberTable& members() const noexcept { return data_->members; }
   [[nodiscard]] const CodeIdentity& code_identity() const noexcept { return *data_->code_identity; }
   [[nodiscard]] const CallSignature& call_signature(std::size_t function) const noexcept {
-    return data_->signatures.at(function);
+    return data_->signatures[function];
   }
   [[nodiscard]] const NativeFunction::AotEntry& import_entry(std::size_t function) const noexcept {
-    return data_->imports.at(function)->aot_entry();
+    return data_->imports[function]->aot_entry();
   }
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
   [[nodiscard]] Value constant(std::size_t index) const noexcept;
@@ -90,8 +91,9 @@ class NativeInstance final {
  private:
   friend struct NativeMemoryLayout;
   friend class NativeDispatch;
-  void StoreGlobal(std::size_t index, Value value) noexcept;
-  NativeInstance(NativeProgramState& data, Value anchor, RootOwner root_owner);
+  NativeInstance(NativeProgramState& data,
+                 Value anchor,
+                 std::optional<ExternalResourceKind> root_owner);
   [[nodiscard]] static std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
   Instantiate(Isolate& isolate,
               const NativeImage& image,

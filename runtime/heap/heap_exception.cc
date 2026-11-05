@@ -1,3 +1,4 @@
+#include <optional>
 #include "runtime/exceptions/exception.h"
 
 #include <algorithm>
@@ -23,7 +24,7 @@ HeapObject* Heap::AllocateException(HeapObject& payload,
     return nullptr;
   }
   const auto rooted_payload = Value::Object(&payload);
-  RootRange roots(*this, &rooted_payload, 1, RootOwner::Runtime);
+  RootRange roots(*this, &rooted_payload, 1, std::nullopt);
   return AllocateObject(ObjectKind::Exception, size,
                         [&payload, status, message](HeapObject& object) {
                           auto* exception = std::construct_at(StorageAfter<ExceptionData>(object));

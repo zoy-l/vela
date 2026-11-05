@@ -106,7 +106,7 @@ StringObject* Heap::ConvertStringCase(StringObject& source, StringCase conversio
     return &source;
   }
   const auto value = Value::String(&source);
-  RootRange root(*this, &value, 1, RootOwner::Runtime);
+  RootRange root(*this, &value, 1, std::nullopt);
   auto* output = AllocateStringStorage({.bytes = *length, .code_points = code_points});
   if (output == nullptr) {
     return nullptr;

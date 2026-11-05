@@ -1,5 +1,6 @@
 #include "runtime/process/process_entry.h"
 
+#include <expected>
 #include <ostream>
 #include <string_view>
 #include <utility>
@@ -12,7 +13,6 @@
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
-#include "runtime/process/process_exit.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -43,6 +43,20 @@ void WriteAsyncFailure(std::ostream& output, const Future& future, std::string_v
 }
 
 }  // namespace
+
+std::expected<int, std::string_view> ProcessExitCode(Value value) noexcept {
+  if (value.IsNull()) {
+    return 0;
+  }
+  if (!value.IsInteger()) {
+    return std::unexpected("main must return an int exit code or void");
+  }
+  const auto code = value.AsInteger();
+  if (code < 0 || code > kMaximumExitCode) {
+    return std::unexpected("main exit code must be in the range 0..255");
+  }
+  return static_cast<int>(code);
+}
 
 void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagnostic) {
   const auto message = diagnostic.message.empty() ? ExecutionStatusName(diagnostic.status)

@@ -1,4 +1,5 @@
 #include "runtime/native/native_function.h"
+#include <optional>
 
 #include <cassert>
 #include <cstddef>
@@ -22,9 +23,13 @@
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_class.h"
 #include "runtime/native/native_context.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/native/native_program_state.h"
 #include "runtime/native/native_type.h"
 #include "runtime/strings/string.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 #include "vela/error.h"
 #include "vela/handles.h"
 #include "vela/types.h"
@@ -78,13 +83,16 @@ bool NativeFunction::IsSignatureCompatible(const CallSignature& signature,
         HasNativeReceiver(member_->kind) != signature.receiver.has_value()) {
       return false;
     }
+    for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
+      const auto& parameter = signature.parameters[index];
+      if (member_->parameter_names[index] != parameter.name || parameter.optional ||
+          parameter.rest) {
+        return false;
+      }
+    }
   }
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
     const auto& parameter = signature.parameters[index];
-    if (member_ != nullptr && (member_->parameter_names[index] != parameter.name ||
-                               parameter.optional || parameter.rest)) {
-      return false;
-    }
     if (!IsNativeTypeCompatible(types[parameter.type], parameters[index + receiver_count],
                                 layouts)) {
       return false;
@@ -132,16 +140,27 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
     });
   }
   const auto raw = Value::Object(object);
-  auto rooted = vela::internal::HandleAccess::Root<vela::Value>(scope, raw);
-  if (!rooted) {
-    return std::unexpected(std::move(rooted.error()));
-  }
-  const auto binding = BindTypeContract(type);
-  if (!binding) {
+  const RootRange source_root(isolate_->heap(), &raw, 1, std::nullopt);
+  const auto resolve = [&]() -> std::expected<TypeConstraint, ExecutionStatus> {
+    if (execution_ == nullptr) {
+      return ResolveBuiltinNativeType(isolate(), type);
+    }
+    auto& instance = execution_->instance();
+    auto& types = instance.program().native_future_types;
+    if (const auto found = types.find(type.description); found != types.end()) {
+      return found->second;
+    }
+    const auto constraint = ResolveInstanceNativeType(instance, type);
+    if (constraint) {
+      types.emplace(type.description, *constraint);
+    }
+    return constraint;
+  };
+  const auto constraint = resolve();
+  if (!constraint) {
     return std::unexpected(
-        vela::Error{.status = binding.error(), .message = {}, .stack_trace = {}});
+        vela::Error{.status = constraint.error(), .message = {}, .stack_trace = {}});
   }
-  const auto constraint = binding->constraint();
   constexpr std::string_view kCompletionMessage =
       "native Future completion does not match its type";
   const auto diagnostic =
@@ -151,15 +170,10 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
                              .status = ExecutionStatus::TypeError,
                              .origin = {},}
           : execution_->Diagnostic(ExecutionStatus::TypeError, kCompletionMessage);
-  const auto checked =
-      CheckFutureCompletion(isolate(), raw, constraint.signature->result, diagnostic, {});
+  const auto checked = BindFutureCompletion(isolate(), raw, *constraint, diagnostic);
   if (!checked) {
     return std::unexpected(
         vela::Error{.status = checked.error(), .message = {}, .stack_trace = {}});
-  }
-  const auto typed = Heap::BindRuntimeType(*checked->AsObject(), constraint);
-  if (!typed) {
-    return std::unexpected(vela::Error{.status = typed.error(), .message = {}, .stack_trace = {}});
   }
   return vela::internal::HandleAccess::Root<vela::Value>(scope, *checked);
 }
@@ -168,25 +182,16 @@ Completer NativeContext::CreateCompleter() const {
   return isolate_->scheduler().CreateHostCompleter();
 }
 
-NativeResult NativeContext::CancellationValue(const CancellationToken& token) const {
-  auto* object = isolate_->heap().AllocateCancellationToken(token);
-  if (object == nullptr) {
-    return std::unexpected(vela::Error{
-        .status = vela::ExecutionStatus::OutOfMemory,
-        .message = {},
-        .stack_trace = {},
-    });
-  }
-  return Value::Object(object);
-}
-
 CancellationToken internal::NativeCodec<CancellationToken>::Decode(Value value) {
   return *Heap::GetCancellationToken(*value.AsObject());
 }
 
 NativeResult internal::NativeCodec<CancellationToken>::Encode(NativeContext& context,
                                                               const CancellationToken& token) {
-  return context.CancellationValue(token);
+  const auto value = AllocatedValue(context.isolate().heap().AllocateCancellationToken(token));
+  return value.transform_error([](ExecutionStatus status) {
+    return vela::Error{.status = status, .message = {}, .stack_trace = {}};
+  });
 }
 
 std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {

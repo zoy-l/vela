@@ -23,6 +23,7 @@
 namespace vela::runtime {
 std::vector<FutureTraceFrame> NativeExecution::CaptureTrace() const {
   std::vector<FutureTraceFrame> trace;
+  trace.reserve(frame_count_);
   for (auto* frame = current_frame_; frame != nullptr; frame = frame->previous) {
     const auto& image = *frame->image;
     const auto position = frame->position;
@@ -51,7 +52,7 @@ FutureDiagnostic NativeExecution::Diagnostic(ExecutionStatus status,
   };
 }
 
-FutureDiagnostic NativeExecution::ExceptionDiagnostic() const {
+const FutureDiagnostic& NativeExecution::ExceptionDiagnostic() const {
   const auto& exception = ExceptionData::From(*pending_exception_.AsObject());
   return *exception.diagnostic;
 }

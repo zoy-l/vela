@@ -1,4 +1,5 @@
 #include "runtime/native/native_async.h"
+#include <optional>
 
 #include <algorithm>
 #include <array>
@@ -59,6 +60,15 @@ FutureCall DescribeFutureCall(NativeExecution& execution,
   return call;
 }
 
+FutureDiagnostic CompletionDiagnostic(NativeExecution& execution,
+                                      AsyncOperation operation,
+                                      std::span<const Value> values) {
+  return operation == AsyncOperation::CompleterError
+             ? execution.Diagnostic(ExecutionStatus::Thrown,
+                                    ErrorMessage(values[1], execution.isolate().error_layout()))
+             : FutureDiagnostic{};
+}
+
 std::expected<Value, ExecutionStatus> BindResult(NativeExecution& execution,
                                                  std::uint32_t function,
                                                  Value value) {
@@ -85,7 +95,7 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
       : isolate_(&isolate),
         point_(point),
         values_(capacity + kSuspensionReferences),
-        version_(*instance.AsObject(), function, RootOwner::Runtime, point.instruction) {
+        version_(*instance.AsObject(), function, std::nullopt, point.instruction) {
     Reference(SuspensionReference::Instance) = instance;
     Reference(SuspensionReference::Output) = output;
     isolate.scheduler().AddSuspendedFrame(SavedBytes());
@@ -177,7 +187,7 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto output = Value::Object(object);
-  const RootRange root(isolate.heap(), &output, 1, RootOwner::Runtime);
+  const RootRange root(isolate.heap(), &output, 1, std::nullopt);
   auto suspended = std::make_shared<NativeSuspendedFrame>(
       isolate, point, capacity, execution.instance().state().front(), function, output);
   const auto bound = BindResult(execution, function, output);
@@ -198,11 +208,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicAsync(NativeExecution&
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto operation = static_cast<AsyncOperation>(selector.AsInteger());
-  FutureDiagnostic diagnostic;
-  if (operation == AsyncOperation::CompleterError) {
-    diagnostic = execution.Diagnostic(
-        ExecutionStatus::Thrown, ErrorMessage(arguments[1], execution.isolate().error_layout()));
-  }
+  const auto diagnostic = CompletionDiagnostic(execution, operation, arguments);
   const auto& instance = execution.instance();
   return ExecuteDynamicAsyncOperation(
       execution.isolate(), DescribeFutureCall(execution, operation, arguments),
@@ -251,11 +257,7 @@ extern "C" std::uint8_t vela_native_v1_async_call(NativeExecution* execution,
   for (std::size_t index = 0; index < decoded.size(); ++index) {
     decoded[index] = DecodeNativeValue(input[index]);
   }
-  FutureDiagnostic diagnostic;
-  if (state == AsyncOperation::CompleterError) {
-    diagnostic = execution->Diagnostic(
-        ExecutionStatus::Thrown, ErrorMessage(decoded[1], execution->isolate().error_layout()));
-  }
+  const auto diagnostic = CompletionDiagnostic(*execution, state, decoded);
   if (IsAsyncStateOperation(state)) {
     return StoreNativeResult(result,
                              ExecuteAsyncState(state, decoded, execution->isolate(), diagnostic));

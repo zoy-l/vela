@@ -26,7 +26,7 @@ class NativeDebugFrame final {
   [[nodiscard]] std::string_view name() const noexcept;
   [[nodiscard]] std::string_view source_path() const noexcept;
   [[nodiscard]] std::string_view source_text() const noexcept;
-  [[nodiscard]] std::optional<SourceLocation> location() const noexcept { return location_; }
+  [[nodiscard]] SourceLocation location() const noexcept { return location_; }
   [[nodiscard]] std::uint32_t instruction() const noexcept;
   [[nodiscard]] NativeCodeTier tier() const noexcept;
   [[nodiscard]] std::size_t register_count() const noexcept;
@@ -36,7 +36,7 @@ class NativeDebugFrame final {
   friend class NativeDebugContext;
   explicit NativeDebugFrame(const NativeTraceFrame& frame) noexcept;
   const NativeFunctionDescription* function_;
-  std::optional<SourceLocation> location_;
+  SourceLocation location_;
   const NativeTraceFrame* frame_;
 };
 

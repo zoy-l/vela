@@ -1,8 +1,11 @@
 #include "runtime/native/native_call.h"
+#include <optional>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -13,6 +16,7 @@
 #include "runtime/async/future_composition.h"
 #include "runtime/async/future_operations.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_dispatch.h"
@@ -22,17 +26,10 @@
 #include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_buffer.h"
 #include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
-
-struct NativeCallback final {
-  HeapObject* environment = nullptr;
-  ResolvedCallable target;
-  const NativeFunctionDescription* function = nullptr;
-};
 
 struct NativeCallDomain final {
   Isolate* isolate;
@@ -58,8 +55,9 @@ std::uint8_t InvokeResolvedDeclaration(NativeExecution* execution,
   return origin.image().function(target.function).entry(execution, arguments, count, result);
 }
 
-std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const NativeCallDomain& domain,
-                                                                     Value callable) {
+std::expected<NativeResolvedCallable, ExecutionStatus> ResolveCallableInDomain(
+    const NativeCallDomain& domain,
+    Value callable) {
   auto* object = callable.IsObject() ? callable.AsObject() : nullptr;
   auto* environment = object != nullptr ? Heap::NativeEnvironment(*object) : nullptr;
   if (environment == nullptr) {
@@ -95,8 +93,8 @@ std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const Nativ
   if (!target) {
     return std::unexpected(target.error());
   }
-  return NativeCallback{
-      .environment = environment,
+  return NativeResolvedCallable{
+      .state = environment,
       .target = *target,
       .function = &functions.subspan(target->function).front(),
   };
@@ -128,10 +126,10 @@ std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstan
 }
 
 std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
-                                                     const NativeCallback& callback,
+                                                     const NativeResolvedCallable& callback,
                                                      std::span<const Value> arguments) {
   auto& heap = execution.isolate().heap();
-  const RootRange arguments_root(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
+  const RootRange arguments_root(heap, arguments.data(), arguments.size(), std::nullopt);
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
@@ -145,12 +143,14 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   if (!typed && function.parameter_count != arguments.size() + hidden) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  ValueBuffer storage(function.parameter_count);
+  constexpr std::size_t kInlineArguments = 8;
+  NativeBuffer<Value, kInlineArguments> storage(heap, function.parameter_count);
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto values = storage.values();
-  const RootRange roots(heap, values.data(), values.size(), RootOwner::Runtime);
+  std::uninitialized_value_construct_n(values.data(), values.size());
+  const RootRange roots(heap, values.data(), values.size(), std::nullopt);
   if (target.implicit) {
     values.front() = *target.implicit;
   }
@@ -183,35 +183,51 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }
-  std::vector<NativeValue> input;
-  input.reserve(values.size());
-  for (const auto value : values) {
-    input.push_back(EncodeNativeValue(value));
+  NativeBuffer<NativeValue, kInlineArguments> input(heap, values.size());
+  if (!input.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  return InvokeNativeTarget(execution, target.function, input);
+  std::ranges::transform(values, input.values().begin(), EncodeNativeValue);
+  return InvokeNativeTarget(execution, target.function, input.values());
 }
 
 Future InvokeFutureCallback(const NativeCallDomain& domain,
+                            const NativeResolvedCallable& callback,
                             Value callable,
                             std::span<const Value> arguments) {
   auto& isolate = *domain.isolate;
-  const RootRange callable_root(isolate.heap(), &callable, 1, RootOwner::Runtime);
-  const auto callback = ResolveNativeCallback(domain, callable);
-  if (!callback) {
-    return FailedCallback(isolate, callback.error());
-  }
-  auto instance = NativeInstance::Borrow(*callback->environment);
+  const RootRange callable_root(isolate.heap(), &callable, 1, std::nullopt);
+  auto instance = NativeInstance::Borrow(*callback.state);
   NativeExecution execution(instance);
-  const auto invoked = InvokeCallback(execution, *callback, arguments);
+  const auto invoked = InvokeCallback(execution, callback, arguments);
   if (invoked) {
     return RootFutureValue(isolate, *invoked);
   }
   const auto status = execution.HandleFailure(invoked.error());
-  if (!execution.HasException()) {
-    return FailedCallback(isolate, status);
-  }
   return FailedCallback(isolate, status, execution.ExceptionPayload(),
-                        execution.ExceptionDiagnostic());
+                        execution.FailureDiagnostic(status));
+}
+
+std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& execution,
+                                                           HeapObject& callable) {
+  const auto target = *Heap::ClassOf(callable)->callable();
+  auto& source = Heap::NativeProgram(*Heap::NativeEnvironment(callable));
+  if (source.dispatch == nullptr || target.mode != CallableMode::InterfaceMethod) {
+    return {};
+  }
+  const auto receiver = Heap::LoadField(callable, 0);
+  const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
+  if (layout == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto selector =
+      source.image->selector_declarations.values().subspan(target.function).front();
+  const auto selected = source.dispatch->ResolveInterface(layout->nominal_type(), selector);
+  if (!selected) {
+    return std::unexpected(selected.error());
+  }
+  execution.isolate().heap().SetNativeEnvironment(callable, *selected->state, selected->function);
+  return {};
 }
 
 }  // namespace
@@ -252,42 +268,16 @@ std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
   return object;
 }
 
-std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& execution,
-                                                           HeapObject& callable) {
-  const auto target = *Heap::ClassOf(callable)->callable();
-  auto& source = Heap::NativeProgram(*Heap::NativeEnvironment(callable));
-  if (source.dispatch == nullptr || target.mode != CallableMode::InterfaceMethod) {
-    return {};
-  }
-  const auto receiver = Heap::LoadField(callable, 0);
-  const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
-  if (layout == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto selector =
-      source.image->selector_declarations.values().subspan(target.function).front();
-  const auto selected = source.dispatch->ResolveInterface(layout->nominal_type(), selector);
-  if (!selected) {
-    return std::unexpected(selected.error());
-  }
-  execution.isolate().heap().SetNativeEnvironment(callable, *selected->state, selected->function);
-  return {};
-}
-
 extern "C" std::uint8_t vela_native_v3_capture_receiver(NativeExecution* execution,
                                                         HeapObject* callable) {
   const auto captured = CaptureNativeReceiver(*execution, *callable);
-  return static_cast<std::uint8_t>(captured ? ExecutionStatus::Returned : captured.error());
+  return ToNativeStatus(captured);
 }
 
 std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
     const NativeInstance& caller,
     Value callable) {
-  const auto resolved = ResolveNativeCallback(Domain(caller), callable);
-  if (!resolved) {
-    return std::unexpected(resolved.error());
-  }
-  return NativeResolvedCallable{.state = resolved->environment, .target = resolved->target};
+  return ResolveCallableInDomain(Domain(caller), callable);
 }
 
 std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
@@ -349,37 +339,56 @@ std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& exec
                                                            Value callable,
                                                            std::span<const Value> arguments) {
   auto& heap = execution.isolate().heap();
-  const RootRange callable_root(heap, &callable, 1, RootOwner::Runtime);
-  const auto callback = ResolveNativeCallback(Domain(execution.instance()), callable);
+  const RootRange callable_root(heap, &callable, 1, std::nullopt);
+  const auto callback = ResolveCallableInDomain(Domain(execution.instance()), callable);
   if (!callback) {
     return std::unexpected(callback.error());
   }
-  auto origin = NativeInstance::Borrow(*callback->environment);
+  auto origin = NativeInstance::Borrow(*callback->state);
   const NativeInstanceScope scope(execution, origin);
   return InvokeCallback(execution, *callback, arguments);
 }
 
-std::expected<Value, ExecutionStatus> internal::BoxNativeEnumResult(NativeExecution& execution,
-                                                                    std::uint32_t type,
-                                                                    Value value) {
+std::expected<Value, ExecutionStatus> InvokeNativeTarget(NativeExecution& execution,
+                                                         std::uint32_t function,
+                                                         std::span<const NativeValue> arguments) {
   const auto& instance = execution.instance();
-  return BoxDynamicValue(execution.isolate().heap(), value, instance.layouts().types.at(type));
+  const auto& target = instance.image().function(function);
+  NativeValue output;
+  const auto status = static_cast<ExecutionStatus>(
+      target.entry(&execution, arguments.data(), arguments.size(), &output));
+  if (status != ExecutionStatus::Returned) {
+    return std::unexpected(status);
+  }
+  const auto value = DecodeNativeValue(output);
+  return (target.flags & kNativeEnumResult) != 0
+             ? BoxDynamicValue(execution.isolate().heap(), value,
+                               instance.layouts().types[target.result_type])
+             : std::expected<Value, ExecutionStatus>(value);
+}
+
+bool NativeCallableContract::HasRequiredParameters(std::size_t skipped) const {
+  return std::ranges::any_of(parameters.subspan(skipped), [](const auto& parameter) {
+    return !parameter.optional && !parameter.rest;
+  });
 }
 
 FutureCallbacks NativeFutureCallbacks(const NativeInstance& instance) {
   const auto domain = Domain(instance);
   return {
-      .arity = [domain](Value callable) -> std::expected<std::size_t, ExecutionStatus> {
-        const auto callback = ResolveNativeCallback(domain, callable);
+      .resolve = [domain](Value callable) -> std::expected<FutureCallback, ExecutionStatus> {
+        const auto callback = ResolveCallableInDomain(domain, callable);
         if (!callback) {
           return std::unexpected(callback.error());
         }
-        return callback->function->parameter_count - (callback->target.implicit ? 1U : 0U);
+        return FutureCallback{
+            .arity = callback->function->parameter_count - (callback->target.implicit ? 1U : 0U),
+            .invoke =
+                [domain, resolved = *callback, callable](std::span<const Value> arguments) {
+                  return InvokeFutureCallback(domain, resolved, callable, arguments);
+                },
+        };
       },
-      .invoke =
-          [domain](Value callable, std::span<const Value> arguments) {
-            return InvokeFutureCallback(domain, callable, arguments);
-          },
   };
 }
 

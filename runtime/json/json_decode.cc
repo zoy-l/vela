@@ -1,3 +1,4 @@
+#include <optional>
 #include "runtime/json/json.h"
 
 #include <charconv>
@@ -117,8 +118,8 @@ struct DecodeFrame final {
   // key 在分配子值时保持存活，根区间不跨越不同的 C++ 成员。
   Value value;
   Value key;
-  RootRange roots{RootOwner::Runtime};
-  RootRange key_roots{RootOwner::Runtime};
+  RootRange roots{std::nullopt};
+  RootRange key_roots{std::nullopt};
   bool object = false;
   yyjson_obj_iter map{};
   yyjson_arr_iter array{};
@@ -130,11 +131,8 @@ class Decoder final {
   Decoder(Isolate& isolate, const JsonDocument& document)
       : heap_(&isolate.heap()),
         document_(document),
-        array_(isolate.CreateArrayLayout({.element = {.dynamic = true}})),
-        map_(isolate.CreateCollectionLayout({
-            .keys = {.element = {.kind = ValueKind::String}},
-            .values = ArrayLayout{.element = {.dynamic = true}},
-        })),
+        array_(&isolate.dynamic_array_layout()),
+        map_(&isolate.dynamic_map_layout()),
         frames_(*heap_) {}
   ~Decoder() {
     while (frame_ != nullptr) {
@@ -150,7 +148,7 @@ class Decoder final {
     if (!root) {
       return root;
     }
-    RootRange roots(*heap_, &*root, 1, RootOwner::Runtime);
+    RootRange roots(*heap_, &*root, 1, std::nullopt);
     if (auto pushed = Push(node, *root); !pushed) {
       return std::unexpected(pushed.error());
     }
@@ -178,7 +176,7 @@ class Decoder final {
       if (!value) {
         return value;
       }
-      RootRange child_root(*heap_, &*value, 1, RootOwner::Runtime);
+      RootRange child_root(*heap_, &*value, 1, std::nullopt);
       auto& container = *frame.value.AsObject();
       if (frame.object) {
         if (!heap_->InsertCollection(container, frame.key, *value)) {

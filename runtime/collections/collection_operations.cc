@@ -7,6 +7,7 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {

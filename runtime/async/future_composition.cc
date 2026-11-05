@@ -1,6 +1,5 @@
 #include "runtime/async/future_composition.h"
 
-#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -34,8 +33,7 @@ using OperationResult = std::expected<void, ExecutionStatus>;
 class RootedValues final {
  public:
   RootedValues(Heap& heap, std::shared_ptr<std::vector<Value>> values)
-      : values_(std::move(values)),
-        roots_(heap, values_->data(), values_->size(), RootOwner::Runtime) {}
+      : values_(std::move(values)), roots_(heap, values_->data(), values_->size(), std::nullopt) {}
 
  private:
   std::shared_ptr<std::vector<Value>> values_;
@@ -68,14 +66,14 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
     return storage;
   }
   Aggregation(Isolate& isolate,
-              FutureCallbacks callbacks,
+              std::optional<FutureCallback> cleanup,
               Future result,
               std::shared_ptr<std::vector<Value>> references,
               const ArrayLayout* layout,
               std::size_t count,
               AsyncOperation operation)
       : isolate_(&isolate),
-        callbacks_(std::move(callbacks)),
+        cleanup_(std::move(cleanup)),
         result_(std::move(result)),
         references_(std::move(references)),
         storage_(references_->front()),
@@ -102,11 +100,9 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
 
  private:
   void Clean(Value value) {
-    const auto values = Heap::ValueSlots(*storage_.AsObject());
-    const auto callback = values[2];
-    if (!value.IsNull() && !callback.IsNull()) {
+    if (!value.IsNull() && cleanup_) {
       const std::array<Value, 1> arguments{value};
-      static_cast<void>(callbacks_.invoke(callback, arguments));
+      static_cast<void>(cleanup_->invoke(arguments));
     }
   }
 
@@ -159,7 +155,7 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
       return;
     }
     const auto output = Value::Object(object);
-    RootRange root(isolate_->heap(), &output, 1, RootOwner::Runtime);
+    RootRange root(isolate_->heap(), &output, 1, std::nullopt);
     for (std::uint32_t index = 0; index < count_; ++index) {
       auto value = values[kValuesStart + index];
       const auto* instance = layout_->element.nominal;
@@ -185,7 +181,7 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
   }
 
   Isolate* isolate_;
-  FutureCallbacks callbacks_;
+  std::optional<FutureCallback> cleanup_;
   Future result_;
   std::shared_ptr<std::vector<Value>> references_;
   Value storage_;
@@ -199,7 +195,6 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
 struct FutureContinuation final {
   static constexpr std::size_t kCompletionReferences = 2;
   Isolate* isolate;
-  FutureCallbacks callbacks;
   Future* source;
   Future target;
   std::shared_ptr<std::vector<Value>> references;
@@ -226,9 +221,10 @@ void CompleteCallback(const FutureContinuation& context, Future& source) {
                            retained);
 }
 
-OperationResult ScheduleTimeout(const Continuation& context, const FutureCall& call) {
+OperationResult ScheduleTimeout(const Continuation& context,
+                                const FutureCall& call,
+                                const FutureCallbacks& callbacks) {
   auto* isolate = context->isolate;
-  const auto& callbacks = context->callbacks;
   const auto& references = context->references;
   auto& heap = isolate->heap();
   auto& scheduler = isolate->scheduler();
@@ -237,46 +233,39 @@ OperationResult ScheduleTimeout(const Continuation& context, const FutureCall& c
       !FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (!call.runtime_type) {
-    std::unreachable();
-  }
   const auto timeout_type = *call.runtime_type;
-  const auto& error_layout = isolate->error_layout();
-  const auto* timeout_layout =
-      timeout_type.nominal == nullptr ? nullptr : timeout_type.nominal->fixed_layout();
-  if (timeout_layout == nullptr || timeout_layout->field_count() != error_layout.field_count() ||
-      !std::ranges::equal(timeout_layout->reference_fields(), error_layout.reference_fields())) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
+  const auto* timeout_layout = timeout_type.nominal->fixed_layout();
   const auto callback = call.At(2);
+  std::optional<FutureCallback> replacement;
   if (!callback.IsNull()) {
-    const auto arity = callbacks.arity(callback);
-    if (!arity || *arity != 0) {
+    auto resolved = callbacks.resolve(callback);
+    if (!resolved || resolved->arity != 0) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
+    replacement = std::move(*resolved);
   }
   auto won = std::make_shared<bool>(false);
   auto roots = std::make_shared<RootedValues>(heap, references);
-  auto timer = scheduler.After(std::chrono::milliseconds(delay.AsInteger()),
-                               [context, callback, won, roots, timeout_layout]() {
-                                 if (std::exchange(*won, true)) {
-                                   return;
-                                 }
-                                 if (!callback.IsNull()) {
-                                   auto replacement = context->callbacks.invoke(callback, {});
-                                   CompleteCallback(*context, replacement);
-                                 } else {
-                                   auto target = context->target;
-                                   const auto error = CreateError(
-                                       context->isolate->heap(), *timeout_layout,
-                                       {.message = "Future timed out", .code = "Timeout"});
-                                   Forward(target, {
-                                                       .state = FutureState::Failed,
-                                                       .value = error.value_or(Value::Null()),
-                                                       .diagnostic = context->timeout_error,
-                                                   });
-                                 }
-                               });
+  auto timer = scheduler.After(
+      std::chrono::milliseconds(delay.AsInteger()),
+      [context, callback = std::move(replacement), won, roots, timeout_layout]() {
+        if (std::exchange(*won, true)) {
+          return;
+        }
+        if (callback) {
+          auto future = callback->invoke({});
+          CompleteCallback(*context, future);
+        } else {
+          auto target = context->target;
+          const auto error = CreateError(context->isolate->heap(), *timeout_layout,
+                                         {.message = "Future timed out", .code = "Timeout"});
+          Forward(target, {
+                              .state = FutureState::Failed,
+                              .value = error.value_or(Value::Null()),
+                              .diagnostic = context->timeout_error,
+                          });
+        }
+      });
   context->source->ObserveResult(
       [context, won, timer](const FutureResult& input) mutable {
         if (!std::exchange(*won, true)) {
@@ -290,17 +279,18 @@ OperationResult ScheduleTimeout(const Continuation& context, const FutureCall& c
   return {};
 }
 
-OperationResult ObserveCompletion(const Continuation& context, const FutureCall& call) {
-  const auto action = call.At(1);
-  const auto arity = context->callbacks.arity(action);
-  if (!arity || *arity != 0) {
+OperationResult ObserveCompletion(const Continuation& context,
+                                  const FutureCall& call,
+                                  const FutureCallbacks& callbacks) {
+  auto action = callbacks.resolve(call.At(1));
+  if (!action || action->arity != 0) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   context->source->ObserveResult(
-      [context, action](const FutureResult& input) {
+      [context, action = std::move(*action)](const FutureResult& input) {
         auto& isolate = *context->isolate;
         auto target = context->target;
-        auto completed = context->callbacks.invoke(action, {});
+        auto completed = action.invoke({});
         const auto& retained = context->references;
         retained->push_back(input.value);
         auto* pending = isolate.heap().AllocateFuture(completed);
@@ -321,42 +311,42 @@ OperationResult ObserveCompletion(const Continuation& context, const FutureCall&
   return {};
 }
 
-OperationResult ObserveCallbacks(const Continuation& context, const FutureCall& call) {
-  const auto& callbacks = context->callbacks;
+OperationResult ObserveCallbacks(const Continuation& context,
+                                 const FutureCall& call,
+                                 const FutureCallbacks& callbacks) {
   const auto operation = call.operation;
 
-  if (!call.runtime_type) {
-    std::unreachable();
-  }
   const auto error_type = *call.runtime_type;
   const auto on_value = operation == AsyncOperation::Then ? call.At(1) : Value::Null();
   const auto on_error = operation == AsyncOperation::Then ? call.At(2) : call.At(1);
-  std::size_t value_arity = 0;
+  std::optional<FutureCallback> value_callback;
+  std::optional<FutureCallback> error_callback;
   if (operation == AsyncOperation::Then) {
-    const auto arity = callbacks.arity(on_value);
-    if (!arity || *arity > 1) {
+    auto resolved = callbacks.resolve(on_value);
+    if (!resolved || resolved->arity > 1) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    value_arity = *arity;
+    value_callback = std::move(*resolved);
   }
   if (!on_error.IsNull()) {
-    const auto arity = callbacks.arity(on_error);
-    if (!arity || *arity != 1) {
+    auto resolved = callbacks.resolve(on_error);
+    if (!resolved || resolved->arity != 1) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
+    error_callback = std::move(*resolved);
   }
   context->source->ObserveResult(
-      [context, on_value, on_error, error_type, value_arity](const FutureResult& input) {
-        const auto callback = input.state == FutureState::Succeeded ? on_value : on_error;
-        if (callback.IsNull() ||
+      [context, on_value = std::move(value_callback), on_error = std::move(error_callback),
+       error_type](const FutureResult& input) {
+        const auto& callback = input.state == FutureState::Succeeded ? on_value : on_error;
+        if (!callback ||
             (input.state == FutureState::Failed && !Heap::IsValueOfType(input.value, error_type))) {
           auto target = context->target;
           Forward(target, input);
           return;
         }
         const std::array<Value, 1> argument_value{input.value};
-        const auto count = input.state == FutureState::Succeeded ? value_arity : 1;
-        auto invoked = context->callbacks.invoke(callback, std::span(argument_value).first(count));
+        auto invoked = callback->invoke(std::span(argument_value).first(callback->arity));
         CompleteCallback(*context, invoked);
       },
       context->references);
@@ -381,8 +371,8 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto callable = argument(delayed ? 1 : 0);
-  const auto arity = callbacks.arity(callable);
-  if (!arity || *arity != 0) {
+  auto callback = callbacks.resolve(callable);
+  if (!callback || callback->arity != 0) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   auto references = std::make_shared<std::vector<Value>>(1, callable);
@@ -393,8 +383,8 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
     if (object == nullptr) {
       return std::unexpected(ExecutionStatus::OutOfMemory);
     }
-    auto action = [callbacks, callable, roots] {
-      static_cast<void>(callbacks.invoke(callable, {}));
+    auto action = [callback = std::move(*callback), roots] {
+      static_cast<void>(callback.invoke({}));
     };
     const auto duration = std::chrono::milliseconds(first.AsInteger());
     *Heap::GetTimer(*object) = operation == AsyncOperation::TimerAfter
@@ -408,8 +398,9 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   // 排队计算自行保根；丢弃脚本返回值不取消副作用，停止调度器则释放该内部根。
-  auto action = [&isolate, callbacks, callable, roots, result = result.Retained()]() mutable {
-    const auto invoked = callbacks.invoke(callable, {});
+  auto action = [&isolate, callback = std::move(*callback), roots,
+                 result = result.Retained()]() mutable {
+    const auto invoked = callback.invoke({});
     CompleteFuture(isolate, result, invoked);
   };
   if (operation == AsyncOperation::Microtask) {
@@ -442,16 +433,18 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
     }
   }
   const auto* layout = call.wait_layout;
+  std::optional<FutureCallback> cleanup_callback;
   if (operation == AsyncOperation::Wait) {
     if (!argument(1).IsBoolean()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     const auto cleanup = argument(2);
     if (!cleanup.IsNull()) {
-      const auto arity = callbacks.arity(cleanup);
-      if (!arity || *arity != (layout != nullptr ? 1U : 0U)) {
+      auto resolved = callbacks.resolve(cleanup);
+      if (!resolved || resolved->arity != (layout != nullptr ? 1U : 0U)) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
+      cleanup_callback = std::move(*resolved);
     }
   }
   // 所有输入经同一个 GC 槽对象保留聚合状态，避免每个 waiter 重扫完整结果列表。
@@ -460,7 +453,7 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto owner = Value::Object(storage);
-  RootRange owner_root(heap, &owner, 1, RootOwner::Runtime);
+  RootRange owner_root(heap, &owner, 1, std::nullopt);
   Future result(&scheduler);
   auto* object = heap.AllocateFuture(result);
   if (object == nullptr) {
@@ -469,8 +462,9 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
   heap.SetValueSlot(*storage, Aggregation::kResultSlot, Value::Object(object));
   auto references = std::make_shared<std::vector<Value>>(1, owner);
   result.KeepAlive(references);
-  auto aggregate = std::make_shared<Aggregation>(isolate, callbacks, result.Internal(), references,
-                                                 layout, *length, operation);
+  auto aggregate =
+      std::make_shared<Aggregation>(isolate, std::move(cleanup_callback), result.Internal(),
+                                    references, layout, *length, operation);
   aggregate->Start();
   return Value::Object(object);
 }
@@ -524,7 +518,6 @@ std::expected<Value, ExecutionStatus> ExecuteComposition(Isolate& isolate,
 
   const auto context = std::make_shared<const FutureContinuation>(FutureContinuation{
       .isolate = &isolate,
-      .callbacks = callbacks,
       .source = source,
       .target = target,
       .references = references,
@@ -534,11 +527,11 @@ std::expected<Value, ExecutionStatus> ExecuteComposition(Isolate& isolate,
   });
   OperationResult observed;
   if (operation == AsyncOperation::Timeout) {
-    observed = ScheduleTimeout(context, call);
+    observed = ScheduleTimeout(context, call, callbacks);
   } else if (operation == AsyncOperation::WhenComplete) {
-    observed = ObserveCompletion(context, call);
+    observed = ObserveCompletion(context, call, callbacks);
   } else {
-    observed = ObserveCallbacks(context, call);
+    observed = ObserveCallbacks(context, call, callbacks);
   }
   if (!observed) {
     return std::unexpected(observed.error());

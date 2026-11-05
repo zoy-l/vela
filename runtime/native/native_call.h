@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -20,8 +21,6 @@ namespace vela::runtime {
     NativeExecution& execution,
     const ClassLayout& layout,
     std::span<const Value> captures = {});
-[[nodiscard]] std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& execution,
-                                                                         HeapObject& callable);
 extern "C" std::uint8_t vela_native_v3_capture_receiver(NativeExecution* execution,
                                                         HeapObject* callable);
 
@@ -31,6 +30,7 @@ extern "C" std::uint8_t vela_native_v3_capture_receiver(NativeExecution* executi
 struct NativeResolvedCallable final {
   HeapObject* state = nullptr;
   ResolvedCallable target;
+  const NativeFunctionDescription* function = nullptr;
 };
 
 [[nodiscard]] std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
@@ -43,6 +43,7 @@ struct NativeCallableContract final {
   std::span<const CallSignature::Parameter> parameters;
   std::span<const TypeConstraint> types;
   bool is_async = false;
+  [[nodiscard]] bool HasRequiredParameters(std::size_t skipped = 0) const;
 };
 
 [[nodiscard]] std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
@@ -64,31 +65,11 @@ struct NativeCallableContract final {
                                                                       std::uint32_t function,
                                                                       std::span<const Value> input);
 
-namespace internal {
-
-[[nodiscard]] std::expected<Value, ExecutionStatus> BoxNativeEnumResult(NativeExecution& execution,
-                                                                        std::uint32_t type,
-                                                                        Value value);
-
-}  // namespace internal
-
 // 参数已经过调用点绑定与验证；返回 runtime 表示，enum 结果在此完成盒装。
-[[nodiscard]] inline std::expected<Value, ExecutionStatus> InvokeNativeTarget(
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeTarget(
     NativeExecution& execution,
     std::uint32_t function,
-    std::span<const NativeValue> arguments) {
-  const auto& target = execution.instance().image().functions.values().subspan(function).front();
-  NativeValue output;
-  const auto status = static_cast<ExecutionStatus>(
-      target.entry(&execution, arguments.data(), arguments.size(), &output));
-  if (status != ExecutionStatus::Returned) {
-    return std::unexpected(status);
-  }
-  const auto value = DecodeNativeValue(output);
-  return (target.flags & kNativeEnumResult) != 0
-             ? internal::BoxNativeEnumResult(execution, target.result_type, value)
-             : std::expected<Value, ExecutionStatus>(value);
-}
+    std::span<const NativeValue> arguments);
 
 // indirect 参数区首槽预留给闭包环境或绑定接收者；显式实参从第二槽开始。
 extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,

@@ -1,6 +1,5 @@
 #include "runtime/native/native_test.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <span>
@@ -25,11 +24,6 @@ std::unexpected<ExecutionStatus> Failure(NativeExecution& execution, std::string
   return std::unexpected(execution.HandleFailure(ExecutionStatus::TypeError, message));
 }
 
-bool HasRequiredParameters(std::span<const CallSignature::Parameter> parameters) {
-  return std::ranges::any_of(
-      parameters, [](const auto& parameter) { return !parameter.optional && !parameter.rest; });
-}
-
 std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
                                                std::span<const Value> values) {
   const auto decoded = DecodeOperation<TestOperation::AddTearDown>(values.front());
@@ -51,7 +45,7 @@ std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
     if (!contract) {
       return Failure(execution, "test callback must be a non-null callable from this program");
     }
-    if (HasRequiredParameters(contract->parameters)) {
+    if (contract->HasRequiredParameters()) {
       return Failure(execution, "test callback must accept zero arguments");
     }
     if (operation == TestOperation::EnterGroup &&
@@ -99,7 +93,7 @@ std::expected<void, ExecutionStatus> ValidateCallback(NativeExecution& execution
   }
   const auto parameters = contract->parameters;
   const auto count = static_cast<std::size_t>(arity.AsInteger());
-  if (parameters.size() < count || HasRequiredParameters(parameters.subspan(count))) {
+  if (parameters.size() < count || contract->HasRequiredParameters(count)) {
     return Failure(execution, "expectAsync callback does not accept the requested arguments");
   }
   return {};

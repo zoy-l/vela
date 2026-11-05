@@ -19,6 +19,7 @@
 #include "runtime/native/host_value.h"
 #include "runtime/native/native_type.h"
 #include "runtime/native/native_type_traits.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela {
@@ -122,7 +123,12 @@ template <class T>
 std::int64_t Local<T>::Size() const noexcept
   requires(internal::ArrayType<T>::kIsArray || internal::CollectionType<T>::kIsCollection)
 {
-  return internal::HostContainerSize(internal::HandleAccess::Read(*this));
+  const auto& object = *internal::HandleAccess::Read(*this).AsObject();
+  if constexpr (internal::ArrayType<T>::kIsArray) {
+    return *runtime::Heap::ArrayLength(object);
+  } else {
+    return *runtime::Heap::CollectionLength(object);
+  }
 }
 
 template <class T>
@@ -240,7 +246,7 @@ Result<std::optional<HostValue<typename internal::CollectionType<U>::Mapped>>> L
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  return internal::ReceiveOptionalHostValue<typename internal::CollectionType<U>::Mapped>(
+  return internal::ReceiveHostValue<typename internal::CollectionType<U>::Mapped>(
       scope, [&](runtime::Value& output) {
         return internal::ReadHostMap(scope, *arguments->front().AsObject(), arguments->back(),
                                      output);

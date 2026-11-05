@@ -37,12 +37,10 @@ struct NativeContractViolation final {
     const NativeImage& candidate);
 [[nodiscard]] std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
     std::span<const NativeRetainedFunction> retained,
+    std::span<const DeclarationId> types,
     const NativeImage* previous,
     const NativeImage& candidate);
 [[nodiscard]] std::vector<DeclarationId> RetainedNativeDeclarations(
     std::span<const NativeRetainedFunction> functions);
-[[nodiscard]] std::expected<void, NativeContractViolation> CheckRetainedNativeTypes(
-    std::span<const DeclarationId> declarations,
-    const NativeImage& candidate);
 
 }  // namespace vela::runtime

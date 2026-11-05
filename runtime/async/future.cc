@@ -10,10 +10,10 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,16 +23,6 @@
 #include "runtime/heap/host_memory.h"
 
 namespace vela::runtime {
-namespace {
-
-void ConsumeCompletion(std::expected<void, FutureCompletionError> completion) {
-  if (!completion.has_value()) {
-    std::unreachable();
-  }
-}
-
-}  // namespace
-
 ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept {
   switch (error) {
     case FutureCompletionError::AlreadyCompleted:
@@ -58,8 +48,9 @@ struct Future::SharedState final {
     std::function<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
     std::optional<ExecutionContext> context;
-    std::uint64_t order = 0;
+    std::weak_ptr<FutureObservation::State> subscription;
   };
+  void CancelWaiter(std::size_t index);
   ExternalResource external;
   std::atomic_size_t retained_count{0};
   std::atomic_bool completion_requested{false};
@@ -67,8 +58,7 @@ struct Future::SharedState final {
   enum class ErrorObservation : std::uint8_t { Unobserved, ReportedUnhandled, Observed };
   ErrorObservation error_observation = ErrorObservation::Unobserved;
   std::vector<Waiter> waiters;
-  std::uint64_t next_observation = 0;
-  std::map<std::uint64_t, std::weak_ptr<FutureObservation::State>> subscriptions;
+  std::size_t cancelled_waiters = 0;
   FutureScheduler* scheduler = nullptr;
   std::optional<ExecutionContext> creation_context;
   Heap* heap = nullptr;
@@ -84,34 +74,29 @@ struct FutureObservation::State final {
         HostMemory reservation)
       : future(std::move(source)),
         scheduler(&owner),
-        identity(owner.next_observation_identity_++),
-        order(future->state_->next_observation++),
         callback(std::move(action)),
         context(owner.context()),
         memory(std::move(reservation)) {}
 
   void Cancel() noexcept {
-    if (scheduler == nullptr) {
+    if (!future) {
       return;
     }
-    assert(scheduler->IsOwnerThread());
-    if (!future) {
-      std::unreachable();
-    }
-    future->state_->subscriptions.erase(order);
-    scheduler->observations_.erase(identity);
-    scheduler = nullptr;
-    callback = {};
+    auto source = std::move(*future);
     future.reset();
+    assert(scheduler->IsOwnerThread());
+    scheduler->observations_.erase(this);
+    if (waiter_index) {
+      source.state_->CancelWaiter(*waiter_index);
+      waiter_index.reset();
+    }
+    callback = {};
     memory = {};
   }
 
   void Invoke() {
-    if (scheduler == nullptr) {
-      return;
-    }
     if (!future) {
-      std::unreachable();
+      return;
     }
     auto source = future->Retained();
     auto action = std::move(callback);
@@ -121,12 +106,29 @@ struct FutureObservation::State final {
 
   std::optional<Future> future;
   FutureScheduler* scheduler;
-  std::uint64_t identity;
-  std::uint64_t order;
+  std::optional<std::size_t> waiter_index;
   absl::AnyInvocable<void(const FutureResult&)> callback;
   std::optional<ExecutionContext> context;
   HostMemory memory;
 };
+
+void Future::SharedState::CancelWaiter(std::size_t index) {
+  waiters[index] = {};
+  ++cancelled_waiters;
+  if (cancelled_waiters < waiters.size() - cancelled_waiters) {
+    return;
+  }
+  // 取消槽达到一半才稳定压缩，保留登记顺序，并把重复取消的成本摊到新增槽上。
+  std::erase_if(waiters, [](const Waiter& waiter) {
+    return !waiter.callback && waiter.subscription.expired();
+  });
+  for (std::size_t position = 0; position < waiters.size(); ++position) {
+    if (const auto observation = waiters[position].subscription.lock()) {
+      observation->waiter_index = position;
+    }
+  }
+  cancelled_waiters = 0;
+}
 
 FutureObservation::~FutureObservation() {
   Cancel();
@@ -152,12 +154,7 @@ void FutureObservation::Cancel() noexcept {
 
 void FutureScheduler::CloseObservations() {
   while (!observations_.empty()) {
-    const auto found = observations_.begin();
-    if (const auto state = found->second.lock()) {
-      state->Cancel();
-    } else {
-      observations_.erase(found);
-    }
+    (*observations_.begin())->Cancel();
   }
 }
 
@@ -177,7 +174,7 @@ struct Future::Observer final {
   Future future;
   std::function<void(const FutureResult&)> callback;
   std::shared_ptr<std::vector<::vela::runtime::Value>> references;
-  RootRange roots{RootOwner::Runtime};
+  RootRange roots{std::nullopt};
 };
 
 Future::Future(FutureScheduler* scheduler)
@@ -302,20 +299,20 @@ Future Future::Value(::vela::runtime::Value value, FutureScheduler* scheduler) {
   Future future(scheduler);
   if (const auto completion = future.Complete(value); !completion) {
     const auto status = FutureCompletionStatus(completion.error());
-    ConsumeCompletion(future.CompleteError(::vela::runtime::Value::Null(),
-                                           {
-                                               .message = std::string(ExecutionStatusName(status)),
-                                               .stack_trace = {},
-                                               .status = status,
-                                               .origin = {},
-                                           }));
+    std::ignore = future.CompleteError(::vela::runtime::Value::Null(),
+                                       {
+                                           .message = std::string(ExecutionStatusName(status)),
+                                           .stack_trace = {},
+                                           .status = status,
+                                           .origin = {},
+                                       });
   }
   return future;
 }
 
 Future Future::Error(::vela::runtime::Value error, FutureScheduler* scheduler) {
   Future future(scheduler);
-  ConsumeCompletion(future.CompleteError(error));
+  std::ignore = future.CompleteError(error);
   return future;
 }
 
@@ -387,7 +384,7 @@ std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, He
 Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler) {
   Future result(&scheduler);
   static_cast<void>(scheduler.After(delay, [result = result.Retained()]() mutable {
-    ConsumeCompletion(result.Complete(::vela::runtime::Value::Null()));
+    std::ignore = result.Complete(::vela::runtime::Value::Null());
   }));
   return result;
 }
@@ -443,7 +440,7 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
         .callback = std::move(callback),
         .references = std::move(references),
         .context = context,
-        .order = state_->next_observation++,
+        .subscription = {},
     });
     return;
   }
@@ -460,10 +457,16 @@ std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
   }
   auto observation = std::make_shared<FutureObservation::State>(
       Retained(), scheduler, std::move(callback), std::move(memory));
-  scheduler.observations_.emplace(observation->identity, observation);
+  scheduler.observations_.insert(observation.get());
   MarkObserved();
   if (state_->completion.state == FutureState::Pending) {
-    state_->subscriptions.emplace(observation->order, observation);
+    observation->waiter_index = state_->waiters.size();
+    state_->waiters.push_back({
+        .callback = {},
+        .references = {},
+        .context = {},
+        .subscription = observation,
+    });
   } else {
     scheduler.microtasks_.push_back({
         .context = observation->context,
@@ -579,24 +582,19 @@ void Future::Publish(FutureResult result) {
     heap->WriteRootBarrier(std::span(&state_->completion.value, 1));
   }
   auto waiters = std::move(state_->waiters);
-  auto subscriptions = std::move(state_->subscriptions);
-  const auto notify_subscription = [&](const auto& weak) {
-    if (const auto observation = weak.lock()) {
-      state_->scheduler->microtasks_.push_back({
-          .context = observation->context,
-          .action = [observation] { observation->Invoke(); },
-      });
-    }
-  };
-  auto next = subscriptions.begin();
+  state_->cancelled_waiters = 0;
   for (auto& waiter : waiters) {
-    while (next != subscriptions.end() && next->first < waiter.order) {
-      notify_subscription(next++->second);
+    if (const auto observation = waiter.subscription.lock()) {
+      observation->waiter_index.reset();
+      if (observation->future) {
+        state_->scheduler->microtasks_.push_back({
+            .context = observation->context,
+            .action = [observation] { observation->Invoke(); },
+        });
+      }
+    } else if (waiter.callback) {
+      NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context);
     }
-    NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context);
-  }
-  for (; next != subscriptions.end(); ++next) {
-    notify_subscription(next->second);
   }
   if (state_->scheduler != nullptr &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {

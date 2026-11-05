@@ -368,21 +368,27 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     case Opcode::BuiltinCall:
       return EmitBuiltin(instruction);
-    case Opcode::StringConcat:
+    case Opcode::StringConcat: {
+      auto* left = Pack(Encode(instruction.lhs), 0);
+      auto* right = Pack(Encode(instruction.rhs), 1);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeConcatSymbol, status_type, pointer,
+                                                pointer, pointer, pointer);
+      status = builder_.CreateCall(helper, {context, left, right, result_});
+      break;
+    }
     case Opcode::EqualString:
     case Opcode::NotEqualString: {
       auto* left = Pack(Encode(instruction.lhs), 0);
       auto* right = Pack(Encode(instruction.rhs), 1);
-      if (instruction.opcode == Opcode::StringConcat) {
-        auto helper = module_.getOrInsertFunction(runtime::kNativeConcatSymbol, status_type,
-                                                  pointer, pointer, pointer, pointer);
-        status = builder_.CreateCall(helper, {context, left, right, result_});
-      } else {
-        auto helper = module_.getOrInsertFunction(runtime::kNativeCompareStringsSymbol, status_type,
-                                                  pointer, pointer, pointer);
-        status = builder_.CreateCall(helper, {left, right, result_});
+      auto helper = module_.getOrInsertFunction(runtime::kNativeCompareStringsSymbol,
+                                                builder_.getInt8Ty(), pointer, pointer);
+      auto* compared =
+          builder_.CreateICmpNE(builder_.CreateCall(helper, {left, right}), builder_.getInt8(0));
+      if (instruction.opcode == Opcode::NotEqualString) {
+        compared = builder_.CreateNot(compared);
       }
-      break;
+      Store(instruction.dst, compared, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
+      return {};
     }
     case Opcode::StringInterpolate: {
       PackArguments(instruction.lhs, instruction.rhs);
@@ -404,10 +410,6 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
                              std::to_string(static_cast<unsigned>(instruction.opcode)));
   }
   CompleteCall(status, instruction.dst);
-  if (instruction.opcode == Opcode::NotEqualString) {
-    Store(instruction.dst, builder_.CreateNot(Load(instruction.dst)),
-          {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
-  }
   return {};
 }
 

@@ -19,7 +19,12 @@ struct DynamicArrayInvocation final {
   HeapObject* names = nullptr;
 };
 
-[[nodiscard]] std::expected<Value, ExecutionStatus> PrepareDynamicArray(
+struct DynamicArrayPreparation final {
+  Value plan;
+  HeapObject* thunk = nullptr;
+};
+
+[[nodiscard]] std::expected<DynamicArrayPreparation, ExecutionStatus> PrepareDynamicArray(
     Isolate& isolate,
     std::span<const Value> input,
     std::span<ClassLayout* const> classes,

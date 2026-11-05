@@ -34,28 +34,24 @@ struct alignas(std::max_align_t) NativeHeader final {
   std::size_t size;
 };
 
-constexpr auto kRootResourceKinds = std::to_array<std::optional<ExternalResourceKind>>({
-    std::nullopt,
-    ExternalResourceKind::RootRange,
-    ExternalResourceKind::NativeInstance,
-    ExternalResourceKind::NativeHandle,
-    ExternalResourceKind::Persistent,
-    ExternalResourceKind::Type,
-});
-
 }  // namespace
 
-RootRange::RootRange(Heap& heap, const Value* values, std::size_t count, RootOwner owner) noexcept
-    : owner_(owner) {
+RootRange::RootRange(Heap& heap,
+                     const Value* values,
+                     std::size_t count,
+                     std::optional<ExternalResourceKind> resource_kind) noexcept
+    : resource_kind_(resource_kind) {
   Attach(heap, values, count);
 }
 
-RootRange::RootRange(Heap& heap, std::span<StringObject* const> strings, RootOwner owner) noexcept
+RootRange::RootRange(Heap& heap,
+                     std::span<StringObject* const> strings,
+                     std::optional<ExternalResourceKind> resource_kind) noexcept
     : heap_(&heap),
       data_(static_cast<const void*>(strings.data())),
       count_(strings.size()),
       kind_(Kind::Strings),
-      owner_(owner) {
+      resource_kind_(resource_kind) {
   heap.RegisterRoot(*this);
 }
 
@@ -63,8 +59,14 @@ RootRange::~RootRange() {
   Detach();
 }
 
-RootRange::RootRange(Heap& heap, std::span<const TypeConstraint> types, RootOwner owner) noexcept
-    : heap_(&heap), data_(types.data()), count_(types.size()), kind_(Kind::Types), owner_(owner) {
+RootRange::RootRange(Heap& heap,
+                     std::span<const TypeConstraint> types,
+                     std::optional<ExternalResourceKind> resource_kind) noexcept
+    : heap_(&heap),
+      data_(types.data()),
+      count_(types.size()),
+      kind_(Kind::Types),
+      resource_kind_(resource_kind) {
   heap.RegisterRoot(*this);
 }
 
@@ -119,8 +121,12 @@ void* Heap::AllocateExternal(std::size_t bytes, std::size_t replaced_bytes) noex
 }
 
 void Heap::RecordExternalAllocation(std::size_t bytes) noexcept {
-  allocated_bytes_ += bytes;
   committed_bytes_ += bytes;
+  RecordAllocation(bytes);
+}
+
+void Heap::RecordAllocation(std::size_t bytes) noexcept {
+  allocated_bytes_ += bytes;
   allocation_statistics_.bytes += bytes;
   ++allocation_statistics_.count;
   allocation_statistics_.peak_live_bytes =
@@ -341,7 +347,7 @@ void Heap::Collect() noexcept {
 }
 
 void Heap::RegisterRoot(RootRange& root) noexcept {
-  if (root.owner_ != RootOwner::Runtime) {
+  if (root.resource_kind_) {
     root.identity_ = next_root_identity_++;
   }
   internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
@@ -355,7 +361,7 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
 
 void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
   for (auto* root = roots_; root != nullptr; root = root->next_) {
-    const auto kind = kRootResourceKinds[static_cast<std::size_t>(root->owner_)];
+    const auto kind = root->resource_kind_;
     if (!kind) {
       continue;
     }
@@ -522,7 +528,7 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   if (class_index < free_blocks_.size()) {
     auto& free_block = std::span(free_blocks_).subspan(class_index).front();
     if (free_block != nullptr) {
-      HeapObject* block = free_block;
+      FreeBlock* block = free_block;
       free_block = block->next;
       memory = block;
       std::destroy_at(block);
@@ -536,11 +542,7 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
     committed_bytes_ += block_size;
   }
 
-  allocated_bytes_ += block_size;
-  allocation_statistics_.bytes += block_size;
-  ++allocation_statistics_.count;
-  allocation_statistics_.peak_live_bytes =
-      std::max(allocation_statistics_.peak_live_bytes, allocated_bytes_);
+  RecordAllocation(block_size);
   return {
       .memory = memory,
       .size = static_cast<std::uint32_t>(block_size),
@@ -603,10 +605,8 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。
   std::destroy_at(&object);
   if (class_index < free_blocks_.size()) {
-    auto* block = std::construct_at(static_cast<HeapObject*>(memory));
     auto& free_block = std::span(free_blocks_).subspan(class_index).front();
-    block->next = free_block;
-    free_block = block;
+    free_block = std::construct_at(static_cast<FreeBlock*>(memory), free_block);
     return;
   }
 
@@ -669,9 +669,9 @@ void Heap::DestroyAll() noexcept {
   ReleaseRetiredNativePrograms();
 
   for (std::size_t index = 0; index < free_blocks_.size(); ++index) {
-    HeapObject*& block = std::span(free_blocks_).subspan(index).front();
+    FreeBlock*& block = std::span(free_blocks_).subspan(index).front();
     while (block != nullptr) {
-      HeapObject* next = block->next;
+      FreeBlock* next = block->next;
       committed_bytes_ -= kSizeClasses.at(index);
       std::destroy_at(block);
       ::operator delete(block);

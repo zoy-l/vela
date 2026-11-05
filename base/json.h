@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -11,6 +13,15 @@
 #include <yyjson.h>
 
 namespace vela {
+
+inline constexpr std::size_t kJsonByteEscapeLength = 6;
+
+[[nodiscard]] constexpr std::array<char, kJsonByteEscapeLength> JSONByteEscape(
+    std::uint8_t byte) noexcept {
+  constexpr std::string_view kHex = "0123456789abcdef";
+  constexpr std::uint8_t kHexDigitMask = 0xf;
+  return {'\\', 'u', '0', '0', kHex[byte >> 4U], kHex[byte & kHexDigitMask]};
+}
 
 struct JsonError final {
   std::size_t offset = 0;

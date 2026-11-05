@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -35,6 +36,17 @@ struct MutableStringBuffer final {
 
 constexpr std::size_t kInlineFormattedParts = 8;
 
+std::optional<std::size_t> SeparatorBytes(std::size_t count, std::string_view separator) {
+  if (count < 2) {
+    return 0;
+  }
+  const auto gaps = count - 1;
+  if (separator.size() > kMaximumStringLength / gaps) {
+    return std::nullopt;
+  }
+  return gaps * separator.size();
+}
+
 std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept {
   return {StorageAfter<char>(string), length};
 }
@@ -62,16 +74,12 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
                                                             TextContext context,
                                                             const Read& read,
                                                             const Allocate& allocate) {
-  std::size_t length = 0;
-  std::size_t code_points = 0;
-  if (count > 1) {
-    const auto gaps = count - 1;
-    if (separator.size() > kMaximumStringLength / gaps) {
-      return std::unexpected(StringJoinError::OutOfMemory);
-    }
-    length = gaps * separator.size();
-    code_points = gaps * Utf8Length(separator);
+  const auto separators = SeparatorBytes(count, separator);
+  if (!separators) {
+    return std::unexpected(StringJoinError::OutOfMemory);
   }
+  std::size_t length = *separators;
+  std::size_t code_points = count > 1 ? (count - 1) * Utf8Length(separator) : 0;
   absl::InlinedVector<char, kInlineFormattedParts * kScalarTextCapacity> scalars;
   absl::InlinedVector<std::size_t, kInlineFormattedParts> scalar_lengths;
   std::array<char, kScalarTextCapacity> buffer{};
@@ -174,16 +182,13 @@ StringObject* Heap::AllocateScalarString(Value value) noexcept {
 
 StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
                                 std::string_view separator) noexcept {
-  std::size_t length = 0;
-  std::size_t code_points = 0;
-  if (parts.size() > 1) {
-    const auto gaps = parts.size() - 1;
-    if (separator.size() > kMaximumStringLength / gaps) {
-      return nullptr;
-    }
-    length = gaps * separator.size();
-    code_points = gaps * Utf8Length(separator);
+  const auto count = parts.size();
+  const auto separators = SeparatorBytes(count, separator);
+  if (!separators) {
+    return nullptr;
   }
+  std::size_t length = *separators;
+  std::size_t code_points = count > 1 ? (count - 1) * Utf8Length(separator) : 0;
   for (const auto* part : parts) {
     const auto size = part->value().size();
     if (size > kMaximumStringLength - length) {
@@ -197,7 +202,7 @@ StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
     return nullptr;
   }
   auto remaining = StringStorage(*string, length);
-  for (std::size_t index = 0; index < parts.size(); ++index) {
+  for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
       std::ranges::copy(separator, remaining.begin());
       remaining = remaining.subspan(separator.size());

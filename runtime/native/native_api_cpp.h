@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <type_traits>
@@ -11,6 +13,7 @@
 #include <vela/handles.h>
 #include <vela/types.h>
 
+#include "base/execution_status.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_value.h"
@@ -25,6 +28,7 @@ struct InstanceRelease final {
 using Instance = std::unique_ptr<VelaAotInstance, InstanceRelease>;
 
 [[nodiscard]] Error TakeError(VelaAotStatus status, VelaAotError* error);
+// C 入口已确认 scope 的所属线程；Local 仍须验证同一 Isolate 和有效槽位。
 [[nodiscard]] Result<runtime::Value> Decode(HandleScope& scope, const VelaAotValue& input);
 [[nodiscard]] VelaAotLocal Borrow(Local<vela::Value> value) noexcept;
 [[nodiscard]] Result<VelaAotValue> Encode(HandleScope& scope, runtime::Value value);
@@ -36,19 +40,29 @@ template <class T>
   if constexpr (requires { typename vela::internal::HostValueType<T>::Payload; }) {
     return value ? EncodeArgument<typename vela::internal::HostValueType<T>::Payload>(scope, *value)
                  : Result<VelaAotValue>(VelaAotValue{});
+  } else if constexpr (!vela::internal::HostValueType<T>::kManaged) {
+    VelaAotValue result{};
+    if constexpr (std::is_same_v<T, bool>) {
+      result.kind = VELA_AOT_BOOLEAN;
+      result.payload = value ? 1U : 0U;
+    } else if constexpr (std::is_same_v<T, std::int64_t>) {
+      result.kind = VELA_AOT_INTEGER;
+      result.payload = std::bit_cast<std::uint64_t>(value);
+    } else {
+      static_assert(std::is_same_v<T, double>);
+      result.kind = VELA_AOT_DOUBLE;
+      result.payload = std::bit_cast<std::uint64_t>(value);
+    }
+    return result;
   } else {
     auto encoded = vela::internal::EncodeHostValue<T>(scope, value);
     if (!encoded) {
       return std::unexpected(std::move(encoded.error()));
     }
-    if constexpr (vela::internal::HostValueType<T>::kManaged) {
-      VelaAotValue result{};
-      result.kind = VELA_AOT_LOCAL;
-      result.local = Borrow(vela::internal::HandleAccess::Rebind<vela::Value>(value));
-      return result;
-    } else {
-      return Encode(scope, *encoded);
-    }
+    VelaAotValue result{};
+    result.kind = VELA_AOT_LOCAL;
+    result.local = Borrow(vela::internal::HandleAccess::Rebind<vela::Value>(value));
+    return result;
   }
 }
 
@@ -58,16 +72,21 @@ template <class R, class... Args, class Entry>
                                           NativeInstance* instance,
                                           Entry entry,
                                           HostValue<Args>... arguments) {
-  std::array<Result<VelaAotValue>, sizeof...(Args)> values{
-      EncodeArgument<Args>(scope, arguments)...,
-  };
   std::array<VelaAotValue, sizeof...(Args)> encoded{};
-  for (std::size_t index = 0; index < encoded.size(); ++index) {
-    auto& argument = values[index];
-    if (!argument) {
-      return std::unexpected(std::move(argument.error()));
+  if constexpr (sizeof...(Args) != 0) {
+    std::size_t index = 0;
+    const auto encode = [&]<class T>(const HostValue<T>& value) {
+      auto argument = EncodeArgument<T>(scope, value);
+      if (!argument) {
+        return false;
+      }
+      encoded[index++] = *argument;
+      return true;
+    };
+    if (!(encode.template operator()<Args>(arguments) && ...)) {
+      return std::unexpected(
+          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
     }
-    encoded[index] = *argument;
   }
   VelaAotValue result{};
   VelaAotError* error = nullptr;

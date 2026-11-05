@@ -74,7 +74,7 @@ class JsonEncoder final {
   [[nodiscard]] std::expected<std::optional<Value>, JsonRuntimeError> EnterObject(Value value);
   [[nodiscard]] std::expected<void, JsonRuntimeError> AdvanceArray();
   [[nodiscard]] std::expected<void, JsonRuntimeError> AdvanceMap();
-  [[nodiscard]] std::expected<void, JsonRuntimeError> CheckElement(const ArrayLayout& layout) const;
+  [[nodiscard]] std::expected<void, JsonRuntimeError> CheckElement() const;
   void Pop();
   [[nodiscard]] JsonRuntimeError Error(ExecutionStatus status, std::string_view message) const;
 

@@ -18,13 +18,9 @@
 namespace vela::runtime {
 
 NativeDebugFrame::NativeDebugFrame(const NativeTraceFrame& frame) noexcept
-    : function_(&frame.image->function(frame.position.function)), frame_(&frame) {
-  const auto locations = function_->locations.values();
-  const auto instruction = frame.position.instruction;
-  if (instruction < locations.size()) {
-    location_ = locations.subspan(instruction).front();
-  }
-}
+    : function_(&frame.image->function(frame.position.function)),
+      location_(function_->locations.values()[frame.position.instruction]),
+      frame_(&frame) {}
 
 std::size_t NativeDebugFrame::register_count() const noexcept {
   return static_cast<std::size_t>(frame_->debug_count);
@@ -56,19 +52,11 @@ std::string_view NativeDebugFrame::name() const noexcept {
 }
 
 std::string_view NativeDebugFrame::source_path() const noexcept {
-  const auto paths = frame_->image->source_paths.values();
-  if (!location_ || location_->source_id >= paths.size()) {
-    return {};
-  }
-  return paths.subspan(location_->source_id).front().text();
+  return frame_->image->source_paths.values()[location_.source_id].text();
 }
 
 std::string_view NativeDebugFrame::source_text() const noexcept {
-  const auto sources = frame_->image->source_texts.values();
-  if (!location_ || location_->source_id >= sources.size()) {
-    return {};
-  }
-  return sources.subspan(location_->source_id).front().text();
+  return frame_->image->source_texts.values()[location_.source_id].text();
 }
 
 NativeDebugContext::NativeDebugContext(NativeExecution& execution)

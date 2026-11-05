@@ -193,7 +193,7 @@ std::expected<CollectionLookup, ExecutionStatus> FindEntry(const HeapObject& obj
   if (layout == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (!Heap::IsValueOfType(key, layout->keys.element_type())) {
+  if (!Heap::IsValueOfType(key, layout->keys.element)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   return FindTypedEntry(object, *layout, key);
@@ -291,8 +291,8 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObje
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
-  if (!IsValueOfType(key, layout.keys.element_type()) ||
-      (layout.values && !IsValueOfType(value, layout.values->element_type()))) {
+  if (!IsValueOfType(key, layout.keys.element) ||
+      (layout.values && !IsValueOfType(value, layout.values->element))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   return InsertCollectionHashed(object, key, HashKey(key), value);
@@ -472,7 +472,7 @@ std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& 
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto rooted = Value::Object(result);
-  RootRange root(*this, &rooted, 1, RootOwner::Runtime);
+  RootRange root(*this, &rooted, 1, std::nullopt);
   const auto& right_storage = *StorageAfter<CollectionStorage>(right);
   const auto& right_table = right_storage.table;
   const auto append = [&](const HeapObject& input) -> std::expected<void, ExecutionStatus> {
@@ -568,12 +568,9 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
   if (!length || *length != storage.size) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto* element_layout = &layout.keys;
-  if (projection == CollectionProjection::Values) {
-    if (!layout.values) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    element_layout = &*layout.values;
+  const auto* element_layout = layout.element_layout(projection);
+  if (element_layout == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   if (storage.size == 0) {
     return {};

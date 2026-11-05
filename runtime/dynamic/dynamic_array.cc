@@ -1,4 +1,5 @@
 #include "runtime/dynamic/dynamic_array.h"
+#include <optional>
 
 #include <array>
 #include <cstddef>
@@ -10,7 +11,6 @@
 
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
-#include "base/callable.h"
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -42,17 +42,6 @@ std::expected<std::int64_t, ExecutionStatus> ComparatorSign(Value value) {
     return static_cast<std::int64_t>(number > 0) - static_cast<std::int64_t>(number < 0);
   }
   return std::unexpected(ExecutionStatus::TypeError);
-}
-
-std::expected<std::span<Value>, ExecutionStatus> ArrayPlan(Value value) {
-  if (!value.IsObject() || Heap::KindOf(*value.AsObject()) != ObjectKind::ValueSlots) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto slots = Heap::ValueSlots(*value.AsObject());
-  if (slots.size() != kSlotCount) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return slots;
 }
 
 OperationResult CheckCallback(const TypeSignature& callback,
@@ -115,7 +104,8 @@ std::expected<HeapObject*, ExecutionStatus> AllocateOutput(Isolate& isolate,
   if (type.nominal != nullptr && type.nominal->IsEnum()) {
     type.kind = ValueKind::Integer;
   }
-  const auto* layout = isolate.CreateArrayLayout({.element = type});
+  const auto* layout =
+      type.dynamic ? &isolate.dynamic_array_layout() : isolate.CreateArrayLayout({.element = type});
   auto* output = isolate.heap().AllocateArray(*layout, length);
   return output == nullptr ? std::expected<HeapObject*, ExecutionStatus>{std::unexpected(
                                  ExecutionStatus::OutOfMemory)}
@@ -141,13 +131,13 @@ std::expected<TypeConstraint, ExecutionStatus> AccumulatorType(Value initial,
 
 OperationResult InitializeArguments(Isolate& isolate, HeapObject& plan, std::uint32_t count) {
   auto& heap = isolate.heap();
-  const auto* values = isolate.CreateArrayLayout({.element = {.dynamic = true}});
+  const auto* values = &isolate.dynamic_array_layout();
   auto* arguments = heap.AllocateArray(*values, count);
   if (arguments == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   heap.SetValueSlot(plan, kArguments, Value::Object(arguments));
-  const auto* strings = isolate.CreateArrayLayout({.element = {.kind = ValueKind::String}});
+  const auto* strings = &isolate.string_array_layout();
   auto* names = heap.AllocateArray(*strings, count);
   if (names == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -174,9 +164,6 @@ OperationResult InitializeOutput(Isolate& isolate,
   auto& heap = isolate.heap();
   if (algorithm == ArrayAlgorithm::Map) {
     const auto result = signature.result;
-    if (!result) {
-      std::unreachable();
-    }
     const auto output = AllocateOutput(isolate, *result, length);
     if (!output) {
       return std::unexpected(output.error());
@@ -194,19 +181,18 @@ OperationResult InitializeOutput(Isolate& isolate,
 
 }  // namespace
 
-std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
-                                                          std::span<const Value> input,
-                                                          std::span<ClassLayout* const> classes,
-                                                          const TypeSignature& callback_type) {
+std::expected<DynamicArrayPreparation, ExecutionStatus> PrepareDynamicArray(
+    Isolate& isolate,
+    std::span<const Value> input,
+    std::span<ClassLayout* const> classes,
+    const TypeSignature& callback_type) {
   const auto receiver = input.front();
   const auto callback = input.subspan(1).front();
   const auto initial = input.subspan(2).front();
   const auto selector = input.subspan(3).front();
   const auto wrapper = input.subspan(4).front();
-  if (!receiver.IsObject() || !selector.IsInteger() || selector.AsInteger() < 0 ||
-      selector.AsInteger() > static_cast<std::int64_t>(ArrayAlgorithm::Map) ||
-      !wrapper.IsInteger() || wrapper.AsInteger() < 0 ||
-      static_cast<std::size_t>(wrapper.AsInteger()) >= classes.size()) {
+  const auto decoded = DecodeOperation<ArrayAlgorithm::Map>(selector);
+  if (!receiver.IsObject() || !decoded) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto length = Heap::ArrayLength(*receiver.AsObject());
@@ -214,11 +200,7 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto* closure = classes.subspan(static_cast<std::size_t>(wrapper.AsInteger())).front();
-  if (closure == nullptr || (closure->callable() == nullptr) ||
-      closure->callable()->mode != CallableMode::Closure || closure->field_count() != 1) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto algorithm = static_cast<ArrayAlgorithm>(selector.AsInteger());
+  const auto algorithm = *decoded;
   const auto type = AccumulatorType(initial, algorithm, callback_type);
   if (!type) {
     return std::unexpected(type.error());
@@ -233,7 +215,7 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto owner = Value::Object(plan);
-  const RootRange root(heap, &owner, 1, RootOwner::Runtime);
+  const RootRange root(heap, &owner, 1, std::nullopt);
   heap.SetValueSlot(*plan, kReceiver, receiver);
   heap.SetValueSlot(*plan, kCallback, callback);
   heap.SetValueSlot(*plan, kAlgorithm, selector);
@@ -252,17 +234,13 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   heap.SetValueSlot(*plan, kThunk, Value::Object(thunk));
-  return owner;
+  return DynamicArrayPreparation{.plan = owner, .thunk = thunk};
 }
 
 std::expected<DynamicArrayInvocation, ExecutionStatus> PrepareDynamicArrayInvocation(
     Heap& heap,
     std::span<const Value> input) {
-  const auto plan = ArrayPlan(input.front());
-  if (!plan) {
-    return std::unexpected(plan.error());
-  }
-  const auto slots = *plan;
+  const auto slots = Heap::ValueSlots(*input.front().AsObject());
   const auto algorithm = static_cast<ArrayAlgorithm>(slots.subspan(kAlgorithm).front().AsInteger());
   const auto callback = slots.subspan(kCallback).front();
   const auto* source = Heap::ArrayTypeOf(*slots.subspan(kReceiver).front().AsObject());
@@ -290,11 +268,7 @@ std::expected<DynamicArrayInvocation, ExecutionStatus> PrepareDynamicArrayInvoca
 
 std::expected<Value, ExecutionStatus> ReadDynamicArrayOperation(Builtin builtin,
                                                                 std::span<const Value> input) {
-  const auto plan = ArrayPlan(input.front());
-  if (!plan) {
-    return std::unexpected(plan.error());
-  }
-  const auto slots = *plan;
+  const auto slots = Heap::ValueSlots(*input.front().AsObject());
   if (builtin == Builtin::DynamicArrayCallback || builtin == Builtin::DynamicArrayOutput) {
     return slots.subspan(builtin == Builtin::DynamicArrayCallback ? kThunk : kOutput).front();
   }

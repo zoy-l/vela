@@ -13,6 +13,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_async.h"
 #include "runtime/native/host_value.h"
@@ -33,15 +34,21 @@ template <class T, class Callback>
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
-  return internal::ObserveHostFuture(
-      scope, *value,
-      [action = std::forward<Callback>(callback)](HandleScope& handles,
-                                                  const runtime::FutureResult& completion) mutable {
-        auto result = internal::ReceiveHostValue<T>(handles, [&](runtime::Value& output) {
-          return internal::ReadHostCompletion(handles, completion, output);
-        });
-        action(handles, std::move(result));
-      });
+  auto& isolate = scope.isolate();
+  auto observation = runtime::Heap::GetFuture(*value->AsObject())
+                         ->SubscribeResult([&isolate, action = std::forward<Callback>(callback)](
+                                               const runtime::FutureResult& completion) mutable {
+                           HandleScope handles(isolate);
+                           auto result =
+                               internal::ReceiveHostValue<T>(handles, [&](runtime::Value& output) {
+                                 return internal::ReadHostCompletion(handles, completion, output);
+                               });
+                           action(handles, std::move(result));
+                         });
+  if (!observation) {
+    return std::unexpected(Error{.status = observation.error(), .message = {}, .stack_trace = {}});
+  }
+  return std::move(*observation);
 }
 
 // 普通句柄留在所属线程；这个能力只共享取消状态，可以跨线程保存和发出取消请求。
@@ -67,25 +74,6 @@ void Cancel(Local<Timer> timer) noexcept;
                                                  Local<Function<void()>> callback,
                                                  TimerMode mode = TimerMode::Once);
 
-namespace internal {
-
-template <class T>
-runtime::Value EncodeCompletionValue(const HostValue<T>& value) {
-  if constexpr (requires { typename HostValueType<T>::Payload; }) {
-    return value ? EncodeCompletionValue<typename HostValueType<T>::Payload>(*value)
-                 : runtime::Value::Null();
-  } else if constexpr (std::is_same_v<T, bool>) {
-    return runtime::Value::Boolean(value);
-  } else if constexpr (std::is_same_v<T, std::int64_t>) {
-    return runtime::Value::Integer(value);
-  } else {
-    static_assert(std::is_same_v<T, double>);
-    return runtime::Value::Double(value);
-  }
-}
-
-}  // namespace internal
-
 // 端点仅持有现有关闭协议的控制块；不保存 Isolate、Local 或持久根。
 template <class T>
 class Completion final {
@@ -96,8 +84,7 @@ class Completion final {
   template <class U = T>
     requires(std::is_same_v<U, T> && !internal::HostValueType<U>::kManaged && !std::is_void_v<U>)
   [[nodiscard]] Result<void> Complete(HostValue<U> value) const {
-    return internal::CompletionResult(
-        endpoint_.Complete(internal::EncodeCompletionValue<U>(value)));
+    return internal::CompletionResult(endpoint_.Complete(internal::EncodeHostScalar<U>(value)));
   }
   [[nodiscard]] Result<void> Complete() const
     requires std::is_void_v<T>
@@ -116,7 +103,7 @@ class Completion final {
     if (!encoded) {
       return std::unexpected(std::move(encoded.error()));
     }
-    return internal::CompleteHostEndpoint(scope, endpoint_, *encoded);
+    return internal::CompletionResult(endpoint_.CompleteIn(scope.isolate().heap(), *encoded));
   }
   [[nodiscard]] Result<void> Fail(std::string message) const {
     return internal::CompletionResult(endpoint_.CompleteError(
@@ -253,7 +240,7 @@ Result<void> Local<T>::Complete(HandleScope& scope,
   if (!values) {
     return std::unexpected(std::move(values.error()));
   }
-  return internal::CompleteHostFuture(scope, *(*values)[0].AsObject(), (*values)[1]);
+  return internal::CompleteHostFuture(*(*values)[0].AsObject(), (*values)[1]);
 }
 
 template <class T>
@@ -265,7 +252,7 @@ Result<void> Local<T>::Complete(HandleScope& scope) const
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
-  return internal::CompleteHostFuture(scope, *value->AsObject(), runtime::Value::Null());
+  return internal::CompleteHostFuture(*value->AsObject(), runtime::Value::Null());
 }
 
 template <class T>
@@ -278,7 +265,7 @@ Result<void> Local<T>::Adopt(HandleScope& scope,
   if (!values) {
     return std::unexpected(std::move(values.error()));
   }
-  return internal::AdoptHostFuture(scope, *(*values)[0].AsObject(), (*values)[1]);
+  return internal::AdoptHostFuture(*(*values)[0].AsObject(), (*values)[1]);
 }
 
 template <class T>

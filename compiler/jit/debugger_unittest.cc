@@ -146,7 +146,7 @@ TEST_P(JitSourceLineTest, ReloadAtAnArithmeticSourceLineRestoresVirtualFieldsWit
   paused_ = [&](const runtime::NativeDebugContext& context) {
     const auto& frame = context.top_frame();
     const auto location = frame.location();
-    if (frame.name() == "caller" && location && location->line == kReloadLine) {
+    if (frame.name() == "caller" && location.line == kReloadLine) {
       publication.PublishPending();
     }
   };

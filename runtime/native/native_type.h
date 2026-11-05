@@ -13,6 +13,7 @@
 namespace vela::runtime {
 
 class Isolate;
+struct LayoutCache;
 
 struct NativeHostIdentity final {
   std::string_view key;
@@ -39,5 +40,9 @@ struct NativeType final {
 [[nodiscard]] std::expected<TypeConstraint, ExecutionStatus> ResolveBuiltinNativeType(
     Isolate& isolate,
     NativeType type);
+
+[[nodiscard]] TypeConstraint InstantiateNativeType(Isolate& isolate,
+                                                   NativeType type,
+                                                   LayoutCache& cache);
 
 }  // namespace vela::runtime

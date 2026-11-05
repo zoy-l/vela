@@ -106,7 +106,7 @@ def format_cpp(text: str, formatter: Path, style: Path) -> bytes:
     return result.stdout.replace("\r\n", "\n").encode("utf-8")
 
 
-def fingerprints(generator: Path, paths: list[Path]) -> dict[str, str]:
+def fingerprints(generator: Path, paths: list[Path | str]) -> dict[str, str]:
     result = subprocess.run([str(generator), "fingerprint"],
                             input=json.dumps([str(path) for path in paths]),
                             capture_output=True, text=True, encoding="utf-8", check=True)
@@ -140,7 +140,7 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     bindings = json.loads(result.stdout)
     products = bindings.pop("products")
     parsed_fingerprints = bindings["input_fingerprints"]
-    current_fingerprints = fingerprints(generator, [Path(path) for path in parsed_fingerprints])
+    current_fingerprints = fingerprints(generator, list(parsed_fingerprints))
     if current_fingerprints != parsed_fingerprints:
         raise ValueError("Binding input changed while Clang was parsing")
     for dependency in dependencies:

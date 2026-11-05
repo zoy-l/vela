@@ -366,10 +366,10 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
             ExecutionStatus::Returned);
   EXPECT_EQ(DecodeNativeValue(output).AsInteger(), 40);
   const auto callbacks = NativeFutureCallbacks(instance);
-  const auto arity = callbacks.arity(value.value());
-  ASSERT_TRUE(arity);
-  EXPECT_EQ(*arity, 0U);
-  const auto result = callbacks.invoke(value.value(), {});
+  const auto callback = callbacks.resolve(value.value());
+  ASSERT_TRUE(callback);
+  EXPECT_EQ(callback->arity, 0U);
+  const auto result = callback->invoke({});
   const auto completed_value = result.value();
   if (!completed_value) {
     FAIL() << "Future did not complete with a value";

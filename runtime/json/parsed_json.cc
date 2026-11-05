@@ -40,6 +40,16 @@ std::size_t TokenEnd(std::string_view source, std::size_t cursor) {
   return cursor;
 }
 
+JsonRuntimeError WithErrorPath(JsonRuntimeError error, std::string_view source, Heap& heap) {
+  auto path = JSONPathAtOffset(source, error.offset, heap);
+  if (!path) {
+    error.status = path.error();
+  } else {
+    error.path = std::move(*path);
+  }
+  return error;
+}
+
 }  // namespace
 
 ParsedJSON::ParsedJSON(JsonDocument document, Heap& heap)
@@ -55,12 +65,7 @@ std::expected<std::unique_ptr<ParsedJSON>, JsonRuntimeError> ParsedJSON::Parse(
   if (!document) {
     auto error = document.error();
     if (error.status == ExecutionStatus::JsonDecodeError) {
-      auto path = JSONPathAtOffset(source, error.offset, heap);
-      if (!path) {
-        error.status = path.error();
-      } else {
-        error.path = std::move(*path);
-      }
+      error = WithErrorPath(std::move(error), source, heap);
     }
     return std::unexpected(std::move(error));
   }
@@ -74,14 +79,7 @@ std::expected<std::unique_ptr<ParsedJSON>, JsonRuntimeError> ParsedJSON::Parse(
     });
   }
   if (auto indexed = parsed->Index(source); !indexed) {
-    auto error = indexed.error();
-    auto path = JSONPathAtOffset(source, error.offset, heap);
-    if (!path) {
-      error.status = path.error();
-    } else {
-      error.path = std::move(*path);
-    }
-    return std::unexpected(std::move(error));
+    return std::unexpected(WithErrorPath(std::move(indexed.error()), source, heap));
   }
   return parsed;
 }

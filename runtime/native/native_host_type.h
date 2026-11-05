@@ -5,7 +5,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 
 #include "base/layout_description.h"
 #include "runtime/native/native_type.h"
@@ -64,10 +63,7 @@ template <NativeHostClass T>
 template <NativeHostClass T>
 [[nodiscard]] NativeType NativeNullableHostType() {
   auto type = NativeHostType<T>();
-  if (!type.type) {
-    std::unreachable();
-  }
-  type.type->nullable = true;
+  type.type = layout::Type{.kind = layout::Type::Kind::Instance, .nullable = true};
   return type;
 }
 
