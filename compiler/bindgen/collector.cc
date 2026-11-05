@@ -372,12 +372,8 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     }
     if (constructor != nullptr) {
       member.name = "constructor";
-      member.result = {
-          .kind = TypeKind::Host,
-          .ownership = Ownership::Unique,
-          .key = output.key,
-          .cpp = output.cpp,
-      };
+      member.result = HostType(output.key, Ownership::Unique);
+      member.result.cpp = output.cpp;
     } else if (!frontend::IsMemberIdentifier(member.name)) {
       Error(method, "exported member name must be a non-keyword Vela identifier");
       return;
@@ -392,9 +388,9 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
 
   void ValidateProperty(const clang::CXXMethodDecl& method, const Member& member) {
     if ((member.kind == MemberKind::Getter &&
-         (!member.parameters.empty() || member.result.kind == TypeKind::Void)) ||
+         (!member.parameters.empty() || member.result.IsVoid())) ||
         (member.kind == MemberKind::Setter &&
-         (member.parameters.size() != 1 || member.result.kind != TypeKind::Void))) {
+         (member.parameters.size() != 1 || !member.result.IsVoid()))) {
       Error(method,
             "getter requires no script arguments and a value; setter requires one "
             "script argument and void result");
@@ -410,7 +406,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     }
     const auto result = MapType(result_type, TypePosition::Result, *context_, hosts_);
     if (!result) {
-      Error(method, "unsupported result type: " + PrintType(result_type, *context_));
+      Error(method, "unsupported result type: " + result.error());
       return;
     }
     member.result = *result;
@@ -437,8 +433,8 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
       }
       const auto mapped = MapType(type, TypePosition::Parameter, *context_, hosts_);
       if (!mapped) {
-        Error(*parameter, "unsupported parameter type or missing binding dependency: " +
-                              PrintType(type, *context_));
+        Error(*parameter,
+              "unsupported parameter type or missing binding dependency: " + mapped.error());
         continue;
       }
       member.parameters.push_back({.name = name, .type = *mapped, .source = Location(*parameter)});
@@ -474,7 +470,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   }
 
   static bool IsSameLogicalType(const Type& left, const Type& right) {
-    return left.kind == right.kind && left.key == right.key && left.nullable == right.nullable;
+    return left.IsSameLogicalType(right);
   }
 
   clang::CompilerInstance* compiler_;

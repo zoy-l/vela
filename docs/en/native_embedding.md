@@ -76,10 +76,15 @@ first parameter when the function needs its Isolate, allocation or asynchronous
 operations; it is omitted from the script signature.
 
 Supported parameters include `std::int64_t`, `double`, `bool`,
-`std::string_view`, `Future` and `CancellationToken`. Results also support
-`void`, owned `std::string`, nullable `std::optional<std::string>`, and
-`std::expected<T, NativeError>`. Exact scalar results use direct calls; managed
-and fallible results use checked codecs. There is no implicit int/float narrowing.
+`std::string_view`, and typed references from `<vela/host.h>`, including
+`Local<String>`, `Local<Array<T>>`, `Local<Function<R(Args...)>>` and
+`Local<Future<T>>`. Template arguments are logical types, such as `Array<String>`.
+Nullable values use `std::optional` around the corresponding boundary value.
+Results also support `void`, owned `std::string`, and `vela::Result<T>`
+(`std::expected<T, vela::Error>`). Persistent handles are host storage and cannot
+appear in binding signatures. A direct entry requires every conversion in the
+adapter to satisfy the direct-call contract; other paths use checked codecs.
+There is no implicit int/float narrowing.
 Host arithmetic and resource failures remain the host's responsibility.
 
 An external declaration has no body or generic parameters. An explicit symbol may
@@ -102,17 +107,36 @@ rules as other managed objects.
 
 ## Values, futures and shutdown
 
-`ExecutionResult::value` is borrowed, including error payloads. Before another
-allocation or GC, retain a managed result with `RootedValue(isolate, value)`.
-Copies share one immutable root slot; the final handle releases it. A read through
-`value()` does not create a new root. The Isolate must outlive instances,
-executions, rooted values and other handles belonging to it.
+`HandleScope scope(isolate)` owns local roots. Every copy of a `Local<T>` expires
+with its owning scope. Creation, reads and calls receive the destination scope;
+managed results are rooted before return. Host imports access their call scope
+through `context.handles()`. `local.Persist()` returns
+`Result<Persistent<T>>` for storage across calls. Copies share a root, released
+by its final owner. `persistent.ToLocal(scope)` creates an independent local
+root, allowing the persistent handle to be reset. The Isolate must outlive its
+scopes, persistent handles, error payloads, instances and executions.
 
-For asynchronous results, `RootFutureValue` creates a rooted Future handle and
-the host pumps the owning scheduler. A host waiting for external producers uses
-the scheduler's `WaitForHost` mode. Command-line applications use `ProcessEntry`
-to apply exit-code rules and drain background work; an embedded host controls
-its own event loop.
+Bind public script entries with `Entry<Signature>::Bind(instance, name)` and call
+them with `entry.Call(scope, args...)`. Development-session entries select the
+current publication; `entry.Capture()` retains a specific version. Script-supplied
+`Local<Function<Signature>>` values use `callback.Call(scope, args...)` and retain
+their closure, receiver and captured code. `Error` owns diagnostics, resolved
+frames and an optional rooted script payload; propagating it preserves exception
+identity.
+
+Low-level `ExecutionResult::value` remains borrowed, including error payloads.
+Internal callers use the fallible `runtime::HostRoot::Create(isolate, value)`
+before allocating or collecting. Public hosts should use typed entries to receive
+rooted success values and error payloads through the same boundary.
+
+Command-line applications use `ProcessEntry` to apply exit-code rules and drain
+background work; an embedded host controls its own event loop.
+
+Public `Local<Future<T>>` values provide `Read(scope)` and
+`Wait(scope, WaitMode::WaitForHost)`. `CreateCompletion<T>(scope)` returns a Future
+and a completion endpoint that can be retained across threads. Ordinary Local and
+Persistent operations remain confined to the Isolate thread. Closed endpoints
+report Closed and no longer retain the Isolate.
 
 A script callable retains its native program state. Invocation must use the same
 Isolate and compatible code identity or reloadable dispatch domain. Keeping the
@@ -127,6 +151,14 @@ run when blockers remain. On success it closes completion endpoints, discards
 queued work and collects unreachable state; the owner still destroys the Isolate.
 `FreezeBindings()` prevents later registration and supplies immutable bindings
 for a fresh Isolate. Runtime-owned roots do not remove host rooting obligations.
+
+Generate script public types and member wrappers with
+`vela host-header api.vela --namespace=app -o api.h`; generation does not execute
+module initializers. `Type<T>` containing nominal types binds an instance or
+development session explicitly; builtin types may bind an Isolate. Generated AOT
+headers use the same logical types and destination scopes. C local references and
+persistent handles have separate ownership types. See the
+[C++ interop contract](../zh-CN/cpp_interop.md) for the full mapping and lifetime rules.
 
 ## Diagnostics
 

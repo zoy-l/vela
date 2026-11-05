@@ -18,6 +18,7 @@
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/regexp.h"
 #include "base/regexp_diagnostic.h"
 #include "base/utf8.h"
 #include "runtime/heap/heap.h"

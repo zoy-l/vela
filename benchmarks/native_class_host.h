@@ -6,6 +6,7 @@
 
 #include "runtime/native/native_context.h"
 #include "vela/bindings.h"
+#include "vela/error.h"
 
 namespace vela::benchmarks {
 
@@ -38,7 +39,7 @@ class VELA_CLASS("benchmark.Host") NativeClassHost final {
   [[nodiscard]] static std::unique_ptr<NativeClassHost> Unique(std::int64_t initial) noexcept;
   [[nodiscard]] static std::shared_ptr<NativeClassHost> Shared(std::int64_t initial) noexcept;
   [[nodiscard]] static std::shared_ptr<NativeClassHost> Repeated() noexcept;
-  [[nodiscard]] std::expected<std::int64_t, runtime::NativeError> Failure(bool fail) const noexcept;
+  [[nodiscard]] std::expected<std::int64_t, vela::Error> Failure(bool fail) const noexcept;
   std::int64_t Collect(runtime::NativeContext& context, std::int64_t delta) const noexcept;
   [[nodiscard]] std::int64_t Reenter(std::int64_t value) const noexcept;
 

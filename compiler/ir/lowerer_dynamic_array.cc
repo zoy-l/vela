@@ -52,8 +52,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   const std::vector<frontend::Capture> captures{
       {.name = "plan", .type = dynamic, .binding = 0, .kind = frontend::BindingKind::Constant},
   };
-  const auto closure = CallableClass(callback_target, CallableMode::Closure, captures,
-                                     frontend::MakeFunctionType(callback_signature));
+  const auto closure = CallableClass(callback_target, CallableMode::Closure, captures);
   program_.functions.at(callback_target).value_types.front() = {
       .kind = Kind::Class,
       .name = frontend::InternTypeName(program_.classes.at(closure).name),
@@ -119,7 +118,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
     Emit({.opcode = Opcode::Return, .dst = sorted, .location = {}});
   }
   function.register_count = next_register_;
-  PublishMemberFunction(receiver, name, MemberKind::Method, signature, std::move(function));
+  PublishMemberFunction(receiver, name, MemberKind::Method, std::move(function));
 }
 
 }  // namespace vela::ir

@@ -22,7 +22,7 @@
 
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_function.h"
@@ -351,11 +351,13 @@ TEST_F(ReplLanguageTest, ResetRejectsHostRootsAndKeepsTheCurrentSessionRunning) 
   Execute("let value = 40;");
   const auto source = std::string(repl().source());
   {
-    const runtime::RootedValue root(session().isolate(), runtime::Value::Null());
+    const auto root_storage =
+        runtime::HostRoot::Create(session().isolate(), runtime::Value::Null());
+    ASSERT_TRUE(root_storage);
     const auto reset = Reset();
     ASSERT_EQ(reset.status, DevelopmentStatus::WaitingForRelease);
     ASSERT_EQ(reset.blockers.size(), 1U);
-    EXPECT_EQ(reset.blockers.front().kind, runtime::ExternalResourceKind::RootedValue);
+    EXPECT_EQ(reset.blockers.front().kind, runtime::ExternalResourceKind::Persistent);
     ASSERT_TRUE(session().Cancel());
     EXPECT_EQ(repl().source(), source);
     Execute("value + 2");

@@ -39,23 +39,19 @@ std::string NativeMemberKey(std::string_view type, NativeMemberKind kind, std::s
 
 Fingerprint NativeClassContract(std::vector<NativeContractMember> members) {
   std::ranges::sort(members, {}, &NativeContractMember::key);
-  std::string text = "vela.native-class/1;";
+  std::string text = "vela.native-class/2;";
   const auto append = [&text](std::string_view value) {
     text += std::to_string(value.size()) + ':';
     text += value;
-  };
-  const auto type = [&append](const NativeContractType& value) {
-    append(value.key);
-    append(value.nullable ? "?" : "!");
   };
   for (const auto& member : members) {
     append(member.key);
     append(std::to_string(member.parameters.size()));
     for (const auto& parameter : member.parameters) {
       append(parameter.name);
-      type(parameter.type);
+      append(parameter.type);
     }
-    type(member.result);
+    append(member.result);
   }
   return ContentFingerprint(text);
 }

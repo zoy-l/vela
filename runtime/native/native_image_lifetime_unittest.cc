@@ -16,6 +16,7 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_image_test_support.h"
 #include "runtime/strings/string.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -116,6 +117,39 @@ TEST(NativeImageLifetimeTest, FailedInstantiationReleasesUnpublishedCodeOwner) {
   }
   resource.reset();
   EXPECT_TRUE(lifetime.expired());
+  EXPECT_EQ(isolate.layout_counts(), before);
+}
+
+TEST(NativeImageLifetimeTest, SharedClosedImagePreservesCacheIdentityUntilItsLastOwnerRetires) {
+  Isolate isolate(1);
+  const auto before = isolate.layout_counts();
+  auto resource = std::make_shared<AsyncImage>();
+  std::shared_ptr<const NativeImage> image(resource, &resource->image);
+  const CodeIdentity* identity = nullptr;
+  const TypeSignature* signature = nullptr;
+  {
+    auto first = NativeInstance::Instantiate(isolate, image);
+    auto second = NativeInstance::Instantiate(isolate, image);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(second);
+    identity = &(*first)->code_identity();
+    signature = (*first)->layouts().types.front().signature;
+    EXPECT_EQ(identity, &(*second)->code_identity());
+    EXPECT_EQ(signature, (*second)->layouts().types.front().signature);
+  }
+  const auto cached = isolate.layout_counts();
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.layout_counts(), cached);
+  {
+    const auto next = NativeInstance::Instantiate(isolate, image);
+    ASSERT_TRUE(next);
+    EXPECT_EQ(identity, &(*next)->code_identity());
+    EXPECT_EQ(signature, (*next)->layouts().types.front().signature);
+  }
+  image.reset();
+  resource.reset();
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
   EXPECT_EQ(isolate.layout_counts(), before);
 }
 

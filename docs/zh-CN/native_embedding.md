@@ -72,10 +72,13 @@ func main(): int { return add(40, 2); }
 需要 Isolate、分配或异步操作的函数可将 `NativeContext&` 放在第一个参数；
 该参数不出现在脚本签名中。
 
-参数支持 `std::int64_t`、`double`、`bool`、`std::string_view`、
-`Future` 和 `CancellationToken`。返回值还支持 `void`、拥有存储的 `std::string`、
-可空的 `std::optional<std::string>` 以及 `std::expected<T, NativeError>`。
-精确标量结果使用直接调用，托管或可失败结果经过受查 codec。
+公共值 API 由 `<vela/host.h>` 提供。标量使用 `std::int64_t`、`double`、`bool`；
+脚本引用使用 `Local<String>`、`Local<Array<T>>`、`Local<Function<R(Args...)>>`、
+`Local<Future<T>>` 等类型化句柄。泛型实参使用逻辑类型，例如 `Array<String>`。
+可空值使用对应边界值的 `std::optional`。字符串还支持 `std::string_view` 参数和
+`std::string` 结果，分别显式借用和复制。可失败结果使用 `vela::Result<T>`，即
+`std::expected<T, vela::Error>`。Persistent 只用于宿主存储，不能出现在绑定签名中。
+只有整条适配路径满足直接调用契约时才使用直接入口；托管或可失败转换经过受查 codec。
 不会隐式缩窄 int/float；宿主算术和资源失败由宿主负责。
 
 external 声明没有函数体或泛型参数。显式符号可以指定注册表名称，例如
@@ -93,12 +96,26 @@ Future 返回值在尚未完成时也持续保留声明的载荷检查。
 
 ## 值、Future 与关闭
 
-`ExecutionResult::value` 借用堆，包括错误载荷。下一次分配或 GC 前，使用
-`RootedValue(isolate, value)` 保留托管结果。副本共享一个不可变根槽，最后一个句柄释放它；
-读取 `value()` 不增加根。Isolate 必须晚于所属实例、执行、保根值及其他句柄销毁。
+`HandleScope scope(isolate)` 拥有局部根，`Local<T>` 的所有副本在所属作用域退出时失效。
+创建、读取和调用显式接收目标作用域，托管返回值在返回前已经保根。宿主导入内通过
+`context.handles()` 取得本次调用的作用域。`local.Persist()` 返回
+`Result<Persistent<T>>`，用于跨调用保存；副本共享一个根，最后一个所有者释放它。
+`persistent.ToLocal(scope)` 在目标作用域建立独立局部根，随后可以重置 Persistent。
+Isolate 必须晚于所属作用域、持久句柄、错误载荷、实例和执行资源销毁。
 
-异步结果通过 `RootFutureValue` 转为保根的 Future 句柄，宿主推进所属调度器。
-需要等待外部生产者时使用 `WaitForHost` 模式。
+宿主调用公开脚本入口使用 `Entry<Signature>::Bind(instance, name)`，随后
+`entry.Call(scope, args...)` 返回 `Result`。开发会话中的命名入口每次调用当前版本；
+`entry.Capture()` 捕获具体版本。脚本交付的 `Local<Function<Signature>>` 使用
+`callback.Call(scope, args...)`，保留闭包、接收者和代码版本。脚本异常通过 `Error`
+保留原始载荷、诊断及栈帧，宿主原样传播时不丢失异常身份。
+
+低层 `ExecutionResult::value` 仍借用堆，包括错误载荷。内部调用者在下一次分配或 GC 前
+使用可失败的 `runtime::HostRoot::Create(isolate, value)` 保根；公共宿主优先使用上述
+类型化入口，以完成成功值与异常载荷的统一交接。
+
+公共 `Local<Future<T>>` 提供 `Read(scope)` 和 `Wait(scope, WaitMode::WaitForHost)`。
+`CreateCompletion<T>(scope)` 返回 Future 与可跨线程保存的完成端点；普通 Local 和
+Persistent 只能在 Isolate 所属线程操作。端点关闭后报告 Closed，不再保活 Isolate。
 命令行应用通过 `ProcessEntry` 应用退出码规则并排空后台任务；嵌入宿主自行管理事件循环。
 
 脚本可调用值保留其原生程序状态。调用必须属于相同 Isolate，并具有兼容代码身份或相同
@@ -110,6 +127,12 @@ Future 返回值在尚未完成时也持续保留声明的载荷检查。
 存在阻塞资源时，`TryStop()` 保留当前运行；成功时关闭完成端点、丢弃排队工作并回收不可达状态，
 Isolate 仍由所有者销毁。`FreezeBindings()` 禁止后续注册，并为新 Isolate 提供不可变绑定快照。
 运行时内部根不免除宿主的保根责任。
+
+脚本公共类型和成员包装可通过
+`vela host-header api.vela --namespace=app -o api.h` 生成；生成不执行模块初始化。
+包含名义类型的 `Type<T>` 显式绑定实例或开发会话，内建类型可以绑定 Isolate。
+AOT 生成头文件提供相同的逻辑类型与作用域参数，C 局部引用和持久句柄分别释放。
+完整类型映射、成员操作与生命周期约定见 [C++ 互操作](cpp_interop.md)。
 
 ## 诊断
 

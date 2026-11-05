@@ -22,6 +22,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/handle_access.h"
 #include "runtime/native/native_context.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -205,24 +206,13 @@ class RetainedValues final {
     auto& session = *session_;
     if (kind_ == RetainedState::Continuations) {
       runtime::NativeContext context(session.isolate());
+      runtime::NativeContextScope handles(context);
       gate_ = context.CreateCompleter();
-      const auto future = context.FutureValue(gate_.future());
+      const auto future = context.FutureValue<std::int64_t>(gate_.future());
       if (!future) {
         return std::unexpected("cannot create suspended-task gate");
       }
-      gate_value_ = *future;
-      const auto* signature = session.isolate().CreateTypeSignature({
-          .parameters = {},
-          .result = runtime::TypeConstraint{.kind = runtime::ValueKind::Integer},
-      });
-      const runtime::TypeConstraint type{
-          .kind = runtime::ValueKind::Object,
-          .object_kind = runtime::ObjectKind::Future,
-          .signature = signature,
-      };
-      if (!runtime::Heap::BindRuntimeType(*gate_value_.AsObject(), type)) {
-        return std::unexpected("cannot bind suspended-task gate type");
-      }
+      gate_value_ = internal::HandleAccess::Read(*future);
     }
     for (auto& value : values_) {
       const auto made = kind_ == RetainedState::Continuations

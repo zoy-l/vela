@@ -2,18 +2,19 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <llvm/Support/JSON.h>
 
+#include "base/layout_description.h"
 #include "base/native_binding.h"
 
 namespace vela::bindgen {
 
-enum class TypeKind : std::uint8_t { Void, Boolean, Integer, Double, String, Cancellation, Host };
-enum class Ownership : std::uint8_t { Value, Borrow, Unique, Shared };
+enum class Ownership : std::uint8_t { Value, Borrow, Unique, Shared, Local };
 using MemberKind = NativeMemberKind;
 
 struct Source final {
@@ -23,14 +24,18 @@ struct Source final {
 };
 
 struct Type final {
-  TypeKind kind = TypeKind::Void;
+  layout::Program layouts;
+  std::optional<layout::Type> value = std::nullopt;
   Ownership ownership = Ownership::Value;
-  std::string key;
   std::string cpp;
-  bool nullable = false;
   bool is_const = false;
-  bool operator==(const Type&) const = default;
+
+  [[nodiscard]] bool IsVoid() const noexcept { return !value; }
+  [[nodiscard]] std::string ContractKey() const;
+  [[nodiscard]] bool IsSameLogicalType(const Type& other) const;
 };
+
+[[nodiscard]] Type HostType(std::string_view key, Ownership ownership);
 
 struct Parameter final {
   std::string name;

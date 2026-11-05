@@ -15,7 +15,7 @@
 #include "compiler/jit/source_compiler.h"
 #include "compiler/jit/test_support.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
@@ -30,7 +30,7 @@ class GeneratedNativeClassTest : public testing::TestWithParam<NativeCodeTier> {
 
 TEST_P(GeneratedNativeClassTest, ExecutesGeneratedDualProductsThroughProductionImportsAndAbi) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   const auto path = PathText(Utf8Path(binding_fixture::kModulePath).parent_path() / "entry.vela");
   constexpr auto kSource = R"(
 import 'bindingfixture';
@@ -47,6 +47,10 @@ export func run(): int {
   if (dynamicCounter.add(2) != 42 || !(dynamicCounter is Counter)) { return -5; }
   const bound = callback();
   if (bound(12) != 42) { return -6; }
+  const values = [40, 2];
+  const echoed = Counter.Echo(values);
+  echoed[0] += echoed[1];
+  if (values[0] != 42) { return -8; }
   try { counter.Checked(true); } catch (error: Error) { return counter.value; }
   return -7;
 }
@@ -63,18 +67,24 @@ export async func retained(): Future<int> {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(bindings::module_bindingfixture::Register(isolate));
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-  ASSERT_TRUE(instance) << instance.error().message;
+  ASSERT_TRUE(instance.has_value()) << instance.error().message;
   const auto function = (*instance)->FindFunction("run");
-  ASSERT_TRUE(function);
+  if (!function) {
+    FAIL() << "expected exported function run";
+  }
   runtime::NativeExecution execution(**instance);
   const auto returned = runtime::InvokeNativeFunction(execution, *function);
-  ASSERT_TRUE(returned) << static_cast<unsigned>(returned.error());
+  ASSERT_TRUE(returned.has_value()) << static_cast<unsigned>(returned.error());
   EXPECT_EQ(returned->AsInteger(), 42);
   const auto async_function = (*instance)->FindFunction("retained");
-  ASSERT_TRUE(async_function);
+  if (!async_function) {
+    FAIL() << "expected exported function retained";
+  }
   const auto future = runtime::InvokeNativeFunction(execution, *async_function);
-  ASSERT_TRUE(future);
-  const runtime::RootedValue pending(isolate, *future);
+  ASSERT_TRUE(future.has_value());
+  const auto pending_storage = runtime::HostRoot::Create(isolate, *future);
+  ASSERT_TRUE(pending_storage.has_value());
+  const auto& pending = *pending_storage;
   isolate.heap().Collect();
   EXPECT_TRUE(test::CompletesWithInteger(isolate, pending.value(), 42));
   isolate.heap().Collect();
@@ -82,7 +92,7 @@ export async func retained(): Future<int> {
 
 TEST_P(GeneratedNativeClassTest, HotReloadKeepsCanonicalHostObjectsAndImmutableBindings) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   const auto path = PathText(Utf8Path(binding_fixture::kModulePath).parent_path() / "reload.vela");
   SourceSession source(path);
   const auto declarations = frontend::LoadProgram(binding_fixture::kModulePath);
@@ -116,24 +126,24 @@ export func object(): Counter { return counter; }
   ASSERT_TRUE(update(initial));
   auto& dispatch = isolate.native_dispatch();
   auto first = dispatch.FindEntry(path, "run");
-  ASSERT_TRUE(first);
+  ASSERT_TRUE(first.has_value());
   EXPECT_TRUE(test::ReturnsInteger(*first, 41));
   const auto get_object = dispatch.FindEntry(path, "object");
-  ASSERT_TRUE(get_object);
+  ASSERT_TRUE(get_object.has_value());
   const auto previous = get_object->Invoke({});
-  ASSERT_TRUE(previous);
+  ASSERT_TRUE(previous.has_value());
   auto changed = initial;
   const auto call = changed.find("counter.Collect(1);");
   ASSERT_NE(call, std::string::npos);
   changed.replace(call, std::string("counter.Collect(1);").size(), "counter.Collect(1) + 1;");
   ASSERT_TRUE(update(std::move(changed)));
   const auto second = dispatch.FindEntry(path, "run");
-  ASSERT_TRUE(second);
+  ASSERT_TRUE(second.has_value());
   EXPECT_TRUE(test::ReturnsInteger(*second, 43));
   const auto next_object = dispatch.FindEntry(path, "object");
-  ASSERT_TRUE(next_object);
+  ASSERT_TRUE(next_object.has_value());
   const auto next = next_object->Invoke({});
-  ASSERT_TRUE(next);
+  ASSERT_TRUE(next.has_value());
   EXPECT_EQ(previous->AsObject(), next->AsObject());
 }
 

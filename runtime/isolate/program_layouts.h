@@ -21,7 +21,7 @@ struct ProgramLayouts final {
   std::vector<TypeConstraint> types;
 };
 
-// 会话借用 Isolate 的不可移动元数据；失败的布局事务不得提交此缓存。
+// 借用 Isolate 的不可移动元数据；失败的布局事务不得提交此缓存。
 struct LayoutCache final {
   const CodeIdentity* code_identity = nullptr;
   absl::flat_hash_map<std::string, ClassLayout*> classes;
@@ -37,5 +37,11 @@ struct LayoutCache final {
                                                 Isolate& isolate,
                                                 LayoutCache& cache,
                                                 std::span<const ClassLayoutOptions> classes = {});
+
+// 与整程序实例化共用解析器；只请求一个根类型，不复制描述图或创建结果表。
+[[nodiscard]] TypeConstraint InstantiateLayoutType(const layout::Program& description,
+                                                   layout::Type type,
+                                                   Isolate& isolate,
+                                                   LayoutCache& cache);
 
 }  // namespace vela::runtime

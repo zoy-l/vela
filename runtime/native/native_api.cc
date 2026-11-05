@@ -7,65 +7,131 @@
 #include <memory>
 #include <new>
 #include <span>
-#include <string>
 #include <string_view>
 #include <utility>
 
+#include <vela/error.h>
+#include <vela/handles.h>
+#include <vela/host.h>
+
 #include "base/execution_status.h"
-#include "base/utf8.h"
-#include "runtime/async/future.h"
-#include "runtime/exceptions/error.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/handle_access.h"
+#include "runtime/native/host_async.h"
+#include "runtime/native/host_value.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_api_cpp.h"
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
-#include "runtime/strings/string.h"
-#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_buffer.h"
 
-struct VelaAotHandle final {
-  VelaAotHandle(vela::runtime::Isolate& owner,
-                vela::runtime::Value source,
-                vela::runtime::FutureDiagnostic detail)
-      : isolate(&owner),
-        value(source),
-        root(owner.heap(), &value, 1, vela::runtime::RootOwner::NativeHandle),
-        diagnostic(std::move(detail)) {}
-  vela::runtime::Isolate* isolate;
-  vela::runtime::Value value;
-  vela::runtime::RootRange root;
-  vela::runtime::FutureDiagnostic diagnostic;
+struct VelaAotPersistent final {
+  vela::runtime::HostRoot root;
+};
+
+struct VelaAotError final {
+  vela::Error detail;
 };
 
 namespace vela::runtime {
 namespace {
 
-static_assert(sizeof(VelaAotValue) == kNativeValueBytes);
-static_assert(static_cast<VelaAotStatus>(ExecutionStatus::Returned) == VELA_AOT_RETURNED);
-
-std::expected<VelaAotHandle*, ExecutionStatus> MakeHandle(Isolate& isolate,
-                                                          Value value,
-                                                          FutureDiagnostic diagnostic = {}) {
-  std::unique_ptr<VelaAotHandle> owned(new (std::nothrow)
-                                           VelaAotHandle(isolate, value, std::move(diagnostic)));
-  if (owned == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  return owned.release();
+bool IsOwner(const VelaAotScope* scope) {
+  return scope != nullptr && scope->isolate().scheduler().IsOwnerThread();
 }
 
-std::expected<VelaAotValue, ExecutionStatus> EncodePublic(Isolate& isolate, Value value) {
+Result<Value> ReadLocal(VelaAotLocal local) {
+  if (!IsOwner(local.scope)) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+  }
+  if (local.slot == nullptr) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+  }
+  return *static_cast<const Value*>(local.slot);
+}
+
+VelaAotStatus StoreError(Error detail, VelaAotError** output) {
+  auto status = ToNativeStatus(detail.status);
+  if (output != nullptr) {
+    std::unique_ptr<VelaAotError> owned(new (std::nothrow) VelaAotError{std::move(detail)});
+    *output = owned.release();
+    if (*output == nullptr) {
+      status = ToNativeStatus(ExecutionStatus::OutOfMemory);
+    }
+  }
+  return status;
+}
+
+VelaAotStatus StorePublic(HandleScope& scope, Value value, VelaAotValue& output) {
+  auto encoded = aot::Encode(scope, value);
+  if (!encoded) {
+    return ToNativeStatus(encoded.error().status);
+  }
+  output = *encoded;
+  return VELA_AOT_RETURNED;
+}
+
+Result<Value> Invoke(NativeExecution& execution,
+                     HandleScope& scope,
+                     std::uint32_t function,
+                     std::span<const VelaAotValue> input) {
+  ValueBuffer storage(input.size());
+  if (!storage.IsAllocated()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+  }
+  const auto values = storage.values();
+  const RootRange roots(scope.isolate().heap(), values.data(), values.size(), RootOwner::Runtime);
+  for (std::size_t index = 0; index < input.size(); ++index) {
+    auto value = aot::Decode(scope, input[index]);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    values[index] = *value;
+  }
+  const auto invoked = InvokeNativeEntry(execution, function, values);
+  if (!invoked) {
+    return std::unexpected(vela::internal::CaptureHostError(execution, invoked.error()));
+  }
+  return *invoked;
+}
+
+}  // namespace
+
+namespace aot {
+
+Error TakeError(VelaAotStatus status, VelaAotError* error) {
+  const std::unique_ptr<VelaAotError> owned(error);
+  return owned ? std::move(owned->detail)
+               : Error{
+                     .status = static_cast<ExecutionStatus>(status),
+                     .message = {},
+                     .stack_trace = {},
+                 };
+}
+
+VelaAotLocal Borrow(Local<vela::Value> value) noexcept {
+  return {
+      .scope = &vela::internal::HandleAccess::Scope(value),
+      .slot = &vela::internal::HandleAccess::Slot(value),
+  };
+}
+
+Result<VelaAotValue> Encode(HandleScope& scope, Value value) {
   VelaAotValue result{};
   if (value.IsReference()) {
-    const auto handle = MakeHandle(isolate, value);
-    if (!handle) {
-      return std::unexpected(handle.error());
+    auto local = vela::internal::HandleAccess::Root<vela::Value>(scope, value);
+    if (!local) {
+      return std::unexpected(std::move(local.error()));
     }
-    result.kind = VELA_AOT_HANDLE;
-    result.payload = std::bit_cast<std::uint64_t>(*handle);
+    result.kind = VELA_AOT_LOCAL;
+    result.local = Borrow(*local);
   } else if (value.IsInteger()) {
     result.kind = VELA_AOT_INTEGER;
     result.payload = std::bit_cast<std::uint64_t>(value.AsInteger());
@@ -79,109 +145,142 @@ std::expected<VelaAotValue, ExecutionStatus> EncodePublic(Isolate& isolate, Valu
   return result;
 }
 
-std::expected<Value, ExecutionStatus> DecodePublic(Isolate& isolate, const VelaAotValue& input) {
+Result<Value> Decode(HandleScope& scope, const VelaAotValue& input) {
   if (input.reserved_byte != 0 || input.reserved_half != 0 || input.reserved_word != 0) {
-    return std::unexpected(ExecutionStatus::TypeError);
+    return std::unexpected(
+        Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
   }
   switch (input.kind) {
     case VELA_AOT_NULL:
-      return input.payload == 0 ? std::expected<Value, ExecutionStatus>(Value::Null())
-                                : std::unexpected(ExecutionStatus::TypeError);
+      if (input.payload == 0) {
+        return Value::Null();
+      }
+      break;
     case VELA_AOT_BOOLEAN:
-      return input.payload <= 1
-                 ? std::expected<Value, ExecutionStatus>(Value::Boolean(input.payload != 0))
-                 : std::unexpected(ExecutionStatus::TypeError);
+      if (input.payload <= 1) {
+        return Value::Boolean(input.payload != 0);
+      }
+      break;
     case VELA_AOT_INTEGER:
       return Value::Integer(std::bit_cast<std::int64_t>(input.payload));
     case VELA_AOT_DOUBLE:
       return Value::Double(std::bit_cast<double>(input.payload));
-    case VELA_AOT_HANDLE: {
-      const auto* handle = std::bit_cast<const VelaAotHandle*>(input.payload);
-      if (handle == nullptr) {
-        return std::unexpected(ExecutionStatus::TypeError);
+    case VELA_AOT_LOCAL:
+      if (input.local.scope == nullptr || &input.local.scope->isolate() != &scope.isolate()) {
+        return std::unexpected(
+            Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
       }
-      return handle->isolate == &isolate ? std::expected<Value, ExecutionStatus>(handle->value)
-                                         : std::unexpected(ExecutionStatus::InvalidIsolate);
-    }
+      return ReadLocal(input.local);
     default:
-      return std::unexpected(ExecutionStatus::TypeError);
+      break;
   }
+  return std::unexpected(
+      Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
 }
 
-VelaAotStatus StoreError(Isolate& isolate,
-                         ExecutionStatus status,
-                         Value value,
-                         FutureDiagnostic diagnostic,
-                         VelaAotHandle** error) {
-  if (error == nullptr) {
-    return ToNativeStatus(status);
+Result<Local<vela::Value>> ReceiveLocal(HandleScope& scope, const VelaAotValue& value) {
+  const auto decoded = Decode(scope, value);
+  if (!decoded) {
+    return std::unexpected(decoded.error());
   }
-  if (diagnostic.message.empty()) {
-    diagnostic.message = ExecutionStatusName(status);
+  if (value.kind == VELA_AOT_LOCAL) {
+    auto& slot = *static_cast<Value*>(value.local.slot);
+    return vela::internal::HandleAccess::Borrow<vela::Value>(scope, slot);
   }
-  diagnostic.status = status;
-  if (value.IsNull() && status != ExecutionStatus::OutOfMemory) {
-    const auto created =
-        CreateError(isolate.heap(), isolate.error_layout(),
-                    {.message = diagnostic.message, .code = ExecutionStatusCode(status)});
-    if (!created) {
-      return ToNativeStatus(created.error());
-    }
-    value = *created;
-  }
-  const auto owned = MakeHandle(isolate, value, std::move(diagnostic));
-  if (!owned) {
-    return ToNativeStatus(owned.error());
-  }
-  *error = *owned;
-  return ToNativeStatus(status);
+  return vela::internal::HandleAccess::Root<vela::Value>(scope, *decoded);
 }
 
-VelaAotStatus StorePublic(Isolate& isolate, Value value, VelaAotValue* output) {
-  const auto encoded = EncodePublic(isolate, value);
-  if (!encoded) {
-    return ToNativeStatus(encoded.error());
-  }
-  *output = *encoded;
-  return VELA_AOT_RETURNED;
+}  // namespace aot
+
+extern "C" VelaAotIsolate* vela_aot_v2_isolate_create() {
+  std::unique_ptr<Isolate> owned(new (std::nothrow) Isolate);
+  return owned.release();
 }
 
-std::expected<Value, ExecutionStatus> Invoke(NativeExecution& execution,
-                                             std::uint32_t function,
-                                             std::span<const VelaAotValue> input) {
-  ValueBuffer storage(input.size());
-  if (!storage.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  auto& isolate = execution.isolate();
-  const auto values = storage.values();
-  const RootRange roots(isolate.heap(), values.data(), values.size(), RootOwner::Runtime);
-  for (std::size_t index = 0; index < input.size(); ++index) {
-    const auto value = DecodePublic(isolate, input.subspan(index).front());
-    if (!value) {
-      return std::unexpected(value.error());
-    }
-    values.subspan(index).front() = *value;
-  }
-  return InvokeNativeEntry(execution, function, values);
-}
-
-}  // namespace
-
-extern "C" VelaAotIsolate* vela_aot_v1_isolate_create() {
-  std::unique_ptr<Isolate> isolate(new (std::nothrow) Isolate);
-  return isolate.release();
-}
-
-extern "C" void vela_aot_v1_isolate_release(VelaAotIsolate* isolate) {
+extern "C" void vela_aot_v2_isolate_release(VelaAotIsolate* isolate) {
   const std::unique_ptr<Isolate> owned(isolate);
 }
 
-extern "C" VelaAotStatus vela_aot_v1_instantiate(VelaAotIsolate* owner,
+extern "C" VelaAotStatus vela_aot_v2_scope_create(VelaAotIsolate* isolate, VelaAotScope** scope) {
+  if (isolate == nullptr || !isolate->scheduler().IsOwnerThread()) {
+    return ToNativeStatus(ExecutionStatus::InvalidIsolate);
+  }
+  if (scope == nullptr) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
+  }
+  *scope = nullptr;
+  auto* memory = isolate->heap().AllocateNative(sizeof(HandleScope));
+  if (memory == nullptr) {
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
+  }
+  *scope = std::construct_at(static_cast<HandleScope*>(memory), *isolate);
+  return VELA_AOT_RETURNED;
+}
+
+extern "C" void vela_aot_v2_scope_release(VelaAotScope* scope) {
+  if (scope != nullptr) {
+    auto& heap = scope->isolate().heap();
+    scope->~HandleScope();
+    heap.FreeNative(scope);
+  }
+}
+
+extern "C" VelaAotStatus vela_aot_v2_persist(VelaAotLocal local, VelaAotPersistent** persistent) {
+  if (persistent == nullptr) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
+  }
+  *persistent = nullptr;
+  const auto value = ReadLocal(local);
+  if (!value) {
+    return ToNativeStatus(value.error().status);
+  }
+  auto& isolate = local.scope->isolate();
+  auto root = HostRoot::Create(isolate, *value);
+  if (!root) {
+    return ToNativeStatus(root.error());
+  }
+  auto* memory = isolate.heap().AllocateNative(sizeof(VelaAotPersistent));
+  if (memory == nullptr) {
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
+  }
+  *persistent = std::construct_at(static_cast<VelaAotPersistent*>(memory), std::move(*root));
+  return VELA_AOT_RETURNED;
+}
+
+extern "C" VelaAotStatus vela_aot_v2_localize(VelaAotScope* scope,
+                                              const VelaAotPersistent* persistent,
+                                              VelaAotLocal* local) {
+  if (!IsOwner(scope)) {
+    return ToNativeStatus(ExecutionStatus::InvalidIsolate);
+  }
+  if (persistent == nullptr || local == nullptr) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
+  }
+  const auto& root = persistent->root;
+  if (&scope->isolate() != &root.isolate()) {
+    return ToNativeStatus(ExecutionStatus::InvalidIsolate);
+  }
+  const auto result = vela::internal::HandleAccess::Root<vela::Value>(*scope, root.value());
+  if (!result) {
+    return ToNativeStatus(result.error().status);
+  }
+  *local = aot::Borrow(*result);
+  return VELA_AOT_RETURNED;
+}
+
+extern "C" void vela_aot_v2_persistent_release(VelaAotPersistent* persistent) {
+  if (persistent != nullptr) {
+    auto& heap = persistent->root.isolate().heap();
+    persistent->~VelaAotPersistent();
+    heap.FreeNative(persistent);
+  }
+}
+
+extern "C" VelaAotStatus vela_aot_v2_instantiate(VelaAotIsolate* isolate,
                                                  const void* image,
                                                  VelaAotInstance** instance,
-                                                 VelaAotHandle** error) {
-  if (owner == nullptr || !owner->scheduler().IsOwnerThread()) {
+                                                 VelaAotError** error) {
+  if (isolate == nullptr || !isolate->scheduler().IsOwnerThread()) {
     return ToNativeStatus(ExecutionStatus::InvalidIsolate);
   }
   if (instance == nullptr || image == nullptr) {
@@ -191,157 +290,173 @@ extern "C" VelaAotStatus vela_aot_v1_instantiate(VelaAotIsolate* owner,
   if (error != nullptr) {
     *error = nullptr;
   }
-  auto created = NativeInstance::Instantiate(*owner, *static_cast<const NativeImage*>(image));
+  auto created = NativeInstance::Instantiate(*isolate, *static_cast<const NativeImage*>(image));
   if (!created) {
-    const auto& failure = created.error();
-    const auto status = failure.status == NativeInstantiationStatus::OutOfMemory
-                            ? ExecutionStatus::OutOfMemory
-                            : ExecutionStatus::InvalidEntry;
+    auto& failure = created.error();
     return StoreError(
-        *owner, status, Value::Null(),
-        {.message = failure.message, .stack_trace = {}, .status = status, .origin = {}}, error);
+        {
+            .status = failure.status == NativeInstantiationStatus::OutOfMemory
+                          ? ExecutionStatus::OutOfMemory
+                          : ExecutionStatus::InvalidEntry,
+            .message = std::move(failure.message),
+            .stack_trace = {},
+        },
+        error);
   }
   *instance = created->release();
   return VELA_AOT_RETURNED;
 }
 
-extern "C" void vela_aot_v1_instance_release(VelaAotInstance* instance) {
+extern "C" void vela_aot_v2_instance_release(VelaAotInstance* instance) {
   const std::unique_ptr<NativeInstance> owned(instance);
 }
 
-extern "C" VelaAotStatus vela_aot_v1_invoke(VelaAotInstance* native,
+extern "C" VelaAotStatus vela_aot_v2_invoke(VelaAotScope* scope,
+                                            VelaAotInstance* instance,
                                             const void* image,
                                             std::uint32_t function,
                                             const VelaAotValue* arguments,
                                             std::uint64_t count,
                                             VelaAotValue* result,
-                                            VelaAotHandle** error) {
-  if (native == nullptr || !native->isolate().scheduler().IsOwnerThread()) {
+                                            VelaAotError** error) {
+  if (!IsOwner(scope) || instance == nullptr || &scope->isolate() != &instance->isolate()) {
     return ToNativeStatus(ExecutionStatus::InvalidIsolate);
   }
-  if (image != &native->image() || result == nullptr || (count != 0 && arguments == nullptr)) {
+  if (image != &instance->image() || result == nullptr || (count != 0 && arguments == nullptr)) {
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
   if (error != nullptr) {
     *error = nullptr;
   }
-  NativeExecution execution(*native);
-  const auto invoked = Invoke(execution, function, {arguments, count});
-  if (invoked) {
-    return StorePublic(native->isolate(), *invoked, result);
+  auto* parent = scope->isolate().native_control().state().host_execution;
+  if (parent != nullptr && &parent->instance().code_identity() != &instance->code_identity()) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
-  const auto status = invoked.error();
-  return StoreError(native->isolate(), status, execution.ExceptionPayload(),
-                    execution.FailureDiagnostic(status), error);
+  NativeExecution execution(*instance, parent);
+  auto invoked = Invoke(execution, *scope, function, {arguments, count});
+  if (!invoked) {
+    return StoreError(std::move(invoked.error()), error);
+  }
+  return StorePublic(*scope, *invoked, *result);
 }
 
-extern "C" VelaAotStatus vela_aot_v1_string_create(VelaAotIsolate* owner,
+extern "C" VelaAotStatus vela_aot_v2_string_create(VelaAotScope* scope,
                                                    const char* text,
                                                    std::uint64_t size,
-                                                   VelaAotHandle** result) {
-  if (owner == nullptr || !owner->scheduler().IsOwnerThread()) {
+                                                   VelaAotLocal* result) {
+  if (!IsOwner(scope)) {
     return ToNativeStatus(ExecutionStatus::InvalidIsolate);
   }
   if (result == nullptr || (text == nullptr && size != 0)) {
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
-  *result = nullptr;
-  const std::string_view source(text != nullptr ? text : "", size);
-  if (InvalidUtf8Offset(source)) {
-    return ToNativeStatus(ExecutionStatus::TypeError);
+  const auto string =
+      vela::CreateString(*scope, std::string_view(text != nullptr ? text : "", size));
+  if (!string) {
+    return ToNativeStatus(string.error().status);
   }
-  auto* string = owner->heap().AllocateString(source);
-  if (string == nullptr) {
-    return ToNativeStatus(ExecutionStatus::OutOfMemory);
-  }
-  const auto owned = MakeHandle(*owner, Value::String(string));
-  if (!owned) {
-    return ToNativeStatus(owned.error());
-  }
-  *result = *owned;
+  *result = aot::Borrow(string->ToValue());
   return VELA_AOT_RETURNED;
 }
 
-extern "C" VelaAotStatus vela_aot_v1_string_view(const VelaAotHandle* handle,
+extern "C" VelaAotStatus vela_aot_v2_string_view(VelaAotLocal string,
                                                  const char** text,
                                                  std::uint64_t* size) {
-  if (handle == nullptr || text == nullptr || size == nullptr || !handle->value.IsString()) {
+  const auto value = ReadLocal(string);
+  if (!value) {
+    return ToNativeStatus(value.error().status);
+  }
+  if (text == nullptr || size == nullptr || !value->IsString()) {
     return ToNativeStatus(ExecutionStatus::TypeError);
   }
-  const auto value = handle->value.AsString()->value();
-  *text = value.data();
-  *size = value.size();
+  const auto bytes = vela::internal::HostStringUtf8(*value);
+  *text = bytes.data();
+  *size = bytes.size();
   return VELA_AOT_RETURNED;
 }
 
-extern "C" void vela_aot_v1_handle_release(VelaAotHandle* handle) {
-  const std::unique_ptr<VelaAotHandle> owned(handle);
-}
-
-extern "C" VelaAotStatus vela_aot_v1_future_wait(VelaAotHandle* future,
+extern "C" VelaAotStatus vela_aot_v2_future_wait(VelaAotScope* scope,
+                                                 VelaAotLocal future,
                                                  std::uint8_t wait_for_host,
                                                  VelaAotValue* result,
-                                                 VelaAotHandle** error) {
-  if (future == nullptr || result == nullptr || wait_for_host > 1 || !future->value.IsObject()) {
-    return ToNativeStatus(ExecutionStatus::TypeError);
-  }
-  auto& isolate = *future->isolate;
-  if (!isolate.scheduler().IsOwnerThread()) {
+                                                 VelaAotError** error) {
+  if (!IsOwner(scope) || future.scope == nullptr || &scope->isolate() != &future.scope->isolate()) {
     return ToNativeStatus(ExecutionStatus::InvalidIsolate);
+  }
+  if (result == nullptr || wait_for_host > 1) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
   if (error != nullptr) {
     *error = nullptr;
   }
-  auto* value = Heap::GetFuture(*future->value.AsObject());
-  if (value == nullptr) {
+  const auto value = ReadLocal(future);
+  if (!value) {
+    return ToNativeStatus(value.error().status);
+  }
+  if (!value->IsObject() || Heap::GetFuture(*value->AsObject()) == nullptr) {
     return ToNativeStatus(ExecutionStatus::TypeError);
   }
-  value->MarkObserved();
-  const auto mode =
-      wait_for_host != 0 ? FuturePumpMode::WaitForHost : FuturePumpMode::AvailableWork;
-  if (isolate.scheduler().PumpUntil(*value, mode) == FuturePumpResult::Idle) {
-    return ToNativeStatus(ExecutionStatus::AsyncIdle);
+  auto output = vela::internal::ReceiveHostValue<vela::Value>(*scope, [&](Value& destination) {
+    return vela::internal::WaitHostFuture(
+        *scope, *value, wait_for_host == 0 ? WaitMode::AvailableWork : WaitMode::WaitForHost,
+        destination);
+  });
+  if (!output) {
+    return StoreError(std::move(output.error()), error);
   }
-  if (const auto completed = value->value()) {
-    return StorePublic(isolate, *completed, result);
-  }
-  const auto diagnostic = value->error_diagnostic();
-  const auto payload = value->error();
-  if (!diagnostic || !payload) {
-    std::unreachable();
-  }
-  return StoreError(isolate, diagnostic->status, *payload, *diagnostic, error);
+  return StorePublic(*scope, vela::internal::HandleAccess::Read(*output), *result);
 }
 
-extern "C" const char* vela_aot_v1_status_code(VelaAotStatus status) {
-  return status <= ToNativeStatus(ExecutionStatus::ExecutionStopped)
+extern "C" const char* vela_aot_v2_status_code(VelaAotStatus status) {
+  return status <= ToNativeStatus(ExecutionStatus::TargetDeleted)
              ? ExecutionStatusCode(static_cast<ExecutionStatus>(status)).data()
              : "InvalidStatus";
 }
 
-extern "C" VelaAotStatus vela_aot_v1_error_message(const VelaAotHandle* error,
+extern "C" void vela_aot_v2_error_release(VelaAotError* error) {
+  const std::unique_ptr<VelaAotError> owned(error);
+}
+
+extern "C" VelaAotStatus vela_aot_v2_error_payload(VelaAotScope* scope,
+                                                   const VelaAotError* error,
+                                                   VelaAotLocal* payload) {
+  if (!IsOwner(scope)) {
+    return ToNativeStatus(ExecutionStatus::InvalidIsolate);
+  }
+  if (error == nullptr || payload == nullptr) {
+    return ToNativeStatus(ExecutionStatus::InvalidEntry);
+  }
+  const auto local = error->detail.payload.ToLocal(*scope);
+  if (!local) {
+    return ToNativeStatus(local.error().status);
+  }
+  *payload = aot::Borrow(*local);
+  return VELA_AOT_RETURNED;
+}
+
+extern "C" VelaAotStatus vela_aot_v2_error_message(const VelaAotError* error,
                                                    const char** text,
                                                    std::uint64_t* size) {
   if (error == nullptr || text == nullptr || size == nullptr) {
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
-  const auto& message = error->diagnostic.message;
+  const auto& message = error->detail.message;
   *text = message.data();
   *size = message.size();
   return VELA_AOT_RETURNED;
 }
 
-extern "C" VelaAotStatus vela_aot_v1_error_frame(const VelaAotHandle* error,
+extern "C" VelaAotStatus vela_aot_v2_error_frame(const VelaAotError* error,
                                                  std::uint64_t index,
                                                  VelaAotTraceFrame* frame) {
   if (error == nullptr || frame == nullptr) {
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
-  const auto& trace = error->diagnostic.stack_trace;
+  const auto& trace = error->detail.stack_trace;
   if (index >= trace.size()) {
     return ToNativeStatus(ExecutionStatus::IndexOutOfBounds);
   }
-  const auto& source = trace.at(index);
+  const auto& source = trace[index];
   *frame = {
       .function = source.function.data(),
       .function_size = source.function.size(),

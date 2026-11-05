@@ -44,6 +44,7 @@
 #include "compiler/jit/engine.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/host_header.h"
 #include "compiler/native/native_image_data.h"
 #include "runtime/native/native_image.h"
 
@@ -402,6 +403,14 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
                                                                       const CompileOptions& options,
                                                                       CodeReuseCache* reuse) {
   const auto exports = ExportedFunctions(program);
+  std::string host_header;
+  if (options.host_namespace) {
+    auto emitted = native::EmitHostDeclarations(program, *options.host_namespace);
+    if (!emitted) {
+      return std::unexpected(Diagnostic(emitted.error()));
+    }
+    host_header = std::move(*emitted);
+  }
   using Clock = std::chrono::steady_clock;
   CompileTimings timings;
   const auto generation_started = Clock::now();
@@ -495,6 +504,7 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
       .cache = cached.status,
       .timings = timings,
       .compiled_functions = compiled_functions,
+      .host_header = std::move(host_header),
   };
 }
 

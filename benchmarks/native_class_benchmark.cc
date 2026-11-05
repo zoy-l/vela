@@ -42,6 +42,7 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::benchmarks::native_class {
 namespace {
@@ -75,8 +76,8 @@ std::int64_t FreeGet(const NativeClassHost& object) noexcept {
 void FreeSet(NativeClassHost& object, std::int64_t value) noexcept {
   object.SetValue(value);
 }
-std::expected<std::int64_t, runtime::NativeError> FreeFailure(const NativeClassHost& object,
-                                                              bool fail) noexcept {
+std::expected<std::int64_t, vela::Error> FreeFailure(const NativeClassHost& object,
+                                                     bool fail) noexcept {
   return object.Failure(fail);
 }
 std::int64_t FreeCollect(runtime::NativeContext& context,
@@ -88,7 +89,7 @@ std::int64_t FreeReenter(const NativeClassHost& object, std::int64_t value) noex
   return object.Reenter(value);
 }
 
-std::expected<runtime::NativeConstructed<NativeClassHost>, runtime::NativeError> Construct(
+std::expected<runtime::NativeConstructed<NativeClassHost>, vela::Error> Construct(
     runtime::NativeContext& context,
     std::int64_t initial) noexcept {
   return context.Construct<NativeClassHost>(initial);

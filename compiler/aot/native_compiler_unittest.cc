@@ -264,7 +264,7 @@ export func iterate(seed: int, count: int): int {
 
 TEST(NativeCompilerTest, VectorizesIndependentObjectFieldUpdates) {
   const auto prepared = Prepare(R"(
-class Particle { x: double; y: double; z: double; vx: double; vy: double; vz: double; }
+export class Particle { x: double; y: double; z: double; vx: double; vy: double; vz: double; }
 export func update(points: Particle[]): void {
   for (const point in points) {
     point.x += point.vx;
@@ -347,10 +347,10 @@ export func calculate(count: int): int {
         }
       }
       for (const auto* store : calls.frame_stores) {
-        // 循环内只重置函数与指令位置；固定元数据在调用者入口初始化。
+        // 循环内只重置函数与指令位置；优化器可将相邻的整数常量写入合成向量。
         const auto* value = store->getValueOperand();
-        EXPECT_TRUE(llvm::isa<llvm::ConstantInt>(value));
-        EXPECT_TRUE(value->getType()->isIntegerTy());
+        EXPECT_TRUE(llvm::isa<llvm::Constant>(value)) << result->llvm_ir;
+        EXPECT_TRUE(value->getType()->isIntOrIntVectorTy()) << result->llvm_ir;
       }
       const auto frame_store_count = calls.frame_stores.size();
       EXPECT_GE(frame_store_count, 1U) << result->llvm_ir;
@@ -362,7 +362,7 @@ export func calculate(count: int): int {
 
 TEST(NativeCompilerTest, NullComparisonsUsePresenceForReferencesScalarsAndDynamicValues) {
   const auto prepared = Prepare(R"(
-class Box { value: int = 0; }
+export class Box { value: int = 0; }
 export func object(value: Box?): bool { return value == null; }
 export func text(value: string?): bool { return null == value; }
 export func integer(value: int?): bool { return value != null; }

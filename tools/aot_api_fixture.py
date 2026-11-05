@@ -1,8 +1,8 @@
-"""Owned host ABI contract fixtures for statically linked native images."""
+"""Common local scopes, persistent roots and typed AOT host contracts."""
 
 SOURCE = """
 external func collect(): void;
-class Box { text: string = 'retained'; }
+export class Box { text: string = 'retained'; }
 export func calculate(value: Box?): Box {
   collect();
   if (value != null) {
@@ -14,197 +14,188 @@ export func calculate(value: Box?): Box {
 """
 
 HOST_TESTS = r'''
+#include <vela/host.h>
 #include "runtime/native/native_api.h"
 extern "C" const NativeImage* PUBLIC_IMAGE() noexcept;
 
-using PublicHandle = std::unique_ptr<VelaAotHandle, decltype(&vela_aot_v1_handle_release)>;
-using PublicInstance = std::unique_ptr<VelaAotInstance, decltype(&vela_aot_v1_instance_release)>;
-PublicHandle OwnPublicHandle(VelaAotHandle* handle) { return {handle, vela_aot_v1_handle_release}; }
-PublicHandle OwnPublicValue(VelaAotValue value) {
-  return OwnPublicHandle(value.kind == VELA_AOT_HANDLE
-                             ? reinterpret_cast<VelaAotHandle*>(value.payload) : nullptr);
-}
+using PublicPersistent = std::unique_ptr<VelaAotPersistent, decltype(&vela_aot_v2_persistent_release)>;
+using PublicInstance = std::unique_ptr<VelaAotInstance, decltype(&vela_aot_v2_instance_release)>;
+using PublicScope = std::unique_ptr<VelaAotScope, decltype(&vela_aot_v2_scope_release)>;
+using PublicError = std::unique_ptr<VelaAotError, decltype(&vela_aot_v2_error_release)>;
 std::uint32_t PublicCalculateIndex(const NativeImage& image) {
   const auto functions = image.functions.values();
   for (std::size_t index = 0; index < functions.size(); ++index) {
-    if (functions.subspan(index).front().name.text() == "calculate") {
-      return static_cast<std::uint32_t>(index);
-    }
+    if (functions[index].name.text() == "calculate") { return static_cast<std::uint32_t>(index); }
   }
   return kNoNativeIndex;
 }
 
-TEST(NativeHostTest, PublicManagedResultsRetainObjectsAfterInstancesAndInputsRelease) {
+TEST(NativeHostTest, PublicManagedResultsRetainObjectsAfterInstancesAndScopesRelease) {
   Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
   const auto baseline = isolate.heap().object_count();
+  PublicPersistent retained(nullptr, vela_aot_v2_persistent_release);
   {
+    VelaAotScope* raw_scope = nullptr;
+    ASSERT_EQ(vela_aot_v2_scope_create(&isolate, &raw_scope), VELA_AOT_RETURNED);
+    PublicScope scope(raw_scope, vela_aot_v2_scope_release);
     VelaAotInstance* raw = nullptr;
-    ASSERT_EQ(vela_aot_v1_instantiate(&isolate, PUBLIC_IMAGE(), &raw, nullptr),
+    ASSERT_EQ(vela_aot_v2_instantiate(&isolate, PUBLIC_IMAGE(), &raw, nullptr), VELA_AOT_RETURNED);
+    PublicInstance instance(raw, vela_aot_v2_instance_release);
+    VelaAotValue empty{}, output{};
+    ASSERT_EQ(vela_aot_v2_invoke(scope.get(), instance.get(), PUBLIC_IMAGE(),
+                                 PublicCalculateIndex(*PUBLIC_IMAGE()), &empty, 1, &output, nullptr),
               VELA_AOT_RETURNED);
-    PublicInstance first(raw, vela_aot_v1_instance_release);
-    const auto index = PublicCalculateIndex(*PUBLIC_IMAGE());
-    const VelaAotValue empty{};
-    VelaAotValue output{};
-    ASSERT_EQ(vela_aot_v1_invoke(first.get(), PUBLIC_IMAGE(), index, &empty, 1, &output, nullptr), VELA_AOT_RETURNED);
-    ASSERT_EQ(output.kind, VELA_AOT_HANDLE);
-    auto original = OwnPublicValue(output);
-    first.reset();
-    isolate.heap().Collect();
-    raw = nullptr;
-    ASSERT_EQ(vela_aot_v1_instantiate(&isolate, PUBLIC_IMAGE(), &raw, nullptr),
-              VELA_AOT_RETURNED);
-    PublicInstance second(raw, vela_aot_v1_instance_release);
-    VelaAotValue copied{};
-    ASSERT_EQ(vela_aot_v1_invoke(second.get(), PUBLIC_IMAGE(), index, &output, 1, &copied, nullptr), VELA_AOT_RETURNED);
-    auto retained = OwnPublicValue(copied);
-    original.reset();
-    second.reset();
-    isolate.heap().Collect();
-    EXPECT_GT(isolate.heap().object_count(), baseline);
+    ASSERT_EQ(output.kind, VELA_AOT_LOCAL);
+    VelaAotPersistent* root = nullptr;
+    ASSERT_EQ(vela_aot_v2_persist(output.local, &root), VELA_AOT_RETURNED);
+    retained.reset(root);
+  }
+  isolate.heap().Collect();
+  EXPECT_GT(isolate.heap().object_count(), baseline);
+  {
+    vela::HandleScope scope(isolate);
+    VelaAotLocal local{};
+    ASSERT_EQ(vela_aot_v2_localize(&scope, retained.get(), &local), VELA_AOT_RETURNED);
     retained.reset();
+    VelaAotInstance* raw = nullptr;
+    ASSERT_EQ(vela_aot_v2_instantiate(&isolate, PUBLIC_IMAGE(), &raw, nullptr), VELA_AOT_RETURNED);
+    PublicInstance instance(raw, vela_aot_v2_instance_release);
+    VelaAotValue argument{.kind = VELA_AOT_LOCAL, .local = local}, output{};
+    ASSERT_EQ(vela_aot_v2_invoke(&scope, instance.get(), PUBLIC_IMAGE(),
+                                 PublicCalculateIndex(*PUBLIC_IMAGE()), &argument, 1, &output, nullptr),
+              VELA_AOT_RETURNED);
+    const auto original = vela::runtime::aot::Decode(scope, argument);
+    const auto copied = vela::runtime::aot::Decode(scope, output);
+    ASSERT_TRUE(original);
+    ASSERT_TRUE(copied);
+    EXPECT_EQ(original->AsObject(), copied->AsObject());
   }
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), baseline);
 }
 
 TEST(NativeHostTest, PublicBoundaryChecksIsolateNominalTypesCanonicalValuesAndUtf8) {
-  Isolate isolate(1);
-  Isolate foreign(1);
+  Isolate isolate(1), foreign(1);
+  vela::HandleScope scope(isolate), other(foreign);
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  VelaAotInstance* raw = nullptr;
-  ASSERT_EQ(vela_aot_v1_instantiate(&isolate, PUBLIC_IMAGE(), &raw, nullptr),
-            VELA_AOT_RETURNED);
-  PublicInstance instance(raw, vela_aot_v1_instance_release);
-  const auto index = PublicCalculateIndex(*PUBLIC_IMAGE());
-  VelaAotHandle* text = nullptr;
-  ASSERT_EQ(vela_aot_v1_string_create(&foreign, "foreign", 7, &text),
-            VELA_AOT_RETURNED);
-  auto foreign_text = OwnPublicHandle(text);
-  VelaAotValue argument{.payload = reinterpret_cast<std::uintptr_t>(text), .kind = VELA_AOT_HANDLE};
-  VelaAotValue output{};
-  EXPECT_EQ(vela_aot_v1_invoke(instance.get(), PUBLIC_IMAGE(), index, &argument, 1, &output, nullptr),
-            static_cast<VelaAotStatus>(ExecutionStatus::InvalidIsolate));
-  text = nullptr;
-  ASSERT_EQ(vela_aot_v1_string_create(&isolate, "local", 5, &text),
-            VELA_AOT_RETURNED);
-  auto local_text = OwnPublicHandle(text);
-  argument.payload = reinterpret_cast<std::uintptr_t>(text);
-  EXPECT_EQ(vela_aot_v1_invoke(instance.get(), PUBLIC_IMAGE(), index, &argument, 1, &output, nullptr),
-            static_cast<VelaAotStatus>(ExecutionStatus::InvalidCast));
+  auto instance = PUBLIC_NAMESPACE::Instantiate(&isolate);
+  ASSERT_TRUE(instance);
+  VelaAotLocal text{};
+  ASSERT_EQ(vela_aot_v2_string_create(&other, "foreign", 7, &text), VELA_AOT_RETURNED);
+  VelaAotValue argument{.kind = VELA_AOT_LOCAL, .local = text}, output{};
+  const auto invoke = [&] { return vela_aot_v2_invoke(&scope, instance->get(), PUBLIC_IMAGE(),
+      PublicCalculateIndex(*PUBLIC_IMAGE()), &argument, 1, &output, nullptr); };
+  EXPECT_EQ(invoke(), static_cast<VelaAotStatus>(ExecutionStatus::InvalidIsolate));
+  ASSERT_EQ(vela_aot_v2_string_create(&scope, "local", 5, &text), VELA_AOT_RETURNED);
+  argument.local = text;
+  EXPECT_EQ(invoke(), static_cast<VelaAotStatus>(ExecutionStatus::InvalidCast));
   argument = {.payload = 2, .kind = VELA_AOT_BOOLEAN};
-  EXPECT_EQ(vela_aot_v1_invoke(instance.get(), PUBLIC_IMAGE(), index, &argument, 1, &output, nullptr),
-            static_cast<VelaAotStatus>(ExecutionStatus::TypeError));
-  const auto invalid_utf8 = std::string(1, static_cast<char>(0xff));
-  VelaAotHandle* invalid = nullptr;
-  EXPECT_EQ(vela_aot_v1_string_create(&isolate, invalid_utf8.data(), 1, &invalid),
-            static_cast<VelaAotStatus>(ExecutionStatus::TypeError));
-  EXPECT_EQ(invalid, nullptr);
+  EXPECT_EQ(invoke(), static_cast<VelaAotStatus>(ExecutionStatus::TypeError));
+  const auto invalid = std::string(1, static_cast<char>(0xff));
+  EXPECT_EQ(vela_aot_v2_string_create(&scope, invalid.data(), 1, &text),
+            static_cast<VelaAotStatus>(ExecutionStatus::NativeFailure));
   const char* borrowed = nullptr;
   std::uint64_t size = 0;
-  ASSERT_EQ(vela_aot_v1_string_view(local_text.get(), &borrowed, &size), VELA_AOT_RETURNED);
+  ASSERT_EQ(vela_aot_v2_string_view(text, &borrowed, &size), VELA_AOT_RETURNED);
   EXPECT_EQ(std::string_view(borrowed, size), "local");
 }
 
-TEST(NativeHostTest, PublicFutureAndErrorsTransferOwnedValuesAndLogicalTraces) {
+TEST(NativeHostTest, PublicFutureAndErrorsTransferRootedPayloadsAndLogicalTraces) {
   Isolate isolate(1);
+  vela::HandleScope scope(isolate);
   RegisterComposition(isolate);
-  VelaAotInstance* raw = nullptr;
-  ASSERT_EQ(vela_aot_v1_instantiate(&isolate, COMPOSITION_IMAGE(), &raw, nullptr),
-            VELA_AOT_RETURNED);
-  PublicInstance instance(raw, vela_aot_v1_instance_release);
-  VelaAotValue argument{.payload = 1, .kind = VELA_AOT_INTEGER};
-  VelaAotValue output{};
-  ASSERT_EQ(vela_aot_v1_invoke(instance.get(), COMPOSITION_IMAGE(), PublicCalculateIndex(*COMPOSITION_IMAGE()),
-                               &argument, 1, &output, nullptr), VELA_AOT_RETURNED);
-  auto future = OwnPublicValue(output);
-  ASSERT_NE(future, nullptr);
-  instance.reset();
+  auto instance = COMPOSITION_NAMESPACE::Instantiate(&isolate);
+  ASSERT_TRUE(instance);
+  VelaAotValue argument{.payload = 1, .kind = VELA_AOT_INTEGER}, output{};
+  ASSERT_EQ(vela_aot_v2_invoke(&scope, instance->get(), COMPOSITION_IMAGE(),
+      PublicCalculateIndex(*COMPOSITION_IMAGE()), &argument, 1, &output, nullptr), VELA_AOT_RETURNED);
+  instance->reset();
   isolate.heap().Collect();
   VelaAotValue completed{};
-  ASSERT_EQ(vela_aot_v1_future_wait(future.get(), 0, &completed, nullptr), VELA_AOT_RETURNED);
+  ASSERT_EQ(vela_aot_v2_future_wait(&scope, output.local, 0, &completed, nullptr), VELA_AOT_RETURNED);
   EXPECT_EQ(completed.kind, VELA_AOT_INTEGER);
   EXPECT_EQ(std::bit_cast<std::int64_t>(completed.payload), 42);
-  raw = nullptr;
-  ASSERT_EQ(vela_aot_v1_instantiate(&isolate, INTEGER_IMAGE(), &raw, nullptr),
-            VELA_AOT_RETURNED);
-  instance.reset(raw);
-  const std::array arguments{
-      VelaAotValue{.payload = 1, .kind = VELA_AOT_INTEGER},
+  auto integers = INTEGER_NAMESPACE::Instantiate(&isolate);
+  ASSERT_TRUE(integers);
+  const std::array arguments{VelaAotValue{.payload = 1, .kind = VELA_AOT_INTEGER},
       VelaAotValue{.payload = 1, .kind = VELA_AOT_INTEGER}, VelaAotValue{.kind = VELA_AOT_INTEGER}};
-  VelaAotHandle* failure = nullptr;
-  const auto status = vela_aot_v1_invoke(instance.get(), INTEGER_IMAGE(), PublicCalculateIndex(*INTEGER_IMAGE()),
-                                         arguments.data(), arguments.size(), &output, &failure);
-  auto error = OwnPublicHandle(failure);
-  EXPECT_STREQ(vela_aot_v1_status_code(status), "DivisionByZero");
-  instance.reset();
+  VelaAotError* failure = nullptr;
+  const auto status = vela_aot_v2_invoke(&scope, integers->get(), INTEGER_IMAGE(),
+      PublicCalculateIndex(*INTEGER_IMAGE()), arguments.data(), arguments.size(), &output, &failure);
+  PublicError error(failure, vela_aot_v2_error_release);
+  EXPECT_STREQ(vela_aot_v2_status_code(status), "DivisionByZero");
+  integers->reset();
   isolate.heap().Collect();
   const char* message = nullptr;
   std::uint64_t size = 0;
-  ASSERT_EQ(vela_aot_v1_error_message(error.get(), &message, &size), VELA_AOT_RETURNED);
+  ASSERT_EQ(vela_aot_v2_error_message(error.get(), &message, &size), VELA_AOT_RETURNED);
   EXPECT_EQ(std::string_view(message, size), "division by zero");
   VelaAotTraceFrame frame{};
-  ASSERT_EQ(vela_aot_v1_error_frame(error.get(), 0, &frame), VELA_AOT_RETURNED);
+  ASSERT_EQ(vela_aot_v2_error_frame(error.get(), 0, &frame), VELA_AOT_RETURNED);
   EXPECT_GT(frame.line, 0U);
   EXPECT_EQ(std::string_view(frame.function, frame.function_size), "calculate");
 }
 
-TEST(NativeHostTest, GeneratedCAndCppExportsUseTypedArgumentsResultsAndOwnedHandles) {
+TEST(NativeHostTest, GeneratedCppExportsKeepCompleteTypesAndUseTheCallersScope) {
   Isolate isolate(1);
+  vela::HandleScope scope(isolate);
   auto integers = INTEGER_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(integers.has_value());
-  std::int64_t product = 0;
-  ASSERT_EQ(INTEGER_WRAPPER(integers->get(), 0, 6, 7, &product, nullptr), VELA_AOT_RETURNED);
-  EXPECT_EQ(product, 42);
-  const auto failed = INTEGER_NAMESPACE::Call_calculate(integers->get(), 1, 1, 0);
-  ASSERT_FALSE(failed.has_value());
-  EXPECT_EQ(failed.error().code(), "DivisionByZero");
-  EXPECT_EQ(failed.error().message(), "division by zero");
+  ASSERT_TRUE(integers);
+  const auto product = INTEGER_NAMESPACE::Call_calculate(scope, integers->get(), 0, 6, 7);
+  ASSERT_TRUE(product);
+  EXPECT_EQ(*product, 42);
+  const auto failed = INTEGER_NAMESPACE::Call_calculate(scope, integers->get(), 1, 1, 0);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error().status, ExecutionStatus::DivisionByZero);
+  EXPECT_EQ(failed.error().message, "division by zero");
   auto booleans = BOOL_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(booleans.has_value());
-  const auto negated = BOOL_NAMESPACE::Call_calculate(booleans->get(), true);
-  ASSERT_TRUE(negated.has_value());
+  ASSERT_TRUE(booleans);
+  const auto negated = BOOL_NAMESPACE::Call_calculate(scope, booleans->get(), true);
+  ASSERT_TRUE(negated);
   EXPECT_FALSE(*negated);
   auto nullable = NULLABLE_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(nullable.has_value());
-  const auto present = NULLABLE_NAMESPACE::Call_calculate(nullable->get(), std::optional<std::int64_t>(42));
-  ASSERT_TRUE(present.has_value());
-  ASSERT_TRUE(present->has_value());
+  ASSERT_TRUE(nullable);
+  const auto present = NULLABLE_NAMESPACE::Call_calculate(scope, nullable->get(), std::optional<std::int64_t>(42));
+  ASSERT_TRUE(present);
+  ASSERT_TRUE(*present);
   EXPECT_EQ(**present, 42);
-  const auto absent = NULLABLE_NAMESPACE::Call_calculate(nullable->get(), std::nullopt);
-  ASSERT_TRUE(absent.has_value());
-  EXPECT_FALSE(absent->has_value());
-  auto null_test = NULL_TEST_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(null_test.has_value());
-  const auto wrong_image = NULLABLE_NAMESPACE::Call_calculate(null_test->get(), std::optional<std::int64_t>(42));
-  ASSERT_FALSE(wrong_image.has_value());
-  EXPECT_EQ(wrong_image.error().code(), "InvalidEntry");
+  const auto absent = NULLABLE_NAMESPACE::Call_calculate(scope, nullable->get(), std::nullopt);
+  ASSERT_TRUE(absent);
+  EXPECT_FALSE(*absent);
+  auto wrong_image = NULL_TEST_NAMESPACE::Instantiate(&isolate);
+  ASSERT_TRUE(wrong_image);
+  const auto wrong = NULLABLE_NAMESPACE::Call_calculate(scope, wrong_image->get(), std::optional<std::int64_t>(42));
+  ASSERT_FALSE(wrong);
+  EXPECT_EQ(wrong.error().status, ExecutionStatus::InvalidEntry);
   auto floats = FLOAT_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(floats.has_value());
-  const auto divided = FLOAT_NAMESPACE::Call_calculate(floats->get(), 84.0, 2.0);
-  ASSERT_TRUE(divided.has_value());
+  ASSERT_TRUE(floats);
+  const auto divided = FLOAT_NAMESPACE::Call_calculate(scope, floats->get(), 84.0, 2.0);
+  ASSERT_TRUE(divided);
   EXPECT_EQ(*divided, 42.0);
   auto empty = VOID_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(empty.has_value());
-  ASSERT_TRUE(VOID_NAMESPACE::Call_calculate(empty->get()).has_value());
+  ASSERT_TRUE(empty);
+  ASSERT_TRUE(VOID_NAMESPACE::Call_calculate(scope, empty->get()));
   RegisterComposition(isolate);
   auto objects = PUBLIC_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(objects.has_value());
-  const vela::runtime::aot::Handle<vela::runtime::aot::AnyTag> nothing;
-  auto object = PUBLIC_NAMESPACE::Call_calculate(objects->get(), nothing);
-  ASSERT_TRUE(object.has_value());
+  ASSERT_TRUE(objects);
+  auto object = PUBLIC_NAMESPACE::Call_calculate(scope, objects->get(), std::nullopt);
+  ASSERT_TRUE(object);
+  const auto type = vela::Type<PUBLIC_NAMESPACE::Type_Box>::Bind(**objects);
+  ASSERT_TRUE(type);
   objects->reset();
   isolate.heap().Collect();
-  EXPECT_NE(object->get(), nullptr);
+  const auto text = PUBLIC_NAMESPACE::Type_BoxMembers::Get_text(*type, scope, *object);
+  ASSERT_TRUE(text);
+  EXPECT_EQ(text->Utf8(), "retained");
   auto async = COMPOSITION_NAMESPACE::Instantiate(&isolate);
-  ASSERT_TRUE(async.has_value());
-  auto future = COMPOSITION_NAMESPACE::Call_calculate(async->get(), 1);
-  ASSERT_TRUE(future.has_value());
+  ASSERT_TRUE(async);
+  auto future = COMPOSITION_NAMESPACE::Call_calculate(scope, async->get(), 1);
+  ASSERT_TRUE(future);
   async->reset();
   isolate.heap().Collect();
-  auto result = vela::runtime::aot::Wait(*future);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->raw().kind, VELA_AOT_INTEGER);
-  EXPECT_EQ(std::bit_cast<std::int64_t>(result->raw().payload), 42);
+  auto result = future->Wait(scope);
+  ASSERT_TRUE(result);
+  EXPECT_EQ(*result, 42);
 }
 '''

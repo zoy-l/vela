@@ -24,7 +24,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/test_support/checkpoint_publication.h"
 #include "runtime/async/future.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/native/native_debugger.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/strings/string.h"
@@ -308,7 +308,9 @@ TEST_P(JitDebuggerTest, ArrayGrowthReloadsStorageAndResumesAfterTheCompletedAppe
   Load(common + "func read(): int { return 40; }");
   const auto created = session_->Invoke("main.vela", "make");
   ASSERT_TRUE(created);
-  const runtime::RootedValue array(session_->isolate(), *created);
+  const auto array_storage = runtime::HostRoot::Create(session_->isolate(), *created);
+  ASSERT_TRUE(array_storage);
+  const auto& array = *array_storage;
   const auto capacity = runtime::Heap::ArrayCapacity(*array.value().AsObject());
   ASSERT_TRUE(capacity);
   for (std::uint32_t index = 0; index < *capacity; ++index) {
@@ -384,7 +386,9 @@ TEST_P(JitDebuggerTest, DeletingAPastFieldAccessKeepsAnActiveCallersRootedLocalV
       "}");
   const auto made = session_->Invoke("main.vela", "make");
   ASSERT_TRUE(made);
-  const runtime::RootedValue box(session_->isolate(), *made);
+  const auto box_storage = runtime::HostRoot::Create(session_->isolate(), *made);
+  ASSERT_TRUE(box_storage);
+  const auto& box = *box_storage;
   auto candidate = Prepare(
       "class Box {} func checkpoint(): void {} "
       "export func make(): Box { return Box(); } "
@@ -411,7 +415,9 @@ TEST_P(JitDebuggerTest, AnAlreadyResolvedMethodCallDoesNotRetainItsOldLookupBind
       "export func invoke(box: Box): int { return box.read(); }");
   const auto made = session_->Invoke("main.vela", "make");
   ASSERT_TRUE(made);
-  const runtime::RootedValue box(session_->isolate(), *made);
+  const auto box_storage = runtime::HostRoot::Create(session_->isolate(), *made);
+  ASSERT_TRUE(box_storage);
+  const auto& box = *box_storage;
   auto candidate = Prepare(
       "func checkpoint(): void {} "
       "class Box { static read(): int { return 100; } } "
@@ -517,7 +523,9 @@ TEST_P(JitDebuggerTest, GenericInterfaceMethodFramesKeepConcreteTypesDuringDeopt
       "export func count(): int { return calls; }");
   const auto created = session_->Invoke("main.vela", "factory");
   ASSERT_TRUE(created);
-  const runtime::RootedValue operation(session_->isolate(), *created);
+  const auto operation_storage = runtime::HostRoot::Create(session_->isolate(), *created);
+  ASSERT_TRUE(operation_storage);
+  const auto& operation = *operation_storage;
   auto candidate = Prepare(
       "let calls = 0; func checkpoint(): void {} "
       "interface Reader<E> { read<V extends int>(value: V): int; } "
@@ -581,12 +589,16 @@ TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginal
     ASSERT_TRUE(captured);
     const auto started = captured->Invoke({});
     ASSERT_TRUE(started);
-    const runtime::RootedValue root(session_->isolate(), *started);
+    const auto root_storage = runtime::HostRoot::Create(session_->isolate(), *started);
+    ASSERT_TRUE(root_storage);
+    const auto& root = *root_storage;
     Load("func read(): int { return 2; } export async func task(): Future<int> { return 100; }");
     ASSERT_TRUE(test::CompletesWithInteger(session_->isolate(), root.value(), 42));
     const auto restarted = captured->Invoke({});
     ASSERT_TRUE(restarted);
-    const runtime::RootedValue restarted_root(session_->isolate(), *restarted);
+    const auto restarted_root_storage = runtime::HostRoot::Create(session_->isolate(), *restarted);
+    ASSERT_TRUE(restarted_root_storage);
+    const auto& restarted_root = *restarted_root_storage;
     auto* old_future = runtime::Heap::GetFuture(*restarted_root.value().AsObject());
     ASSERT_NE(old_future, nullptr);
     ASSERT_EQ(session_->isolate().scheduler().PumpUntil(*old_future,
@@ -619,7 +631,9 @@ TEST_P(JitDebuggerTest, FusedScalarAwaitKeepsSavedReferencesAndItsVersionAfterRe
       "await Future.value(0); await Future.value(0); return int.parse(saved) + read(); }");
   const auto started = session_->Invoke("main.vela", "task");
   ASSERT_TRUE(started);
-  const runtime::RootedValue root(session_->isolate(), *started);
+  const auto root_storage = runtime::HostRoot::Create(session_->isolate(), *started);
+  ASSERT_TRUE(root_storage);
+  const auto& root = *root_storage;
   Load("func read(): int { return 2; } export async func task(): Future<int> { return 100; }");
   session_->isolate().heap().Collect();
   ASSERT_TRUE(test::CompletesWithInteger(session_->isolate(), root.value(), 42));
@@ -670,7 +684,9 @@ TEST_P(JitDebuggerTest, RejectedPublicationLeavesOptimizationAndLogicalFramesUnc
       "export func caller(box: Box): int { checkpoint(); return box.value; }");
   const auto made = session_->Invoke("main.vela", "make");
   ASSERT_TRUE(made);
-  const runtime::RootedValue root(session_->isolate(), *made);
+  const auto root_storage = runtime::HostRoot::Create(session_->isolate(), *made);
+  ASSERT_TRUE(root_storage);
+  const auto& root = *root_storage;
   auto candidate = Prepare(
       "class Box {} func stay(): void {} func checkpoint(): void { stay(); } "
       "export func make(): Box { return Box(); } "

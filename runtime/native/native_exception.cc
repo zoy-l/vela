@@ -15,8 +15,10 @@
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/handle_access.h"
 #include "runtime/native/native_image.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::runtime {
 std::vector<FutureTraceFrame> NativeExecution::CaptureTrace() const {
@@ -93,6 +95,33 @@ ExecutionStatus NativeExecution::RestoreFutureError(const FutureResult& completi
     return ExecutionStatus::OutOfMemory;
   }
   ExceptionData::From(*pending_exception_.AsObject()).diagnostic = std::move(stored);
+  return status;
+}
+
+ExecutionStatus NativeExecution::RestoreHostError(vela::Error error) {
+  if (exception_allocation_failed_) {
+    return ExecutionStatus::OutOfMemory;
+  }
+  const auto status = error.status;
+  const auto payload = vela::internal::HandleAccess::ReadErrorPayload(error).value();
+  std::unique_ptr<FutureDiagnostic> diagnostic(new (std::nothrow) FutureDiagnostic{
+      .message = std::move(error.message),
+      .stack_trace = std::move(error.stack_trace),
+      .status = status,
+      .origin = error.origin,
+  });
+  if (diagnostic == nullptr) {
+    AbortWithOutOfMemory();
+    return ExecutionStatus::OutOfMemory;
+  }
+  auto* exception =
+      isolate().heap().AllocateException(*payload.AsObject(), status, diagnostic->message);
+  if (exception == nullptr) {
+    AbortWithOutOfMemory();
+    return ExecutionStatus::OutOfMemory;
+  }
+  ExceptionData::From(*exception).diagnostic = std::move(diagnostic);
+  SetException(Value::Object(exception));
   return status;
 }
 

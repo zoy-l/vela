@@ -33,7 +33,7 @@
 #include "compiler/test_support/test_sources.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_contracts.h"
@@ -44,6 +44,7 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::compiler::jit {
 namespace {
@@ -711,7 +712,9 @@ export async func live(): Future<int> {
     ASSERT_TRUE(entry);
     const auto started = entry->Invoke({});
     ASSERT_TRUE(started);
-    const runtime::RootedValue root(isolate, *started);
+    const auto root_storage = runtime::HostRoot::Create(isolate, *started);
+    ASSERT_TRUE(root_storage);
+    const auto& root = *root_storage;
     isolate.heap().Collect();
     ASSERT_TRUE(test::CompletesWithInteger(isolate, root.value(), 42));
   }
@@ -931,11 +934,15 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
   ASSERT_TRUE(check);
   const auto created = make->Invoke({});
   ASSERT_TRUE(created);
-  const runtime::RootedValue object(isolate, *created);
+  const auto object_storage = runtime::HostRoot::Create(isolate, *created);
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
   const std::array object_argument{object.value()};
   const auto wrapped = wrap->Invoke(object_argument);
   ASSERT_TRUE(wrapped);
-  const runtime::RootedValue array(isolate, *wrapped);
+  const auto array_storage = runtime::HostRoot::Create(isolate, *wrapped);
+  ASSERT_TRUE(array_storage);
+  const auto& array = *array_storage;
   const auto next = test::PrepareText(
       source, "class Added { other: string = 'new'; } " + declarations +
                   "export func read(value: Box): int { return value.value + 2; }");
@@ -1086,7 +1093,9 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   ASSERT_TRUE(old_call);
   const auto created = make->Invoke({});
   ASSERT_TRUE(created);
-  const runtime::RootedValue receiver(isolate, *created);
+  const auto receiver_storage = runtime::HostRoot::Create(isolate, *created);
+  ASSERT_TRUE(receiver_storage);
+  const auto& receiver = *receiver_storage;
   const auto next =
       test::PrepareText(source,
                         "interface Reader { other(): int; read(): int; } "
@@ -1122,7 +1131,9 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
   ASSERT_TRUE(entry);
   const auto result = entry->Invoke({});
   ASSERT_TRUE(result) << ExecutionStatusName(result.error());
-  const runtime::RootedValue root(isolate, *result);
+  const auto root_storage = runtime::HostRoot::Create(isolate, *result);
+  ASSERT_TRUE(root_storage);
+  const auto& root = *root_storage;
   auto value = root.value();
   if (value.IsObject()) {
     auto* future = runtime::Heap::GetFuture(*value.AsObject());
@@ -1620,8 +1631,8 @@ export func main(count: int): int {
   }
 }
 
-std::expected<void, runtime::NativeError> Reject() noexcept {
-  return std::unexpected(runtime::NativeError{.message = "rejected"});
+std::expected<void, vela::Error> Reject() noexcept {
+  return std::unexpected(vela::Error{.message = "rejected", .stack_trace = {}});
 }
 
 TEST(JitCompilerTest, FixedHostBindingsUseDirectCheckedAndManagedCallingConventions) {

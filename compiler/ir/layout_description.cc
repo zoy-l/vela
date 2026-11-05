@@ -9,6 +9,7 @@
 
 #include "base/callable.h"
 #include "base/layout_description.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
@@ -34,8 +35,10 @@ bool HasReference(SourceType::Kind kind) {
 
 class LayoutDescription final {
  public:
-  LayoutDescription(const Program& program, const frontend::SemanticModel& model)
-      : program_(&program), model_(&model) {}
+  LayoutDescription(const Program& program,
+                    const frontend::SemanticModel& model,
+                    const frontend::Program& source)
+      : program_(&program), model_(&model), source_(&source) {}
 
   layout::Program Build();
 
@@ -46,15 +49,92 @@ class LayoutDescription final {
   std::uint32_t Signature(const SourceType& type);
   std::uint32_t CallableSignature(const Class& type);
   layout::Class DescribeClass(const Class& type);
+  void Canonicalize(layout::Type type);
+  std::string Nominal(const std::string& name);
 
   const Program* program_;
   const frontend::SemanticModel* model_;
+  const frontend::Program* source_;
   layout::Program result_;
   absl::flat_hash_map<std::string, std::uint32_t> classes_;
   absl::flat_hash_map<std::string, std::uint32_t> arrays_;
   absl::flat_hash_map<std::string, std::uint32_t> collections_;
   absl::flat_hash_map<std::string, std::uint32_t> signatures_;
+  absl::flat_hash_map<std::string, std::string> nominal_keys_;
+  absl::flat_hash_map<std::string, bool> exported_;
 };
+
+std::string LayoutDescription::Nominal(const std::string& name) {
+  if (const auto found = nominal_keys_.find(name); found != nominal_keys_.end()) {
+    return found->second;
+  }
+  const auto origin = source_->origins.find(name);
+  if (origin == source_->origins.end()) {
+    // 捕获单元和 callable class 没有源码名义身份，只由其函数版本拥有。
+    return name;
+  }
+  const auto& declaration = origin->second;
+  layout::Nominal nominal{
+      .module = declaration.module_uri,
+      .name = declaration.name,
+      .arguments = {},
+      .exported = exported_.at(name),
+  };
+  for (const auto& argument : declaration.arguments) {
+    const auto type = Type(model_->types.at(frontend::CanonicalTypeText(argument)));
+    Canonicalize(type);
+    nominal.arguments.push_back(type);
+  }
+  auto key = layout::NominalKey(result_, nominal);
+  result_.nominals.emplace(key, std::move(nominal));
+  nominal_keys_.emplace(name, key);
+  return key;
+}
+
+void LayoutDescription::Canonicalize(layout::Type type) {
+  using Kind = layout::Type::Kind;
+  switch (type.kind) {
+    case Kind::Instance:
+    case Kind::Enum: {
+      auto& nominal = result_.classes.at(type.index);
+      nominal.name = Nominal(program_->classes.at(type.index).name);
+      break;
+    }
+    case Kind::Interface: {
+      auto& name = result_.interfaces.at(type.index);
+      // 已规范化的接口不再通过语义表查询源码名。
+      if (!result_.nominals.contains(name)) {
+        name = Nominal(name);
+      }
+      break;
+    }
+    case Kind::Array:
+      Canonicalize(result_.arrays.at(type.index).element);
+      break;
+    case Kind::Collection: {
+      const auto collection = result_.collections.at(type.index);
+      Canonicalize(collection.key);
+      if (collection.value) {
+        Canonicalize(*collection.value);
+      }
+      break;
+    }
+    case Kind::Callable:
+    case Kind::Future:
+    case Kind::Completer: {
+      const auto signature = result_.signatures.at(type.index);
+      for (const auto& parameter : signature.parameters) {
+        Canonicalize(parameter.type);
+      }
+      if (signature.result) {
+        Canonicalize(*signature.result);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
 
 layout::Type LayoutDescription::Type(const SourceType& type) {
   using Source = SourceType::Kind;
@@ -197,11 +277,10 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
     std::unreachable();
   }
   const auto& callable = *target;
-  if (callable.mode == CallableMode::InterfaceMethod) {
-    return Signature({.kind = SourceType::Kind::Function, .name = type.callable_type});
-  }
   const auto& program = *program_;
-  const auto& signature = program.functions.at(callable.function).signature;
+  const auto& signature = callable.mode == CallableMode::InterfaceMethod
+                              ? type.callable_type
+                              : program.functions.at(callable.function).signature;
   if (!signature) {
     std::unreachable();
   }
@@ -259,7 +338,7 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
       descriptor.reference_fields.push_back(static_cast<std::uint32_t>(index));
     }
   }
-  if (type.callable && !type.callable_type.empty()) {
+  if (type.callable) {
     descriptor.callable_type = CallableSignature(type);
   }
   return descriptor;
@@ -267,6 +346,15 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
 
 layout::Program LayoutDescription::Build() {
   const auto& program = *program_;
+  const auto collect_exports = [&](const auto& declarations) {
+    for (const auto& declaration : declarations) {
+      exported_.emplace(declaration.name,
+                        declaration.export_kind == frontend::ExportKind::Exported);
+    }
+  };
+  collect_exports(source_->classes);
+  collect_exports(source_->enums);
+  collect_exports(source_->interfaces);
   for (const auto& [name, descriptor] : model_->interfaces) {
     // 模板定义检查的抽象应用没有运行时编号，不能覆盖具体接口的布局身份。
     if (descriptor.type.is_abstract) {
@@ -292,13 +380,25 @@ layout::Program LayoutDescription::Build() {
   for (const auto& type : program.runtime_types) {
     result_.types.push_back(Type(type));
   }
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    Canonicalize(
+        {.kind = layout::Type::Kind::Instance, .index = static_cast<std::uint32_t>(index)});
+  }
+  for (std::size_t index = 0; index < result_.interfaces.size(); ++index) {
+    if (!result_.interfaces.at(index).empty()) {
+      Canonicalize(
+          {.kind = layout::Type::Kind::Interface, .index = static_cast<std::uint32_t>(index)});
+    }
+  }
   return std::move(result_);
 }
 
 }  // namespace
 
-layout::Program DescribeLayouts(const Program& program, const frontend::SemanticModel& model) {
-  return LayoutDescription(program, model).Build();
+layout::Program DescribeLayouts(const Program& program,
+                                const frontend::SemanticModel& model,
+                                const frontend::Program& source) {
+  return LayoutDescription(program, model, source).Build();
 }
 
 }  // namespace vela::ir

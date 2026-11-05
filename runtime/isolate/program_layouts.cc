@@ -29,8 +29,10 @@ class LayoutInstantiation final {
         signatures_(description.signatures.size()) {}
 
   ProgramLayouts Build();
+  TypeConstraint Resolve(const layout::Type& type);
 
  private:
+  void PrepareNominals();
   TypeConstraint Constraint(const layout::Type& type);
   ArrayLayout Element(const layout::Type& type);
   const ArrayLayout* Array(std::uint32_t index);
@@ -230,7 +232,7 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
   return stored;
 }
 
-ProgramLayouts LayoutInstantiation::Build() {
+void LayoutInstantiation::PrepareNominals() {
   interfaces_.reserve(description_->interfaces.size());
   classes_.reserve(description_->classes.size());
   for (const auto& name : description_->interfaces) {
@@ -256,6 +258,15 @@ ProgramLayouts LayoutInstantiation::Build() {
       stored->BindCallableType(*Signature(*description.callable_type));
     }
   }
+}
+
+TypeConstraint LayoutInstantiation::Resolve(const layout::Type& type) {
+  PrepareNominals();
+  return Constraint(type);
+}
+
+ProgramLayouts LayoutInstantiation::Build() {
+  PrepareNominals();
   ProgramLayouts result;
   for (const auto index : description_->array_types) {
     result.arrays.push_back(Array(index));
@@ -278,6 +289,13 @@ ProgramLayouts InstantiateLayouts(const layout::Program& description,
                                   LayoutCache& cache,
                                   std::span<const ClassLayoutOptions> classes) {
   return LayoutInstantiation(description, isolate, cache, classes).Build();
+}
+
+TypeConstraint InstantiateLayoutType(const layout::Program& description,
+                                     layout::Type type,
+                                     Isolate& isolate,
+                                     LayoutCache& cache) {
+  return LayoutInstantiation(description, isolate, cache, {}).Resolve(type);
 }
 
 }  // namespace vela::runtime

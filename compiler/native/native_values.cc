@@ -282,7 +282,9 @@ void EmitExecutionBoundary(Builder& builder) {
   auto* ready = llvm::BasicBlock::Create(context, "execution.ready", function);
   auto* depth =
       builder.CreateLoad(builder.getInt64Ty(), address(NativeMemoryLayout::kExecutionDepth));
-  builder.CreateCondBr(builder.CreateICmpEQ(depth, builder.getInt64(0)), first, ready);
+  auto* base_depth =
+      builder.CreateLoad(builder.getInt64Ty(), address(NativeMemoryLayout::kExecutionBaseDepth));
+  builder.CreateCondBr(builder.CreateICmpEQ(depth, base_depth), first, ready);
   builder.SetInsertPoint(first);
   // 宿主重入借用当前执行时必须保留外层 catch 的异常状态。
   builder.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),

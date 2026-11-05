@@ -29,7 +29,7 @@ Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLoc
 ClassId Lowerer::CallableClass(std::uint32_t function_id,
                                CallableMode mode,
                                const std::vector<frontend::Capture>& captures,
-                               const frontend::TypeDescriptor& type) {
+                               const frontend::FunctionDescriptor* interface_signature) {
   const auto key = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
   const auto existing = callable_classes_.find(key);
   if (existing != callable_classes_.end()) {
@@ -39,8 +39,20 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   Class layout;
   layout.name = "$callable" + std::to_string(key);
   layout.callable = CallableTarget{.function = function_id, .mode = mode};
-  layout.callable_type = type.nullable ? std::string(type.name.substr(1, type.name.size() - 3))
-                                       : std::string(type.name);
+  if (interface_signature != nullptr) {
+    auto& signature = layout.callable_type.emplace();
+    for (const auto& parameter : interface_signature->parameters) {
+      signature.parameters.push_back({
+          .name = parameter.name,
+          .type = RegisterRuntimeType(parameter.type),
+          .optional = interface_signature->optional_parameters.contains(parameter.name),
+          .rest = parameter.rest,
+      });
+    }
+    if (interface_signature->return_type.kind != frontend::TypeDescriptor::Kind::Void) {
+      signature.result = RegisterRuntimeType(interface_signature->return_type);
+    }
+  }
   for (const auto& capture : captures) {
     layout.field_types.push_back(
         capture.kind == frontend::BindingKind::Mutable
@@ -113,8 +125,12 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   const auto& receiver = plan.receiver;
   const auto& captures = plan.captures;
   const auto mode = plan.mode;
-  const auto& function_type = model_.expression_types.at(&expression);
-  const auto layout = CallableClass(plan.target, mode, captures, function_type);
+  const auto interface = model_.interface_members.find(&expression);
+  const auto* signature =
+      interface == model_.interface_members.end()
+          ? nullptr
+          : &model_.interfaces.at(interface->second.owner).methods.at(interface->second.member);
+  const auto layout = CallableClass(plan.target, mode, captures, signature);
   const auto object = AllocateTemporary(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {
@@ -155,7 +171,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
     });
   }
   FinishNullSafe(null_jump, object, expression.location);
-  return {.reg = object, .type = function_type};
+  return {.reg = object, .type = model_.expression_types.at(&expression)};
 }
 
 Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& expression) {

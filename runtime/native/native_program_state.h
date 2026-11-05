@@ -7,6 +7,8 @@
 #include <optional>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/callable.h"
 #include "base/declaration.h"
 #include "runtime/isolate/member_table.h"
@@ -56,6 +58,7 @@ struct NativeProgramState final {
   const NativeImage* image = nullptr;
   ProgramLayouts layouts;
   MemberTable members;
+  absl::flat_hash_map<const NominalType*, std::uint32_t> class_indices;
   const CodeIdentity* code_identity = nullptr;
   std::vector<CallSignature> signatures;
   std::vector<std::shared_ptr<const NativeFunction>> imports;

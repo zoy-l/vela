@@ -65,10 +65,12 @@ struct Class final {
   Kind kind = Kind::Instance;
   std::string native_key;
   std::string native_contract;
-  std::string callable_type;
+  std::optional<CallSignature> callable_type = std::nullopt;
   DeclarationId declaration;
   std::vector<Field> fields;
   DeclarationId base_class;
+  std::uint32_t constructor = kInvalidFunctionTarget;
+  std::vector<std::string> enum_members;
 };
 
 struct Function final {

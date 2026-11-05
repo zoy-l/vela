@@ -1,5 +1,6 @@
 #include "compiler/native/function_emitter.h"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -23,17 +24,29 @@ namespace vela::compiler::native {
 namespace {
 
 bool HasDirectHostResult(const SourceType& type) {
-  return type.kind == Kind::Void || type.kind == Kind::Bool || type.kind == Kind::Int ||
-         type.kind == Kind::Double;
+  return !type.nullable && (type.kind == Kind::Void || type.kind == Kind::Bool ||
+                            type.kind == Kind::Int || type.kind == Kind::Double);
 }
 
 }  // namespace
 
 void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
+  auto* control = ControlState();
+  auto* active = ByteAddress(control, offsetof(runtime::NativeControlState, host_execution));
+  if (change == HostBorrow::Enter) {
+    if (host_parent_ == nullptr) {
+      Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+      host_parent_ = allocation.CreateAlloca(builder_.getPtrTy());
+    }
+    builder_.CreateStore(builder_.CreateLoad(builder_.getPtrTy(), active), host_parent_);
+    builder_.CreateStore(body_->getArg(0), active);
+  } else {
+    builder_.CreateStore(builder_.CreateLoad(builder_.getPtrTy(), host_parent_), active);
+  }
   if (program_.native_mode != NativeProgramMode::Reloadable) {
     return;
   }
-  auto* address = ByteAddress(ControlState(), offsetof(runtime::NativeControlState, host_borrows));
+  auto* address = ByteAddress(control, offsetof(runtime::NativeControlState, host_borrows));
   auto* depth = builder_.CreateLoad(builder_.getInt64Ty(), address);
   auto* updated = change == HostBorrow::Enter ? builder_.CreateAdd(depth, builder_.getInt64(1))
                                               : builder_.CreateSub(depth, builder_.getInt64(1));
@@ -103,12 +116,12 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
 
 bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
   if (program_.native_mode != NativeProgramMode::Closed || roots_.debug_values ||
-      callee.native_symbol.empty() || !HasDirectHostResult(callee.return_type) ||
-      callee.return_type.nullable) {
+      callee.native_symbol.empty() || !HasDirectHostResult(callee.return_type)) {
     return false;
   }
   // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接入口的
   // host codec 从包装对象固定位置借用指针，原生调用期间仍保留调用者的根登记。
+  assert(callee.signature.has_value());
   const auto& signature = *callee.signature;
   const auto receiver_count = static_cast<std::size_t>(signature.receiver.has_value());
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
@@ -119,7 +132,7 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
     if (type.kind != Kind::Class) {
       return false;
     }
-    const auto type_index = receiver_count != 0 && index == 0
+    const auto type_index = signature.receiver && index == 0
                                 ? *signature.receiver
                                 : signature.parameters[index - receiver_count].type;
     const auto& type_layout = program_.layouts.types[type_index];
@@ -186,16 +199,25 @@ void FunctionEmitter::EmitImport() {
     if (const auto slot = roots_.slots.at(reg)) {
       WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
     }
-    parameters.push_back(Load(reg));
+    const auto& type = source_.value_types.at(reg);
+    parameters.push_back(type.kind == Kind::Dynamic || HasValidity(type) ? Pack(Encode(reg), index)
+                                                                         : Load(reg));
   }
   if (program_.native_mode == NativeProgramMode::Reloadable || roots_.debug_values) {
     Poll();
   }
   EmitIntrinsicImport();
   const auto& return_type = source_.return_type;
-  auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
-                          ? builder_.getInt8Ty()
-                          : ValueType(module_.getContext(), return_type);
+  const bool packed_result = return_type.kind == Kind::Dynamic || HasValidity(return_type);
+  auto* host_output = packed_result ? result_ : Output();
+  llvm::Type* result_type = nullptr;
+  if (packed_result) {
+    result_type = NativeRecordType(module_.getContext());
+  } else if (return_type.kind == Kind::Bool || return_type.kind == Kind::Void) {
+    result_type = builder_.getInt8Ty();
+  } else {
+    result_type = ValueType(module_.getContext(), return_type);
+  }
   auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
   auto* target = builder_.CreateExtractValue(entries, 0);
   auto* call_kind = builder_.CreateExtractValue(entries, 1);
@@ -223,7 +245,7 @@ void FunctionEmitter::EmitImport() {
     arguments.push_back(value);
     types.push_back(value->getType());
   }
-  arguments.push_back(Output());
+  arguments.push_back(host_output);
   types.push_back(builder_.getPtrTy());
   auto* signature = llvm::FunctionType::get(builder_.getInt8Ty(), types, false);
   EmitHostBoundary(HostBorrow::Enter);
@@ -231,8 +253,10 @@ void FunctionEmitter::EmitImport() {
   EmitHostBoundary(HostBorrow::Exit);
   CheckStatus(called);
   if (return_type.kind != Kind::Void) {
-    llvm::Value* value = builder_.CreateLoad(result_type, Output());
-    if (return_type.kind == Kind::Bool) {
+    llvm::Value* value = builder_.CreateLoad(result_type, host_output);
+    if (packed_result) {
+      value = DecodeValue(builder_, value, return_type);
+    } else if (return_type.kind == Kind::Bool) {
       value = builder_.CreateICmpNE(value, builder_.getInt8(0));
     }
     builder_.CreateStore(value, Output());

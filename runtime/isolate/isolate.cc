@@ -217,8 +217,8 @@ const TypeSignature* Isolate::CreateTypeSignature(TypeSignature signature) {
   return result;
 }
 
-const InterfaceType* Isolate::CreateInterfaceType() {
-  auto type = std::make_unique<InterfaceType>();
+const InterfaceType* Isolate::CreateInterfaceType(DeclarationId declaration) {
+  auto type = std::make_unique<InterfaceType>(declaration);
   const auto* result = type.get();
   interface_types_.push_back(std::move(type));
   return result;

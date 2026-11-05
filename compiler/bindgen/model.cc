@@ -1,5 +1,6 @@
 #include "compiler/bindgen/model.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -8,6 +9,7 @@
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/JSON.h>
 
+#include "base/layout_description.h"
 #include "base/native_binding.h"
 
 namespace vela::bindgen {
@@ -21,22 +23,49 @@ llvm::json::Object SerializeSource(const Source& source) {
   };
 }
 
-std::string_view TypeName(TypeKind kind) {
-  switch (kind) {
-    case TypeKind::Void:
-      return "void";
-    case TypeKind::Boolean:
+std::string_view TypeName(const layout::Program& program, const layout::Type& type) {
+  using Kind = layout::Type::Kind;
+  switch (type.kind) {
+    case Kind::Dynamic:
+      return "dynamic";
+    case Kind::Boolean:
       return "bool";
-    case TypeKind::Integer:
+    case Kind::Integer:
       return "int";
-    case TypeKind::Double:
+    case Kind::Double:
       return "double";
-    case TypeKind::String:
+    case Kind::String:
       return "string";
-    case TypeKind::Cancellation:
+    case Kind::CancellationToken:
       return "CancellationToken";
-    case TypeKind::Host:
-      return "host";
+    case Kind::MutableString:
+      return "MutableString";
+    case Kind::ByteArray:
+      return "ByteArray";
+    case Kind::ByteData:
+      return "ByteData";
+    case Kind::RegExp:
+      return "RegExp";
+    case Kind::RegExpMatch:
+      return "RegExpMatch";
+    case Kind::Timer:
+      return "Timer";
+    case Kind::Instance:
+      return program.classes.at(type.index).kind == layout::Class::Kind::Host ? "host" : "object";
+    case Kind::Enum:
+      return "enum";
+    case Kind::Interface:
+      return "interface";
+    case Kind::Array:
+      return "array";
+    case Kind::Collection:
+      return program.collections.at(type.index).value ? "map" : "set";
+    case Kind::Callable:
+      return "function";
+    case Kind::Future:
+      return "future";
+    case Kind::Completer:
+      return "completer";
   }
   llvm_unreachable("exhaustive type kind");
 }
@@ -51,19 +80,92 @@ std::string_view OwnershipName(Ownership ownership) {
       return "unique";
     case Ownership::Shared:
       return "shared";
+    case Ownership::Local:
+      return "local";
   }
   llvm_unreachable("exhaustive ownership");
 }
 
-llvm::json::Object SerializeType(const Type& type) {
-  return llvm::json::Object{
-      {.K = "kind", .V = std::string(TypeName(type.kind))},
-      {.K = "key", .V = type.key},
-      {.K = "cpp", .V = type.cpp},
-      {.K = "ownership", .V = std::string(OwnershipName(type.ownership))},
-      {.K = "nullable", .V = type.nullable},
-      {.K = "const", .V = type.is_const},
+llvm::json::Object SerializeShape(const layout::Program& program,
+                                  std::optional<layout::Type> type) {
+  if (!type) {
+    return llvm::json::Object{
+        {.K = "kind", .V = "void"},
+        {.K = "key", .V = ""},
+        {.K = "nullable", .V = false},
+    };
+  }
+  llvm::json::Object result{
+      {.K = "kind", .V = std::string(TypeName(program, *type))},
+      {.K = "key", .V = ""},
+      {.K = "nullable", .V = type->nullable},
   };
+  using Kind = layout::Type::Kind;
+  switch (type->kind) {
+    case Kind::Instance:
+    case Kind::Enum: {
+      const auto& nominal = program.classes.at(type->index);
+      result["key"] = nominal.native_key.empty() ? nominal.name : nominal.native_key;
+      if (nominal.kind != layout::Class::Kind::Host) {
+        const auto& origin = program.nominals.at(nominal.name);
+        result["module"] = origin.module;
+        result["declaration"] = origin.name;
+        llvm::json::Array arguments;
+        for (const auto& argument : origin.arguments) {
+          arguments.push_back(SerializeShape(program, argument));
+        }
+        result["arguments"] = std::move(arguments);
+      }
+      break;
+    }
+    case Kind::Interface: {
+      const auto& key = program.interfaces.at(type->index);
+      const auto& origin = program.nominals.at(key);
+      result["key"] = key;
+      result["module"] = origin.module;
+      result["declaration"] = origin.name;
+      llvm::json::Array arguments;
+      for (const auto& argument : origin.arguments) {
+        arguments.push_back(SerializeShape(program, argument));
+      }
+      result["arguments"] = std::move(arguments);
+      break;
+    }
+    case Kind::Array:
+      result["element"] = SerializeShape(program, program.arrays.at(type->index).element);
+      break;
+    case Kind::Collection: {
+      const auto& collection = program.collections.at(type->index);
+      result["key_type"] = SerializeShape(program, collection.key);
+      if (collection.value) {
+        result["value_type"] = SerializeShape(program, collection.value);
+      }
+      break;
+    }
+    case Kind::Callable:
+    case Kind::Future:
+    case Kind::Completer: {
+      const auto& signature = program.signatures.at(type->index);
+      llvm::json::Array parameters;
+      for (const auto& parameter : signature.parameters) {
+        parameters.push_back(SerializeShape(program, parameter.type));
+      }
+      result["parameters"] = std::move(parameters);
+      result["result"] = SerializeShape(program, signature.result);
+      break;
+    }
+    default:
+      break;
+  }
+  return result;
+}
+
+llvm::json::Object SerializeType(const Type& type) {
+  auto result = SerializeShape(type.layouts, type.value);
+  result["cpp"] = type.cpp;
+  result["ownership"] = std::string(OwnershipName(type.ownership));
+  result["const"] = type.is_const;
+  return result;
 }
 
 llvm::json::Object SerializeMember(const Member& member) {
@@ -93,22 +195,45 @@ llvm::json::Object SerializeMember(const Member& member) {
 
 }  // namespace
 
-std::string PublicContract(const Class& type) {
-  const auto contract_type = [](const Type& value) {
-    return NativeContractType{
-        .key = value.kind == TypeKind::Host ? value.key : std::string(TypeName(value.kind)),
-        .nullable = value.nullable,
-    };
+std::string Type::ContractKey() const {
+  return value ? layout::TypeKey(layouts, *value) : "void";
+}
+
+bool Type::IsSameLogicalType(const Type& other) const {
+  return value.has_value() == other.value.has_value() &&
+         (!value || layout::IsSameType(layouts, *value, other.layouts, *other.value));
+}
+
+Type HostType(std::string_view key, Ownership ownership) {
+  Type result{
+      .layouts = {},
+      .value = layout::Type{.kind = layout::Type::Kind::Instance},
+      .ownership = ownership,
+      .cpp = {},
   };
+  result.layouts.classes.push_back({
+      .name = {},
+      .native_key = std::string(key),
+      .native_contract = {},
+      .kind = layout::Class::Kind::Host,
+      .reference_fields = {},
+      .callable = {},
+      .interfaces = {},
+      .dispatch_targets = {},
+  });
+  return result;
+}
+
+std::string PublicContract(const Class& type) {
   std::vector<NativeContractMember> members;
   for (const auto& source : type.members) {
     NativeContractMember member{
         .key = source.key,
         .parameters = {},
-        .result = contract_type(source.result),
+        .result = source.result.ContractKey(),
     };
     for (const auto& parameter : source.parameters) {
-      member.parameters.push_back({.name = parameter.name, .type = contract_type(parameter.type)});
+      member.parameters.push_back({.name = parameter.name, .type = parameter.type.ContractKey()});
     }
     members.push_back(std::move(member));
   }
@@ -152,7 +277,7 @@ llvm::json::Object Serialize(const Module& module) {
     });
   }
   return llvm::json::Object{
-      {.K = "format_version", .V = 1},
+      {.K = "format_version", .V = 2},
       {.K = "module", .V = module.name},
       {.K = "registration", .V = RegistrationNamespace(module.name) + "::Register"},
       {.K = "target", .V = module.target},

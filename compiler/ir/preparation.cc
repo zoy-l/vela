@@ -22,7 +22,6 @@
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/layout_description.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/optimizer.h"
 
@@ -288,7 +287,6 @@ LoweringResult PrepareProgram(const frontend::Program& source,
     program.source_paths.push_back(file.path);
     program.source_texts.emplace_back(file.text);
   }
-  program.layouts = DescribeLayouts(program, model);
   if (declarations) {
     const auto& bindings = *declarations;
     program.revision = bindings.revision;

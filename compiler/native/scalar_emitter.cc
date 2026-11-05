@@ -29,9 +29,7 @@ bool FunctionEmitter::CanInlineSquareRoot(const ir::Function& function) const {
   const auto standard = runtime::FindStandardNative(function.native_symbol);
   const auto& signature = function.signature;
   return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
-         signature &&
-         standard->IsSignatureCompatible(*signature, program_.layouts.types,
-                                         program_.layouts.classes);
+         signature && standard->IsSignatureCompatible(*signature, program_.layouts);
 }
 
 llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {
@@ -40,7 +38,7 @@ llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Va
   auto* recognized = builder_.CreateICmpEQ(
       intrinsic, builder_.getInt8(static_cast<std::uint8_t>(Intrinsic::SquareRoot)));
   // 身份来自已冻结的真实绑定，宿主覆盖同名函数仍调用其入口。负参数沿用标准绑定的
-  // NativeError 消息和逻辑栈；NaN 与 -0 按 sqrt 的浮点契约直接计算。
+  // vela::Error 消息和逻辑栈；NaN 与 -0 按 sqrt 的浮点契约直接计算。
   auto* valid = builder_.CreateFCmpUGE(operand, llvm::ConstantFP::get(operand->getType(), 0));
   return builder_.CreateAnd(recognized, valid);
 }

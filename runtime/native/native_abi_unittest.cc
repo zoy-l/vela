@@ -200,7 +200,7 @@ TEST(NativeAbiTest, BorrowedStackRootsUseOnlyRootRangeAndReleaseTheirReferences)
 
 TEST(NativeAbiTest, StoppedExecutionHasPublicNativeDiagnostic) {
   EXPECT_STREQ(
-      vela_aot_v1_status_code(static_cast<VelaAotStatus>(ExecutionStatus::ExecutionStopped)),
+      vela_aot_v2_status_code(static_cast<VelaAotStatus>(ExecutionStatus::ExecutionStopped)),
       "ExecutionStopped");
 }
 

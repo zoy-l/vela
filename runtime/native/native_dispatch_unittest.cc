@@ -16,7 +16,7 @@
 #include "base/native_program_mode.h"
 #include "base/source_location.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
@@ -348,7 +348,9 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
   auto* closure = heap.AllocateInstance(*old_instance.layouts().classes.front());
   ASSERT_NE(closure, nullptr);
   heap.SetNativeEnvironment(*closure, *old_target->state, old_target->function);
-  const RootedValue value(isolate, Value::Object(closure));
+  const auto value_storage = HostRoot::Create(isolate, Value::Object(closure));
+  ASSERT_TRUE(value_storage);
+  const auto& value = *value_storage;
   const auto second = std::make_shared<VersionedImage>(2, NewAnswer);
   std::swap(second->functions.front(), second->functions.back());
   ASSERT_TRUE(PublishVersion(dispatch, 1, second));

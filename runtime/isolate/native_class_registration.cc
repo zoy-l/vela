@@ -25,50 +25,19 @@ namespace {
 using Classes = absl::flat_hash_map<std::string, NativeClassBinding>;
 using Registration = std::expected<void, NativeRegistrationError>;
 
-NativeContractType ContractType(NativeType type) {
-  std::string_view key;
-  switch (type.kind) {
-    case NativeKind::Void:
-      key = "void";
-      break;
-    case NativeKind::Boolean:
-      key = "bool";
-      break;
-    case NativeKind::Integer:
-      key = "int";
-      break;
-    case NativeKind::Double:
-      key = "double";
-      break;
-    case NativeKind::String:
-      key = "string";
-      break;
-    case NativeKind::Future:
-      key = "Future";
-      break;
-    case NativeKind::CancellationToken:
-      key = "CancellationToken";
-      break;
-    case NativeKind::Host:
-      key = type.host_key;
-      break;
-  }
-  return {.key = std::string(key), .nullable = type.nullable};
-}
-
 std::string Contract(const NativeClass& type) {
   std::vector<NativeContractMember> members;
   for (const auto& source : type.members) {
     NativeContractMember member{
         .key = std::string(source.function.name()),
         .parameters = {},
-        .result = ContractType(source.function.result_type()),
+        .result = source.function.result_type().ContractKey(),
     };
     const auto offset = static_cast<std::size_t>(HasNativeReceiver(source.kind));
     const auto parameters = source.function.parameters().subspan(offset);
     for (std::size_t index = 0; index < parameters.size(); ++index) {
       member.parameters.push_back(
-          {.name = source.parameter_names[index], .type = ContractType(parameters[index])});
+          {.name = source.parameter_names[index], .type = parameters[index].ContractKey()});
     }
     members.push_back(std::move(member));
   }
@@ -80,15 +49,14 @@ bool IsName(std::string_view name) {
 }
 
 Registration ValidateType(NativeType type, const Classes& classes) {
-  if (type.kind != NativeKind::Host) {
-    return {};
-  }
-  const auto found = classes.find(type.host_key);
-  if (found == classes.end()) {
-    return std::unexpected(NativeRegistrationError::UnknownClass);
-  }
-  if (type.cpp_identity != found->second.description->type.cpp_identity) {
-    return std::unexpected(NativeRegistrationError::TypeMismatch);
+  for (const auto& host : type.hosts) {
+    const auto found = classes.find(host.key);
+    if (found == classes.end()) {
+      return std::unexpected(NativeRegistrationError::UnknownClass);
+    }
+    if (host.identity != found->second.description->type.cpp_identity()) {
+      return std::unexpected(NativeRegistrationError::TypeMismatch);
+    }
   }
   return {};
 }
@@ -111,7 +79,7 @@ Registration ValidateMember(const NativeClass& owner, const NativeClassMember& m
   const auto result = function.result_type();
   const auto receiver_count = static_cast<std::size_t>(HasNativeReceiver(member.kind));
   if (!IsName(member.name) ||
-      function.name() != NativeMemberKey(owner.type.host_key, member.kind, member.name) ||
+      function.name() != NativeMemberKey(owner.type.host_key(), member.kind, member.name) ||
       parameters.size() != member.parameter_names.size() + receiver_count) {
     return std::unexpected(NativeRegistrationError::InvalidMember);
   }
@@ -128,9 +96,9 @@ Registration ValidateMember(const NativeClass& owner, const NativeClassMember& m
     }
   }
   if ((member.kind == NativeMemberKind::Getter &&
-       (!member.parameter_names.empty() || result.kind == NativeKind::Void)) ||
+       (!member.parameter_names.empty() || result.IsVoid())) ||
       (member.kind == NativeMemberKind::Setter &&
-       (member.parameter_names.size() != 1 || result.kind != NativeKind::Void))) {
+       (member.parameter_names.size() != 1 || !result.IsVoid()))) {
     return std::unexpected(NativeRegistrationError::InvalidMember);
   }
   return {};
@@ -192,9 +160,9 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNativeModule(
   module.reserve(classes.size());
   for (auto& type : classes) {
     const auto descriptor = type.type;
-    const auto key = descriptor.host_key;
-    if (!IsName(key) || descriptor.kind != NativeKind::Host || descriptor.nullable ||
-        descriptor.cpp_identity == nullptr || type.size == 0 || type.alignment == 0) {
+    const auto key = descriptor.host_key();
+    if (!IsName(key) || !descriptor.IsHost() || descriptor.IsNullable() ||
+        descriptor.cpp_identity() == nullptr || type.size == 0 || type.alignment == 0) {
       return std::unexpected(NativeRegistrationError::InvalidClass);
     }
     auto owner = std::make_shared<NativeClass>(std::move(type));
@@ -229,7 +197,7 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNativeModule(
     }
   }
   for (const auto& owner : module) {
-    staged_classes.at(owner->type.host_key).layout = CreateNativeClassLayout();
+    staged_classes.at(owner->type.host_key()).layout = CreateNativeClassLayout();
   }
   natives_.swap(staged_functions);
   native_classes_.swap(staged_classes);

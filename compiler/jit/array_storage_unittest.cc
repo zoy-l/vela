@@ -7,7 +7,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/test_support.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_execution.h"
@@ -56,10 +56,14 @@ export func fail(values: Item[]): int { return values[2].value; }
     }
     const auto made = runtime::ExecuteNativeFunction(instance, *make);
     ASSERT_TRUE(made.Succeeded());
-    const runtime::RootedValue values(isolate, made.value);
+    const auto values_storage = runtime::HostRoot::Create(isolate, made.value);
+    ASSERT_TRUE(values_storage);
+    const auto& values = *values_storage;
     const auto maybe = runtime::ExecuteNativeFunction(instance, *make_nullable);
     ASSERT_TRUE(maybe.Succeeded());
-    const runtime::RootedValue optional(isolate, maybe.value);
+    const auto optional_storage = runtime::HostRoot::Create(isolate, maybe.value);
+    ASSERT_TRUE(optional_storage);
+    const auto& optional = *optional_storage;
     isolate.heap().Collect();
     const std::array input{values.value()};
     const auto total = runtime::ExecuteNativeFunction(instance, *sum, input);

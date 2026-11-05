@@ -69,6 +69,8 @@ struct NativeClassDescription final {
   DeclarationId declaration;
   NativeTable<NativeFieldDescription> fields;
   DeclarationId base_class;
+  std::uint32_t constructor = kNoNativeIndex;
+  NativeTable<NativeText> enum_members;
 };
 
 struct NativeArrayDescription final {

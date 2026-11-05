@@ -20,7 +20,7 @@
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_control.h"
@@ -30,12 +30,14 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
+#include "vela/handles.h"
+#include "vela/types.h"
 
 namespace vela::compiler {
 namespace {
 
 using runtime::NativeContext;
-using runtime::NativeError;
 
 runtime::FutureCompletionEndpoint*& PendingFetchCompleter() {
   static runtime::FutureCompletionEndpoint* completer = nullptr;
@@ -69,11 +71,11 @@ bool PlainInvert(bool value) noexcept {
   return !value;
 }
 void PlainNoop() noexcept {}
-std::expected<std::int64_t, NativeError> PlainAnswer() noexcept {
+std::expected<std::int64_t, vela::Error> PlainAnswer() noexcept {
   return kHostAnswer;
 }
-std::expected<void, NativeError> PlainReject() noexcept {
-  return std::unexpected(NativeError{.message = "plain host rejected request"});
+std::expected<void, vela::Error> PlainReject() noexcept {
+  return std::unexpected(vela::Error{.message = "plain host rejected request", .stack_trace = {}});
 }
 
 TEST(NativeBindingTest, ContextFreeFunctionsShareSignatureValidationCodecsAndFailures) {
@@ -116,12 +118,12 @@ Reentry*& ActiveReentry() {
   return active;
 }
 
-std::expected<std::string, NativeError> ReenterWithBorrowedString(NativeContext& context,
+std::expected<std::string, vela::Error> ReenterWithBorrowedString(NativeContext& context,
                                                                   std::string_view text) noexcept {
   auto& active = *ActiveReentry();
   const auto result = runtime::ExecuteNativeFunction(*active.instance, active.nested);
   if (!result.Succeeded()) {
-    return std::unexpected(NativeError{.message = "nested execution failed"});
+    return std::unexpected(vela::Error{.message = "nested execution failed", .stack_trace = {}});
   }
   context.isolate().heap().Collect();
   return std::string(text);
@@ -178,15 +180,15 @@ std::string CopyWithCollection(NativeContext& context, std::string_view text) no
   return std::string(text);
 }
 
-std::expected<void, NativeError> Fail(NativeContext& /*unused*/) noexcept {
-  return std::unexpected(NativeError{.message = "host rejected request"});
+std::expected<void, vela::Error> Fail(NativeContext& /*unused*/) noexcept {
+  return std::unexpected(vela::Error{.message = "host rejected request", .stack_trace = {}});
 }
 
 std::string InvalidString(NativeContext& /*unused*/) noexcept {
   return {1, static_cast<char>(kInvalidUtf8Byte)};
 }
 
-std::expected<std::int64_t, NativeError> Answer(NativeContext& /*unused*/) noexcept {
+std::expected<std::int64_t, vela::Error> Answer(NativeContext& /*unused*/) noexcept {
   return kHostAnswer;
 }
 
@@ -194,27 +196,31 @@ void Collect(NativeContext& context) noexcept {
   context.isolate().heap().Collect();
 }
 
-runtime::Future Fetch(NativeContext& context) noexcept {
+template <class T>
+Result<Local<vela::Future<T>>> Fetch(NativeContext& context) noexcept {
   auto completer = context.CreateCompleter();
   const auto future = completer.future();
   *PendingFetchCompleter() = std::move(completer).Detach();
+  return context.FutureValue<T>(future);
+}
+
+Local<vela::Future<std::int64_t>> EchoFuture(Local<vela::Future<std::int64_t>> future) noexcept {
   return future;
 }
 
-runtime::Future EchoFuture(NativeContext& /*unused*/, runtime::Future future) noexcept {
-  return future;
+Result<Local<vela::Future<std::int64_t>>> CompletedWithoutScheduler(
+    NativeContext& context) noexcept {
+  return context.FutureValue<std::int64_t>(
+      runtime::Future::Value(runtime::Value::Integer(kNativeFutureValue)));
 }
 
-runtime::Future CompletedWithoutScheduler(NativeContext& /*unused*/) noexcept {
-  return runtime::Future::Value(runtime::Value::Integer(kNativeFutureValue));
+Result<Local<vela::Future<std::int64_t>>> WrongFuturePayload(NativeContext& context) noexcept {
+  return context.FutureValue<std::int64_t>(runtime::Future::Value(runtime::Value::Boolean(true)));
 }
 
-runtime::Future WrongFuturePayload(NativeContext& /*unused*/) noexcept {
-  return runtime::Future::Value(runtime::Value::Boolean(true));
-}
-
-runtime::Future WrongFutureError(NativeContext& /*unused*/) noexcept {
-  return runtime::Future::Error(runtime::Value::Integer(kNativeFutureValue));
+Result<Local<vela::Future<std::int64_t>>> WrongFutureError(NativeContext& context) noexcept {
+  return context.FutureValue<std::int64_t>(
+      runtime::Future::Error(runtime::Value::Integer(kNativeFutureValue)));
 }
 
 std::expected<void, runtime::NativeRegistrationError> BindFutureContract(
@@ -281,15 +287,16 @@ TEST(NativeBindingTest, NativeFuturePayloadChecksSurviveFreshIsolateImageLoading
   EXPECT_EQ(*result, kNativeFutureValue);
 }
 
-runtime::Future WaitForCancellation(NativeContext& context,
-                                    runtime::CancellationToken token) noexcept {
+Result<Local<vela::Future<std::int64_t>>> WaitForCancellation(
+    NativeContext& context,
+    runtime::CancellationToken token) noexcept {
   auto completer = context.CreateCompleter();
   const auto future = completer.future();
   token.Observe([endpoint = std::move(completer).Detach()] {
     const auto completion = endpoint.Complete(runtime::Value::Integer(42));
     EXPECT_TRUE(completion.has_value());
   });
-  return future;
+  return context.FutureValue<std::int64_t>(future);
 }
 
 TEST(NativeBindingTest, CancellationTokenReachesNativeProducerWithoutCancellingFutureItself) {
@@ -313,7 +320,7 @@ async func main(): Future<int> {
 }
 
 std::optional<runtime::Future> StartNativeFetch(runtime::Isolate& isolate) {
-  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch"))) {
+  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch<std::int64_t>>("fetch"))) {
     return std::nullopt;
   }
   const auto compiled = test::CompileSource(R"(
@@ -405,7 +412,9 @@ func main(): string { collect(); return copy("你好" + " host"); }
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
-  const runtime::RootedValue handle(isolate, result.value);
+  const auto handle_storage = runtime::HostRoot::Create(isolate, result.value);
+  ASSERT_TRUE(handle_storage);
+  const auto& handle = *handle_storage;
   isolate.heap().Collect();
   EXPECT_EQ(handle.value().AsString()->value(), "你好 host");
 }
@@ -594,8 +603,10 @@ TEST(NativeBindingTest, ForeignProgramCallablesCannotReuseLocalFunctionIndices) 
   ASSERT_TRUE(producer.Succeeded());
   const auto produced = test::Execute(*producer.instance, "main");
   ASSERT_TRUE(produced.Succeeded());
-  const runtime::RootedValue callable(isolate, produced.value);
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch")));
+  const auto callable_storage = runtime::HostRoot::Create(isolate, produced.value);
+  ASSERT_TRUE(callable_storage);
+  const auto& callable = *callable_storage;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch<vela::Value>>("fetch")));
   const auto consumer = test::CompileSource(R"(external func fetch(): Future<dynamic>;
 async func main(): Future<int> {
   const callable: dynamic = await fetch();

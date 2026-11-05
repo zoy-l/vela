@@ -26,6 +26,7 @@ from tools.aot_binding_fixture import HOST_TESTS as BINDING_TESTS, SOURCE as BIN
 from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
                                      SOURCE as GLOBAL_STORAGE_SOURCE,
                                      LEAF_SOURCE as GLOBAL_LEAF_SOURCE)
+from tools.aot_c_fixture import host_source as c_host_source
 
 
 HOST_TESTS = r'''
@@ -44,6 +45,7 @@ HOST_TESTS = r'''
 #include <thread>
 #include <utility>
 #include <gtest/gtest.h>
+#include <vela/host.h>
 #include "base/execution_status.h"
 #include "base/execution_limits.h"
 #include "runtime/exceptions/exception.h"
@@ -194,22 +196,37 @@ void CompleteOnHostThread(Isolate& isolate, Future& future,
   EXPECT_TRUE(completed.load());
 }
 
-std::expected<void, NativeError> Fail(NativeContext&) noexcept {
-  return std::unexpected(NativeError{.message = "host rejected request"});
+std::expected<void, vela::Error> Fail(NativeContext&) noexcept {
+  return std::unexpected(vela::Error{.message = "host rejected request", .stack_trace = {}});
 }
 std::string InvalidString(NativeContext&) noexcept { return std::string(1, static_cast<char>(0xff)); }
-Future Ready(NativeContext&) noexcept { return Future::Value(Value::Integer(42)); }
-Future Wrong(NativeContext&) noexcept { return Future::Value(Value::Boolean(true)); }
-Future WrongError(NativeContext&) noexcept { return Future::Error(Value::Integer(42)); }
+vela::Result<vela::Local<vela::Future<std::int64_t>>> Ready(NativeContext& context) noexcept {
+  auto result = vela::CreateCompletion<std::int64_t>(context.handles());
+  if (!result) { return std::unexpected(std::move(result.error())); }
+  auto completed = result->completion.Complete(42);
+  if (!completed) { return std::unexpected(std::move(completed.error())); }
+  return result->future;
+}
+// 用故意构造的错误载荷验证宿主结果边界的完整 Future 类型检查。
+vela::Result<vela::Local<vela::Future<std::int64_t>>> MalformedFuture(
+    NativeContext& context, Future future) noexcept {
+  return context.FutureValue<std::int64_t>(future);
+}
+vela::Result<vela::Local<vela::Future<std::int64_t>>> Wrong(NativeContext& context) noexcept {
+  return MalformedFuture(context, Future::Value(Value::Boolean(true)));
+}
+vela::Result<vela::Local<vela::Future<std::int64_t>>> WrongError(NativeContext& context) noexcept {
+  return MalformedFuture(context, Future::Error(Value::Integer(42)));
+}
 FutureCompletionEndpoint*& ActiveProducer() {
   static FutureCompletionEndpoint* producer = nullptr;
   return producer;
 }
-Future Fetch(NativeContext& context) noexcept {
+vela::Result<vela::Local<vela::Future<std::int64_t>>> Fetch(NativeContext& context) noexcept {
   auto producer = context.CreateCompleter();
   auto future = producer.future();
   *ActiveProducer() = std::move(producer).Detach();
-  return future;
+  return context.FutureValue<std::int64_t>(future);
 }
 
 TEST(NativeHostTest, OptimizedIntegerCallsLoopsAndShiftSemantics) {
@@ -1183,6 +1200,7 @@ export async func calculate(): Future<int> {
         fixtures["GLOBAL_STORAGE_ENTRY"] = GLOBAL_STORAGE_SOURCE
         fixtures["GLOBAL_LEAF_ENTRY"] = GLOBAL_LEAF_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
+        fixtures["TEXT_ENTRY"] = "export func calculate(value: string): string { return value + '!'; }"
         host = (HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS + MAP_LITERAL_TESTS
                 + NUMERIC_TESTS + CALLBACK_TESTS + CLASS_TESTS
                 + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS + BINDING_TESTS)
@@ -1196,6 +1214,7 @@ export async func calculate(): Future<int> {
         host = host.replace("EXPECTED_TRACE_LINES", ", ".join(map(str, trace_lines)))
         host = re.sub(r'^extern "C" std::uint8_t \w+_ENTRY\([^\n]+\);\n', "", host, flags=re.MULTILINE)
         objects = []
+        c_host = ""
         for name, source in fixtures.items():
             object_file, manifest = self.emit(name.lower(), source)
             image_symbol = manifest["image"]
@@ -1206,17 +1225,20 @@ export async func calculate(): Future<int> {
             wrapper = next(entry["symbol"] for entry in manifest["exports"] if entry["name"] == "calculate")
             host = host.replace(name.replace("_ENTRY", "_WRAPPER"), wrapper)
             host = '#include "' + object_file.name + '.h"\n' + host
+            if name == "TEXT_ENTRY":
+                c_host = c_host_source(object_file.name + ".h", manifest)
         source_file = self.directory / "host.cc"
         source_file.write_text(host, encoding="utf-8", newline="\n")
         c_source = self.directory / "headers.c"
         c_source.write_text("\n".join('#include "' + path.name + '.h"' for path in objects)
-                            + "\nint probe(void) { return VELA_AOT_RETURNED; }\n",
+                            + "\n" + c_host,
                             encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("host")
         runtime = self.output / "obj/runtime" / static_library_name("vela_runtime")
         gtest = [self.output / "obj/third_party" / static_library_name(name)
                  for name in ("gtest_main", "gtest")]
-        includes = [ROOT, ROOT / "third_party/googletest/googletest/include", ROOT / "third_party/abseil-cpp"]
+        includes = [ROOT, ROOT / "include", ROOT / "third_party/googletest/googletest/include",
+                    ROOT / "third_party/abseil-cpp"]
         if sys.platform == "win32":
             self.command([self.tools["cxx"], "/nologo", "/TC", "/W4", "/WX", "/c", c_source,
                           f"/I{ROOT}", f"/Fo{self.directory / 'headers.obj'}"])
@@ -1226,8 +1248,14 @@ export async func calculate(): Future<int> {
             self.command([self.tools["cxx"], *flags, source_file])
             self.command([self.tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", f"/Fe{executable}",
                           self.directory / "host.obj", *objects, runtime, *gtest])
+            c_executable = self.directory / executable_name("c_host")
+            self.command([self.tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", f"/Fe{c_executable}",
+                          self.directory / "headers.obj", *objects, runtime])
         else:
-            self.command([self.tools["cxx"], "-x", "c", "-Werror", "-c", c_source,
+            c_compile_flags = ["-std=c17", "-Werror", "-c"]
+            if sys.platform == "darwin":
+                c_compile_flags.extend(["-isysroot", str(self.tools["sysroot"])])
+            self.command([self.tools["cc"], *c_compile_flags, c_source,
                           f"-I{ROOT}", "-o", self.directory / "headers.o"])
             flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
                      "-o", str(executable), *[f"-I{path}" for path in includes]]
@@ -1237,8 +1265,13 @@ export async func calculate(): Future<int> {
                               "-isystem", str(self.tools["sysroot"] / "usr/include/c++/v1"),
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
+            c_executable = self.directory / executable_name("c_host")
+            c_flags = flags[:]
+            c_flags[c_flags.index(str(executable))] = str(c_executable)
+            self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
         executed = self.command([executable])
         self.assertIn("[  PASSED  ] 58 tests.", executed.stdout)
+        self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)

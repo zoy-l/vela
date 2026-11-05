@@ -93,12 +93,27 @@ resolve each used import once per invocation, including resumed invocations.
 Host functions may take `NativeContext&` as their first argument or omit it. A context is supplied
 only when the function or its codecs require it; scripts see the same external signature.
 
-Functions returning plain `void`, `bool`, `int64_t` or `double` use a direct AOT entry with register
-results. Exact scalar signatures retain the original C++ function pointer. Boolean and managed
-arguments use their ABI codecs. Functions returning `std::expected` or managed values use a checked
-entry that propagates errors and validates managed results, including Future completion types.
+Functions use a direct AOT entry with register results only when their argument codecs, return
+conversion and call cannot fail. Exact scalar signatures retain the original C++ function pointer.
+Context-dependent managed decoding, `std::expected` results and managed return values use a checked
+entry that propagates errors and validates results, including complete Future payload contracts.
 Both entries preserve logical frames, call-depth limits and GC roots during host execution.
 Dynamic callable boundaries validate their arguments before entering typed native code.
+
+`include/vela/host.h` exposes logical types, `Local`, `Persistent`, `Type`, `Entry` and `Result`.
+Canonical host descriptions use the shared layout graph, resolved against an explicit instance or
+development session for script nominals. Type roots retain structural metadata; captured callables
+retain code versions. Named session entries resolve the current publication. Local scopes and
+persistent roots share the heap root mechanism, and both success values and `Error` payloads cross
+the boundary while rooted. Their native storage participates in heap accounting and external
+resources obey the existing shutdown protocol. Ordinary handles remain confined to the Isolate
+thread; typed completion endpoints use the scheduler's explicit cross-thread delivery contract.
+
+Closed native images share layout identities while their image owner remains alive. The cache
+holds that owner weakly and traces its layout graph during metadata collection. After the last
+image owner retires, only live objects and type roots retain those layouts; even an empty nominal
+container must keep its element metadata valid. Host type resolution never promotes collectible
+structural metadata into a permanent Isolate cache.
 
 Generated `external class` bindings use this same signature and calling convention. Clang tooling
 belongs to the independent binding generator; runtime code consumes immutable class descriptions,

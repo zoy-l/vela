@@ -20,13 +20,13 @@ namespace vela::runtime {
 
 class Isolate;
 class Future;
-class Timer;
-class CancellationToken;
 struct TypeSignature;
 struct HeapObject;
 struct InstanceStorage;
 // Isolate 持有的名义接口身份；不占用可分配类的布局索引。
-struct InterfaceType final {};
+struct InterfaceType final {
+  DeclarationId declaration;
+};
 // 同一增量会话共享代码身份；函数编号只在该身份内有意义。
 struct CodeIdentity final {};
 class ClassLayout;

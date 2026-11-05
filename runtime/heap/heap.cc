@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include "base/execution_status.h"
+#include "runtime/async/future.h"
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
@@ -36,9 +37,10 @@ struct alignas(std::max_align_t) NativeHeader final {
 constexpr auto kRootResourceKinds = std::to_array<std::optional<ExternalResourceKind>>({
     std::nullopt,
     ExternalResourceKind::RootRange,
-    ExternalResourceKind::RootedValue,
     ExternalResourceKind::NativeInstance,
     ExternalResourceKind::NativeHandle,
+    ExternalResourceKind::Persistent,
+    ExternalResourceKind::Type,
 });
 
 }  // namespace
@@ -59,6 +61,11 @@ RootRange::RootRange(Heap& heap, std::span<StringObject* const> strings, RootOwn
 
 RootRange::~RootRange() {
   Detach();
+}
+
+RootRange::RootRange(Heap& heap, std::span<const TypeConstraint> types, RootOwner owner) noexcept
+    : heap_(&heap), data_(types.data()), count_(types.size()), kind_(Kind::Types), owner_(owner) {
+  heap.RegisterRoot(*this);
 }
 
 void RootRange::Attach(Heap& heap, const Value* values, std::size_t count) noexcept {
@@ -378,7 +385,7 @@ void Heap::MarkRoot(const RootRange& root) noexcept {
     for (auto* string : std::span(static_cast<StringObject* const*>(root.data_), root.count_)) {
       MarkReference(string);
     }
-  } else {
+  } else if (root.kind_ == RootRange::Kind::InstanceFields) {
     const auto& storage = *static_cast<const InstanceStorage*>(root.data_);
     const auto fields = storage.fields();
     for (std::uint32_t index = 0; index < storage.count; ++index) {

@@ -248,6 +248,37 @@ executable("vela_benchmark_tests") {
   ]
 }
 
+host_interop_directory = "$target_gen_dir/host_interop"
+host_interop_object = "$host_interop_directory/workload.o"
+if (target_os == "win") {
+  host_interop_object = "$host_interop_directory/workload.obj"
+}
+
+action("host_interop_inputs") {
+  testonly = true
+  script = "//tools/host_interop_benchmarks.py"
+  inputs = [
+    "//tools/aot_benchmarks.py",
+    "host_interop.vela",
+  ]
+  outputs = [
+    host_interop_object,
+    "$host_interop_object.h",
+    "$host_interop_object.aot.json",
+    "$host_interop_directory/entries.h",
+    "$host_interop_directory/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--source",
+    rebase_path("host_interop.vela", root_build_dir),
+    "--output",
+    rebase_path(host_interop_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
+}
+
 executable("vela_aot_benchmarks") {
   testonly = true
   sources = [
@@ -260,6 +291,7 @@ executable("vela_aot_benchmarks") {
     "dasprofile/workloads.h",
     "escape_benchmark.cc",
     "generics_benchmark.cc",
+    "host_interop_benchmark.cc",
     "map_literal_benchmark.cc",
     "map_literal_benchmark.h",
     "native_class_benchmark.cc",
@@ -267,6 +299,7 @@ executable("vela_aot_benchmarks") {
     "reload_scaling_benchmark.cc",
     aot_object,
     dasprofile_object,
+    host_interop_object,
     map_literal_object,
     native_class_object,
   ]
@@ -280,6 +313,7 @@ executable("vela_aot_benchmarks") {
   deps = [
     ":aot_native_inputs",
     ":dasprofile_native_inputs",
+    ":host_interop_inputs",
     ":jit_benchmark_support",
     ":map_literal_native_inputs",
     ":native_class_host",

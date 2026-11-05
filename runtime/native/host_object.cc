@@ -1,0 +1,197 @@
+#include "runtime/native/host_object.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <expected>
+#include <span>
+#include <string_view>
+#include <utility>
+
+#include <vela/error.h>
+#include <vela/handles.h>
+
+#include "base/execution_status.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/host_type.h"
+#include "runtime/native/host_value.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_dynamic.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/native/native_program_state.h"
+#include "runtime/native/native_type.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
+#include "runtime/value/value_buffer.h"
+#include "runtime/value/value_operations.h"
+
+namespace vela::internal {
+namespace {
+
+Result<runtime::HeapObject*> ResolveHostProgram(HandleScope& scope, const runtime::HostType& type) {
+  if (&type.isolate() != &scope.isolate()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+  }
+  const auto program = type.program();
+  if (!program) {
+    return std::unexpected(Error{.status = program.error(), .message = {}, .stack_trace = {}});
+  }
+  auto* parent = scope.isolate().native_control().state().host_execution;
+  if (parent != nullptr) {
+    const auto& state = runtime::Heap::NativeProgram(**program);
+    if (state.code_identity != &parent->instance().code_identity()) {
+      return std::unexpected(
+          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    }
+  }
+  return *program;
+}
+
+Result<runtime::HeapObject*> ResolveMemberProgram(HandleScope& scope,
+                                                  const runtime::HostType& type,
+                                                  runtime::Value receiver) {
+  if (!runtime::Heap::IsValueOfType(receiver, type.constraint())) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
+  }
+  return ResolveHostProgram(scope, type);
+}
+
+}  // namespace
+
+Result<void> ConstructHostObject(HandleScope& scope,
+                                 const runtime::HostType& type,
+                                 std::span<const HostArgument> arguments,
+                                 runtime::Value& output) {
+  const auto program = ResolveHostProgram(scope, type);
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  auto instance = runtime::NativeInstance::Borrow(**program);
+  const auto& state = runtime::Heap::NativeProgram(**program);
+  const auto found = state.class_indices.find(type.constraint().nominal);
+  if (found == state.class_indices.end()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+  }
+  const auto target = instance.image().classes.values()[found->second].constructor;
+  if (target == runtime::kNoNativeIndex) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+  }
+  const auto& signature = instance.call_signature(target);
+  const auto count = signature.parameters.size() / 2;
+  runtime::ValueBuffer storage(signature.parameters.size());
+  if (!storage.IsAllocated()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+  }
+  const auto values = storage.values();
+  for (std::size_t index = 0; index < count; ++index) {
+    values[index + count] = runtime::Value::Boolean(false);
+  }
+  for (const auto& argument : arguments) {
+    const auto parameter = signature.ParameterIndex(argument.name);
+    if (!parameter || *parameter >= count || values[*parameter + count].AsBoolean()) {
+      return std::unexpected(
+          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    }
+    values[*parameter] = argument.value;
+    values[*parameter + count] = runtime::Value::Boolean(true);
+  }
+  for (std::size_t index = 0; index < count; ++index) {
+    if (!signature.parameters[index].optional && !values[index + count].AsBoolean()) {
+      return std::unexpected(
+          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    }
+  }
+  runtime::NativeExecution execution(instance,
+                                     scope.isolate().native_control().state().host_execution);
+  const auto result = runtime::InvokeNativeFunction(execution, target, values);
+  if (!result) {
+    return std::unexpected(CaptureHostError(execution, result.error()));
+  }
+  StoreHostResult(scope.isolate().heap(), output, *result);
+  return {};
+}
+
+Result<void> ReadHostEnum(HandleScope& scope,
+                          const runtime::HostType& type,
+                          std::string_view name,
+                          runtime::Value& output) {
+  const auto program = ResolveHostProgram(scope, type);
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  const auto contract = type.constraint();
+  if (contract.nominal == nullptr || !contract.nominal->IsEnum()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
+  }
+  const auto& state = runtime::Heap::NativeProgram(**program);
+  const auto index = state.class_indices.at(contract.nominal);
+  const auto names = state.image->classes.values()[index].enum_members.values();
+  const auto member = std::ranges::find(names, name, &runtime::NativeText::text);
+  if (member == names.end()) {
+    return std::unexpected(
+        Error{.status = ExecutionStatus::InvalidField, .message = {}, .stack_trace = {}});
+  }
+  const auto ordinal = runtime::Value::Integer(member - names.begin());
+  const auto value = runtime::BoxDynamicValue(scope.isolate().heap(), ordinal, contract);
+  if (!value) {
+    return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
+  }
+  StoreHostResult(scope.isolate().heap(), output, *value);
+  return {};
+}
+
+Result<void> ReadHostMember(HandleScope& scope,
+                            const runtime::HostType& type,
+                            runtime::Value receiver,
+                            std::string_view name,
+                            runtime::NativeType result_type,
+                            runtime::Value& output) {
+  const auto program = ResolveMemberProgram(scope, type, receiver);
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  auto instance = runtime::NativeInstance::Borrow(**program);
+  auto expected = runtime::ResolveInstanceNativeType(instance, result_type);
+  if (!expected) {
+    return std::unexpected(Error{.status = expected.error(), .message = {}, .stack_trace = {}});
+  }
+  const runtime::RootRange result_type_root(scope.isolate().heap(), std::span(&*expected, 1),
+                                            runtime::RootOwner::Runtime);
+  runtime::NativeExecution execution(instance,
+                                     scope.isolate().native_control().state().host_execution);
+  const auto result = runtime::ReadNativeMember(execution, receiver, name, type.constraint());
+  if (!result) {
+    return std::unexpected(CaptureHostError(execution, result.error()));
+  }
+  return CastHostValue(scope, *result, *expected, output);
+}
+
+Result<void> WriteHostMember(HandleScope& scope,
+                             const runtime::HostType& type,
+                             runtime::Value receiver,
+                             std::string_view name,
+                             runtime::Value value) {
+  const auto program = ResolveMemberProgram(scope, type, receiver);
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  auto instance = runtime::NativeInstance::Borrow(**program);
+  runtime::NativeExecution execution(instance,
+                                     scope.isolate().native_control().state().host_execution);
+  const auto result =
+      runtime::WriteNativeMember(execution, receiver, name, value, type.constraint());
+  if (!result) {
+    return std::unexpected(CaptureHostError(execution, result.error()));
+  }
+  return {};
+}
+
+}  // namespace vela::internal

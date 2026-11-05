@@ -75,7 +75,7 @@ std::expected<void, std::string> ReadDependency(const std::string& path, Collect
   const auto* object = json->getAsObject();
   const auto* bindings = object != nullptr ? object->getObject("bindings") : nullptr;
   const auto* classes = bindings != nullptr ? bindings->getArray("classes") : nullptr;
-  if (classes == nullptr || bindings->getInteger("format_version") != 1) {
+  if (classes == nullptr || bindings->getInteger("format_version") != 2) {
     return std::unexpected("unsupported binding dependency manifest: " + path);
   }
   const auto module = bindings->getString("module");
@@ -230,7 +230,7 @@ int Collect(const Options& options) {
   }
   collection.module.inputs.assign(files->inputs().begin(), files->inputs().end());
   collection.module.input_fingerprints = files->fingerprints();
-  auto serialized = Serialize(collection.module);
+  std::optional<llvm::json::Object> emitted;
   if (!options.output.getValue().empty()) {
     const std::vector<std::string> headers(collection.headers.begin(), collection.headers.end());
     auto products = Emit(collection.module, headers, options.output.getValue());
@@ -238,7 +238,11 @@ int Collect(const Options& options) {
       llvm::errs() << products.error() << '\n';
       return 1;
     }
-    serialized["products"] = std::move(*products);
+    emitted = std::move(*products);
+  }
+  auto serialized = Serialize(collection.module);
+  if (emitted) {
+    serialized["products"] = std::move(*emitted);
   }
   llvm::outs() << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(serialized)));
   return 0;

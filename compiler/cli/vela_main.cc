@@ -23,9 +23,12 @@
 #include "compiler/cli/repl_console.h"
 #include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker.h"
+#include "compiler/ir/preparation.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/native/host_header.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
 #include "compiler/testing/command.h"
@@ -63,6 +66,7 @@ void PrintUsage(std::ostream& output) {
       << "  build --verify-manifest=FILE   Verify a native library and its header\n"
       << "  fmt [--write|--check] FILE   Format Vela source\n"
       << "  doc FILE OUTPUT   Generate exported API Markdown\n"
+      << "  host-header FILE --namespace=NAME -o OUTPUT   Generate typed C++ declarations\n"
       << "  lsp          Run the language server over stdio\n"
       << "  debug FILE   Debug main with source breakpoints and stepping\n"
       << "  repl         Start a persistent interactive session\n";
@@ -138,16 +142,17 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
     return vela::tooling::RunDebugConsole(program, *main, std::cin, std::cerr);
   }
   if (vela::testing::HasTestModule(program)) {
-    return vela::testing::RunDirectSuite(program, path,
-                                         {.output = std::cout, .errors = std::cerr});
+    return vela::testing::RunDirectSuite(program, path, {.output = std::cout, .errors = std::cerr});
   }
   vela::runtime::ProcessEntry process(isolate, std::cerr);
   const auto result = vela::runtime::ExecuteNativeFunction(program, *main);
   if (!result.Succeeded()) {
     vela::runtime::WriteRuntimeDiagnostic(std::cerr, {
-        .message = result.message, .stack_trace = result.stack_trace,
-        .status = result.status, .origin = result.origin,
-    });
+                                                         .message = result.message,
+                                                         .stack_trace = result.stack_trace,
+                                                         .status = result.status,
+                                                         .origin = result.origin,
+                                                     });
     return kRuntimeErrorExitCode;
   }
   return process.Finish(result.value);
@@ -204,6 +209,38 @@ int FormatFile(std::string_view path, FormatMode mode) {
     }
   } else {
     std::cout << *formatted;
+  }
+  return 0;
+}
+
+int HostHeaderCommand(std::span<char*> arguments) {
+  if (arguments.size() != 4 || !std::string_view(arguments[1]).starts_with("--namespace=") ||
+      std::string_view(arguments[2]) != "-o") {
+    std::cerr << "vela: host-header requires FILE --namespace=NAME -o OUTPUT\n";
+    return kUsageExitCode;
+  }
+  const std::string_view path = arguments.front();
+  const auto options = ReadDiagnosticOptions(path);
+  if (!options) {
+    return options.error().exit_code;
+  }
+  const auto prepared = vela::ir::PrepareParsed(vela::frontend::LoadProgram(path), *options);
+  PrintDiagnostics(path, prepared.diagnostics);
+  if (!prepared.Succeeded()) {
+    return kSourceErrorExitCode;
+  }
+  const auto name_space =
+      std::string_view(arguments[1]).substr(std::string_view("--namespace=").size());
+  const auto header = vela::compiler::native::EmitHostDeclarations(prepared.program, name_space);
+  if (!header) {
+    vela::WriteError(std::cerr, path, vela::SourceLocation(), header.error());
+    return kSourceErrorExitCode;
+  }
+  const auto output = vela::Utf8Path(arguments[3]);
+  const auto written = vela::WriteFileAtomically(output, std::as_bytes(std::span(*header)));
+  if (!written) {
+    vela::WriteError(std::cerr, vela::PathText(output), vela::SourceLocation(), written.error());
+    return kIoErrorExitCode;
   }
   return 0;
 }
@@ -348,6 +385,9 @@ int main(int argc, char** argv) {
   }
   if (command == "doc") {
     return WriteArtifactCommand(command, arguments.subspan(2));
+  }
+  if (command == "host-header") {
+    return HostHeaderCommand(arguments.subspan(2));
   }
 
   if (command == "run" || command == "debug") {

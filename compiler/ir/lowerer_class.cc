@@ -1,9 +1,11 @@
+#include "base/layout_description.h"
 #include "base/native_binding.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -17,6 +19,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 
 namespace vela::ir {
 namespace {
@@ -25,41 +28,54 @@ constexpr auto kConstructorMaskBits = std::numeric_limits<std::uint64_t>::digits
 
 }  // namespace
 
-std::string Lowerer::BuildNativeClassContract(const frontend::Class& source_class,
-                                              const frontend::ClassDescriptor& class_info) {
-  const auto contract_type = [this](const frontend::TypeDescriptor& type) {
-    const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
-    return NativeContractType{
-        .key = type.kind == frontend::TypeDescriptor::Kind::Class
-                   ? model_.classes.at(name).declaration->native_key
-                   : std::string(name),
-        .nullable = type.nullable,
-    };
+void Lowerer::BuildNativeClassContracts() {
+  struct Contract final {
+    ClassId owner;
+    std::vector<Function> members;
   };
-  std::vector<NativeContractMember> members;
-  const auto append = [&](const frontend::Function& source,
-                          const frontend::FunctionDescriptor& descriptor) {
-    auto function = PrepareFunction(source, descriptor, &source_class, nullptr);
-    NativeContractMember member{
-        .key = source.native_symbol,
-        .parameters = {},
-        .result = contract_type(function.return_type),
-    };
-    for (const auto& parameter : function.signature->parameters) {
-      member.parameters.push_back({
-          .name = parameter.name,
-          .type = contract_type(program_.runtime_types.at(parameter.type)),
-      });
+  std::vector<Contract> contracts;
+  for (const auto& owner : source_.classes) {
+    if (owner.native_key.empty()) {
+      continue;
     }
-    members.push_back(std::move(member));
-  };
-  if (source_class.constructor != nullptr) {
-    append(*source_class.constructor, class_info.constructor);
+    const auto& descriptor = model_.classes.at(owner.name);
+    Contract contract{.owner = class_ids_.at(owner.name), .members = {}};
+    if (owner.constructor != nullptr) {
+      contract.members.push_back(
+          PrepareFunction(*owner.constructor, descriptor.constructor, &owner, nullptr));
+    }
+    for (const auto& method : owner.methods) {
+      contract.members.push_back(
+          PrepareFunction(method, descriptor.methods.at(method.name), &owner, nullptr));
+    }
+    contracts.push_back(std::move(contract));
   }
-  for (const auto& method : source_class.methods) {
-    append(method, class_info.methods.at(method.name));
+  // 全部公开成员（包括未调用的构造器）先登记类型，再从生产布局生成同一份规范摘要。
+  program_.layouts = DescribeLayouts(program_, model_, source_);
+  const auto& layouts = program_.layouts;
+  for (const auto& contract : contracts) {
+    std::vector<NativeContractMember> members;
+    for (const auto& function : contract.members) {
+      assert(function.signature.has_value());
+      const auto& signature = *function.signature;
+      NativeContractMember member{
+          .key = function.native_symbol,
+          .parameters = {},
+          .result = signature.result ? layout::TypeKey(layouts, layouts.types.at(*signature.result))
+                                     : "void",
+      };
+      for (const auto& parameter : signature.parameters) {
+        member.parameters.push_back({
+            .name = parameter.name,
+            .type = layout::TypeKey(layouts, layouts.types.at(parameter.type)),
+        });
+      }
+      members.push_back(std::move(member));
+    }
+    auto key = NativeClassContract(std::move(members)).Hex();
+    program_.classes.at(contract.owner).native_contract = key;
+    program_.layouts.classes.at(contract.owner).native_contract = std::move(key);
   }
-  return NativeClassContract(std::move(members)).Hex();
 }
 
 void Lowerer::LowerFieldDefaultInitializers(const frontend::Class& owner) {
@@ -161,6 +177,10 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   Class layout;
   layout.name = name;
   layout.kind = Class::Kind::Enum;
+  const auto declaration = std::ranges::find(source_.enums, name, &frontend::Enum::name);
+  for (const auto& member : declaration->members) {
+    layout.enum_members.push_back(member.name);
+  }
   if (declarations_ != nullptr) {
     layout.declaration = declarations_->nominals.at(name);
   }

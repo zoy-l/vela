@@ -4,7 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
@@ -12,12 +12,13 @@
 namespace vela::runtime {
 namespace {
 
-TEST(RootedValueTest, CopiesShareStableRootAndReleaseAfterLastHandle) {
+TEST(HostRootTest, CopiesShareStableRootAndReleaseAfterLastHandle) {
   Isolate isolate(1);
   auto& heap = isolate.heap();
-  std::optional<RootedValue> first(std::in_place, isolate,
-                                   Value::String(heap.AllocateString("host")));
-  std::optional<RootedValue> second = first;
+  auto created = HostRoot::Create(isolate, Value::String(heap.AllocateString("host")));
+  ASSERT_TRUE(created);
+  std::optional<HostRoot> first(std::move(*created));
+  std::optional<HostRoot> second = first;
   auto moved = std::move(second);
   second.reset();
   first.reset();
@@ -29,13 +30,15 @@ TEST(RootedValueTest, CopiesShareStableRootAndReleaseAfterLastHandle) {
   EXPECT_EQ(heap.object_count(), 0U);
 }
 
-TEST(RootedValueTest, CreatingHandleDuringCollectionPreservesObject) {
+TEST(HostRootTest, CreatingHandleDuringCollectionPreservesObject) {
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* string = heap.AllocateString("late root");
   heap.StartCollection();
   {
-    const RootedValue handle(isolate, Value::String(string));
+    const auto handle_storage = HostRoot::Create(isolate, Value::String(string));
+    ASSERT_TRUE(handle_storage);
+    const auto& handle = *handle_storage;
     heap.Collect();
     EXPECT_EQ(heap.object_count(), 1U);
     EXPECT_EQ(handle.value().AsString()->value(), "late root");

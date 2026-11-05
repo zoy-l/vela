@@ -6,16 +6,11 @@
 
 #include <pcre2.h>
 
+#include "base/regexp.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 
 namespace vela::runtime {
-
-struct RegExpOptions final {
-  bool multi_line = false;
-  bool case_sensitive = true;
-  bool dot_all = false;
-};
 
 struct RegExpStorage final {
   StringObject* source{};

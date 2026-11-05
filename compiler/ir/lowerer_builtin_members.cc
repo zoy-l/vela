@@ -230,13 +230,12 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
   EmitBuiltinCall(builtin, result, base, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
   function.register_count = next_register_;
-  PublishMemberFunction(receiver, name, kind, signature, std::move(function));
+  PublishMemberFunction(receiver, name, kind, std::move(function));
 }
 
 void Lowerer::PublishMemberFunction(const frontend::TypeDescriptor& receiver,
                                     std::string_view name,
                                     MemberKind kind,
-                                    const frontend::FunctionDescriptor& signature,
                                     Function function) {
   const auto target = function_ids_.at(function.name);
   StoreFunction(std::move(function));
@@ -252,8 +251,7 @@ void Lowerer::PublishMemberFunction(const frontend::TypeDescriptor& receiver,
             .kind = frontend::BindingKind::Constant,
         },
     };
-    member_target = CallableClass(target, CallableMode::BoundMethod, captures,
-                                  frontend::MakeFunctionType(signature));
+    member_target = CallableClass(target, CallableMode::BoundMethod, captures);
   }
   program_.members.push_back({
       .receiver_type = receiver_type,

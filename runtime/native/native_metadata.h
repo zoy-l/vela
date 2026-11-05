@@ -7,8 +7,9 @@
 namespace vela::runtime {
 
 struct ProgramLayouts;
+struct LayoutCache;
 
-// 只有可重载实例化创建的稳定元数据参与回收；宿主/封闭程序创建的元数据保持 Isolate 寿命。
+// 程序和宿主类型创建的元数据按可达性回收；运行时内建元数据保持 Isolate 寿命。
 struct NativeMetadataSet final {
   absl::flat_hash_set<const ClassLayout*> classes;
   absl::flat_hash_set<const NominalType*> nominals;
@@ -16,6 +17,7 @@ struct NativeMetadataSet final {
   absl::flat_hash_set<const CollectionLayout*> collections;
   absl::flat_hash_set<const TypeSignature*> signatures;
   absl::flat_hash_set<const InterfaceType*> interfaces;
+  absl::flat_hash_set<const CodeIdentity*> code_identities;
   [[nodiscard]] bool IsEmpty() const noexcept;
 };
 
@@ -28,8 +30,10 @@ class NativeMetadataTracer final {
   void Mark(const CollectionLayout* layout);
   void Mark(const TypeSignature* signature);
   void Mark(const InterfaceType* interface);
+  void Mark(const CodeIdentity* identity);
   void Mark(TypeConstraint type);
   void Mark(const ProgramLayouts& layouts);
+  void Mark(const LayoutCache& cache);
   [[nodiscard]] const NativeMetadataSet& reached() const noexcept { return reached_; }
 
  private:

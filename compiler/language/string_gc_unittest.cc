@@ -9,7 +9,7 @@
 
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_instance.h"
@@ -59,7 +59,7 @@ TEST(CompilerStringGcTest, RootsConstantsDuringCompilationAndBetweenExecutions) 
 TEST(CompilerStringGcTest, InstanceTransfersAndCapturedFunctionsKeepCodeAndConstantsAlive) {
   runtime::Isolate isolate(1);
   std::unique_ptr<runtime::NativeInstance> retained;
-  std::optional<runtime::RootedValue> function;
+  std::optional<runtime::HostRoot> function;
   {
     auto compiled = test::CompileSource(R"(
 func identity(value: string): string { return value; }
@@ -71,7 +71,9 @@ func capture(): () => string { return single; }
     ASSERT_TRUE(compiled.Succeeded());
     const auto captured = test::Execute(*compiled.instance, "capture");
     ASSERT_TRUE(captured.Succeeded());
-    function.emplace(isolate, captured.value);
+    auto root = runtime::HostRoot::Create(isolate, captured.value);
+    ASSERT_TRUE(root);
+    function = std::move(*root);
     retained = std::move(compiled.instance);
   }
   auto moved = std::move(retained);

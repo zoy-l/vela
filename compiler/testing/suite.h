@@ -15,6 +15,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <vela/handles.h>
 
 #include "base/mock_operation.h"
 #include "base/test_operation.h"
@@ -23,12 +24,12 @@
 #include "compiler/testing/settings.h"
 #include "runtime/async/execution_context.h"
 #include "runtime/async/future.h"
-#include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/process/process_entry.h"
 #include "runtime/testing/test_bridge.h"
+#include "vela/types.h"
 
 namespace vela::testing {
 
@@ -70,7 +71,7 @@ class Suite final : public runtime::TestBridge {
   enum class ExpectationKind : std::uint8_t { Assertion, CallObservation };
   struct Callback final {
     std::uint64_t id;
-    runtime::RootedValue value;
+    Persistent<vela::Value> value;
     std::vector<runtime::FutureTraceFrame> trace;
   };
   struct AsyncExpectation final {
@@ -114,7 +115,9 @@ class Suite final : public runtime::TestBridge {
     State state = State::Pending;
     std::vector<runtime::FutureTraceFrame> trace;
   };
-  [[nodiscard]] Callback Capture(const runtime::TestRegistration& registration);
+  [[nodiscard]] std::expected<Callback, std::string> Capture(
+      runtime::Value callback,
+      std::vector<runtime::FutureTraceFrame> trace);
   std::expected<void, std::string> RegisterNode(const runtime::TestRegistration& registration);
   std::expected<void, std::string> RegisterHook(const runtime::TestRegistration& registration);
   static std::expected<void, std::string> ReadMetadata(

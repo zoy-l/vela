@@ -83,6 +83,14 @@ std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& s
                                                            const NativeRootPlan& roots) {
   std::size_t scratch_count = roots.count == 0 && !source.is_async ? 0 : 1;
   scratch_count = std::max(scratch_count, roots.minimum_temporary_count);
+  if (!source.native_symbol.empty()) {
+    for (std::size_t index = 0; index < source.parameter_count; ++index) {
+      const auto& type = source.value_types.at(index);
+      if (type.kind == Kind::Dynamic || HasValidity(type)) {
+        scratch_count = std::max(scratch_count, index + 1);
+      }
+    }
+  }
   for (const auto& saved : roots.suspended) {
     if (!saved.empty()) {
       scratch_count = std::max(scratch_count, saved.size() + 1);

@@ -309,7 +309,7 @@ Reload 不能在机器栈上仍有旧脚本帧时直接销毁 Isolate。停止�
 
 宿主侧必须接通以下边界，才能承诺安全 Reload：
 
-- **外部根**：现有 `RootedValue`、程序/函数句柄和外部 Future 句柄的原契约仍要求 Isolate 活得更久。不能在销毁 Isolate 后让这些句柄继续析构或读取。Reload 前由其拥有者释放；无法释放时返回需释放句柄的诊断，不强制销毁。不把旧对象引用自动搬入新堆。
+- **外部根**：`Persistent<T>`、类型/入口能力及外部 Future 资源要求 Isolate 活得更久。不能在销毁 Isolate 后让这些资源继续析构或读取。Reload 前由其拥有者释放；无法释放时返回需释放句柄的诊断，不强制销毁。不把旧对象引用自动搬入新堆。
 - **跨线程完成**：宿主异步生产者使用可关闭、带运行代次的完成端点。关闭后投递返回已关闭，不再解引用旧堆、执行回调或访问新 Isolate。端点控制状态可以独立存活，但不保留已销毁 Isolate 的裸指针。旧消息不能仅因 ID 重用进入新运行。
 - **任务停止**：不要求旧网络或文件系统操作一定能物理取消，但必须切断其脚本投递能力。不能等待无关外部操作无限期结束，也不能遗留可执行的旧微任务或恢复入口。
 - **事件与资源**：宿主持有的脚本回调、订阅及定时来源在旧运行停止时解绑。脚本对宿主产生的文件、网络请求、日志或业务对象变更不会自动撤销；是否重置这些宿主资源由嵌入方的生命周期逻辑决定。
@@ -343,8 +343,8 @@ JIT 的每个受支持目标都必须实现可执行内存权限切换、指令�
 | [`runtime/native/native_dispatch.h`](../../runtime/native/native_dispatch.h)、[`native_version.h`](../../runtime/native/native_version.h)、[`native_metadata.h`](../../runtime/native/native_metadata.h) | 原子快照、会话全局、存留依赖、函数版本所有权及元数据回收 |
 | [`runtime/heap/instance_storage.h`](../../runtime/heap/instance_storage.h)、[`heap_instance.cc`](../../runtime/heap/heap_instance.cc)、[`native_memory_layout.h`](../../runtime/native/native_memory_layout.h) | 稳定对象、独立字段块、弱实例登记、精确扫描、屏障与迁移 |
 | [`runtime/native/native_async.cc`](../../runtime/native/native_async.cc)、[`native_deoptimization.h`](../../runtime/native/native_deoptimization.h) | 挂起版本保活、活跃帧检查点、优化续延恢复和退休 |
-| [`runtime/heap/rooted_value.h`](../../runtime/heap/rooted_value.h)、[`isolate.h`](../../runtime/isolate/isolate.h)、[`future.h`](../../runtime/async/future.h) | 外部根诊断、固定 binding 快照、停止边界和可关闭完成端点 |
-| [`compiler/jit/platform_support_win.cc`](../../compiler/jit/platform_support_win.cc)、[`platform_support_posix.cc`](../../compiler/jit/platform_support_posix.cc)、[`tools/llvm.py`](../../tools/llvm.py) | 平台展开/调试注册、可执行资源和 ORC 依赖闭包 |
+| [`runtime/heap/host_root.h`](../../runtime/heap/host_root.h)、[`isolate.h`](../../runtime/isolate/isolate.h)、[`future.h`](../../runtime/async/future.h) | 外部根诊断、固定 binding 快照、停止边界和可关闭完成端点 |
+| [`compiler/jit/platform_support_win.cc`](../../compiler/jit/platform_support_win.cc)、[`platform_support_eh_frame.cc`](../../compiler/jit/platform_support_eh_frame.cc)、[`tools/llvm.py`](../../tools/llvm.py) | 平台展开/调试注册、可执行资源和 ORC 依赖闭包 |
 
 现有封闭 AOT 与 JIT 的具体状态以各自实现和文档为准。本文对可重载模式的布局、调用和生命周期要求，只在对应里程碑完整接通后才可标记为已支持。
 
@@ -360,7 +360,7 @@ JIT 的每个受支持目标都必须实现可执行内存权限切换、指令�
 | H4：开发操作闭环 | Load/Hot Reload/Reload、源码增量、文件监视、刷新通知、REPL 与调试器集成、结构化诊断 | 嵌入测试和工具测试能重复编辑、提交、刷新、重建 Isolate；旧消息不进入新运行；外部句柄冲突能定位 |
 | H5：优化与性能验收 | 依赖失效、去优化、内联/直接调用、优化续延、代码缓存与测量 | 活跃和挂起优化状态都能正确重载；旧代码可回收；性能数据同时给出冷启动、重载暂停、稳态与内存 |
 
-H2 不能因为首个算术函数可执行就完成；H3 不能因为没有活动栈的函数体替换成功就完成；H4 不能把宿主 RootedValue 的悬空风险留给用户承担。每阶段验收覆盖生产入口、IR、代码生成、runtime、嵌入、工具和退出清理的完整链路。H1–H4 完成后才可宣称支持本文的基线热重载；接近 AOT 的性能结论需要 H5 的实测。
+H2 不能因为首个算术函数可执行就完成；H3 不能因为没有活动栈的函数体替换成功就完成；H4 必须接通宿主持久句柄的关闭与释放契约。每阶段验收覆盖生产入口、IR、代码生成、runtime、嵌入、工具和退出清理的完整链路。H1–H4 完成后才可宣称支持本文的基线热重载；接近 AOT 的性能结论需要 H5 的实测。
 
 当前 Windows x64 实现通过 539 个 C++ 文件的静态检查、1,891 项 C++ 测试及 141 项 Python 工具与发行测试。验证包含基线和优化层的状态演化、活跃帧与挂起续延恢复、开发操作、缓存和资源退休；本轮未在 macOS 或 Linux 目标机执行验证。
 

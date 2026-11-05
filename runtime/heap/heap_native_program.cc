@@ -100,6 +100,14 @@ void Heap::AccumulateNativeLayouts(LayoutCounts& counts) const noexcept {
 }
 
 void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
+  for (auto* root = roots_; root != nullptr; root = root->next_) {
+    if (root->kind_ == RootRange::Kind::Types) {
+      for (const auto type :
+           std::span(static_cast<const TypeConstraint*>(root->data_), root->count_)) {
+        tracer.Mark(type);
+      }
+    }
+  }
   for (auto* object = objects_; object != nullptr; object = object->next) {
     switch (object->kind) {
       case ObjectKind::Instance:
@@ -145,6 +153,40 @@ void Heap::AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& fu
   }
 }
 
+namespace {
+
+template <class Append>
+void VisitNativeType(TypeConstraint type,
+                     std::vector<DeclarationId>& declarations,
+                     const Append& append) {
+  if (type.nominal != nullptr && type.nominal->declaration() != DeclarationId{}) {
+    declarations.push_back(type.nominal->declaration());
+  }
+  if (type.interface != nullptr && type.interface->declaration != DeclarationId{}) {
+    declarations.push_back(type.interface->declaration);
+  }
+  if (type.array != nullptr) {
+    append(type.array->element);
+  }
+  if (type.collection != nullptr) {
+    append(type.collection->keys.element);
+    const auto& values = type.collection->values;
+    if (values) {
+      append(values->element);
+    }
+  }
+  if (const auto* signature = type.signature) {
+    if (signature->result) {
+      append(*signature->result);
+    }
+    for (const auto& parameter : signature->parameters) {
+      append(parameter.type);
+    }
+  }
+}
+
+}  // namespace
+
 void Heap::AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const {
   absl::flat_hash_set<TypeConstraint> visited;
   std::vector<TypeConstraint> pending;
@@ -153,33 +195,21 @@ void Heap::AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) c
       pending.push_back(type);
     }
   };
+  for (auto* root = roots_; root != nullptr; root = root->next_) {
+    if (root->kind_ == RootRange::Kind::Types) {
+      for (const auto type :
+           std::span(static_cast<const TypeConstraint*>(root->data_), root->count_)) {
+        append(type);
+      }
+    }
+  }
   for (auto* object = objects_; object != nullptr; object = object->next) {
     append(TypeOf(Value::Object(object)));
   }
   while (!pending.empty()) {
     const auto type = pending.back();
     pending.pop_back();
-    if (type.nominal != nullptr && type.nominal->declaration() != DeclarationId{}) {
-      declarations.push_back(type.nominal->declaration());
-    }
-    if (type.array != nullptr) {
-      append(type.array->element);
-    }
-    if (type.collection != nullptr) {
-      append(type.collection->keys.element);
-      const auto& values = type.collection->values;
-      if (values) {
-        append(values->element);
-      }
-    }
-    if (const auto* signature = type.signature) {
-      if (signature->result) {
-        append(*signature->result);
-      }
-      for (const auto& parameter : signature->parameters) {
-        append(parameter.type);
-      }
-    }
+    VisitNativeType(type, declarations, append);
   }
 }
 

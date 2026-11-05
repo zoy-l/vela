@@ -109,7 +109,8 @@ void ObserveCheckedCompletion(Isolate& isolate,
       [&isolate, target, type, diagnostic](const FutureResult& input) mutable {
         const auto value = input.value;
         const auto succeeded = input.state == FutureState::Succeeded;
-        bool matches = Heap::IsThrowable(value);
+        bool matches = Heap::IsThrowable(value) ||
+                       (value.IsNull() && input.diagnostic.status != ExecutionStatus::Thrown);
         if (succeeded) {
           matches = type ? Heap::IsValueOfType(value, *type) : value.IsNull();
         }

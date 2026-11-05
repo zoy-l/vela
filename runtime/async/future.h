@@ -32,6 +32,7 @@ class FutureScheduler;
 class Heap;
 class RootRange;
 class FutureCompletionEndpoint;
+class FutureObservation;
 
 enum class FutureState : std::uint8_t { Pending, Succeeded, Failed };
 enum class FutureCompletionError : std::uint8_t {
@@ -133,6 +134,9 @@ class Future final {
   void Observe(Callback callback) const;
   void ObserveResult(std::function<void(const FutureResult&)> callback,
                      std::shared_ptr<std::vector<::vela::runtime::Value>> references = {}) const;
+  // 可取消的宿主观察。其根由返回能力持有，Future 对象图只借用观察者控制状态。
+  [[nodiscard]] std::expected<FutureObservation, ExecutionStatus> SubscribeResult(
+      absl::AnyInvocable<void(const FutureResult&)> callback) const;
   std::expected<void, FutureCompletionError> Adopt(const Future& source);
   // 所属线程同步检查 adoption；跨线程返回投递是否成功，adoption 失败发布为 Future 错误。
   // 跨线程传入的堆值必须属于该 Isolate，且在所属线程接收前持续保根。
@@ -169,8 +173,30 @@ class Future final {
   void Release() noexcept;
   friend class Completer;
   friend class FutureScheduler;
+  friend class FutureCompletionEndpoint;
+  friend class FutureObservation;
+  [[nodiscard]] Heap& heap() const noexcept;
   std::shared_ptr<SharedState> state_;
   Rooting rooting_ = Rooting::External;
+};
+
+// 所属线程上的作用域观察能力；取消、完成和关闭均释放回调及源 Future 的临时根。
+class FutureObservation final {
+ public:
+  FutureObservation() = default;
+  ~FutureObservation();
+  FutureObservation(const FutureObservation&) = delete;
+  FutureObservation& operator=(const FutureObservation&) = delete;
+  FutureObservation(FutureObservation&& other) noexcept;
+  FutureObservation& operator=(FutureObservation&& other) noexcept;
+  void Cancel() noexcept;
+
+ private:
+  friend class Future;
+  friend class FutureScheduler;
+  struct State;
+  explicit FutureObservation(std::shared_ptr<State> state) : state_(std::move(state)) {}
+  std::shared_ptr<State> state_;
 };
 
 class Completer final {
@@ -198,6 +224,10 @@ class FutureCompletionEndpoint final {
  public:
   FutureCompletionEndpoint() = default;
   [[nodiscard]] std::expected<void, FutureCompletionError> Complete(Value value) const;
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteIn(Heap& heap,
+                                                                      Value value) const;
+  // 复制文本可跨线程传输；仅在所属线程分配脚本字符串，关闭时丢弃尚未构造的消息。
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteText(std::string text) const;
   [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(Value error) const;
   [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(
       Value error,
@@ -208,11 +238,14 @@ class FutureCompletionEndpoint final {
   friend class FutureScheduler;
   struct State;
   struct Lease;
+  enum class CloseReason : std::uint8_t { Retired, Shutdown };
   explicit FutureCompletionEndpoint(std::shared_ptr<Lease> lease);
   [[nodiscard]] static FutureCompletionEndpoint Create(FutureScheduler& scheduler,
                                                        Completer completer);
-  static void Close(State& state);
-  [[nodiscard]] std::expected<void, FutureCompletionError> Settle(FutureResult result) const;
+  static void Close(State& state, CloseReason reason);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Settle(
+      FutureResult result,
+      Heap* expected_heap = nullptr) const;
   std::shared_ptr<Lease> lease_;
 };
 
@@ -294,6 +327,10 @@ class FutureScheduler final {
   friend class Timer;
   friend class HostEventSource;
   friend class FutureCompletionEndpoint;
+  friend class FutureObservation;
+  void CloseObservations();
+  std::uint64_t next_observation_identity_ = 0;
+  absl::flat_hash_map<std::uint64_t, std::weak_ptr<FutureObservation::State>> observations_;
   ExternalResources external_resources_;
   std::atomic_size_t host_accesses_{0};
   void RetireCompletionEndpoint(std::uint64_t identity);

@@ -297,6 +297,22 @@ NativeVersionEntry::Storage::Storage(Value source, std::uint32_t target)
 NativeVersionEntry::NativeVersionEntry(std::shared_ptr<const Storage> storage)
     : storage_(std::move(storage)) {}
 
+std::expected<NativeVersionEntry, ExecutionStatus> NativeVersionEntry::Bind(
+    NativeInstance& instance,
+    std::uint32_t function) {
+  const auto functions = instance.image().functions.values();
+  if (function >= functions.size() || (functions[function].flags & kNativeExportedFunction) == 0 ||
+      functions[function].hidden_parameters != 0) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  return NativeVersionEntry(std::make_shared<const Storage>(instance.state().front(), function));
+}
+
+NativeResolvedDeclaration NativeVersionEntry::Resolve() const noexcept {
+  const auto& version = storage_->version;
+  return {.state = version.state().AsObject(), .function = version.function()};
+}
+
 FunctionIdentity NativeVersionEntry::identity() const noexcept {
   const auto& version = storage_->version;
   const auto& state = Heap::NativeProgram(*version.state().AsObject());
@@ -320,6 +336,11 @@ NativeNamedEntry::NativeNamedEntry(std::shared_ptr<const Storage> storage)
 
 DeclarationId NativeNamedEntry::declaration() const noexcept {
   return storage_->declaration;
+}
+
+std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeNamedEntry::Resolve()
+    const noexcept {
+  return storage_->dispatch->Resolve(storage_->declaration);
 }
 
 std::expected<NativeVersionEntry, ExecutionStatus> NativeNamedEntry::Capture() const {

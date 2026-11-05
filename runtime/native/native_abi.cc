@@ -52,12 +52,20 @@ NativeFrame::~NativeFrame() {
 }
 
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
+    : NativeExecution(instance, nullptr) {}
+
+NativeExecution::NativeExecution(NativeInstance& instance, const NativeExecution* parent) noexcept
     : instance_(&instance),
-      context_(instance.isolate()),
+      context_(instance.isolate(), *this),
       control_state_(&isolate().native_control().state()),
       barrier_state_(&isolate().heap().barrier_state()),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
   const auto bounds = CurrentNativeStackBounds();
+  if (parent != nullptr) {
+    current_frame_ = parent->current_frame_;
+    frame_count_ = parent->frame_count_;
+    base_frame_count_ = frame_count_;
+  }
   if (!bounds) {
     stack_status_ = bounds.error();
   } else if (bounds->upper - bounds->lower <= kNativeStackReserveBytes) {

@@ -15,7 +15,7 @@
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/test_support.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/value/value.h"
@@ -72,13 +72,15 @@ TEST_P(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
   ASSERT_TRUE(call);
   const auto created = make->Invoke({});
   ASSERT_TRUE(created);
-  const runtime::RootedValue receiver(isolate_, *created);
+  const auto receiver_storage = runtime::HostRoot::Create(isolate_, *created);
+  ASSERT_TRUE(receiver_storage);
+  const auto& receiver = *receiver_storage;
   const std::array receiver_argument{receiver.value()};
   const std::array names{
       "topFactory", "lambdaFactory", "boundFactory", "interfaceFactory", "dynamicFactory",
   };
   std::vector<runtime::NativeVersionEntry> factories;
-  std::vector<runtime::RootedValue> callbacks;
+  std::vector<runtime::HostRoot> callbacks;
   for (std::size_t index = 0; index < names.size(); ++index) {
     const auto entry = dispatch.FindEntry("main.vela", names.at(index));
     ASSERT_TRUE(entry);
@@ -89,7 +91,9 @@ TEST_P(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
                                      : std::span<const runtime::Value>(receiver_argument);
     const auto callback = entry->Invoke(arguments);
     ASSERT_TRUE(callback);
-    callbacks.emplace_back(isolate_, *callback);
+    auto root = runtime::HostRoot::Create(isolate_, *callback);
+    ASSERT_TRUE(root);
+    callbacks.push_back(std::move(*root));
   }
   const auto updated = Publish("func added(): double { return 1.5; } " + FactorySource(42));
   ASSERT_TRUE(updated) << updated.error();
@@ -104,7 +108,9 @@ TEST_P(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
                                      : std::span<const runtime::Value>(receiver_argument);
     const auto created_callback = factories.at(index).Invoke(arguments);
     ASSERT_TRUE(created_callback);
-    const runtime::RootedValue callback(isolate_, *created_callback);
+    const auto callback_storage = runtime::HostRoot::Create(isolate_, *created_callback);
+    ASSERT_TRUE(callback_storage);
+    const auto& callback = *callback_storage;
     const std::array current_argument{callback.value()};
     const auto selected = call->Invoke(current_argument);
     ASSERT_TRUE(selected);
@@ -178,13 +184,17 @@ TEST_P(JitCallableTest, DynamicArrayCallbacksUseTheCapturedStateAndFunctionIndex
   ASSERT_TRUE(old_map);
   const auto created = factory->Invoke({});
   ASSERT_TRUE(created);
-  const runtime::RootedValue previous_callback(isolate_, *created);
+  const auto previous_callback_storage = runtime::HostRoot::Create(isolate_, *created);
+  ASSERT_TRUE(previous_callback_storage);
+  const auto& previous_callback = *previous_callback_storage;
   const auto updated = Publish("func added(): string { return 'new'; } " + declarations +
                                "func increment(value: int): int { return value + 2; }");
   ASSERT_TRUE(updated) << updated.error();
   const auto created_after_update = old_factory->Invoke({});
   ASSERT_TRUE(created_after_update);
-  const runtime::RootedValue current_callback(isolate_, *created_after_update);
+  const auto current_callback_storage = runtime::HostRoot::Create(isolate_, *created_after_update);
+  ASSERT_TRUE(current_callback_storage);
+  const auto& current_callback = *current_callback_storage;
   isolate_.heap().Collect();
   const std::array previous_argument{previous_callback.value()};
   const std::array current_argument{current_callback.value()};
@@ -236,7 +246,7 @@ export func interfaceFactory(): (int) => int {
   ASSERT_TRUE(call);
   const std::array names{"boundFactory", "interfaceFactory"};
   std::vector<runtime::NativeVersionEntry> factories;
-  std::vector<runtime::RootedValue> callbacks;
+  std::vector<runtime::HostRoot> callbacks;
   for (const auto* name : names) {
     const auto factory = dispatch.FindEntry("main.vela", name);
     ASSERT_TRUE(factory);
@@ -245,7 +255,9 @@ export func interfaceFactory(): (int) => int {
     ASSERT_TRUE(captured);
     ASSERT_TRUE(callback);
     factories.push_back(*captured);
-    callbacks.emplace_back(isolate_, *callback);
+    auto root = runtime::HostRoot::Create(isolate_, *callback);
+    ASSERT_TRUE(root);
+    callbacks.push_back(std::move(*root));
   }
   const auto retained = dispatch.RetainedDeclarations();
   const auto updated = test::UpdateSource(*compiler_, source_, isolate_, declarations(2) + R"(
@@ -261,7 +273,9 @@ export func interfaceFactory(): (int) => int { return (value: int): int => 0; }
     ASSERT_TRUE(test::ReturnsInteger(*call, 40, previous_argument));
     const auto created = factories.at(index).Invoke({});
     ASSERT_TRUE(created);
-    const runtime::RootedValue callback(isolate_, *created);
+    const auto callback_storage = runtime::HostRoot::Create(isolate_, *created);
+    ASSERT_TRUE(callback_storage);
+    const auto& callback = *callback_storage;
     const std::array current_argument{callback.value()};
     ASSERT_TRUE(test::ReturnsInteger(*call, 42, current_argument));
   }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
+#include <expected>
 #include <string>
 
 #include <clang/AST/ASTContext.h>
@@ -20,9 +20,9 @@ using HostTypes = llvm::DenseMap<const clang::CXXRecordDecl*, std::string>;
 [[nodiscard]] std::string PrintType(clang::QualType type, const clang::ASTContext& context);
 [[nodiscard]] bool IsContext(clang::QualType type);
 [[nodiscard]] clang::QualType UnwrapExpected(clang::QualType type);
-[[nodiscard]] std::optional<Type> MapType(clang::QualType type,
-                                          TypePosition position,
-                                          clang::ASTContext& context,
-                                          const HostTypes& hosts);
+[[nodiscard]] std::expected<Type, std::string> MapType(clang::QualType type,
+                                                       TypePosition position,
+                                                       clang::ASTContext& context,
+                                                       const HostTypes& hosts);
 
 }  // namespace vela::bindgen

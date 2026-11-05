@@ -1,0 +1,11 @@
+external func step(value: int): int = 'interop.step';
+external func echo(values: int[]): int[] = 'interop.echo';
+external func bounce(callback: (int) => int, value: int): int = 'interop.bounce';
+
+export class Box { value: int; }
+
+export func scalar(value: int): int { return step(value); }
+export func reentry(value: int): int { return bounce((item: int): int => step(item), value); }
+export func local(values: int[]): int[] { return echo(values); }
+export func callback(): (int) => int { return (value: int): int => value + 1; }
+export func object(): Box { return Box(value: 42); }

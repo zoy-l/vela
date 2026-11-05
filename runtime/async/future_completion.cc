@@ -1,11 +1,15 @@
+#include "base/execution_status.h"
 #include "runtime/async/future.h"
 
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <utility>
 
+#include "base/utf8.h"
+#include "runtime/heap/heap.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -58,17 +62,63 @@ FutureCompletionEndpoint FutureCompletionEndpoint::Create(FutureScheduler& sched
   return FutureCompletionEndpoint(std::make_shared<Lease>(std::move(state)));
 }
 
-void FutureCompletionEndpoint::Close(State& state) {
+void FutureCompletionEndpoint::Close(State& state, CloseReason reason) {
   std::unique_ptr<Completer> retired;
   {
     const std::scoped_lock lock(state.mutex);
     retired = std::move(state.completer);
     state.scheduler = nullptr;
+    if (reason == CloseReason::Shutdown) {
+      state.completed = false;
+    }
   }
 }
 
 std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Complete(Value value) const {
   return Settle({.state = FutureState::Succeeded, .value = value, .diagnostic = {}});
+}
+
+std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteIn(Heap& heap,
+                                                                                Value value) const {
+  return Settle({.state = FutureState::Succeeded, .value = value, .diagnostic = {}}, &heap);
+}
+
+std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteText(
+    std::string text) const {
+  if (lease_ == nullptr) {
+    return std::unexpected(FutureCompletionError::Closed);
+  }
+  auto state = lease_->state;
+  const std::scoped_lock lock(state->mutex);
+  if (state->completed) {
+    return std::unexpected(FutureCompletionError::AlreadyCompleted);
+  }
+  auto* scheduler = state->scheduler;
+  if (scheduler == nullptr) {
+    return std::unexpected(FutureCompletionError::Closed);
+  }
+  state->completed = true;
+  scheduler->PostMicrotask([state, text = std::move(text)] {
+    const std::scoped_lock completion_lock(state->mutex);
+    if (state->scheduler == nullptr) {
+      return;
+    }
+    auto& completer = *state->completer;
+    auto status = ExecutionStatus::TypeError;
+    if (!InvalidUtf8Offset(text)) {
+      auto* string = completer.future().heap().AllocateString(text);
+      if (string != nullptr) {
+        std::ignore = completer.Complete(Value::String(string));
+        state->Retire();
+        return;
+      }
+      status = ExecutionStatus::OutOfMemory;
+    }
+    std::ignore = completer.CompleteError(
+        Value::Null(), {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
+    state->Retire();
+  });
+  return {};
 }
 
 std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteError(
@@ -84,7 +134,8 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteErr
 }
 
 std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Settle(
-    FutureResult result) const {
+    FutureResult result,
+    Heap* expected_heap) const {
   if (lease_ == nullptr) {
     return std::unexpected(FutureCompletionError::Closed);
   }
@@ -97,6 +148,9 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Settle(
     return std::unexpected(FutureCompletionError::Closed);
   }
   auto& completer = *state.completer;
+  if (expected_heap != nullptr && &completer.future().heap() != expected_heap) {
+    return std::unexpected(FutureCompletionError::DifferentIsolate);
+  }
   const auto completion = completer.Settle(std::move(result));
   if (completion) {
     state.completed = true;

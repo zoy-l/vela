@@ -36,7 +36,14 @@ class InstanceMigration;
 struct NativeRetainedFunction;
 struct LayoutCounts;
 
-enum class RootOwner : std::uint8_t { Runtime, Host, RootedValue, NativeInstance, NativeHandle };
+enum class RootOwner : std::uint8_t {
+  Runtime,
+  Host,
+  NativeInstance,
+  NativeHandle,
+  Persistent,
+  Type,
+};
 
 class RootRange final {
  public:
@@ -48,6 +55,9 @@ class RootRange final {
   RootRange(Heap& heap,
             std::span<StringObject* const> strings,
             RootOwner owner = RootOwner::Host) noexcept;
+  RootRange(Heap& heap,
+            std::span<const TypeConstraint> types,
+            RootOwner owner = RootOwner::Runtime) noexcept;
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
@@ -63,7 +73,7 @@ class RootRange final {
  private:
   friend class Heap;
 
-  enum class Kind : std::uint8_t { Values, Strings, InstanceFields };
+  enum class Kind : std::uint8_t { Values, Strings, InstanceFields, Types };
 
   Heap* heap_ = nullptr;
   const void* data_ = nullptr;
@@ -225,6 +235,9 @@ class Heap final {
       const HeapObject& object,
       Value key) noexcept;
   [[nodiscard]] static std::expected<Value, ExecutionStatus> GetCollectionValue(
+      const HeapObject& object,
+      Value key) noexcept;
+  [[nodiscard]] static std::expected<std::optional<Value>, ExecutionStatus> FindCollectionValue(
       const HeapObject& object,
       Value key) noexcept;
   [[nodiscard]] static std::expected<CollectionRemove, ExecutionStatus> RemoveCollection(

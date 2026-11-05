@@ -7,9 +7,11 @@
 
 #include <benchmark/benchmark.h>
 
+#include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
+#include "vela/error.h"
 
 namespace vela::benchmarks {
 
@@ -73,12 +75,12 @@ std::shared_ptr<NativeClassHost> NativeClassHost::Repeated() noexcept {
   return kRepeated;
 }
 
-std::expected<std::int64_t, runtime::NativeError> NativeClassHost::Failure(
-    bool fail) const noexcept {
+std::expected<std::int64_t, vela::Error> NativeClassHost::Failure(bool fail) const noexcept {
   if (fail) {
-    return std::unexpected(runtime::NativeError{
-        .kind = runtime::NativeErrorKind::Failure,
+    return std::unexpected(vela::Error{
+        .status = vela::ExecutionStatus::NativeFailure,
         .message = "native benchmark failure",
+        .stack_trace = {},
     });
   }
   return value_;

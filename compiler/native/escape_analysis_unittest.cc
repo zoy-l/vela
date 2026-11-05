@@ -221,7 +221,7 @@ export func read(publishNow: bool): int {
 
 TEST(EscapeAnalysisTest, PlansOneObjectPerNodeForSharedCyclicGraphs) {
   const auto program = Prepare(R"(
-class Link { value: int; next: Link?; other: Link?; }
+export class Link { value: int; next: Link?; other: Link?; }
 export func create(): Link {
   const first = Link(value: 20, next: null, other: null);
   const second = Link(value: 22, next: first, other: first);

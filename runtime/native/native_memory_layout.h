@@ -38,6 +38,7 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
+  static constexpr auto kExecutionBaseDepth = offsetof(NativeExecution, base_frame_count_);
   static constexpr auto kExecutionStackLimit = offsetof(NativeExecution, stack_limit_);
   static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);

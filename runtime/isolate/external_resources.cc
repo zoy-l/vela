@@ -14,12 +14,14 @@ std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
   switch (kind) {
     case ExternalResourceKind::RootRange:
       return "RootRange";
-    case ExternalResourceKind::RootedValue:
-      return "RootedValue";
     case ExternalResourceKind::NativeInstance:
       return "NativeInstance";
     case ExternalResourceKind::NativeHandle:
       return "NativeHandle";
+    case ExternalResourceKind::Persistent:
+      return "Persistent";
+    case ExternalResourceKind::Type:
+      return "Type";
     case ExternalResourceKind::NativeNamedEntry:
       return "NativeNamedEntry";
     case ExternalResourceKind::NativePreparedPublication:

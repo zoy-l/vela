@@ -21,20 +21,15 @@ enum class NativeMemberKind : std::uint8_t { Constructor, Method, Static, Getter
                                           NativeMemberKind kind,
                                           std::string_view name);
 
-// 源码、bindgen 和 runtime 生产者共享的临时规范化输入；不作为另一份持久类型表。
-struct NativeContractType final {
-  std::string key;
-  bool nullable = false;
-};
-
+// 类型键由共享 layout 描述生成，包含可空性及全部嵌套契约。
 struct NativeContractMember final {
   struct Parameter final {
     std::string name;
-    NativeContractType type;
+    std::string type;
   };
   std::string key;
   std::vector<Parameter> parameters;
-  NativeContractType result;
+  std::string result;
 };
 
 [[nodiscard]] Fingerprint NativeClassContract(std::vector<NativeContractMember> members);

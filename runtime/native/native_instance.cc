@@ -190,6 +190,7 @@ layout::Program DescribeLayouts(const NativeImage& image) {
       .types = ConvertTable<layout::Type>(image.types, DescribeType),
       .array_types = CopyTable(image.array_types),
       .collection_types = CopyTable(image.collection_types),
+      .nominals = {},
   };
 }
 
@@ -238,7 +239,7 @@ void RegisterInterfaces(const NativeImage& image,
     }
     const auto [entry, inserted] = identities.interfaces.try_emplace(identity, nullptr);
     if (inserted) {
-      entry->second = isolate.CreateInterfaceType();
+      entry->second = isolate.CreateInterfaceType(identity);
     }
     cache.interfaces.emplace(description.interfaces[index], entry->second);
   }
@@ -416,8 +417,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
           .message = "unregistered native function '" + std::string(symbol) + "'",
       });
     }
-    if (!binding->IsSignatureCompatible(data_->signatures.back(), description.types,
-                                        description.classes)) {
+    if (!binding->IsSignatureCompatible(data_->signatures.back(), description)) {
       return std::unexpected(NativeInstantiationError{
           .status = NativeInstantiationStatus::ImportSignatureMismatch,
           .message = "external declaration does not match native signature for '" +
@@ -522,8 +522,7 @@ NativeInstance::Instantiate(Isolate& isolate,
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  LayoutTransaction transaction(isolate,
-                                closed ? LayoutLifetime::Isolate : LayoutLifetime::Reloadable);
+  LayoutTransaction transaction(isolate, LayoutLifetime::Collectible);
   const auto existing = isolate.native_images_.find(&image);
   const auto has_owner = state.image_owner != nullptr;
   const auto can_reuse = closed && existing != isolate.native_images_.end() &&
@@ -544,6 +543,10 @@ NativeInstance::Instantiate(Isolate& isolate,
   state.code_identity = cache.code_identity;
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
+  for (std::size_t index = 0; index < state.layouts.classes.size(); ++index) {
+    state.class_indices.emplace(&state.layouts.classes[index]->nominal_type(),
+                                static_cast<std::uint32_t>(index));
+  }
   for (auto* type : state.layouts.classes) {
     if (type->callable() != nullptr) {
       type->BindCodeIdentity(*cache.code_identity);
@@ -563,18 +566,12 @@ NativeInstance::Instantiate(Isolate& isolate,
     return std::unexpected(initialized.error());
   }
   if (closed) {
-    if (has_owner) {
-      absl::erase_if(isolate.native_images_, [](const auto& entry) {
-        const auto& cached = entry.second;
-        return !cached.static_lifetime && cached.owner.expired();
-      });
-    }
     isolate.native_images_.insert_or_assign(&image, Isolate::NativeImageCache{
                                                         .layouts = std::move(cache),
                                                         .owner = state.image_owner,
                                                         .static_lifetime = !has_owner,
                                                     });
-    transaction.Commit();
+    transaction.CommitImage();
   } else {
     transaction.CommitNative(*anchor);
   }

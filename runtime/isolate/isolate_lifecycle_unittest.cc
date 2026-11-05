@@ -11,7 +11,7 @@
 
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/native/native_api.h"
 #include "runtime/native/native_function.h"
@@ -42,11 +42,13 @@ TEST(IsolateLifecycleTest, BindingSnapshotIsFixedAndSharesTheSameNativeImplement
 
 TEST(IsolateLifecycleTest, SharedRootBlocksStopUntilTheLastHostHandleIsReleased) {
   Isolate isolate;
-  std::optional<RootedValue> first(std::in_place, isolate, Value::Null());
+  auto created = HostRoot::Create(isolate, Value::Null());
+  ASSERT_TRUE(created);
+  std::optional<HostRoot> first(std::move(*created));
   auto second = first;
   const auto initial = isolate.ReloadBlockers();
   ASSERT_EQ(initial.size(), 1U);
-  EXPECT_EQ(initial.front().kind, ExternalResourceKind::RootedValue);
+  EXPECT_EQ(initial.front().kind, ExternalResourceKind::Persistent);
   first.reset();
   const auto refused = isolate.TryStop();
   ASSERT_FALSE(refused);
@@ -124,7 +126,8 @@ TEST(IsolateLifecycleTest, RefusedStopPreservesPendingEventsAndOpenEndpoints) {
   completer.future().Observe([&](FutureState, Value) { called = true; });
   const auto endpoint = std::move(completer).Detach();
   {
-    const RootedValue host_root(isolate, Value::Null());
+    const auto host_root_storage = HostRoot::Create(isolate, Value::Null());
+    ASSERT_TRUE(host_root_storage);
     ASSERT_FALSE(isolate.TryStop());
     ASSERT_TRUE(endpoint.Complete(Value::Null()));
     ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
@@ -148,13 +151,18 @@ TEST(IsolateLifecycleTest, StopDisposesDeferredHostDestructionOnTheOwnerThread) 
 
 TEST(IsolateLifecycleTest, OpaqueNativeHandlesAppearInStopDiagnostics) {
   Isolate isolate;
-  VelaAotHandle* handle = nullptr;
-  ASSERT_EQ(vela_aot_v1_string_create(&isolate, "text", 4, &handle), VELA_AOT_RETURNED);
+  VelaAotPersistent* handle = nullptr;
+  VelaAotScope* scope = nullptr;
+  ASSERT_EQ(vela_aot_v2_scope_create(&isolate, &scope), VELA_AOT_RETURNED);
+  VelaAotLocal text{};
+  ASSERT_EQ(vela_aot_v2_string_create(scope, "text", 4, &text), VELA_AOT_RETURNED);
+  ASSERT_EQ(vela_aot_v2_persist(text, &handle), VELA_AOT_RETURNED);
+  vela_aot_v2_scope_release(scope);
   const auto refused = isolate.TryStop();
   ASSERT_FALSE(refused);
   ASSERT_EQ(refused.error().size(), 1U);
-  EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::NativeHandle);
-  vela_aot_v1_handle_release(handle);
+  EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::Persistent);
+  vela_aot_v2_persistent_release(handle);
   EXPECT_TRUE(isolate.TryStop());
 }
 

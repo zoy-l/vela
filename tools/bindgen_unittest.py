@@ -12,7 +12,7 @@ import unittest
 from tools.clang_sdk import sdk_directory
 from tools.bindgen import fingerprints, generate, verify_manifest
 from tools.package import create_package, package_bindgen
-from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
+from tools.config import ROOT, executable_name, static_library_name, toolchain_tools, xcode_path
 from tools.test_support import CommandTestCase
 
 
@@ -30,6 +30,12 @@ class BindingCollectorTest(CommandTestCase):
                  if sys.platform == "win32" else ["-std=c++23", "-c", "-o", "ignored.o"])
         self.arguments = [str(self.compiler), *flags, "-I" + str(ROOT / "include"),
                           "-DHOST_BINDING_TEST=1", str(self.source)]
+        self.platform_arguments = []
+        if sys.platform == "darwin":
+            sysroot = xcode_path(["--show-sdk-path"], "sysroot")
+            self.platform_arguments = ["-isysroot", str(sysroot), "-nostdinc++", "-isystem",
+                                       str(sysroot / "usr/include/c++/v1")]
+            self.arguments[1:1] = self.platform_arguments
         self.database = self.directory / "compile_commands.json"
         self.write_database()
 
@@ -124,22 +130,55 @@ class VELA_CLASS("app.Derived") Derived : public Base {
         members = json.loads(result.stdout)["classes"][0]["members"]
         self.assertEqual([member["name"] for member in members], ["Double", "Int"])
 
+    def test_preserves_nested_local_contracts_and_generates_structured_types(self) -> None:
+        source = """#include <cstdint>
+#include <optional>
+#include <vela/types.h>
+namespace vela { template<class T> class Local; }
+using Payload = vela::Array<std::int64_t>;
+using Values = vela::Array<vela::Map<vela::String, vela::Nullable<vela::Future<Payload>>>>;
+using Callback = vela::Function<vela::Future<Payload>(vela::Set<std::int64_t>)>;
+class VELA_CLASS("app.Host") Host {
+ public:
+  vela::Local<Values> Echo(vela::Local<Values> values) noexcept;
+  std::optional<vela::Local<Callback>> Select(std::optional<vela::Local<Callback>> callback) noexcept;
+};"""
+        output = self.directory / "generated"
+        model = json.loads(self.collect(source, extra=["--output-directory=" + str(output)]).stdout)
+        self.assertEqual(model["format_version"], 2)
+        host, = model["classes"]
+        members = {member["name"]: member for member in host["members"]}
+        array = members["Echo"]["result"]
+        self.assertEqual((array["kind"], array["ownership"]), ("array", "local"))
+        future = array["element"]["value_type"]
+        self.assertEqual((future["kind"], future["nullable"]), ("future", True))
+        self.assertEqual(future["result"]["element"]["kind"], "int")
+        callback = members["Select"]["parameters"][0]["type"]
+        self.assertTrue(callback["nullable"])
+        self.assertEqual(callback["parameters"][0]["kind"], "set")
+        emitted = model["products"]["app.vela"]
+        self.assertIn("Map<string, Future<int[]>?>[]", emitted)
+        self.assertIn("Set<int>", emitted)
+        changed = json.loads(self.collect(source.replace("Array<std::int64_t>", "Array<double>")).stdout)
+        self.assertNotEqual(host["contract"], changed["classes"][0]["contract"])
+
     def test_maps_owned_results_strings_context_and_failures(self) -> None:
         model = json.loads(self.collect("""#include <memory>
 #include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
-namespace vela::runtime { class NativeContext; struct NativeError {}; class CancellationToken {}; }
+namespace vela { struct Error {}; }
+namespace vela::runtime { class NativeContext; class CancellationToken {}; }
 class VELA_CLASS("app.Counter") Counter {
  public:
   explicit Counter(vela::runtime::NativeContext& context, bool initial) noexcept;
-  static std::expected<std::unique_ptr<Counter>, vela::runtime::NativeError>
+  static std::expected<std::unique_ptr<Counter>, vela::Error>
       Create(vela::runtime::NativeContext& context) noexcept;
   std::shared_ptr<Counter> Shared() noexcept;
   std::string Text(std::string_view input) const noexcept;
   std::optional<std::string> MaybeText() noexcept;
-  std::expected<void, vela::runtime::NativeError> Reset() noexcept;
+  std::expected<void, vela::Error> Reset() noexcept;
   vela::runtime::CancellationToken Cancel(vela::runtime::CancellationToken token) noexcept;
   template<class T> VELA_IGNORE void Unbound(T value);
 };""").stdout)
@@ -160,6 +199,54 @@ class VELA_CLASS("app.Counter") Counter {
         self.assertEqual(members["Reset"]["result"]["kind"], "void")
         self.assertTrue(members["Reset"]["fallible"])
         self.assertEqual(members["Cancel"]["result"]["kind"], "CancellationToken")
+
+    def test_generated_script_header_round_trips_nominals_generics_and_source_dependencies(self) -> None:
+        dependency = self.write("types.vela", "export class Box<T> { value: T; private hidden: int = 0; }\n")
+        entry = self.write("api.vela", "import 'types.vela' as types;\n"
+                           "func fail(): int { throw Error(message: 'must not run'); }\n"
+                           "const initialized = fail();\n"
+                           "export func echo(value: types.Box<int>): types.Box<int> { return value; }\n")
+        header = self.directory / "script.h"
+        self.invoke("host-header", str(entry), "--namespace=script", "-o", str(header))
+        generated = header.read_text(encoding="utf-8")
+        self.assertIn("using Arguments = std::tuple<std::int64_t>", generated)
+        self.assertNotIn("Get_hidden", generated)
+        self.arguments[1:1] = ["-I" + str(ROOT), "-I" + str(ROOT / "third_party/abseil-cpp")]
+        self.write_database()
+        # Read the exact generated signature through the function type, without spelling tag names.
+        self.collect('''#include "script.h"
+template<class T> struct ResultOf;
+template<class T> struct ResultOf<vela::Entry<T(T)>> { using Type = T; };
+using Box = typename ResultOf<script::Entry_echo>::Type;
+class VELA_CLASS("app.Service") Service final { public:
+  vela::Local<Box> Echo(vela::Local<Box> value) noexcept { return value; }
+};
+''')
+        manifest_path = generate(self.binding_config(), self.collector, self.resource)
+        manifest = verify_manifest(manifest_path)
+        shape = manifest["bindings"]["classes"][0]["members"][0]["result"]
+        self.assertEqual((shape["module"], shape["declaration"]), (str(dependency), "Box"))
+        self.assertEqual(shape["arguments"][0]["kind"], "int")
+        self.assertIn(str(dependency), manifest["inputs"])
+        self.assertIn("scriptDependency1.Box<int>", (manifest_path.parent / "app.vela").read_text())
+        standard = "/clang:-std=c++23" if sys.platform == "win32" else "-std=c++23"
+        flags = ["/nologo", "/Zs"] if sys.platform == "win32" else ["-fsyntax-only"]
+        compiled = subprocess.run([str(self.compiler), *self.platform_arguments, standard, *flags,
+                                   "-I" + str(ROOT), "-I" + str(ROOT / "include"),
+                                   "-I" + str(ROOT / "third_party/abseil-cpp"),
+                                   str(manifest_path.parent / "app_bindings.cc")],
+                                  capture_output=True, text=True, check=False)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        dependency.write_text("export class Box<T> { value: T; }\n", encoding="utf-8", newline="\n")
+        with self.assertRaisesRegex(ValueError, "Stale binding input"):
+            verify_manifest(manifest_path)
+
+    def test_host_header_rejects_private_public_dependencies_without_replacing_output(self) -> None:
+        source = self.write("private.vela", "class Secret {} export func create(): Secret { return Secret(); }")
+        output = self.write("private.h", "previous generation\n")
+        rejected = self.invoke("host-header", str(source), "--namespace=script", "-o", str(output), code=65)
+        self.assertIn("not exported", rejected.stderr)
+        self.assertEqual(output.read_text(), "previous generation\n")
 
     def test_rejects_unowned_results_and_nonstandard_stl_specializations(self) -> None:
         prefix = '#include <memory>\n#include <string>\n'
@@ -242,7 +329,8 @@ static_assert(sizeof(Counter) == sizeof(int));
 #endif
 """, encoding="utf-8", newline="\n")
         flags = ["/Zs", "/nologo"] if sys.platform == "win32" else ["-fsyntax-only"]
-        result = subprocess.run([str(self.compiler), *flags, "-I" + str(ROOT / "include"),
+        result = subprocess.run([str(self.compiler), *self.platform_arguments, *flags,
+                                 "-I" + str(ROOT / "include"),
                                  str(self.source)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -272,7 +360,7 @@ class VELA_CLASS("app.Counter") Counter final { public:
         self.assertEqual(before, {path.name: (path.read_bytes(), path.stat().st_mtime_ns)
                                   for path in output.iterdir()})
         standard = "/clang:-std=c++23" if sys.platform == "win32" else "-std=c++23"
-        compile_arguments = [str(self.compiler), standard, "-I" + str(ROOT),
+        compile_arguments = [str(self.compiler), *self.platform_arguments, standard, "-I" + str(ROOT),
                              "-I" + str(ROOT / "include"),
                              "-I" + str(ROOT / "third_party/abseil-cpp")]
         compile_arguments += ["/nologo", "/Zs"] if sys.platform == "win32" else ["-fsyntax-only"]
@@ -365,11 +453,14 @@ class VELA_CLASS("app.Service") Service { public:
                 self.assertTrue(registration.startswith("vela::bindings::module_"))
                 self.assertNotIn("__", registration)
 
+    @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
+                         "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
     def test_aot_exports_use_typed_rooted_host_handles_and_run_without_source(self) -> None:
         runtime = self.executable.parent / "obj/runtime" / static_library_name("vela_runtime")
         tools = toolchain_tools()
         package = self.directory / "aot_package"
-        create_package(self.executable, runtime, package)
+        specification = os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")
+        create_package(self.executable, runtime, package, Path(specification) if specification else None)
         runtime = package / json.loads((package / "share/vela/target.json").read_text())["runtime"]
         self.arguments.remove("-I" + str(ROOT / "include"))
         self.arguments[1:1] = ["-I" + str(package / "include")]
@@ -416,8 +507,10 @@ export func retain(counter: Counter?): Counter? { return counter; }
                 metadata = json.loads(Path(str(library) + ".aot.json").read_text())
                 namespace = metadata["image"].removesuffix("_image")
                 header = Path(str(library) + ".h").read_text()
-                self.assertIn("Handle<NativeClass_", header)
+                self.assertIn("vela::Host<", header)
+                self.assertIn("vela::Nullable<vela::Host<", header)
                 host = self.write("host_main.cc", '''#include "IMAGE_HEADER"
+#include <cassert>
 #include "generated/app/app_bindings.h"
 #include "runtime/heap/heap.h"
 int main() {
@@ -425,16 +518,24 @@ int main() {
   if (!vela::bindings::module_app::Register(isolate)) return 1;
   auto instance = IMAGE_NAMESPACE::Instantiate(&isolate);
   if (!instance) return 2;
-  auto counter = IMAGE_NAMESPACE::Call_create(instance->get(), 40);
-  if (!counter) return 3;
-  auto retained = IMAGE_NAMESPACE::Call_retain(instance->get(), *counter);
-  if (!retained) return 4;
-  *counter = {};
+  auto retained = [&] {
+    vela::HandleScope scope(isolate);
+    auto counter = IMAGE_NAMESPACE::Call_create(scope, instance->get(), 40);
+    assert(counter.has_value());
+    auto returned = IMAGE_NAMESPACE::Call_retain(scope, instance->get(), *counter);
+    assert(returned.has_value() && returned->has_value());
+    return (*returned)->Persist();
+  }();
+  if (!retained) return 3;
   instance->reset();
   isolate.heap().Collect();
   instance = IMAGE_NAMESPACE::Instantiate(&isolate);
   if (!instance) return 5;
-  const auto result = IMAGE_NAMESPACE::Call_update(instance->get(), *retained);
+  vela::HandleScope scope(isolate);
+  const auto counter = retained->ToLocal(scope);
+  if (!counter) return 4;
+  retained->Reset();
+  const auto result = IMAGE_NAMESPACE::Call_update(scope, instance->get(), *counter);
   return result && *result == 42 ? 0 : 6;
 }
 '''.replace("IMAGE_HEADER", library.name + ".h").replace("IMAGE_NAMESPACE", namespace))

@@ -20,12 +20,15 @@
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "runtime/async/future.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
+#include "vela/handles.h"
+#include "vela/types.h"
 
 namespace vela::compiler {
 namespace {
@@ -330,8 +333,11 @@ TEST(DevelopmentSessionTest, ReloadWaitsForExternalRootsAndThenReexecutesEntryIn
       Apply(session, "class Box {} export func make(): Box { return Box(); } func main(): void {}")
           .status,
       DevelopmentStatus::Accepted);
-  std::optional<runtime::RootedValue> root;
-  root.emplace(session.isolate(), *session.Invoke("main.vela", "make"));
+  std::optional<runtime::HostRoot> root;
+  auto retained =
+      runtime::HostRoot::Create(session.isolate(), *session.Invoke("main.vela", "make"));
+  ASSERT_TRUE(retained);
+  root = std::move(*retained);
   auto* previous = &session.isolate();
   auto result = Apply(session,
                       "let count = 100; func main(): void { count++; } "
@@ -339,7 +345,7 @@ TEST(DevelopmentSessionTest, ReloadWaitsForExternalRootsAndThenReexecutesEntryIn
                       DevelopmentOperation::Reload);
   ASSERT_EQ(result.status, DevelopmentStatus::WaitingForRelease) << result.message;
   ASSERT_FALSE(result.blockers.empty());
-  EXPECT_EQ(result.blockers.front().kind, runtime::ExternalResourceKind::RootedValue);
+  EXPECT_EQ(result.blockers.front().kind, runtime::ExternalResourceKind::Persistent);
   EXPECT_EQ(&session.isolate(), previous);
   EXPECT_EQ(session.generation(), 1U);
   root.reset();
@@ -416,11 +422,11 @@ TEST(DevelopmentSessionTest, EntryFailureKeepsTheNewRunInstalledAndOldStateDisca
   EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);
 }
 
-runtime::Future StartRequest(runtime::NativeContext& context) noexcept {
+Result<Local<vela::Future<std::int64_t>>> StartRequest(runtime::NativeContext& context) noexcept {
   auto completer = context.CreateCompleter();
   const auto future = completer.future();
   HostState().completion = std::move(completer).Detach();
-  return future;
+  return context.FutureValue<std::int64_t>(future);
 }
 
 TEST(DevelopmentSessionTest, LateHostCompletionCannotEnterTheReplacementRun) {
@@ -499,7 +505,10 @@ TEST(DevelopmentSessionTest, NewlyRequiredGenericSpecializationsRecompileWithinT
                   "export func invoke(value: () => int): int { return value(); }")
                 .status,
             DevelopmentStatus::Accepted);
-  const runtime::RootedValue callback(session.isolate(), *session.Invoke("main.vela", "factory"));
+  const auto callback_storage =
+      runtime::HostRoot::Create(session.isolate(), *session.Invoke("main.vela", "factory"));
+  ASSERT_TRUE(callback_storage);
+  const auto& callback = *callback_storage;
   auto candidate =
       session.Prepare(Edit(session,
                            "func value<T>(input: T): int { return 42; } "

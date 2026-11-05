@@ -7,7 +7,7 @@
 #include "base/execution_status.h"
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
@@ -28,7 +28,8 @@ TEST(ExceptionHeapTest, RootsPayloadAndOwnsMessageInOneAllocation) {
   ASSERT_NE(exception, nullptr);
   message.clear();
   {
-    const RootedValue root(isolate, Value::Object(exception));
+    const auto root_storage = HostRoot::Create(isolate, Value::Object(exception));
+    ASSERT_TRUE(root_storage);
     heap.Collect();
     EXPECT_EQ(heap.object_count(), 3U);
     const auto& data = ExceptionData::From(*exception);

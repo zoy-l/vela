@@ -276,6 +276,7 @@ class FunctionEmitter final {
   llvm::BasicBlock* cleanup_ = nullptr;
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
+  llvm::Value* host_parent_ = nullptr;
   llvm::Value* result_ = nullptr;
   llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;

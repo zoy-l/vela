@@ -4,6 +4,12 @@
 
 namespace vela {
 
+struct RegExpOptions final {
+  bool multi_line = false;
+  bool case_sensitive = true;
+  bool dot_all = false;
+};
+
 [[nodiscard]] constexpr bool IsRegExpBuiltin(Builtin builtin) noexcept {
   return builtin >= Builtin::NewRegExp && builtin <= Builtin::RegExpMatchNamedGroup;
 }

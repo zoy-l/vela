@@ -6,6 +6,7 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -192,8 +193,9 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
       return stored ? std::expected<Value, ExecutionStatus>(original)
                     : std::unexpected(stored.error());
     }
-    return execution.isolate().heap().SetField(object, member.target, value)
-        .transform([original] { return original; });
+    return execution.isolate().heap().SetField(object, member.target, value).transform([original] {
+      return original;
+    });
   }
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
   if (!setter) {
@@ -239,6 +241,50 @@ std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
 }
 
 }  // namespace
+
+std::expected<Value, ExecutionStatus> ReadNativeMember(NativeExecution& execution,
+                                                       Value receiver,
+                                                       std::string_view name,
+                                                       const TypeConstraint& contract) {
+  const auto read = [&]() -> std::expected<Value, ExecutionStatus> {
+    const auto& members = execution.instance().members();
+    const auto* member =
+        contract.interface != nullptr ? members.Find(contract, name) : members.Find(receiver, name);
+    return member != nullptr ? ReadMember(execution, *member, receiver, Builtin::DynamicMemberGet)
+                             : std::unexpected(ExecutionStatus::InvalidField);
+  };
+  auto* dispatch = execution.instance().dispatch();
+  if (dispatch != nullptr) {
+    auto current = NativeInstance::Borrow(dispatch->current_state());
+    const NativeInstanceScope scope(execution, current);
+    return read();
+  }
+  return read();
+}
+
+std::expected<void, ExecutionStatus> WriteNativeMember(NativeExecution& execution,
+                                                       Value receiver,
+                                                       std::string_view name,
+                                                       Value value,
+                                                       const TypeConstraint& contract) {
+  const auto write = [&]() -> std::expected<void, ExecutionStatus> {
+    const auto& members = execution.instance().members();
+    const auto* member =
+        contract.interface != nullptr ? members.Find(contract, name) : members.Find(receiver, name);
+    if (member == nullptr) {
+      return std::unexpected(ExecutionStatus::InvalidField);
+    }
+    const std::array input{receiver, Value::Null(), value};
+    return WriteMember(execution, *member, input).transform([](Value) {});
+  };
+  auto* dispatch = execution.instance().dispatch();
+  if (dispatch != nullptr) {
+    auto current = NativeInstance::Borrow(dispatch->current_state());
+    const NativeInstanceScope scope(execution, current);
+    return write();
+  }
+  return write();
+}
 
 std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& execution,
                                                                Builtin builtin,

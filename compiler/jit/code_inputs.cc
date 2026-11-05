@@ -101,6 +101,7 @@ std::vector<std::string> ClassInputs(const ir::Program& program) {
     const auto& layout = program.layouts.classes.at(index);
     BinaryWriter output;
     output.Write(type.name);
+    output.Write(layout.name);
     output.Write(type.native_key);
     output.Write(type.native_contract);
     Put(output, type.kind);
@@ -121,11 +122,14 @@ std::vector<std::string> ClassInputs(const ir::Program& program) {
     }
     Numbers(output, type.interfaces);
     Numbers(output, type.dispatch_targets);
-    output.Write(type.callable_type);
     Put(output, layout.kind);
     Put(output, layout.field_count);
     Numbers(output, layout.reference_fields);
     Put(output, layout.callable_type.value_or(kInvalidFunctionTarget));
+    if (layout.callable_type) {
+      output.Write(layout::TypeKey(
+          program.layouts, {.kind = layout::Type::Kind::Callable, .index = *layout.callable_type}));
+    }
     fingerprints.push_back(ContentFingerprint(output.bytes()).Hex());
   }
   return fingerprints;

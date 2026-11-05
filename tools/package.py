@@ -246,8 +246,9 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             for header in (ROOT / directory).rglob("*.h"):
                 relative = (Path("include") / header.relative_to(ROOT)).as_posix()
                 copy_file(header, package, relative, "header", "Vela", "MIT")
-        copy_file(ROOT / "include/vela/bindings.h", package,
-                  "include/vela/bindings.h", "header", "Vela", "MIT")
+        for header in (ROOT / "include/vela").rglob("*.h"):
+            relative = header.relative_to(ROOT / "include").as_posix()
+            copy_file(header, package, "include/" + relative, "header", "Vela", "MIT")
         package_bindgen(executable.parent / executable_name("vela_bindgen"), package)
         for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
             if header.is_file() and header.suffix in {".h", ".inc"}:

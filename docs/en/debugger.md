@@ -59,8 +59,9 @@ unavailable values or invalid indices. The frame at depth zero is current;
 caller positions identify their calls, including lazy global initialization.
 
 Paused native frames retain precise GC roots. The observer may allocate or collect
-on the same Isolate; copied references that outlive the callback need
-`RootedValue`. The Isolate, execution and debugger must remain alive, and the host
+on the same Isolate. Retain a low-level `runtime::Value` beyond the callback with
+`runtime::HostRoot::Create(isolate, value)`; public `Local<T>` values use `Persist()`
+to create `Persistent<T>`. The Isolate, execution and debugger must remain alive, and the host
 must detach the observer before destroying it. Keep it installed while pumping
 asynchronous main and background work so resumed functions remain debuggable.
 

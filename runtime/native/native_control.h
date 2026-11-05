@@ -30,6 +30,7 @@ struct NativeSafepointQueue final {
 struct NativeControlState final {
   const std::atomic<std::uint8_t>* requests = nullptr;
   std::uint64_t host_borrows = 0;
+  NativeExecution* host_execution = nullptr;
 };
 
 // 跨线程只拥有队列控制状态；关闭后投递不会访问已退休的 Isolate。

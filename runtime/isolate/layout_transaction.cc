@@ -11,27 +11,51 @@
 #include "runtime/value/object.h"
 
 namespace vela::runtime {
+namespace {
+
+template <class Target, class Storage>
+void RetainNew(Target& target, const Storage& storage, std::size_t first) {
+  for (auto index = first; index < storage.size(); ++index) {
+    target.insert(storage.at(index).get());
+  }
+}
+
+}  // namespace
 
 LayoutTransaction::LayoutTransaction(Isolate& isolate, LayoutLifetime lifetime) noexcept
     : isolate_(&isolate), initial_(isolate.PersistentLayoutCounts()), lifetime_(lifetime) {
   ++isolate.layout_transactions_;
-  if (lifetime == LayoutLifetime::Reloadable) {
+  if (lifetime == LayoutLifetime::Collectible) {
     ++isolate.native_layout_transactions_;
   }
+}
+
+void LayoutTransaction::RetainStructuralMetadata() {
+  auto& metadata = isolate_->native_metadata_;
+  RetainNew(metadata.arrays, isolate_->array_layouts_, initial_.arrays);
+  RetainNew(metadata.collections, isolate_->collection_layouts_, initial_.collections);
+  RetainNew(metadata.signatures, isolate_->type_signatures_, initial_.signatures);
+  RetainNew(metadata.interfaces, isolate_->interface_types_, initial_.interfaces);
+}
+
+void LayoutTransaction::CommitImage() {
+  RetainStructuralMetadata();
+  auto& metadata = isolate_->native_metadata_;
+  RetainNew(metadata.classes, isolate_->class_layouts_, initial_.classes);
+  RetainNew(metadata.nominals, isolate_->nominal_types_, initial_.nominal_types);
+  RetainNew(metadata.code_identities, isolate_->code_identities_, initial_.code_identities);
+  committed_ = true;
+}
+
+void LayoutTransaction::CommitStructural() {
+  RetainStructuralMetadata();
+  committed_ = true;
 }
 
 void LayoutTransaction::CommitNative(HeapObject& owner) {
   auto& state = Heap::NativeProgram(owner);
   auto& metadata = isolate_->native_metadata_;
-  const auto retain_new = [](auto& target, const auto& storage, std::size_t first) {
-    for (auto index = first; index < storage.size(); ++index) {
-      target.insert(storage.at(index).get());
-    }
-  };
-  retain_new(metadata.arrays, isolate_->array_layouts_, initial_.arrays);
-  retain_new(metadata.collections, isolate_->collection_layouts_, initial_.collections);
-  retain_new(metadata.signatures, isolate_->type_signatures_, initial_.signatures);
-  retain_new(metadata.interfaces, isolate_->interface_types_, initial_.interfaces);
+  RetainStructuralMetadata();
   auto& layouts = isolate_->class_layouts_;
   auto retained = initial_.classes;
   for (auto index = initial_.classes; index < layouts.size(); ++index) {
@@ -101,7 +125,7 @@ LayoutTransaction::~LayoutTransaction() {
     isolate_->code_identities_.resize(initial_.code_identities);
   }
   --isolate_->layout_transactions_;
-  if (lifetime_ == LayoutLifetime::Reloadable) {
+  if (lifetime_ == LayoutLifetime::Collectible) {
     --isolate_->native_layout_transactions_;
   }
   if (isolate_->layout_transactions_ == 0 && isolate_->metadata_collection_pending_) {

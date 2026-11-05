@@ -73,9 +73,9 @@ export func fail(): int { return increment(9223372036854775807); }
   const auto run = (*instance)->FindFunction("run");
   const auto prefix = (*instance)->FindFunction("prefix");
   const auto fail = (*instance)->FindFunction("fail");
-  ASSERT_TRUE(run);
-  ASSERT_TRUE(prefix);
-  ASSERT_TRUE(fail);
+  if (!run || !prefix || !fail) {
+    FAIL() << "expected exported functions run, prefix and fail";
+  }
   const auto value = runtime::InvokeNativeFunction(execution, *run);
   ASSERT_TRUE(value);
   EXPECT_EQ(value->AsInteger(), 50);
@@ -116,7 +116,9 @@ TEST_P(NativeStorageTest, IsolatesScalarResultsInFramesWithExternalStorage) {
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   ASSERT_TRUE(instance) << instance.error().message;
   const auto run = (*instance)->FindFunction("run");
-  ASSERT_TRUE(run);
+  if (!run) {
+    FAIL() << "expected exported function run";
+  }
   const std::array arguments{runtime::Value::Integer(1)};
   const auto result = runtime::ExecuteNativeFunction(**instance, *run, arguments);
   ASSERT_TRUE(result.Succeeded()) << result.message;
@@ -148,10 +150,9 @@ export func checked(value: int): int { return rotate((value + 1) & 4294967295, 7
   const auto wide = (*instance)->FindFunction("wide");
   const auto iterate = (*instance)->FindFunction("iterate");
   const auto checked = (*instance)->FindFunction("checked");
-  ASSERT_TRUE(bounded);
-  ASSERT_TRUE(wide);
-  ASSERT_TRUE(iterate);
-  ASSERT_TRUE(checked);
+  if (!bounded || !wide || !iterate || !checked) {
+    FAIL() << "expected exported functions bounded, wide, iterate and checked";
+  }
   constexpr auto kWordBits = std::numeric_limits<std::uint32_t>::digits;
   constexpr std::int64_t kMask = std::numeric_limits<std::uint32_t>::max();
   constexpr std::int64_t kWideBit = std::int64_t{1} << kWordBits;
@@ -240,7 +241,9 @@ export func run(): double {
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   ASSERT_TRUE(instance) << instance.error().message;
   const auto run = (*instance)->FindFunction("run");
-  ASSERT_TRUE(run);
+  if (!run) {
+    FAIL() << "expected exported function run";
+  }
   const auto result = runtime::ExecuteNativeFunction(**instance, *run);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 0.0);

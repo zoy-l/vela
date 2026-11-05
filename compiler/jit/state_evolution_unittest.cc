@@ -17,7 +17,7 @@
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/test_support.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_dispatch.h"
@@ -104,7 +104,9 @@ TEST_P(JitStateTest, MapLiteralContinuationsKeepTheirEntriesAndGlobalsAcrossRelo
                        "return (map.get('answer') ?? 0) + (map.get('extra') ?? 0); }");
   ASSERT_TRUE(update) << update.error();
   EXPECT_EQ(Entry("stored").Invoke({})->AsInteger(), 7);
-  const runtime::RootedValue pending(isolate_, *Entry("start").Invoke({}));
+  const auto pending_storage = runtime::HostRoot::Create(isolate_, *Entry("start").Invoke({}));
+  ASSERT_TRUE(pending_storage);
+  const auto& pending = *pending_storage;
   EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 2);
   update = Update(common +
                   "export async func start(): Future<int> { "
@@ -129,7 +131,9 @@ TEST_P(JitStateTest, ParentExpansionAndReorderingKeepIdentitySlotsAndOldReaders)
       "class Child extends Base { right: int = 2; } " +
       common + "export func read(value: Child): int { return value.left + value.right; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
   const auto* address = object.value().AsObject();
   const auto* old_layout = runtime::Heap::ClassOf(*address);
   const auto old_fields = old_layout->field_declarations();
@@ -162,8 +166,12 @@ TEST_P(JitStateTest, NewFieldsAreLazyPerObjectAndFirstWritesSkipTheirDefaults) {
       "export func make(): Box { return Box(); } ";
   auto update = Update("class Box { value: int = 40; } " + common);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue first(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue second(isolate_, *Entry("make").Invoke({}));
+  const auto first_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(first_storage);
+  const auto& first = *first_storage;
+  const auto second_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(second_storage);
+  const auto& second = *second_storage;
   update = Update(
       "class Box { value: int = 100; extra: int = initial(); items: int[] = []; } " + common +
       "export func read(value: Box): int { return value.value + value.extra; } "
@@ -190,7 +198,9 @@ TEST_P(JitStateTest, CyclicNewFieldInitializationCanRetryWithTheLatestInitialize
       "export func keep(value: Box): void { saved = value; } ";
   auto update = Update("class Box { value: int = 40; } " + common);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
   const std::array argument{object.value()};
   ASSERT_TRUE(Entry("keep").Invoke(argument));
   const std::string fields = "class Box { value: int = 40; extra: int = initial(); } ";
@@ -211,7 +221,9 @@ TEST_P(JitStateTest, RequiredNewFieldsRejectAtomicallyWhenAnInstanceIsReachable)
   const std::string common = "export func make(): Box { return Box(value: 40); } ";
   auto update = Update("class Box { value: int; } " + common);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
   const auto* layout = runtime::Heap::ClassOf(*object.value().AsObject());
   update = Update(
       "class Box { value: int; required: int; } "
@@ -240,8 +252,12 @@ TEST_P(JitStateTest, OldFactoriesUseStableExplicitArgumentsAndTheCurrentConstruc
       "export func read(value: Box): int { return value.first * 100 + value.second * 10 + "
       "value.third; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue previous(isolate_, *old_factory->Invoke({}));
-  const runtime::RootedValue current(isolate_, *Entry("make").Invoke({}));
+  const auto previous_storage = runtime::HostRoot::Create(isolate_, *old_factory->Invoke({}));
+  ASSERT_TRUE(previous_storage);
+  const auto& previous = *previous_storage;
+  const auto current_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(current_storage);
+  const auto& current = *current_storage;
   EXPECT_EQ(Entry("read").Invoke(std::array{previous.value()})->AsInteger(), 4203);
   EXPECT_EQ(Entry("read").Invoke(std::array{current.value()})->AsInteger(), 8203);
 }
@@ -252,9 +268,14 @@ TEST_P(JitStateTest, DeletedFieldsAreRejectedOnlyWhileAReachableOldClosureDepend
       "export func make(): Box { return Box(); } "
       "export func reader(value: Box): () => int { return (): int => value.stored; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  std::optional<runtime::RootedValue> closure;
-  closure.emplace(isolate_, *Entry("reader").Invoke(std::array{object.value()}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
+  std::optional<runtime::HostRoot> closure;
+  auto captured =
+      runtime::HostRoot::Create(isolate_, *Entry("reader").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(captured);
+  closure = std::move(*captured);
   const auto* original = runtime::Heap::ClassOf(*object.value().AsObject());
   const auto removed_field = original->field_declarations().front();
   const std::string changed =
@@ -325,7 +346,9 @@ TEST_P(JitStateTest, SuspendedGenericInterfaceMethodsKeepTheirConcreteVersionAft
       "} " +
       common + "export func start(): Future<int> { return worker.later(41); }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue pending(isolate_, *Entry("start").Invoke({}));
+  const auto pending_storage = runtime::HostRoot::Create(isolate_, *Entry("start").Invoke({}));
+  ASSERT_TRUE(pending_storage);
+  const auto& pending = *pending_storage;
   update = Update(
       "interface Delayed { later<U extends int>(value: U): Future<int>; } "
       "class Worker implements Delayed { "
@@ -354,8 +377,13 @@ TEST_P(JitStateTest, SuspendedOldFramesKeepTheirFieldDependenciesUntilTheyFinish
       "export func make(): Box { return Box(); } "
       "export async func read(value: Box): Future<int> { await sleep(1); return value.stored; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue pending(isolate_, *Entry("read").Invoke(std::array{object.value()}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
+  const auto pending_storage =
+      runtime::HostRoot::Create(isolate_, *Entry("read").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(pending_storage);
+  const auto& pending = *pending_storage;
   const std::string changed =
       "class Box {} "
       "export func make(): Box { return Box(); } "
@@ -376,8 +404,13 @@ TEST_P(JitStateTest, SuspendedFramesOnlyKeepFieldAccessesReachableFromTheirAwait
   ASSERT_TRUE(Update("class Box { stored: int = 42; } " + common +
                      "export async func read(value: Box): Future<int> { "
                      "const result = value.stored; await ready.future; return result; }"));
-  const runtime::RootedValue box(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue pending(isolate_, *Entry("read").Invoke(std::array{box.value()}));
+  const auto box_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(box_storage);
+  const auto& box = *box_storage;
+  const auto pending_storage =
+      runtime::HostRoot::Create(isolate_, *Entry("read").Invoke(std::array{box.value()}));
+  ASSERT_TRUE(pending_storage);
+  const auto& pending = *pending_storage;
   auto updated = Update("class Box {} " + common +
                         "export async func read(value: Box): Future<int> { return 0; }");
   ASSERT_TRUE(updated) << updated.error();
@@ -395,8 +428,12 @@ TEST_P(JitStateTest, SuspendedDependencyReachabilityIncludesExceptionAndLoopEdge
                      "let result = 0; while (result < 2) { result += value.loop; "
                      "try { await ready.future; } catch (error: Error) { return value.error; } } "
                      "return result; }"));
-  const runtime::RootedValue box(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue pending(isolate_, *Entry("read").Invoke(std::array{box.value()}));
+  const auto box_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(box_storage);
+  const auto& box = *box_storage;
+  const auto pending_storage =
+      runtime::HostRoot::Create(isolate_, *Entry("read").Invoke(std::array{box.value()}));
+  ASSERT_TRUE(pending_storage);
   for (const auto& fields : {"loop: int = 1;", "error: int = 42;"}) {
     const auto updated = Update("class Box { " + std::string(fields) + " } " + common +
                                 "export async func read(value: Box): Future<int> { return 0; }");
@@ -464,7 +501,9 @@ TEST_P(JitStateTest, AQueuedPublicationMigratesAtAPreciseSafepointAndOldFramesCa
                        "func helper(value: Box): int { return value.stored; } "
                        "export func caller(value: Box): int { return helper(value); }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
   const auto compiled =
       test::CompileUpdate(*compiler_, source_,
                           common +
@@ -544,7 +583,9 @@ TEST_P(JitStateTest, AwaitingConstructorArgumentsDoesNotSuspendAnInitializationB
       "export async func main(): Future<int> { "
       "const value = Box(value: await Future.delayed(1, (): int => 42)); return value.value; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue result(isolate_, *Entry("main").Invoke({}));
+  const auto result_storage = runtime::HostRoot::Create(isolate_, *Entry("main").Invoke({}));
+  ASSERT_TRUE(result_storage);
+  const auto& result = *result_storage;
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
   ASSERT_TRUE(test::CompletesWithInteger(isolate_, result.value(), 42));
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
@@ -554,8 +595,12 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   const std::string common = "export func make(): Box { return Box(); } ";
   auto update = Update("class Box { value: int = 40; } " + common);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue first(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue second(isolate_, *Entry("make").Invoke({}));
+  const auto first_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(first_storage);
+  const auto& first = *first_storage;
+  const auto second_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(second_storage);
+  const auto& second = *second_storage;
   const auto compiled = test::CompileUpdate(
       *compiler_, source_, "class Box { value: int = 100; extra: int = 2; } " + common, GetParam());
   ASSERT_TRUE(compiled) << compiled.error();
@@ -632,9 +677,13 @@ TEST_P(JitStateTest, FieldPrivacyRejectsRetainedForeignReadersAndAllowsRetainedC
       "export func callback(value: Box): () => int { return value.reader(); } "
       "export func invoke(value: () => int): int { return value(); }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue callback(isolate_,
-                                      *Entry("callback").Invoke(std::array{object.value()}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
+  const auto callback_storage =
+      runtime::HostRoot::Create(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(callback_storage);
+  const auto& callback = *callback_storage;
   std::optional<runtime::NativeVersionEntry> reader = *Entry("read").Capture();
   const std::string changed =
       "class Box { private stored: int = 100; "
@@ -697,9 +746,14 @@ TEST_P(JitStateTest, SuperDependenciesUseTheLexicalParentIncludingItsInheritedMe
       "export func invoke(value: () => int): int { return value(); }";
   auto update = Update(common + "class Base extends Grand {} " + child);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  std::optional<runtime::RootedValue> callback;
-  callback.emplace(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
+  std::optional<runtime::HostRoot> callback;
+  auto captured =
+      runtime::HostRoot::Create(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(captured);
+  callback = std::move(*captured);
   const std::string changed =
       common + "class Base extends Grand { override read(): int { return 100; } } " + child;
   update = Update(changed);
@@ -708,8 +762,10 @@ TEST_P(JitStateTest, SuperDependenciesUseTheLexicalParentIncludingItsInheritedMe
   callback.reset();
   update = Update(changed);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue current(isolate_,
-                                     *Entry("callback").Invoke(std::array{object.value()}));
+  const auto current_storage =
+      runtime::HostRoot::Create(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(current_storage);
+  const auto& current = *current_storage;
   EXPECT_EQ(Entry("invoke").Invoke(std::array{current.value()})->AsInteger(), 102);
 }
 
@@ -734,8 +790,12 @@ TEST_P(JitStateTest, LiveGenericObjectsAndEmptyTypedContainersRetainCurrentLayou
                        "export func make(): Box<int> { return Box<int>(); } "
                        "export func empty(): Box<string>[] { return []; }");
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  const runtime::RootedValue array(isolate_, *Entry("empty").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
+  const auto& object = *object_storage;
+  const auto array_storage = runtime::HostRoot::Create(isolate_, *Entry("empty").Invoke({}));
+  ASSERT_TRUE(array_storage);
+  const auto& array = *array_storage;
   const auto* nominal = &runtime::Heap::ClassOf(*object.value().AsObject())->nominal_type();
   const auto* element = runtime::Heap::ArrayTypeOf(*array.value().AsObject())->element.nominal;
   ASSERT_NE(element, nullptr);
@@ -762,7 +822,8 @@ TEST_P(JitStateTest, AGenericDependencyCreatedAfterCompilationRequiresRepreparin
   auto& dispatch = isolate_.native_dispatch();
   auto candidate = dispatch.Prepare(1, compiled->code.image);
   ASSERT_TRUE(candidate);
-  const runtime::RootedValue callback(isolate_, *Entry("old").Invoke({}));
+  const auto callback_storage = runtime::HostRoot::Create(isolate_, *Entry("old").Invoke({}));
+  ASSERT_TRUE(callback_storage);
   const auto published = dispatch.Publish(std::move(*candidate));
   ASSERT_FALSE(published);
   EXPECT_EQ(published.error().status, runtime::NativePublicationStatus::NeedsCompilation);
@@ -781,7 +842,8 @@ TEST_P(JitStateTest, RepeatedPublicationReclaimsVersionLayoutsAndPreservesEnumAl
       "export func callback(): () => int { let value = 42; return () => value++; }";
   auto update = Update(source);
   ASSERT_TRUE(update) << update.error();
-  const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
+  const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(object_storage);
   const auto enumeration = Entry("mode").Invoke({});
   ASSERT_TRUE(enumeration);
   const auto* enum_layout = runtime::Heap::ClassOf(*enumeration->AsObject());
@@ -812,8 +874,10 @@ TEST_P(JitStateTest, AnOldWrapperKeepsItsOwnLayoutWhileCapturingANewerFunctionEn
       "export func factory(): () => int { return answer; } "
       "export func invoke(value: () => int): int { return value(); }");
   ASSERT_TRUE(update) << update.error();
-  std::optional<runtime::RootedValue> callback;
-  callback.emplace(isolate_, *factory->Invoke({}));
+  std::optional<runtime::HostRoot> callback;
+  auto captured = runtime::HostRoot::Create(isolate_, *factory->Invoke({}));
+  ASSERT_TRUE(captured);
+  callback = std::move(*captured);
   factory.reset();
   isolate_.heap().Collect();
   EXPECT_EQ(compiler_->resource_counts().batches, 2U);
@@ -868,7 +932,9 @@ TEST_P(JitStateTest, StaticFieldPrivacyChecksRetainedAccessesUsingTheirLexicalCl
   ASSERT_TRUE(update) << update.error();
   std::optional<runtime::NativeVersionEntry> external = *Entry("read").Capture();
   EXPECT_EQ(external->Invoke({})->AsInteger(), 42);
-  const runtime::RootedValue internal(isolate_, *Entry("factory").Invoke({}));
+  const auto internal_storage = runtime::HostRoot::Create(isolate_, *Entry("factory").Invoke({}));
+  ASSERT_TRUE(internal_storage);
+  const auto& internal = *internal_storage;
   const auto changed = "class Box { private static value: int = 100; " + methods +
                        "export func read(): int { return 0; }";
   update = Update(changed);
@@ -952,8 +1018,10 @@ TEST_P(JitStateTest, HostRequestedInternedSchemasKeepTheirDependenciesAfterNativ
   isolate_.heap().Collect();
   EXPECT_EQ(compiler_->resource_counts().batches, 0U);
   EXPECT_EQ(layout->element.nominal->declaration(), declaration);
-  const runtime::RootedValue array(
+  const auto array_storage = runtime::HostRoot::Create(
       isolate_, runtime::Value::Object(isolate_.heap().AllocateArray(*layout, 0)));
+  ASSERT_TRUE(array_storage);
+  const auto& array = *array_storage;
   isolate_.heap().Collect();
   EXPECT_EQ(runtime::Heap::ArrayTypeOf(*array.value().AsObject()), layout);
 }
@@ -968,9 +1036,15 @@ TEST_P(JitStateTest, EmptyTypedContainersAndFutureSignaturesKeepMetadataWithoutR
              "export func future(): Future<Box?> { const value: Box? = null; "
              "return Future.value(value); }"));
   {
-    const runtime::RootedValue array(isolate_, *Entry("values").Invoke({}));
-    const runtime::RootedValue map(isolate_, *Entry("lookup").Invoke({}));
-    const runtime::RootedValue future(isolate_, *Entry("future").Invoke({}));
+    const auto array_storage = runtime::HostRoot::Create(isolate_, *Entry("values").Invoke({}));
+    ASSERT_TRUE(array_storage);
+    const auto& array = *array_storage;
+    const auto map_storage = runtime::HostRoot::Create(isolate_, *Entry("lookup").Invoke({}));
+    ASSERT_TRUE(map_storage);
+    const auto& map = *map_storage;
+    const auto future_storage = runtime::HostRoot::Create(isolate_, *Entry("future").Invoke({}));
+    ASSERT_TRUE(future_storage);
+    const auto& future = *future_storage;
     const auto* nominal = runtime::Heap::ArrayTypeOf(*array.value().AsObject())->element.nominal;
     const auto declaration = nominal->declaration();
     isolate_.native_dispatch().Close();

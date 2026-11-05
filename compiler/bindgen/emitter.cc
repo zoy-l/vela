@@ -1,10 +1,12 @@
 #include "compiler/bindgen/emitter.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <sstream>
@@ -15,6 +17,8 @@
 
 #include <llvm/Support/JSON.h>
 
+#include "base/fingerprint.h"
+#include "base/layout_description.h"
 #include "base/native_binding.h"
 #include "base/path.h"
 #include "compiler/bindgen/model.h"
@@ -47,39 +51,126 @@ void Documentation(std::ostream& output, const std::string& text) {
 
 using TypeNames = std::map<std::string, std::string>;
 
-frontend::TypeName ScriptType(const Type& type, const TypeNames& names) {
-  std::string name;
-  switch (type.kind) {
-    case TypeKind::Void:
-      name = "void";
-      break;
-    case TypeKind::Boolean:
-      name = "bool";
-      break;
-    case TypeKind::Integer:
-      name = "int";
-      break;
-    case TypeKind::Double:
-      name = "double";
-      break;
-    case TypeKind::String:
-      name = "string";
-      break;
-    case TypeKind::Cancellation:
-      name = "CancellationToken";
-      break;
-    case TypeKind::Host:
-      name = names.at(type.key);
-      break;
-  }
+frontend::TypeName ScriptType(const layout::Program& program,
+                              std::optional<layout::Type> type,
+                              const TypeNames& names);
+
+frontend::TypeName ScriptNominal(const layout::Program& program,
+                                 const std::string& key,
+                                 const TypeNames& names) {
+  const auto& nominal = program.nominals.at(key);
   frontend::TypeName result{
-      .name = std::move(name),
+      .name = names.at(key),
+      .location = {},
+      .kind = nominal.arguments.empty() ? frontend::TypeName::Kind::Named
+                                        : frontend::TypeName::Kind::Generic,
+      .arguments = {},
+      .parameter = {},
+  };
+  for (const auto& argument : nominal.arguments) {
+    result.arguments.push_back(ScriptType(program, argument, names));
+  }
+  return result;
+}
+
+frontend::TypeName ScriptType(const layout::Program& program,
+                              std::optional<layout::Type> type,
+                              const TypeNames& names) {
+  frontend::TypeName result{
+      .name = {},
       .location = {},
       .kind = frontend::TypeName::Kind::Named,
       .arguments = {},
       .parameter = {},
   };
-  if (type.nullable) {
+  if (!type) {
+    result.name = "void";
+    return result;
+  }
+  using Kind = layout::Type::Kind;
+  switch (type->kind) {
+    case Kind::Dynamic:
+      result.name = "dynamic";
+      break;
+    case Kind::Boolean:
+      result.name = "bool";
+      break;
+    case Kind::Integer:
+      result.name = "int";
+      break;
+    case Kind::Double:
+      result.name = "double";
+      break;
+    case Kind::String:
+      result.name = "string";
+      break;
+    case Kind::MutableString:
+      result.name = "MutableString";
+      break;
+    case Kind::ByteArray:
+      result.name = "ByteArray";
+      break;
+    case Kind::ByteData:
+      result.name = "ByteData";
+      break;
+    case Kind::RegExp:
+      result.name = "RegExp";
+      break;
+    case Kind::RegExpMatch:
+      result.name = "RegExpMatch";
+      break;
+    case Kind::Timer:
+      result.name = "Timer";
+      break;
+    case Kind::CancellationToken:
+      result.name = "CancellationToken";
+      break;
+    case Kind::Instance:
+    case Kind::Enum: {
+      const auto& nominal = program.classes.at(type->index);
+      if (nominal.kind == layout::Class::Kind::Host) {
+        result.name = names.at(nominal.native_key);
+      } else {
+        result = ScriptNominal(program, nominal.name, names);
+      }
+      break;
+    }
+    case Kind::Interface:
+      result = ScriptNominal(program, program.interfaces.at(type->index), names);
+      break;
+    case Kind::Array:
+      result.kind = frontend::TypeName::Kind::Array;
+      result.arguments.push_back(
+          ScriptType(program, program.arrays.at(type->index).element, names));
+      break;
+    case Kind::Collection: {
+      const auto& collection = program.collections.at(type->index);
+      result.kind = frontend::TypeName::Kind::Generic;
+      result.name = collection.value ? "Map" : "Set";
+      result.arguments.push_back(ScriptType(program, collection.key, names));
+      if (collection.value) {
+        result.arguments.push_back(ScriptType(program, collection.value, names));
+      }
+      break;
+    }
+    case Kind::Callable:
+    case Kind::Future:
+    case Kind::Completer: {
+      const auto& signature = program.signatures.at(type->index);
+      if (type->kind == Kind::Callable) {
+        result.kind = frontend::TypeName::Kind::Function;
+        for (const auto& parameter : signature.parameters) {
+          result.arguments.push_back(ScriptType(program, parameter.type, names));
+        }
+      } else {
+        result.kind = frontend::TypeName::Kind::Generic;
+        result.name = type->kind == Kind::Future ? "Future" : "Completer";
+      }
+      result.arguments.push_back(ScriptType(program, signature.result, names));
+      break;
+    }
+  }
+  if (type->nullable) {
     result = {
         .name = {},
         .location = {},
@@ -89,6 +180,10 @@ frontend::TypeName ScriptType(const Type& type, const TypeNames& names) {
     };
   }
   return result;
+}
+
+frontend::TypeName ScriptType(const Type& type, const TypeNames& names) {
+  return ScriptType(type.layouts, type.value, names);
 }
 
 frontend::Function ScriptMember(const Member& member, const TypeNames& names) {
@@ -151,11 +246,11 @@ void RenderMember(std::ostream& output, const frontend::Function& method, bool c
   output << ";\n";
 }
 
-std::expected<std::string, std::string> EmitScript(const Module& module,
-                                                   const std::string& output_directory) {
-  frontend::Program program;
-  TypeNames names;
-  std::set<std::string> identifiers;
+void ImportNativeDependencies(const Module& module,
+                              const std::string& output_directory,
+                              frontend::Program& program,
+                              TypeNames& names,
+                              std::set<std::string>& identifiers) {
   for (const auto& type : module.classes) {
     names.emplace(type.key, type.name);
     identifiers.insert(type.name);
@@ -173,9 +268,69 @@ std::expected<std::string, std::string> EmitScript(const Module& module,
       names.emplace(type.key, alias + "." + type.name);
     }
   }
+}
+
+std::expected<void, std::string> CollectScriptType(
+    TypeNames& names,
+    std::set<std::string>& identifiers,
+    std::map<std::string, std::string>& script_imports,
+    const Type& type,
+    const std::string& member) {
+  for (const auto& nominal : type.layouts.classes) {
+    if (nominal.kind == layout::Class::Kind::Host && !names.contains(nominal.native_key)) {
+      return std::unexpected(member + ": host type " + nominal.native_key +
+                             " requires its binding dependency manifest");
+    }
+  }
+  for (const auto& [key, nominal] : type.layouts.nominals) {
+    const auto [entry, inserted] = script_imports.try_emplace(nominal.module);
+    if (inserted) {
+      auto alias = "scriptDependency" + std::to_string(script_imports.size());
+      while (!identifiers.insert(alias).second) {
+        alias += '_';
+      }
+      entry->second = alias;
+    }
+    names.emplace(key, entry->second + '.' + nominal.name);
+  }
+  return {};
+}
+
+std::expected<void, std::string> ImportScriptDependencies(const Module& module,
+                                                          const std::string& output_directory,
+                                                          frontend::Program& program,
+                                                          TypeNames& names,
+                                                          std::set<std::string>& identifiers) {
+  std::map<std::string, std::string> script_imports;
+  for (const auto& type : module.classes) {
+    for (const auto& member : type.members) {
+      const auto name = type.name + '.' + member.name;
+      if (const auto result = CollectScriptType(names, identifiers, script_imports, member.result,
+                                                name + ".result");
+          !result) {
+        return std::unexpected(result.error());
+      }
+      for (const auto& parameter : member.parameters) {
+        if (const auto result = CollectScriptType(names, identifiers, script_imports,
+                                                  parameter.type, name + '.' + parameter.name);
+            !result) {
+          return std::unexpected(result.error());
+        }
+      }
+    }
+  }
+  for (const auto& [source, alias] : script_imports) {
+    const auto relative = Utf8Path(source).lexically_relative(Utf8Path(output_directory));
+    program.imports.push_back(
+        {.path = relative.empty() ? source : PathText(relative), .location = {}, .alias = alias});
+  }
   for (const auto& type : module.classes) {
     program.classes.push_back(ScriptClass(type, names));
   }
+  return {};
+}
+
+std::string RenderScript(const Module& module, const frontend::Program& program) {
   std::ostringstream output;
   for (const auto& import : program.imports) {
     output << "import " << Quote(import.path, '\'') << " as " << import.alias << ";\n";
@@ -198,16 +353,45 @@ std::expected<std::string, std::string> EmitScript(const Module& module,
     }
     output << "}\n";
   }
-  auto formatted = tooling::FormatSource(output.str());
+  return output.str();
+}
+
+std::expected<std::string, std::string> EmitScript(Module& module,
+                                                   const std::string& output_directory) {
+  frontend::Program program;
+  TypeNames names;
+  std::set<std::string> identifiers;
+  ImportNativeDependencies(module, output_directory, program, names, identifiers);
+  const auto imported =
+      ImportScriptDependencies(module, output_directory, program, names, identifiers);
+  if (!imported) {
+    return std::unexpected(imported.error());
+  }
+  auto formatted = tooling::FormatSource(RenderScript(module, program));
   if (!formatted) {
     return std::unexpected(frontend::DiagnosticsText(formatted.error()));
   }
   const auto path = PathText(Utf8Path(output_directory) / (module.name + ".vela"));
   const frontend::SourceInput candidate{.path = path, .text = *formatted};
-  const auto checked = frontend::CheckParsed(frontend::LoadProgram(path, {&candidate, 1}));
+  auto loaded = frontend::LoadProgram(path, {&candidate, 1});
+  if (frontend::HasErrors(loaded.diagnostics)) {
+    return std::unexpected(frontend::DiagnosticsText(loaded.diagnostics));
+  }
+  const auto checked = frontend::CheckProgram(loaded.program);
   if (!checked.Succeeded()) {
     return std::unexpected(frontend::DiagnosticsText(checked.diagnostics));
   }
+  for (const auto& source : loaded.program.sources) {
+    if (source.path == path || source.path.starts_with("builtin:") ||
+        source.path.starts_with("sdk:")) {
+      continue;
+    }
+    if (module.input_fingerprints.emplace(source.path, ContentFingerprint(source.text).Hex())
+            .second) {
+      module.inputs.push_back(source.path);
+    }
+  }
+  std::ranges::sort(module.inputs);
   return std::move(*formatted);
 }
 
@@ -328,7 +512,7 @@ std::string EmitCpp(const Module& module) {
 
 }  // namespace
 
-std::expected<llvm::json::Object, std::string> Emit(const Module& module,
+std::expected<llvm::json::Object, std::string> Emit(Module& module,
                                                     const std::vector<std::string>& headers,
                                                     const std::string& output_directory) {
   auto script = EmitScript(module, output_directory);

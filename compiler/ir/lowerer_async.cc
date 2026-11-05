@@ -67,7 +67,7 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   EmitBuiltinCall(Builtin::DynamicAsync, result, arguments, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
   function.register_count = next_register_;
-  PublishMemberFunction(receiver, name, member->kind, signature, std::move(function));
+  PublishMemberFunction(receiver, name, member->kind, std::move(function));
 }
 
 void Lowerer::LowerAsyncArguments(const frontend::Expression& expression,

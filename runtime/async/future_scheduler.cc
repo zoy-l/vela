@@ -60,8 +60,9 @@ FutureScheduler::~FutureScheduler() {
 
 void FutureScheduler::Shutdown() {
   assert(IsOwnerThread());
+  CloseObservations();
   for (const auto& [identity, state] : completion_endpoints_) {
-    FutureCompletionEndpoint::Close(*state);
+    FutureCompletionEndpoint::Close(*state, FutureCompletionEndpoint::CloseReason::Shutdown);
   }
   completion_endpoints_.clear();
   ReceiveMessages();
@@ -76,7 +77,7 @@ void FutureScheduler::Shutdown() {
 
 void FutureScheduler::RetireCompletionEndpoint(std::uint64_t identity) {
   const auto found = completion_endpoints_.find(identity);
-  FutureCompletionEndpoint::Close(*found->second);
+  FutureCompletionEndpoint::Close(*found->second, FutureCompletionEndpoint::CloseReason::Retired);
   completion_endpoints_.erase(found);
 }
 

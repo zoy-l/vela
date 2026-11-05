@@ -15,6 +15,7 @@ import unittest
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
 from tools.test_support import native_command, vela_executable
 from tools.package import create_package
+from tools.aot_c_fixture import host_source as c_host_source
 
 
 @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
@@ -162,26 +163,23 @@ class NativeDistributionTest(unittest.TestCase):
 #include "NUMBERS_HEADER"
 #include "STRINGS_HEADER"
 TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) {
-  auto isolate = std::unique_ptr<VelaAotIsolate, decltype(&vela_aot_v1_isolate_release)>(
-      vela_aot_v1_isolate_create(), vela_aot_v1_isolate_release);
+  auto isolate = std::unique_ptr<VelaAotIsolate, decltype(&vela_aot_v2_isolate_release)>(
+      vela_aot_v2_isolate_create(), vela_aot_v2_isolate_release);
   ASSERT_NE(isolate, nullptr);
+  vela::HandleScope scope(*isolate);
   auto numbers = NUMBERS::Instantiate(isolate.get());
   auto strings = STRINGS::Instantiate(isolate.get());
   ASSERT_TRUE(numbers.has_value());
   ASSERT_TRUE(strings.has_value());
-  const auto scalar = NUMBERS::Call_calculate(numbers->get(), 40);
+  const auto scalar = NUMBERS::Call_calculate(scope, numbers->get(), 40);
   ASSERT_TRUE(scalar.has_value());
   EXPECT_EQ(*scalar, 42);
-  auto input = vela::runtime::aot::CreateString(isolate.get(), "你好");
+  auto input = vela::CreateString(scope, "你好");
   ASSERT_TRUE(input.has_value());
-  auto text = STRINGS::Call_calculate(strings->get(), *input);
+  auto text = STRINGS::Call_calculate(scope, strings->get(), *input);
   ASSERT_TRUE(text.has_value());
-  input = vela::runtime::aot::String{};
   strings->reset();
-  const char* bytes = nullptr;
-  std::uint64_t size = 0;
-  ASSERT_EQ(vela_aot_v1_string_view(text->get(), &bytes, &size), VELA_AOT_RETURNED);
-  EXPECT_EQ(std::string_view(bytes, size), "你好!");
+  EXPECT_EQ(text->Utf8(), "你好!");
 }
 '''.replace("NUMBERS_HEADER", libraries[0].name + ".h")
                 .replace("STRINGS_HEADER", libraries[1].name + ".h")
@@ -208,6 +206,25 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
                 run([tools["cxx"], *flags, *["-I" + str(path) for path in includes],
                      host_source, *libraries, runtime, *gtest, "-o", host], env=None)
             self.assertIn("[  PASSED  ] 1 test.", run([host]).stdout)
+
+            c_source = work / "embedding.c"
+            c_source.write_text(c_host_source(libraries[1].name + ".h", manifests[1]),
+                                encoding="utf-8", newline="\n")
+            c_object = work / ("embedding_c.obj" if sys.platform == "win32" else "embedding_c.o")
+            c_host = work / executable_name("embedding_c")
+            if sys.platform == "win32":
+                run([tools["cxx"], "/nologo", "/MT", "/TC", "/W4", "/WX", "/c", c_source,
+                     "/I" + str(package / "include"), "/Fo" + str(c_object)], env=None)
+                run([tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", "/Fe" + str(c_host),
+                     c_object, libraries[1], runtime], env=None)
+            else:
+                c_flags = ["-std=c17", "-Werror", "-c"]
+                if sys.platform == "darwin":
+                    c_flags += ["-isysroot", str(tools["sysroot"])]
+                run([tools["cc"], *c_flags, "-I" + str(package / "include"), c_source,
+                     "-o", c_object], env=None)
+                run([tools["cxx"], *flags, c_object, libraries[1], runtime, "-o", c_host], env=None)
+            self.assertEqual(run([c_host]).stdout, "C host passed\n")
 
             header = Path(str(libraries[0]) + ".h")
             original_header = header.read_bytes()

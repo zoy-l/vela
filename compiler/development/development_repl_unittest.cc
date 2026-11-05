@@ -17,7 +17,7 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/value.h"
 
@@ -163,6 +163,7 @@ TEST_F(DevelopmentReplTest, NativeClassDeclarationsAndBoundMethodsUseTheRegister
     static Shared(initial: int): Counter?;
     static Empty(): Counter?;
     Checked(fail: bool): int;
+    static Echo(values: int[]): int[];
   })");
   Execute("let counter = Counter(initial: 40);");
   Execute("const bound = counter.Collect;");
@@ -233,7 +234,8 @@ TEST_F(DevelopmentReplTest, ReloadRetainsDeclarationsAndDoesNotRunHistoricalStat
 TEST_F(DevelopmentReplTest, ResetWaitsForHostRootsAndOnlyClearsAcceptedHistoryAfterSwitching) {
   Execute("let value = 42;");
   {
-    runtime::RootedValue blocker(session().isolate(), runtime::Value::Null());
+    const auto blocker = runtime::HostRoot::Create(session().isolate(), runtime::Value::Null());
+    ASSERT_TRUE(blocker);
     EXPECT_EQ(Reset().status, DevelopmentStatus::WaitingForRelease);
     EXPECT_FALSE(repl().source().empty());
     ASSERT_TRUE(session().Cancel());

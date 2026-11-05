@@ -34,7 +34,7 @@ struct NativeClass final {
   [[nodiscard]] static NativeClass Define(std::vector<NativeClassMember>&& members) {
     static_assert(std::is_nothrow_destructible_v<T>);
     return {
-        .type = kNativeHostType<T>,
+        .type = NativeHostType<T>(),
         .size = sizeof(T),
         .alignment = alignof(T),
         .members = std::move(members),

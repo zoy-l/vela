@@ -30,6 +30,11 @@ class NativeMaterialization;
 class NativeDispatch;
 struct NativeDispatchSnapshot;
 
+struct NativeResolvedDeclaration final {
+  HeapObject* state = nullptr;
+  std::uint32_t function = 0;
+};
+
 enum class NativePublicationStatus : std::uint8_t {
   Stale,
   Stopped,
@@ -91,9 +96,13 @@ class NativePreparedPublication final {
 };
 
 // 显式版本句柄保留其程序状态及代码；Invoke 不重新查询当前声明。
-// 与 RootedValue 相同，只能在所属线程使用和释放，Isolate 必须覆盖所有副本。
+// 只能在所属线程使用和释放，Isolate 必须覆盖所有副本。
 class NativeVersionEntry final {
  public:
+  [[nodiscard]] static std::expected<NativeVersionEntry, ExecutionStatus> Bind(
+      NativeInstance& instance,
+      std::uint32_t function);
+  [[nodiscard]] NativeResolvedDeclaration Resolve() const noexcept;
   [[nodiscard]] FunctionIdentity identity() const noexcept;
   [[nodiscard]] std::expected<Value, ExecutionStatus> Invoke(
       std::span<const Value> arguments) const;
@@ -111,6 +120,7 @@ class NativeVersionEntry final {
 // 命名入口只保存会话及声明，不保留任何历史映像。每次进入都选择当前已发布版本。
 class NativeNamedEntry final {
  public:
+  [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> Resolve() const noexcept;
   [[nodiscard]] DeclarationId declaration() const noexcept;
   [[nodiscard]] std::expected<NativeVersionEntry, ExecutionStatus> Capture() const;
   [[nodiscard]] std::expected<Value, ExecutionStatus> Invoke(
@@ -126,11 +136,6 @@ class NativeNamedEntry final {
   };
   explicit NativeNamedEntry(std::shared_ptr<const Storage> storage);
   std::shared_ptr<const Storage> storage_;
-};
-
-struct NativeResolvedDeclaration final {
-  HeapObject* state = nullptr;
-  std::uint32_t function = 0;
 };
 
 // Isolate 拥有唯一发布入口。程序状态借用它；发布快照的根不会与 GC 状态形成共享所有权环。

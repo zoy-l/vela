@@ -24,7 +24,6 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -390,14 +389,18 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
   references->insert(references->end(), call.retained.begin(), call.retained.end());
   auto roots = std::make_shared<RootedValues>(heap, references);
   if (operation == AsyncOperation::TimerAfter || operation == AsyncOperation::TimerPeriodic) {
+    auto* object = heap.AllocateTimer(Timer{});
+    if (object == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
     auto action = [callbacks, callable, roots] {
       static_cast<void>(callbacks.invoke(callable, {}));
     };
     const auto duration = std::chrono::milliseconds(first.AsInteger());
-    auto timer = operation == AsyncOperation::TimerAfter
-                     ? scheduler.After(duration, std::move(action))
-                     : scheduler.Periodic(duration, std::move(action));
-    return AllocatedValue(heap.AllocateTimer(std::move(timer)));
+    *Heap::GetTimer(*object) = operation == AsyncOperation::TimerAfter
+                                   ? scheduler.After(duration, std::move(action))
+                                   : scheduler.Periodic(duration, std::move(action));
+    return Value::Object(object);
   }
   Future result(&scheduler);
   auto* object = heap.AllocateFuture(result);

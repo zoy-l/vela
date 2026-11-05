@@ -60,28 +60,26 @@ TEST(NativeHostTest, MapLiteralAllocationAndInsertionFailuresStopLaterEffects) {
 
 TEST(NativeHostTest, MapLiteralResultsKeepTheirConcreteTypeAcrossThePublicAbi) {
   Isolate isolate(1);
+  vela::HandleScope scope(isolate);
   auto instance = MAP_VALUE_NAMESPACE::Instantiate(&isolate);
   ASSERT_TRUE(instance);
   const auto* image = MAP_VALUE_IMAGE();
   const auto index = PublicCalculateIndex(*image);
   VelaAotValue argument{};
   VelaAotValue output{};
-  ASSERT_EQ(vela_aot_v1_invoke(instance->get(), image, index, &argument, 1, &output, nullptr),
+  ASSERT_EQ(vela_aot_v2_invoke(&scope, instance->get(), image, index, &argument, 1, &output, nullptr),
             VELA_AOT_RETURNED);
-  auto map = OwnPublicValue(output);
-  ASSERT_NE(map, nullptr);
+  ASSERT_EQ(output.kind, VELA_AOT_LOCAL);
   isolate.heap().Collect();
   VelaAotValue repeated{};
-  ASSERT_EQ(vela_aot_v1_invoke(instance->get(), image, index, &output, 1, &repeated, nullptr),
+  ASSERT_EQ(vela_aot_v2_invoke(&scope, instance->get(), image, index, &output, 1, &repeated, nullptr),
             VELA_AOT_RETURNED);
-  auto same = OwnPublicValue(repeated);
-  ASSERT_NE(same, nullptr);
+  ASSERT_EQ(repeated.kind, VELA_AOT_LOCAL);
   const char* text = "wrong";
-  VelaAotHandle* raw = nullptr;
-  ASSERT_EQ(vela_aot_v1_string_create(&isolate, text, 5, &raw), VELA_AOT_RETURNED);
-  auto wrong = OwnPublicHandle(raw);
-  argument = {.payload = reinterpret_cast<std::uintptr_t>(wrong.get()), .kind = VELA_AOT_HANDLE};
-  EXPECT_EQ(vela_aot_v1_invoke(instance->get(), image, index, &argument, 1, &repeated, nullptr),
+  VelaAotLocal wrong{};
+  ASSERT_EQ(vela_aot_v2_string_create(&scope, text, 5, &wrong), VELA_AOT_RETURNED);
+  argument = {.kind = VELA_AOT_LOCAL, .local = wrong};
+  EXPECT_EQ(vela_aot_v2_invoke(&scope, instance->get(), image, index, &argument, 1, &repeated, nullptr),
             static_cast<VelaAotStatus>(ExecutionStatus::InvalidCast));
 }
 '''

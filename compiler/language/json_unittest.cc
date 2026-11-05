@@ -8,7 +8,7 @@
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 
@@ -53,7 +53,9 @@ TEST_P(DynamicNominalIdentityTest, IndependentCompilationsRetainNominalSignature
   ASSERT_TRUE(first.Succeeded());
   const auto value = test::Execute(*first.instance, "main");
   ASSERT_TRUE(value.Succeeded()) << value.message;
-  const runtime::RootedValue rooted(isolate, value.value);
+  const auto rooted_storage = runtime::HostRoot::Create(isolate, value.value);
+  ASSERT_TRUE(rooted_storage);
+  const auto& rooted = *rooted_storage;
   const auto second = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(second.Succeeded());
   const auto original_types = first.instance->layouts().types;

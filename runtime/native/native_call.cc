@@ -159,7 +159,11 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     if (typed) {
       const auto parameter =
           parameters.subspan(index + hidden - function.hidden_parameters).front();
-      const auto converted = ConvertCallbackArgument(instance, types.at(parameter.type), value);
+      auto type = types.at(parameter.type);
+      if ((parameter.flags & kNativeOptionalParameter) != 0) {
+        type.nullable = true;
+      }
+      const auto converted = ConvertCallbackArgument(instance, type, value);
       if (!converted) {
         return std::unexpected(converted.error());
       }

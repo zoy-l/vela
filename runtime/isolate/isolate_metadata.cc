@@ -57,6 +57,10 @@ void Isolate::CollectNativeMetadata() {
     return;
   }
   metadata_collection_pending_ = false;
+  absl::erase_if(native_images_, [](const auto& entry) {
+    const auto& cached = entry.second;
+    return !cached.static_lifetime && cached.owner.expired();
+  });
   if (native_metadata_.IsEmpty()) {
     return;
   }
@@ -67,6 +71,10 @@ void Isolate::CollectNativeMetadata() {
   MarkPersistent(collection_layouts_, native_metadata_.collections, tracer);
   MarkPersistent(type_signatures_, native_metadata_.signatures, tracer);
   MarkPersistent(interface_types_, native_metadata_.interfaces, tracer);
+  MarkPersistent(code_identities_, native_metadata_.code_identities, tracer);
+  for (const auto& [image, cache] : native_images_) {
+    tracer.Mark(cache.layouts);
+  }
   heap_.TraceNativeMetadata(tracer);
   native_dispatch_.TraceMetadata(tracer);
   const auto& reached = tracer.reached();
@@ -78,6 +86,7 @@ void Isolate::CollectNativeMetadata() {
   SweepMetadata(class_layouts_, native_metadata_.classes, reached.classes);
   SweepMetadata(nominal_types_, native_metadata_.nominals, reached.nominals);
   SweepMetadata(interface_types_, native_metadata_.interfaces, reached.interfaces);
+  SweepMetadata(code_identities_, native_metadata_.code_identities, reached.code_identities);
 }
 
 }  // namespace vela::runtime

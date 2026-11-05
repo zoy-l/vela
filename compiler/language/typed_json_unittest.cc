@@ -12,7 +12,7 @@
 #include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_control.h"
@@ -309,7 +309,10 @@ export func decode(source: string): int {
   const auto entry = function.value();
   auto& heap = isolate.heap();
   for (const auto* const source : {R"({"name":"Vela"})", R"({"name":false})", "{"}) {
-    const runtime::RootedValue input(isolate, runtime::Value::String(heap.AllocateString(source)));
+    const auto input_storage =
+        runtime::HostRoot::Create(isolate, runtime::Value::String(heap.AllocateString(source)));
+    ASSERT_TRUE(input_storage);
+    const auto& input = *input_storage;
     const std::array arguments{input.value()};
     heap.FinishCollection();
     heap.Collect();

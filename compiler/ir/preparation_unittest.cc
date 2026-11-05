@@ -16,6 +16,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/test_support/preparation_test_support.h"
@@ -24,6 +25,27 @@ namespace vela::ir {
 namespace {
 
 using test::Prepare;
+
+TEST(PreparationTest, EnumRuntimeNamesDoNotBorrowSourceDeclarations) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text = "enum Short { first } enum LongEnumerationNameBeyondInlineStorage { second }",
+  };
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded());
+  const auto prepared = PrepareProgram(parsed.program, checked.model);
+  ASSERT_TRUE(prepared.Succeeded());
+  for (auto& enumeration : parsed.program.enums) {
+    const auto name = enumeration.name;
+    enumeration.name.front() = 'X';
+    const auto& types = prepared.program.runtime_types;
+    const auto type = std::ranges::find(types, name, &frontend::TypeDescriptor::name);
+    ASSERT_NE(type, types.end()) << name;
+    EXPECT_EQ(type->kind, frontend::TypeDescriptor::Kind::Enum);
+  }
+}
 
 TEST(PreparationTest, ScalarValueAwaitSkipsOnlyAnUnobservableFactory) {
   const auto prepared = Prepare(R"(
@@ -98,7 +120,13 @@ func main(): int { return Operations().read(Value()); }
   ASSERT_TRUE(prepared.Succeeded());
   const auto& interfaces = prepared.program.layouts.interfaces;
   ASSERT_EQ(interfaces.size(), 1U);
-  EXPECT_EQ(interfaces.front(), "Reader<int>");
+  layout::Program arguments;
+  const layout::Nominal nominal{
+      .module = "main.vela",
+      .name = "Reader",
+      .arguments = {{.kind = layout::Type::Kind::Integer}},
+  };
+  EXPECT_EQ(interfaces.front(), layout::NominalKey(arguments, nominal));
 }
 
 TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
@@ -136,7 +164,9 @@ TEST(PreparationTest, ClassInterfaceMetadataHasCanonicalOrder) {
   const auto prepared = Prepare(source);
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& classes = prepared.program.layouts.classes;
-  const auto found = std::ranges::find(classes, "Value", &layout::Class::name);
+  const auto key = layout::NominalKey(prepared.program.layouts,
+                                      {.module = "main.vela", .name = "Value", .arguments = {}});
+  const auto found = std::ranges::find(classes, key, &layout::Class::name);
   ASSERT_NE(found, classes.end());
   ASSERT_EQ(found->interfaces.size(), kInterfaces);
   for (std::uint32_t index = 0; index < kInterfaces; ++index) {
@@ -153,7 +183,9 @@ func main(): int { return Box(value: 42).value; }
   auto prepared = std::move(first.program);
   first = {};
   const auto& classes = prepared.layouts.classes;
-  const auto found = std::ranges::find(classes, "Box", &layout::Class::name);
+  const auto key =
+      layout::NominalKey(prepared.layouts, {.module = "main.vela", .name = "Box", .arguments = {}});
+  const auto found = std::ranges::find(classes, key, &layout::Class::name);
   ASSERT_NE(found, classes.end());
   EXPECT_EQ(found->field_count, 1U);
   EXPECT_TRUE(found->reference_fields.empty());

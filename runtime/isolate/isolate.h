@@ -12,6 +12,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/declaration.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
@@ -103,7 +104,7 @@ class Isolate final {
   [[nodiscard]] const ArrayLayout* CreateArrayLayout(ArrayLayout layout);
   [[nodiscard]] const CollectionLayout* CreateCollectionLayout(CollectionLayout layout);
   [[nodiscard]] const TypeSignature* CreateTypeSignature(TypeSignature signature);
-  [[nodiscard]] const InterfaceType* CreateInterfaceType();
+  [[nodiscard]] const InterfaceType* CreateInterfaceType(DeclarationId declaration = {});
   [[nodiscard]] const CodeIdentity* CreateCodeIdentity();
   [[nodiscard]] NominalType* CreateNominalType(NominalTypeOptions options);
   [[nodiscard]] std::expected<void, NativeRegistrationError> RegisterNative(

@@ -27,8 +27,8 @@
 #include "runtime/async/execution_context.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/member_table.h"
+#include "runtime/native/handle_access.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
@@ -37,6 +37,8 @@
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
+#include "vela/handles.h"
+#include "vela/types.h"
 
 namespace vela::testing {
 namespace {
@@ -174,11 +176,22 @@ Suite::~Suite() {
   isolate_->SetTestBridge(nullptr);
 }
 
-Suite::Callback Suite::Capture(const runtime::TestRegistration& registration) {
-  return {
+std::expected<Suite::Callback, std::string> Suite::Capture(
+    runtime::Value callback,
+    std::vector<runtime::FutureTraceFrame> trace) {
+  HandleScope scope(*isolate_);
+  const auto local = internal::HandleAccess::Root<vela::Value>(scope, callback);
+  if (!local) {
+    return std::unexpected(std::string(ExecutionStatusName(local.error().status)));
+  }
+  auto retained = local->Persist();
+  if (!retained) {
+    return std::unexpected(std::string(ExecutionStatusName(retained.error().status)));
+  }
+  return Callback{
       .id = next_id_++,
-      .value = runtime::RootedValue(*isolate_, registration.callback),
-      .trace = registration.trace,
+      .value = std::move(*retained),
+      .trace = std::move(trace),
   };
 }
 
@@ -227,7 +240,11 @@ std::expected<void, std::string> Suite::RegisterNode(
   const bool group = registration.operation == runtime::TestOperation::EnterGroup;
   node->kind = group ? NodeKind::Group : NodeKind::Test;
   if (!group) {
-    node->body = Capture(registration);
+    auto callback = Capture(registration.callback, registration.trace);
+    if (!callback) {
+      return std::unexpected(std::move(callback.error()));
+    }
+    node->body = std::move(*callback);
   }
   auto* registered = node.get();
   scopes_.emplace(registered->id, registered);
@@ -240,7 +257,10 @@ std::expected<void, std::string> Suite::RegisterNode(
 
 std::expected<void, std::string> Suite::RegisterHook(
     const runtime::TestRegistration& registration) {
-  auto callback = Capture(registration);
+  auto callback = Capture(registration.callback, registration.trace);
+  if (!callback) {
+    return std::unexpected(std::move(callback.error()));
+  }
   if (registration.operation == runtime::TestOperation::AddTearDown) {
     const auto context = isolate_->scheduler().context();
     if (!context || state_ != State::Running) {
@@ -250,12 +270,12 @@ std::expected<void, std::string> Suite::RegisterHook(
     if (scope->closed) {
       return std::unexpected("the cleanup scope has already closed");
     }
-    scope->cleanup.push_back(std::move(callback));
+    scope->cleanup.push_back(std::move(*callback));
     return {};
   }
   const auto index = static_cast<std::size_t>(registration.operation) -
                      static_cast<std::size_t>(runtime::TestOperation::SetUp);
-  registration_scope_->hooks.at(index).push_back(std::move(callback));
+  registration_scope_->hooks.at(index).push_back(std::move(*callback));
   return {};
 }
 
@@ -459,8 +479,17 @@ void Suite::Invoke(const Callback& callback,
     scope.cancelled = true;
     return;
   }
-  auto result = Await(runtime::ExecuteNativeCallable(*instance_, callback.value.value()),
-                      scope.effective_timeout, scope, phase);
+  HandleScope handles(*isolate_);
+  const auto callable = callback.value.ToLocal(handles);
+  auto invoked =
+      callable ? runtime::ExecuteNativeCallable(*instance_, internal::HandleAccess::Read(*callable))
+               : runtime::ExecutionResult{
+                     .status = callable.error().status,
+                     .stack_trace = {},
+                     .message = callable.error().message,
+                     .origin = {},
+                 };
+  auto result = Await(std::move(invoked), scope.effective_timeout, scope, phase);
   if (result.stack_trace.empty() && !result.Succeeded()) {
     result.stack_trace = callback.trace;
   }

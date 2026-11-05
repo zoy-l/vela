@@ -151,8 +151,8 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
     api.try_emplace((*engine)->mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(function),
                     llvm::JITSymbolFlags::Exported);
   };
-  bind("vela_aot_v1_instantiate", &vela_aot_v1_instantiate);
-  bind("vela_aot_v1_invoke", &vela_aot_v1_invoke);
+  bind("vela_aot_v2_instantiate", &vela_aot_v2_instantiate);
+  bind("vela_aot_v2_invoke", &vela_aot_v2_invoke);
   if (auto error =
           (*engine)->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(api)))) {
     return std::unexpected(llvm::toString(std::move(error)));

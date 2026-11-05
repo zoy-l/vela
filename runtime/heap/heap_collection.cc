@@ -387,6 +387,14 @@ std::expected<bool, ExecutionStatus> Heap::HasCollectionKey(const HeapObject& ob
 
 std::expected<Value, ExecutionStatus> Heap::GetCollectionValue(const HeapObject& object,
                                                                Value key) noexcept {
+  return FindCollectionValue(object, key).transform([](const auto& value) {
+    return value.value_or(Value::Null());
+  });
+}
+
+std::expected<std::optional<Value>, ExecutionStatus> Heap::FindCollectionValue(
+    const HeapObject& object,
+    Value key) noexcept {
   const auto entry = FindEntry(object, key);
   if (!entry) {
     return std::unexpected(entry.error());
@@ -394,6 +402,9 @@ std::expected<Value, ExecutionStatus> Heap::GetCollectionValue(const HeapObject&
   const auto& layout = *object.collection_layout();
   if (!layout.values) {
     return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (!entry->slot.found) {
+    return std::nullopt;
   }
   return ReadMapEntry(layout, *entry);
 }

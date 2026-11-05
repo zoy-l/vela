@@ -6,7 +6,7 @@
 
 #include "benchmarks/standard_value_benchmark.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/json/json.h"
 #include "runtime/strings/string.h"
@@ -70,13 +70,17 @@ void EncodeJson(benchmark::State& state) {
     state.SkipWithError("JSON fixture decoding failed");
     return;
   }
-  const runtime::RootedValue root(isolate, *input);
+  const auto root = runtime::HostRoot::Create(isolate, *input);
+  if (!root) {
+    state.SkipWithError("JSON input root allocation failed");
+    return;
+  }
   auto& heap = isolate.heap();
   heap.FinishCollection();
   heap.Collect();
   const auto baseline = heap.allocated_bytes();
   {
-    runtime::JsonEncoder warm(isolate, root.value());
+    runtime::JsonEncoder warm(isolate, root->value());
     const auto encoded = warm.Advance();
     if (!encoded || !encoded->IsString()) {
       state.SkipWithError("JSON encoding warm-up failed");
@@ -88,7 +92,7 @@ void EncodeJson(benchmark::State& state) {
   heap.Collect();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    runtime::JsonEncoder encoder(isolate, root.value());
+    runtime::JsonEncoder encoder(isolate, root->value());
     auto result = encoder.Advance();
     if (!result || !result->IsString() || result->AsString()->value() != source) {
       state.SkipWithError("JSON encoding returned an unexpected value");

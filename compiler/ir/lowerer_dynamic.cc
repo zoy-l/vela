@@ -69,8 +69,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
             .kind = frontend::BindingKind::Constant,
         },
     };
-    const auto wrapper = CallableClass(target->second, CallableMode::BoundMethod, captures,
-                                       frontend::MakeFunctionType(signature));
+    const auto wrapper = CallableClass(target->second, CallableMode::BoundMethod, captures);
     program_.members.push_back(
         {.receiver_type = receiver, .name = name, .kind = MemberKind::Method, .target = wrapper});
   }

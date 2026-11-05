@@ -10,9 +10,10 @@ namespace vela::runtime {
 
 enum class ExternalResourceKind : std::uint8_t {
   RootRange,
-  RootedValue,
   NativeInstance,
   NativeHandle,
+  Persistent,
+  Type,
   Future,
   Execution,
   HostAccess,

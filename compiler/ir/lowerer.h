@@ -99,8 +99,7 @@ class Lowerer final {
   void BuildClassTable();
   [[nodiscard]] Class BuildClass(const frontend::Class& source_class,
                                  const frontend::ClassDescriptor& class_info);
-  [[nodiscard]] std::string BuildNativeClassContract(const frontend::Class& source_class,
-                                                     const frontend::ClassDescriptor& class_info);
+  void BuildNativeClassContracts();
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name,
@@ -178,7 +177,11 @@ class Lowerer final {
                                      std::span<const RegisterId> arguments,
                                      frontend::SourceLocation location);
   void LowerJSONDecodePlans();
-  void LowerJSONConstructor(const frontend::JSONDecodePlan& plan);
+  void LowerPublicConstructors();
+  void LowerConstructorFactory(const frontend::ClassDescriptor& owner, const std::string& name);
+  [[nodiscard]] Function PrepareConstructorFactory(const frontend::ClassDescriptor& owner,
+                                                   const std::string& name);
+  [[nodiscard]] RegisterId LowerHostConstructorFactory(const frontend::ClassDescriptor& owner);
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,
@@ -218,7 +221,6 @@ class Lowerer final {
   void PublishMemberFunction(const frontend::TypeDescriptor& receiver,
                              std::string_view name,
                              MemberKind kind,
-                             const frontend::FunctionDescriptor& signature,
                              Function function);
   void RegisterClassProperty(std::uint32_t receiver,
                              const frontend::ClassDescriptor& owner,
@@ -236,7 +238,7 @@ class Lowerer final {
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,
                         const std::vector<frontend::Capture>& captures,
-                        const frontend::TypeDescriptor& type);
+                        const frontend::FunctionDescriptor* interface_signature = nullptr);
 
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
   [[nodiscard]] const Local* FindLocal(std::string_view name) const;

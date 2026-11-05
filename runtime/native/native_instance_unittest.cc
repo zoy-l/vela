@@ -8,7 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "base/layout_description.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
@@ -153,7 +153,9 @@ TEST(NativeInstanceTest, DynamicImageOwnerIsRetainedByReachableCallableAndReleas
   heap.SetNativeEnvironment(*closure, *instance->state().front().AsObject(),
                             instance->layouts().classes.front()->callable()->function);
   {
-    const RootedValue root(isolate, Value::Object(closure));
+    const auto root_storage = HostRoot::Create(isolate, Value::Object(closure));
+    ASSERT_TRUE(root_storage);
+    const auto& root = *root_storage;
     instance.reset();
     image.reset();
     heap.Collect();

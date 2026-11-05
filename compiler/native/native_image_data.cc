@@ -165,6 +165,8 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
       .declaration = source.declaration,
       .fields = Copy(fields),
       .base_class = source.base_class,
+      .constructor = source.constructor,
+      .enum_members = Texts(source.enum_members),
   };
 }
 

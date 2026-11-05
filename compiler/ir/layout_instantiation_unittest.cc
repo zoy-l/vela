@@ -78,7 +78,9 @@ func main(): void {
     ASSERT_TRUE(prepared.Succeeded());
     description = std::move(prepared.program.layouts);
   }
-  const auto node = std::ranges::find(description.classes, "Node", &layout::Class::name);
+  const auto key =
+      layout::NominalKey(description, {.module = "main.vela", .name = "Node", .arguments = {}});
+  const auto node = std::ranges::find(description.classes, key, &layout::Class::name);
   ASSERT_NE(node, description.classes.end());
   const auto node_index = static_cast<std::size_t>(node - description.classes.begin());
   ASSERT_EQ(node->reference_fields.size(), 1U);

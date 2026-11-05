@@ -16,7 +16,7 @@
 #include "gtest/gtest.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/rooted_value.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
 #include "runtime/value/value.h"
@@ -126,11 +126,14 @@ testing::AssertionResult IsExpectedInteger(runtime::Value value, std::int64_t ex
 testing::AssertionResult CompletesWithInteger(runtime::Isolate& isolate,
                                               runtime::Value value,
                                               std::int64_t expected) {
-  const runtime::RootedValue root(isolate, value);
-  if (!root.value().IsObject()) {
+  const auto root = runtime::HostRoot::Create(isolate, value);
+  if (!root) {
+    return testing::AssertionFailure() << ExecutionStatusName(root.error());
+  }
+  if (!root->value().IsObject()) {
     return testing::AssertionFailure() << "result is not a Future";
   }
-  auto* future = runtime::Heap::GetFuture(*root.value().AsObject());
+  auto* future = runtime::Heap::GetFuture(*root->value().AsObject());
   if (future == nullptr) {
     return testing::AssertionFailure() << "result is not a Future";
   }

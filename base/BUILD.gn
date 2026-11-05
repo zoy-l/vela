@@ -21,6 +21,7 @@ source_set("base") {
     "fingerprint.h",
     "integer_arithmetic.h",
     "json_decode.h",
+    "layout_description.cc",
     "layout_description.h",
     "member.h",
     "mock_operation.h",

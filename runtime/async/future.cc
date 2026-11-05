@@ -1,4 +1,5 @@
 #include "runtime/async/future.h"
+#include <absl/functional/any_invocable.h>
 #include "base/execution_status.h"
 #include "runtime/async/execution_context.h"
 #include "runtime/heap/heap.h"
@@ -12,11 +13,14 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "runtime/heap/host_memory.h"
 
 namespace vela::runtime {
 namespace {
@@ -54,6 +58,7 @@ struct Future::SharedState final {
     std::function<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
     std::optional<ExecutionContext> context;
+    std::uint64_t order = 0;
   };
   ExternalResource external;
   std::atomic_size_t retained_count{0};
@@ -62,6 +67,8 @@ struct Future::SharedState final {
   enum class ErrorObservation : std::uint8_t { Unobserved, ReportedUnhandled, Observed };
   ErrorObservation error_observation = ErrorObservation::Unobserved;
   std::vector<Waiter> waiters;
+  std::uint64_t next_observation = 0;
+  std::map<std::uint64_t, std::weak_ptr<FutureObservation::State>> subscriptions;
   FutureScheduler* scheduler = nullptr;
   std::optional<ExecutionContext> creation_context;
   Heap* heap = nullptr;
@@ -69,6 +76,86 @@ struct Future::SharedState final {
   std::shared_ptr<std::vector<::vela::runtime::Value>> retained;
   std::weak_ptr<SharedState> adopted;
 };
+
+struct FutureObservation::State final {
+  State(Future source,
+        FutureScheduler& owner,
+        absl::AnyInvocable<void(const FutureResult&)> action,
+        HostMemory reservation)
+      : future(std::move(source)),
+        scheduler(&owner),
+        identity(owner.next_observation_identity_++),
+        order(future->state_->next_observation++),
+        callback(std::move(action)),
+        context(owner.context()),
+        memory(std::move(reservation)) {}
+
+  void Cancel() noexcept {
+    if (scheduler == nullptr) {
+      return;
+    }
+    assert(scheduler->IsOwnerThread());
+    assert(future.has_value());
+    future->state_->subscriptions.erase(order);
+    scheduler->observations_.erase(identity);
+    scheduler = nullptr;
+    callback = {};
+    future.reset();
+    memory = {};
+  }
+
+  void Invoke() {
+    if (scheduler == nullptr) {
+      return;
+    }
+    assert(future.has_value());
+    auto source = future->Retained();
+    auto action = std::move(callback);
+    Cancel();
+    action(source.result());
+  }
+
+  std::optional<Future> future;
+  FutureScheduler* scheduler;
+  std::uint64_t identity;
+  std::uint64_t order;
+  absl::AnyInvocable<void(const FutureResult&)> callback;
+  std::optional<ExecutionContext> context;
+  HostMemory memory;
+};
+
+FutureObservation::~FutureObservation() {
+  Cancel();
+}
+
+FutureObservation::FutureObservation(FutureObservation&& other) noexcept
+    : state_(std::move(other.state_)) {}
+
+FutureObservation& FutureObservation::operator=(FutureObservation&& other) noexcept {
+  if (this != &other) {
+    Cancel();
+    state_ = std::move(other.state_);
+  }
+  return *this;
+}
+
+void FutureObservation::Cancel() noexcept {
+  if (state_ != nullptr) {
+    state_->Cancel();
+    state_.reset();
+  }
+}
+
+void FutureScheduler::CloseObservations() {
+  while (!observations_.empty()) {
+    const auto found = observations_.begin();
+    if (const auto state = found->second.lock()) {
+      state->Cancel();
+    } else {
+      observations_.erase(found);
+    }
+  }
+}
 
 // 微任务独占监听器：回调、稳定根及结果句柄共用一次分配，取消排队也能立即释放根。
 struct Future::Observer final {
@@ -264,6 +351,11 @@ void Future::AttachHeap(Heap& heap) {
   }
 }
 
+Heap& Future::heap() const noexcept {
+  assert(state_->heap != nullptr);
+  return *state_->heap;
+}
+
 std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, Heap& heap) {
   if ((state_->scheduler != nullptr && state_->scheduler != &scheduler) ||
       (state_->heap != nullptr && state_->heap != &heap)) {
@@ -343,11 +435,38 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
   const auto context = state_->scheduler != nullptr ? state_->scheduler->context() : std::nullopt;
   MarkObserved();
   if (state_->completion.state == FutureState::Pending) {
-    state_->waiters.push_back(
-        {.callback = std::move(callback), .references = std::move(references), .context = context});
+    state_->waiters.push_back({
+        .callback = std::move(callback),
+        .references = std::move(references),
+        .context = context,
+        .order = state_->next_observation++,
+    });
     return;
   }
   NotifyObserver(std::move(callback), std::move(references), context);
+}
+
+std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
+    absl::AnyInvocable<void(const FutureResult&)> callback) const {
+  auto& scheduler = *state_->scheduler;
+  assert(scheduler.IsOwnerThread());
+  HostMemory memory(heap(), sizeof(FutureObservation::State));
+  if (!memory.IsReserved()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  auto observation = std::make_shared<FutureObservation::State>(
+      Retained(), scheduler, std::move(callback), std::move(memory));
+  scheduler.observations_.emplace(observation->identity, observation);
+  MarkObserved();
+  if (state_->completion.state == FutureState::Pending) {
+    state_->subscriptions.emplace(observation->order, observation);
+  } else {
+    scheduler.microtasks_.push_back({
+        .context = observation->context,
+        .action = [observation] { observation->Invoke(); },
+    });
+  }
+  return FutureObservation(std::move(observation));
 }
 
 void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
@@ -456,8 +575,24 @@ void Future::Publish(FutureResult result) {
     heap->WriteRootBarrier(std::span(&state_->completion.value, 1));
   }
   auto waiters = std::move(state_->waiters);
+  auto subscriptions = std::move(state_->subscriptions);
+  const auto notify_subscription = [&](const auto& weak) {
+    if (const auto observation = weak.lock()) {
+      state_->scheduler->microtasks_.push_back({
+          .context = observation->context,
+          .action = [observation] { observation->Invoke(); },
+      });
+    }
+  };
+  auto next = subscriptions.begin();
   for (auto& waiter : waiters) {
+    while (next != subscriptions.end() && next->first < waiter.order) {
+      notify_subscription(next++->second);
+    }
     NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context);
+  }
+  for (; next != subscriptions.end(); ++next) {
+    notify_subscription(next->second);
   }
   if (state_->scheduler != nullptr &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {

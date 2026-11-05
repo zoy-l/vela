@@ -8,6 +8,9 @@
 
 #include "runtime/native/native_context.h"
 #include "vela/bindings.h"
+#include "vela/error.h"
+#include "vela/handles.h"
+#include "vela/types.h"
 
 namespace vela::binding_fixture {
 
@@ -54,7 +57,9 @@ class VELA_CLASS("fixture.Counter") Counter final : public Padding, public Virtu
   }
   [[nodiscard]] static std::shared_ptr<Counter> Shared(std::int64_t initial) noexcept;
   [[nodiscard]] static std::unique_ptr<Counter> Empty() noexcept { return nullptr; }
-  [[nodiscard]] std::expected<std::int64_t, runtime::NativeError> Checked(bool fail) const noexcept;
+  [[nodiscard]] std::expected<std::int64_t, vela::Error> Checked(bool fail) const noexcept;
+  [[nodiscard]] static Local<Array<std::int64_t>> Echo(runtime::NativeContext& context,
+                                                       Local<Array<std::int64_t>> values) noexcept;
   VELA_IGNORE
   void Debug(int unsupported);
 

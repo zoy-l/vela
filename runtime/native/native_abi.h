@@ -15,6 +15,7 @@
 #include "runtime/isolate/external_resources.h"
 #include "runtime/native/native_context.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::runtime {
 
@@ -26,7 +27,7 @@ struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 14;
+inline constexpr std::uint32_t kNativeAbiVersion = 16;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {
@@ -153,6 +154,8 @@ inline std::uint8_t StoreNativeResult(NativeValue* output,
 class NativeExecution final {
  public:
   explicit NativeExecution(NativeInstance& instance) noexcept;
+  // parent 只借用同步重入的外层执行；其逻辑帧必须覆盖此对象的整个生命周期。
+  NativeExecution(NativeInstance& instance, const NativeExecution* parent) noexcept;
   ~NativeExecution();
   NativeExecution(const NativeExecution&) = delete;
   NativeExecution& operator=(const NativeExecution&) = delete;
@@ -183,6 +186,7 @@ class NativeExecution final {
   [[nodiscard]] Value ExceptionPayload() const noexcept;
   [[nodiscard]] FutureDiagnostic FailureDiagnostic(ExecutionStatus status) const;
   [[nodiscard]] ExecutionStatus RestoreFutureError(const FutureResult& completion);
+  [[nodiscard]] ExecutionStatus RestoreHostError(vela::Error error);
   void AbortWithOutOfMemory() noexcept;
   [[nodiscard]] ExecutionStatus Throw(Value payload);
   [[nodiscard]] ExecutionStatus Rethrow(Value exception) noexcept;
@@ -202,6 +206,7 @@ class NativeExecution final {
   const GcBarrierState* barrier_state_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
+  std::size_t base_frame_count_ = 0;
   std::uintptr_t stack_limit_ = 0;
   ExecutionStatus stack_status_ = ExecutionStatus::NativeFailure;
   Value pending_exception_;

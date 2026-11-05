@@ -16,12 +16,13 @@
 #include "runtime/library/random.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
+#include "vela/error.h"
 
 namespace vela::runtime {
 namespace {
 
-std::unexpected<NativeError> Failure(std::string message) {
-  return std::unexpected(NativeError{.message = std::move(message)});
+std::unexpected<vela::Error> Failure(std::string message) {
+  return std::unexpected(vela::Error{.message = std::move(message), .stack_trace = {}});
 }
 
 double PerformanceNow([[maybe_unused]] NativeContext& context) noexcept {
@@ -44,7 +45,7 @@ double NextDouble(NativeContext& context) noexcept {
   return context.isolate().random().NextDouble();
 }
 
-std::expected<std::int64_t, NativeError> NextInt(NativeContext& context,
+std::expected<std::int64_t, vela::Error> NextInt(NativeContext& context,
                                                  std::int64_t bound) noexcept {
   const auto value = context.isolate().random().NextInt(bound);
   if (!value) {
@@ -71,7 +72,7 @@ bool IsNaN([[maybe_unused]] NativeContext& context, double value) noexcept {
   return std::isnan(value);
 }
 
-std::expected<double, NativeError> Clamp([[maybe_unused]] NativeContext& context,
+std::expected<double, vela::Error> Clamp([[maybe_unused]] NativeContext& context,
                                          double value,
                                          double lower,
                                          double upper) noexcept {
@@ -81,7 +82,7 @@ std::expected<double, NativeError> Clamp([[maybe_unused]] NativeContext& context
   return std::fmin(std::fmax(value, lower), upper);
 }
 
-std::expected<double, NativeError> Sqrt([[maybe_unused]] NativeContext& context,
+std::expected<double, vela::Error> Sqrt([[maybe_unused]] NativeContext& context,
                                         double value) noexcept {
   if (value < 0.0) {
     return Failure("sqrt argument must be nonnegative");
@@ -89,7 +90,7 @@ std::expected<double, NativeError> Sqrt([[maybe_unused]] NativeContext& context,
   return std::sqrt(value);
 }
 
-std::expected<double, NativeError> Log([[maybe_unused]] NativeContext& context,
+std::expected<double, vela::Error> Log([[maybe_unused]] NativeContext& context,
                                        double value) noexcept {
   if (value <= 0.0) {
     return Failure("log argument must be positive");

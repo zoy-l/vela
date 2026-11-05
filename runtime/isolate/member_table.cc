@@ -19,7 +19,7 @@ MemberTable::MemberTable(std::span<const TypeConstraint> types,
     : types_(types), members_(std::move(members)) {
   for (std::size_t index = 0; index < types_.size(); ++index) {
     const auto& type = types_.subspan(index).front();
-    if (!type.nullable && !type.dynamic && type.interface == nullptr && !type.callable) {
+    if (!type.nullable && !type.dynamic && !type.callable) {
       receiver_indices_.try_emplace(Key(type), static_cast<std::uint32_t>(index));
     }
   }
@@ -31,11 +31,17 @@ MemberTable::MemberTable(std::span<const TypeConstraint> types,
 }
 
 MemberTable::ReceiverKey MemberTable::Key(const TypeConstraint& type) {
-  return {type.kind, type.object_kind, type.nominal, type.array, type.collection, type.signature};
+  return {type.kind,       type.object_kind, type.nominal,  type.array,
+          type.collection, type.signature,   type.interface};
 }
 
 const MemberDefinition* MemberTable::Find(Value receiver, std::string_view name) const {
-  const auto key = Key(Heap::TypeOf(receiver));
+  return Find(Heap::TypeOf(receiver), name);
+}
+
+const MemberDefinition* MemberTable::Find(const TypeConstraint& receiver,
+                                          std::string_view name) const {
+  const auto key = Key(receiver);
   const auto type = receiver_indices_.find(key);
   if (type == receiver_indices_.end()) {
     return nullptr;

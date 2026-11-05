@@ -384,12 +384,12 @@ std::expected<runtime::Value, std::string> Suite::RegisterFinalizer(
     return std::unexpected("SDK finalizers require an executing test scope");
   }
   auto& scope = *scopes_.at(static_cast<std::uint64_t>(identity));
-  const auto registration = next_id_++;
-  scope.finalizers.push_back({
-      .id = registration,
-      .value = runtime::RootedValue(*isolate_, callback),
-      .trace = std::move(trace),
-  });
+  auto captured = Capture(callback, std::move(trace));
+  if (!captured) {
+    return std::unexpected(std::move(captured.error()));
+  }
+  const auto registration = captured->id;
+  scope.finalizers.push_back(std::move(*captured));
   return runtime::Value::Integer(static_cast<std::int64_t>(registration));
 }
 

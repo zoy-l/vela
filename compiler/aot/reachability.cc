@@ -217,6 +217,9 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
 
 void Reachability::VisitClass(std::uint32_t index, TypeExposure exposure) {
   const auto& source = program_.classes.at(index);
+  if (exposure == TypeExposure::Host && source.constructor != kInvalidFunctionTarget) {
+    Mark(NodeKind::Function, source.constructor, exposure);
+  }
   if (source.callable && source.callable->mode != CallableMode::InterfaceMethod) {
     Mark(NodeKind::Function, source.callable->function, exposure);
   }
@@ -435,7 +438,11 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
     main = mapping.at(*main);
   }
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    RemapClass(program.classes.at(index), static_cast<std::uint32_t>(index), mapping);
+    auto& type = program.classes.at(index);
+    if (type.constructor != kInvalidFunctionTarget) {
+      type.constructor = mapping.at(type.constructor);
+    }
+    RemapClass(type, static_cast<std::uint32_t>(index), mapping);
     RemapClass(program.layouts.classes.at(index), static_cast<std::uint32_t>(index), mapping);
   }
   std::erase_if(program.members, [&](const MemberDefinition& member) {

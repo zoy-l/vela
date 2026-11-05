@@ -42,7 +42,9 @@
 调用方位置指向调用指令，包括惰性全局初始化期间的嵌套调用。
 
 暂停的原生栈帧仍持有精确 GC 根。观察者可在同一 Isolate 上分配或回收；
-需要跨回调保留的引用必须使用 `RootedValue`。
+底层调试器读取的 `runtime::Value` 如需跨回调保留，须通过
+`runtime::HostRoot::Create(isolate, value)` 建立稳定根。已取得的公共 `Local<T>` 使用
+`Persist()` 转为 `Persistent<T>`。
 Isolate、执行与调试器须保持有效，销毁观察者前必须解除安装。
 推进异步 main 及后台任务期间继续安装调试器，才能检查恢复后的函数。
 

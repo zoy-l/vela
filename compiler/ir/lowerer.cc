@@ -1,5 +1,6 @@
 #include "compiler/ir/lowerer.h"
 #include "base/declaration.h"
+#include "base/member.h"
 #include "compiler/frontend/syntax/names.h"
 
 #include <algorithm>
@@ -120,6 +121,10 @@ LoweringResult Lowerer::Lower() && {
   program_.native_mode = native_mode_;
   BuildFunctionTable();
   BuildClassTable();
+  for (const auto& enumeration : source_.enums) {
+    static_cast<void>(RegisterRuntimeType(model_.types.at(enumeration.name)));
+  }
+  LowerPublicConstructors();
   LowerJSONDecodePlans();
   if (declarations_ != nullptr) {
     for (const auto& [name, selector] : interface_method_ids_) {
@@ -144,6 +149,7 @@ LoweringResult Lowerer::Lower() && {
         .declaration = {},
         .fields = {},
         .base_class = {},
+        .enum_members = {},
     });
   }
   for (const frontend::Function& function : source_.functions) {
@@ -184,6 +190,7 @@ LoweringResult Lowerer::Lower() && {
   }
   RegisterBuiltinMembers();
   ResolveCallValueTypes();
+  BuildNativeClassContracts();
   return {.program = std::move(program_), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -197,30 +204,13 @@ void Lowerer::AddDiagnostic(frontend::SourceLocation location, std::string messa
 }
 
 void Lowerer::BuildInterfaceSelectors() {
-  if (persistent_ != nullptr || native_mode_ == NativeProgramMode::Reloadable) {
-    // 布局一旦用于实例就不能更换；首次接纳类型时必须绑定全部接口方法。
-    for (const auto& interface : source_.interfaces) {
-      for (const auto& method : interface.methods) {
-        const auto key = interface.name + "." + method.name;
-        const auto selector = persistent_ != nullptr
-                                  ? persistent_->selectors.Get(key)
-                                  : static_cast<std::uint32_t>(interface_method_ids_.size());
-        interface_method_ids_.emplace(key, selector);
-      }
-    }
-    return;
-  }
-  // 只为实际接口调用和绑定的方法生成 selector，未使用的接口不扩张分派表。
-  for (const auto& [expression, member] : model_.interface_members) {
-    interface_method_ids_.try_emplace(member.owner + "." + member.member, 0);
-  }
-  std::uint32_t selector = 0;
   for (const auto& interface : source_.interfaces) {
     for (const auto& method : interface.methods) {
-      const auto selected = interface_method_ids_.find(interface.name + "." + method.name);
-      if (selected != interface_method_ids_.end()) {
-        selected->second = selector++;
-      }
+      const auto key = interface.name + "." + method.name;
+      const auto selector = persistent_ != nullptr
+                                ? persistent_->selectors.Get(key)
+                                : static_cast<std::uint32_t>(interface_method_ids_.size());
+      interface_method_ids_.emplace(key, selector);
     }
   }
 }
@@ -245,6 +235,29 @@ void Lowerer::BuildClassTable() {
     program_.classes.at(class_ids_.at(source_class.name)) = std::move(descriptor);
     RegisterClassMembers(class_info->second);
   }
+  for (const auto& source : source_.interfaces) {
+    const auto& descriptor = model_.interfaces.at(source.name);
+    const auto receiver = RegisterRuntimeType(descriptor.type);
+    for (const auto& method : source.methods) {
+      const auto& signature = descriptor.methods.at(method.name);
+      const std::vector<frontend::Capture> captures{
+          {
+              .name = std::string(frontend::kReceiverName),
+              .type = descriptor.type,
+              .binding = 0,
+              .kind = frontend::BindingKind::Constant,
+          },
+      };
+      const auto wrapper = CallableClass(interface_method_ids_.at(source.name + '.' + method.name),
+                                         CallableMode::InterfaceMethod, captures, &signature);
+      program_.members.push_back({
+          .receiver_type = receiver,
+          .name = method.name,
+          .kind = MemberKind::Method,
+          .target = wrapper,
+      });
+    }
+  }
 }
 
 Class Lowerer::BuildClass(const frontend::Class& source_class,
@@ -254,7 +267,6 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
   output_class.native_key = source_class.native_key;
   if (!source_class.native_key.empty()) {
     output_class.kind = Class::Kind::Host;
-    output_class.native_contract = BuildNativeClassContract(source_class, class_info);
   }
   if (!source_.sources.empty() &&
       source_.sources.at(source_class.location.source_id).path == frontend::kErrorSourceName) {
@@ -539,6 +551,7 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
     }
   }
   function.is_async = source.is_async;
+  function.native_symbol = source.native_symbol;
   function.visibility = source.visibility;
   function.is_exported =
       owner == nullptr && lambda == nullptr &&
@@ -593,7 +606,6 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     return;
   }
   if (!source.native_symbol.empty()) {
-    function.native_symbol = source.native_symbol;
     function.register_count = std::max(function.parameter_count, 1U);
     StoreFunction(std::move(function));
     return;

@@ -24,6 +24,7 @@
 #include "runtime/native/native_host_type.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::runtime::binding_test {
 
@@ -56,7 +57,7 @@ namespace {
 
 using runtime::binding_test::Counter;
 
-std::expected<runtime::NativeConstructed<Counter>, runtime::NativeError> ConstructCounter(
+std::expected<runtime::NativeConstructed<Counter>, vela::Error> ConstructCounter(
     runtime::NativeContext& context,
     std::int64_t initial) noexcept {
   return context.Construct<Counter>(initial);
@@ -165,7 +166,7 @@ class NativeClassJitTest : public testing::TestWithParam<NativeCodeTier> {};
 
 TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCallsAndBoundMethods) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   const auto compiled =
       CompileSource(**compiler, kSource, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
@@ -173,13 +174,15 @@ TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCall
   ASSERT_TRUE(RegisterCounter(isolate).has_value());
   static_cast<void>(isolate.FreezeBindings());
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-  ASSERT_TRUE(instance) << instance.error().message;
+  ASSERT_TRUE(instance.has_value()) << instance.error().message;
   runtime::NativeExecution execution(**instance);
   for (const auto* const name : {"run", "boundOnly"}) {
     const auto function = (*instance)->FindFunction(name);
-    ASSERT_TRUE(function);
+    if (!function) {
+      FAIL() << "expected exported function " << name;
+    }
     const auto returned = runtime::InvokeNativeFunction(execution, *function);
-    ASSERT_TRUE(returned) << static_cast<unsigned>(returned.error());
+    ASSERT_TRUE(returned.has_value()) << static_cast<unsigned>(returned.error());
     EXPECT_EQ(returned->AsInteger(), 42);
   }
   isolate.heap().Collect();
@@ -187,7 +190,7 @@ TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCall
 
 TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublication) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   const auto compiled =
       CompileSource(**compiler, kSource, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
@@ -212,7 +215,7 @@ TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublica
 
 TEST_P(NativeClassJitTest, RejectsDriftInUnusedMembersAsPartOfTheWholeClassContract) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   auto source = std::string(kSource);
   const auto method = source.find("  text(text: string): string;");
   ASSERT_NE(method, std::string::npos);

@@ -61,7 +61,7 @@ class LoopInitialized {
 }
 class LocalPoint { x: int; y: int; text: string?; }
 class SavedPoint { static point: LocalPoint? = null; }
-class Link { value: int; next: Link?; other: Link?; }
+export class Link { value: int; next: Link?; other: Link?; }
 func borrowWrite(point: LocalPoint, fail: bool): int {
   const alias = point;
   alias.x += 1;

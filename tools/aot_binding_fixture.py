@@ -49,8 +49,8 @@ extern "C" const NativeImage* BINDING_IMAGE() noexcept;
 namespace binding_test {
 
 std::int64_t Step(std::int64_t value) noexcept { return value + 1; }
-std::expected<std::int64_t, NativeError> CheckedStep(std::int64_t value) noexcept {
-  if (value < 0) { return std::unexpected(NativeError{.message = "negative input"}); }
+std::expected<std::int64_t, vela::Error> CheckedStep(std::int64_t value) noexcept {
+  if (value < 0) { return std::unexpected(vela::Error{.message = "negative input", .stack_trace = {}}); }
   return value + 1;
 }
 bool Invert(bool value) noexcept { return !value; }

@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_class.h"
@@ -243,7 +244,7 @@ TEST_F(HostObjectTest, ConstructionReservesBudgetBeforeCallingCppAndReleasesFail
   heap.SetAllocationLimit(0);
   const auto denied = context.Construct<TrackedHost>(destroyed_);
   ASSERT_FALSE(denied);
-  EXPECT_EQ(denied.error().kind, NativeErrorKind::OutOfMemory);
+  EXPECT_EQ(denied.error().status, ExecutionStatus::OutOfMemory);
   EXPECT_EQ(TrackedHost::constructed, before);
   EXPECT_EQ(heap.allocated_bytes(), 0U);
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
@@ -274,7 +275,7 @@ TEST_F(HostObjectTest, ExternalMemoryUpdatesAreRootedAndPreserveTheOldBudgetOnFa
   heap.SetAllocationLimit(heap.allocated_bytes());
   const auto denied = context.ReportExternalMemory(native, 2 * kExtraBytes);
   ASSERT_FALSE(denied);
-  EXPECT_EQ(denied.error().kind, NativeErrorKind::OutOfMemory);
+  EXPECT_EQ(denied.error().status, ExecutionStatus::OutOfMemory);
   EXPECT_EQ(heap.allocated_bytes(), baseline + kExtraBytes);
   EXPECT_EQ(destroyed_, 0U);
   ASSERT_TRUE(context.ReportExternalMemory(native, 0));
@@ -296,7 +297,7 @@ TEST_F(HostObjectTest, ConstructionBundlesCannotCrossIsolatesButSharedOwnersCan)
   ASSERT_TRUE(bundle);
   const auto foreign = second.Own(std::move(*bundle));
   ASSERT_FALSE(foreign);
-  EXPECT_EQ(foreign.error().kind, NativeErrorKind::TypeMismatch);
+  EXPECT_EQ(foreign.error().status, ExecutionStatus::TypeError);
   EXPECT_EQ(destroyed_, 1U);
   EXPECT_EQ(isolate_.heap().allocated_bytes(), 0U);
   EXPECT_EQ(other.heap().allocated_bytes(), 0U);

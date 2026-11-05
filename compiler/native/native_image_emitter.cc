@@ -183,6 +183,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              wide_,
                                              table_,
                                              wide_,
+                                             word_,
+                                             table_,
                                          }),
                                          std::array{
                                              offsetof(NativeClassDescription, name),
@@ -199,6 +201,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              offsetof(NativeClassDescription, declaration),
                                              offsetof(NativeClassDescription, fields),
                                              offsetof(NativeClassDescription, base_class),
+                                             offsetof(NativeClassDescription, constructor),
+                                             offsetof(NativeClassDescription, enum_members),
                                          });
   array_ =
       RecordType<NativeArrayDescription>("vela.array", std::to_array<llvm::Type*>({text_, type_}),
@@ -505,6 +509,8 @@ llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> cl
                                            Wide(type.declaration.value),
                                            Table(field_, fields),
                                            Wide(type.base_class.value),
+                                           Word(type.constructor),
+                                           Texts(type.enum_members.values()),
                                        }));
   }
   return Table(class_, constants);

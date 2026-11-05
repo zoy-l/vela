@@ -21,6 +21,7 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
+#include "vela/error.h"
 
 namespace vela::compiler::jit {
 namespace {
@@ -86,9 +87,9 @@ class ScalarHostCallTest : public testing::TestWithParam<std::tuple<NativeCodeTi
     }
   }
 
-  static std::expected<std::int64_t, runtime::NativeError> Reject() noexcept {
+  static std::expected<std::int64_t, vela::Error> Reject() noexcept {
     Observe("reject");
-    return std::unexpected(runtime::NativeError{.message = "rejected"});
+    return std::unexpected(vela::Error{.message = "rejected", .stack_trace = {}});
   }
 
   static thread_local runtime::NativeExecution* execution_;
@@ -98,7 +99,7 @@ thread_local runtime::NativeExecution* ScalarHostCallTest::execution_ = nullptr;
 
 TEST_P(ScalarHostCallTest, PreservesFramesReentryRootsCheckedFailuresAndDepthLimits) {
   auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
+  ASSERT_TRUE(compiler.has_value());
   const auto [tier, with_context] = GetParam();
   const auto compiled = CompileSource(**compiler, R"(
 external func step(value: int): int;
@@ -136,21 +137,20 @@ export func boundary(): void { touch(); }
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Reject>("reject")));
   static_cast<void>(isolate.FreezeBindings());
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-  ASSERT_TRUE(instance);
+  ASSERT_TRUE(instance.has_value());
   const auto run = (*instance)->FindFunction("run");
   const auto failing = (*instance)->FindFunction("failing");
   const auto caught = (*instance)->FindFunction("caught");
   const auto boundary = (*instance)->FindFunction("boundary");
-  ASSERT_TRUE(run);
-  ASSERT_TRUE(failing);
-  ASSERT_TRUE(caught);
-  ASSERT_TRUE(boundary);
+  if (!run || !failing || !caught || !boundary) {
+    FAIL() << "expected exported functions run, failing, caught and boundary";
+  }
   runtime::NativeExecution execution(**instance);
   execution_ = &execution;
   for (const std::int64_t count : {0, 1, 4, 1}) {
     const std::array arguments{runtime::Value::Integer(count)};
     const auto result = runtime::InvokeNativeFunction(execution, *run, arguments);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->AsInteger(), count + 12);
     EXPECT_EQ(execution.current_frame(), nullptr);
   }
@@ -163,7 +163,7 @@ export func boundary(): void { touch(); }
   EXPECT_EQ(diagnostic.stack_trace.back().function, "failing");
   EXPECT_EQ(execution.current_frame(), nullptr);
   const auto handled = runtime::InvokeNativeFunction(execution, *caught);
-  ASSERT_TRUE(handled);
+  ASSERT_TRUE(handled.has_value());
   EXPECT_EQ(handled->AsInteger(), 8);
   EXPECT_EQ(execution.current_frame(), nullptr);
 
@@ -172,7 +172,7 @@ export func boundary(): void { touch(); }
     execution.MaterializeFrame(frame, *boundary);
   }
   const auto allowed = runtime::InvokeNativeFunction(execution, *boundary);
-  ASSERT_TRUE(allowed);
+  ASSERT_TRUE(allowed.has_value());
   runtime::NativeTraceFrame last;
   execution.MaterializeFrame(last, *boundary);
   const auto exceeded = runtime::InvokeNativeFunction(execution, *boundary);
