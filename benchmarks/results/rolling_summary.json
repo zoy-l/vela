@@ -1,2874 +1,5 @@
 {
   "previous": {
-    "run_date": "2026-11-06T04:14:26.227476+00:00",
-    "source": {
-      "revision": "c0162e5c05fb57ac68b47a185cb0360a062f0c28",
-      "working_tree": "M base/builtin.h\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/ir/analysis.cc\n M compiler/ir/optimizer.cc\n M compiler/ir/preparation_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/native_storage_unittest.cc\n M compiler/language/string_unittest.cc\n M compiler/native/field_access.cc\n M compiler/native/field_access.h\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/memory_emitter.cc\n M compiler/native/native_roots.cc\n M compiler/native/native_roots.h\n M runtime/library/builtins.cc\n M runtime/native/native_abi.cc\n M runtime/native/native_abi.h\n M runtime/native/native_abi_unittest.cc\n M runtime/strings/string_unittest.cc\n?? compiler/native/field_access_unittest.cc\n?? compiler/native/native_roots_unittest.cc",
-      "working_tree_content_sha256_excluding_summary": "2c3f1b18ee76556963a79ab1eaca66a548c1baacc2626c03a1b61ac237d0d256",
-      "modified_file_sha256": {
-        "base/builtin.h": "9c636c3c7ea1e9e6e5fa730d11324fc485ac5e0e19fda326551b0ac4d8d03be3",
-        "compiler/BUILD.gn": "f84bcce582128b3f58470c465258086c482b67aeebb82df881ee333f3f09ea62",
-        "compiler/ir/analysis.cc": "14f4e382ba428a5b61a3cdcbe81cd46fba267985a7e5dd5ad465da6672903ad9",
-        "compiler/ir/optimizer.cc": "b6b7e416ec59153429a9c04c1240c67cb8a2814ad4a4c6460ce89bee5b26b468",
-        "compiler/ir/preparation_unittest.cc": "f2c92e7ab2510c2bd28b4c868a7b28f7c0381cb6514809f4e296b5c93164a574",
-        "compiler/jit/compiler_unittest.cc": "65a32fd2233404b8d7c7d9fbbcef0e20ea4316460426f461618c69c33e6b0b30",
-        "compiler/jit/native_storage_unittest.cc": "2caf7fe19a982284ad389add868e3fd8c65c296e93a1c9a4ea05269f7712d4c6",
-        "compiler/language/string_unittest.cc": "cd936859e4887035f5784e2a4f4cfd6c73c1b98d7344b97892f46299f6883ccf",
-        "compiler/native/field_access.cc": "365a0cbbf46c80807c82fda26b0123c2ba9e4c72524f93940351674dfc04c0d8",
-        "compiler/native/field_access.h": "033986b59b60c769d7f41e80cc4748a110b00b2988d0fd594056cb1bc179457f",
-        "compiler/native/field_access_unittest.cc": "edc4a9535efe24eaa62b1e232ee13a0ca9e4f50759f707f1cf5770f2e2e7e567",
-        "compiler/native/function_emitter.cc": "52d381512b395e214467176740b1751566ac4cc93520084efcc23fd23e1f81cd",
-        "compiler/native/function_emitter.h": "5645190c2138bfaaeb0b88a2b50d23f910cf18231d7cb28a2a9b9f2a15a9f535",
-        "compiler/native/memory_emitter.cc": "ec22aa98fb95b2be5e67b79f3a0aad13db909f439807540559e4cc77eec4fd03",
-        "compiler/native/native_roots.cc": "17fe795700290735ac53dfff15f63c889dd258d4805d48b7dcf0246b271b4e06",
-        "compiler/native/native_roots.h": "865f69ba81fa85e1a478fae1804068eb8287a2f97c0a9132572ebac1c26eaefc",
-        "compiler/native/native_roots_unittest.cc": "74eb8f6f757c790325396a4c3914fe090fa43e524a4eac0c513bab5bd67d72ff",
-        "runtime/library/builtins.cc": "30ab91c999d268a7b3ce816131b3ec01b16aecbd14cd0e9b69650cb266eeaf47",
-        "runtime/native/native_abi.cc": "3d87a9d90108fb976da5f64e805b02ce0b01f08dea930987eb182059d658234f",
-        "runtime/native/native_abi.h": "f9e9eabb9dc8db030cf0792b4fc02bbde781dca9b6b50e2ed758b3e794191c25",
-        "runtime/native/native_abi_unittest.cc": "948bb4b688aab51d56731f441c74dc2e77ed1afc876e6c7e2871996795d6b610",
-        "runtime/strings/string_unittest.cc": "15ae2e278acb45c15e3584db4b43bc4ff09884ee743027b0e4215ac2daf05c0e"
-      },
-      "baseline_source": {
-        "revision": "c0162e5c05fb57ac68b47a185cb0360a062f0c28",
-        "working_tree": "M base/builtin.h\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/ir/analysis.cc\n M compiler/ir/optimizer.cc\n M compiler/ir/preparation_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/native_storage_unittest.cc\n M compiler/language/string_unittest.cc\n M compiler/native/field_access.cc\n M compiler/native/field_access.h\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/memory_emitter.cc\n M runtime/library/builtins.cc\n M runtime/native/native_abi.h\n M runtime/strings/string_unittest.cc\n?? compiler/native/field_access_unittest.cc",
-        "production_sources_match_previous": true,
-        "working_tree_content_sha256_excluding_summary": "a65aff7e0fd88335ed1817a9055c572d252638b2b632813aa68f156270dd5b97",
-        "modified_file_sha256": {
-          "base/builtin.h": "9c636c3c7ea1e9e6e5fa730d11324fc485ac5e0e19fda326551b0ac4d8d03be3",
-          "compiler/BUILD.gn": "cf9d142405c3f0f83181fa313c044f8e6868530c2ebea6fe24a8db49372c87b7",
-          "compiler/ir/analysis.cc": "14f4e382ba428a5b61a3cdcbe81cd46fba267985a7e5dd5ad465da6672903ad9",
-          "compiler/ir/optimizer.cc": "b6b7e416ec59153429a9c04c1240c67cb8a2814ad4a4c6460ce89bee5b26b468",
-          "compiler/ir/preparation_unittest.cc": "f2c92e7ab2510c2bd28b4c868a7b28f7c0381cb6514809f4e296b5c93164a574",
-          "compiler/jit/compiler_unittest.cc": "65a32fd2233404b8d7c7d9fbbcef0e20ea4316460426f461618c69c33e6b0b30",
-          "compiler/jit/native_storage_unittest.cc": "2caf7fe19a982284ad389add868e3fd8c65c296e93a1c9a4ea05269f7712d4c6",
-          "compiler/language/string_unittest.cc": "cd936859e4887035f5784e2a4f4cfd6c73c1b98d7344b97892f46299f6883ccf",
-          "compiler/native/field_access.cc": "365a0cbbf46c80807c82fda26b0123c2ba9e4c72524f93940351674dfc04c0d8",
-          "compiler/native/field_access.h": "033986b59b60c769d7f41e80cc4748a110b00b2988d0fd594056cb1bc179457f",
-          "compiler/native/field_access_unittest.cc": "edc4a9535efe24eaa62b1e232ee13a0ca9e4f50759f707f1cf5770f2e2e7e567",
-          "compiler/native/function_emitter.cc": "52d381512b395e214467176740b1751566ac4cc93520084efcc23fd23e1f81cd",
-          "compiler/native/function_emitter.h": "5645190c2138bfaaeb0b88a2b50d23f910cf18231d7cb28a2a9b9f2a15a9f535",
-          "compiler/native/memory_emitter.cc": "ec22aa98fb95b2be5e67b79f3a0aad13db909f439807540559e4cc77eec4fd03",
-          "runtime/library/builtins.cc": "30ab91c999d268a7b3ce816131b3ec01b16aecbd14cd0e9b69650cb266eeaf47",
-          "runtime/native/native_abi.h": "f9e9eabb9dc8db030cf0792b4fc02bbde781dca9b6b50e2ed758b3e794191c25",
-          "runtime/strings/string_unittest.cc": "15ae2e278acb45c15e3584db4b43bc4ff09884ee743027b0e4215ac2daf05c0e"
-        },
-        "production_code_changed_during_research": false,
-        "native_abi_version": 19,
-        "native_runtime_abi": "b32691098ebc4a63ff3284439af7ecf59b908b985fad7541724b4f40da5d3cfa/release"
-      },
-      "baseline_binary_fingerprint_captured": false,
-      "baseline_provenance": "Existing production Release binary measured before rebuilding root-slot and roots-enter changes",
-      "native_abi_version": 19,
-      "native_runtime_abi": "07ea98826e2bfc6e4fa7b154627a72dcdc3ffb0b0d71bb60a02cef214d445d15/release",
-      "benchmark_binary_sha256": "032e16258c5a20093f09d64772efb5d3d2191aa8f95baf2b8e6fb58c16697692",
-      "native_object_sha256": "6c6f664b7c41bfe8919c08f88f2d142e6af7845b8aeb222de4c354045b282c4a"
-    },
-    "machine": {
-      "os": "Windows",
-      "release": "11",
-      "version": "10.0.26300",
-      "architecture": "AMD64",
-      "logical_cpus": 24,
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
-      "host": "DESKTOP-E7S678P"
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
-      "llvm_sdk": "21.1.8",
-      "runtime_configuration": "GN release; clang-cl /O2 /MT; checked arithmetic",
-      "generated_configuration": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots"
-    },
-    "build": "release",
-    "measurement": {
-      "repetitions": 7,
-      "minimum_time_seconds": 0.3,
-      "random_interleaving": true,
-      "affinity": "logical CPU 2",
-      "priority": "High",
-      "clock": "Google Benchmark real_time; wall clock nanoseconds",
-      "aggregation": "All samples retained in medians and sample CV; no outlier filtering",
-      "limitations": [
-        "Separate before/after processes; per-workload C++ controls and CV are recorded to expose drift",
-        "Frame bytes are declared LLVM storage, not measured machine-stack use",
-        "Static root stores are planned safepoint writes, not dynamic executed store counts",
-        "Overflow checks, GC registration, safepoints and stack limits remain enabled",
-        "Several complete-after cases have high CV; tree, sort and nbodies have separate focused confirmations with CV below 2%"
-      ]
-    },
-    "suite": {
-      "identity": "aot-root-production/v1",
-      "description": "All 24 AOT/C++ workloads, eight cold AOT cases and 14 reloadable JIT controls",
-      "expected_cases_per_stage": 70,
-      "observed_samples_per_stage": 490,
-      "all_expected_cases_passed": true,
-      "all_checksums_passed": true,
-      "all_retained_heap_checks_passed": true,
-      "plans": [
-        {
-          "stage": "before",
-          "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-          "logical_cpu": 2,
-          "priority": "High",
-          "arguments": [
-            "--benchmark_filter=^(aot/|hot/steady/.*dasprofile\\.(tree|sort|nbodies|queen|particles|sha256|fibonacciRecursive)/)",
-            "--benchmark_min_time=0.3s",
-            "--benchmark_repetitions=7",
-            "--benchmark_enable_random_interleaving=true",
-            "--benchmark_out_format=json",
-            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-root-production\\before.json"
-          ]
-        },
-        {
-          "stage": "after",
-          "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-          "logical_cpu": 2,
-          "priority": "High",
-          "arguments": [
-            "--benchmark_filter=^(aot/|hot/steady/.*dasprofile\\.(tree|sort|nbodies|queen|particles|sha256|fibonacciRecursive)/)",
-            "--benchmark_min_time=0.3s",
-            "--benchmark_repetitions=7",
-            "--benchmark_enable_random_interleaving=true",
-            "--benchmark_out_format=json",
-            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-root-production\\after.json"
-          ]
-        }
-      ]
-    },
-    "comparison": {
-      "within_run_before_after_comparable": true,
-      "comparable_to_previous": false,
-      "reason": "Previous entry measures isolated research variants; this entry measures the production benchmark executable",
-      "geometric_mean_aot_over_cpp": {
-        "before": 1.5171085097668056,
-        "after": 1.480762142096217
-      },
-      "high_variance_after_cases": [
-        "aot/cpp/asyncWork/64/real_time",
-        "aot/cpp/calls/1000/real_time",
-        "aot/cpp/dasprofile.dictionary/500000/real_time",
-        "aot/cpp/dasprofile.expLoop/1000000/real_time",
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time",
-        "aot/cpp/dasprofile.interop/1000000/real_time",
-        "aot/cpp/dasprofile.particles/50000/real_time",
-        "aot/cpp/dasprofile.queen/8/real_time",
-        "aot/cpp/dasprofile.string2float/10000/real_time",
-        "aot/cpp/fields/1000/real_time",
-        "aot/cpp/gc/1000/real_time",
-        "aot/cpp/host/1000/real_time",
-        "aot/first_native/asyncWork/64/real_time",
-        "aot/first_native/gc/1000/real_time",
-        "aot/native/arithmetic/1000/real_time",
-        "aot/native/asyncWork/64/real_time",
-        "aot/native/dasprofile.dictionary/500000/real_time",
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time",
-        "aot/native/dasprofile.float2string/10000/real_time",
-        "aot/native/dasprofile.interop/1000000/real_time",
-        "aot/native/dasprofile.nbodies/33000/real_time",
-        "aot/native/dasprofile.sort/100000/real_time",
-        "aot/native/dasprofile.string2float/10000/real_time",
-        "aot/native/dasprofile.tree/20000/real_time",
-        "aot/native/gc/1000/real_time",
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time",
-        "hot/steady/baseline/dasprofile.nbodies/33000/real_time",
-        "hot/steady/baseline/dasprofile.particles/50000/real_time",
-        "hot/steady/baseline/dasprofile.sort/100000/real_time",
-        "hot/steady/baseline/dasprofile.tree/20000/real_time",
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time",
-        "hot/steady/optimized/dasprofile.particles/50000/real_time",
-        "hot/steady/optimized/dasprofile.sha256/32/real_time",
-        "hot/steady/optimized/dasprofile.sort/100000/real_time",
-        "hot/steady/optimized/dasprofile.tree/20000/real_time"
-      ]
-    },
-    "benchmark_contexts": {
-      "before": {
-        "date": "2026-11-06T11:42:13+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "b32691098ebc4a63ff3284439af7ecf59b908b985fad7541724b4f40da5d3cfa/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "2",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      },
-      "after": {
-        "date": "2026-11-06T12:09:48+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "07ea98826e2bfc6e4fa7b154627a72dcdc3ffb0b0d71bb60a02cef214d445d15/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "2",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      }
-    },
-    "results": {
-      "before": {
-        "aot/cpp/arithmetic/1000/real_time": {
-          "median_ns": 1.287096506645971,
-          "sample_stddev_ns": 0.13993334208319608,
-          "cv": 0.10422314961612314,
-          "sample_count": 7,
-          "counters": {
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/arrays/1000/real_time": {
-          "median_ns": 637.2707645860454,
-          "sample_stddev_ns": 0.7596768659183322,
-          "cv": 0.0011926189618119306,
-          "sample_count": 7,
-          "counters": {
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/asyncWork/64/real_time": {
-          "median_ns": 13174.821860266422,
-          "sample_stddev_ns": 130.8420877579239,
-          "cv": 0.009913461952312332,
-          "sample_count": 7,
-          "counters": {
-            "result": 2080.0
-          }
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "median_ns": 918.4524368209477,
-          "sample_stddev_ns": 9.194242110362357,
-          "cv": 0.009976728127129955,
-          "sample_count": 7,
-          "counters": {
-            "result": 500500.0
-          }
-        },
-        "aot/cpp/dasprofile.dictionary/500000/real_time": {
-          "median_ns": 22534889.473478723,
-          "sample_stddev_ns": 1544318.0885264473,
-          "cv": 0.07055910148997027,
-          "sample_count": 7,
-          "counters": {
-            "result": 13.0,
-            "expected_result": 13.0
-          }
-        },
-        "aot/cpp/dasprofile.expLoop/1000000/real_time": {
-          "median_ns": 2863808.219183128,
-          "sample_stddev_ns": 43733.44888794119,
-          "cv": 0.015192659148470773,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000015.4709149387,
-            "expected_result": 1000015.4709149387
-          }
-        },
-        "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time": {
-          "median_ns": 1188216.9491487772,
-          "sample_stddev_ns": 4297.719926714388,
-          "cv": 0.0036208461386536433,
-          "sample_count": 7,
-          "counters": {
-            "result": 1781508648.0,
-            "expected_result": 1781508648.0
-          }
-        },
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 2407658.3815016514,
-          "sample_stddev_ns": 15201.148212728896,
-          "cv": 0.006297604214646087,
-          "sample_count": 7,
-          "counters": {
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/cpp/dasprofile.float2string/10000/real_time": {
-          "median_ns": 970303.0023183705,
-          "sample_stddev_ns": 1695.8279378247653,
-          "cv": 0.0017476492851628144,
-          "sample_count": 7,
-          "counters": {
-            "result": 351112.0,
-            "expected_result": 351112.0
-          }
-        },
-        "aot/cpp/dasprofile.interop/1000000/real_time": {
-          "median_ns": 912428.4782560806,
-          "sample_stddev_ns": 4836.001377957525,
-          "cv": 0.00529065064820507,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000000.0,
-            "expected_result": 1000000.0
-          }
-        },
-        "aot/cpp/dasprofile.mandelbrot/64/real_time": {
-          "median_ns": 216216.40786842164,
-          "sample_stddev_ns": 150.1630424776482,
-          "cv": 0.0006944069217534524,
-          "sample_count": 7,
-          "counters": {
-            "result": 107699.0,
-            "expected_result": 107699.0
-          }
-        },
-        "aot/cpp/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 869960.5543781241,
-          "sample_stddev_ns": 418.6429231017222,
-          "cv": 0.00048118641331967453,
-          "sample_count": 7,
-          "counters": {
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "aot/cpp/dasprofile.particles/50000/real_time": {
-          "median_ns": 249846.7023157851,
-          "sample_stddev_ns": 14638.240725615537,
-          "cv": 0.05713067531857213,
-          "sample_count": 7,
-          "counters": {
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "aot/cpp/dasprofile.primes/14000/real_time": {
-          "median_ns": 11938108.571380977,
-          "sample_stddev_ns": 11541.661226561293,
-          "cv": 0.0009665085139849476,
-          "sample_count": 7,
-          "counters": {
-            "result": 1652.0,
-            "expected_result": 1652.0
-          }
-        },
-        "aot/cpp/dasprofile.queen/8/real_time": {
-          "median_ns": 27920.421372668396,
-          "sample_stddev_ns": 416.6428954170689,
-          "cv": 0.014940173493848045,
-          "sample_count": 7,
-          "counters": {
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/cpp/dasprofile.sha256/32/real_time": {
-          "median_ns": 91244.51206290953,
-          "sample_stddev_ns": 2347.562718111789,
-          "cv": 0.025484993112986933,
-          "sample_count": 7,
-          "counters": {
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "aot/cpp/dasprofile.sort/100000/real_time": {
-          "median_ns": 3482767.500039093,
-          "sample_stddev_ns": 20637.860081251987,
-          "cv": 0.005908152023167399,
-          "sample_count": 7,
-          "counters": {
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "aot/cpp/dasprofile.spectralNorm/500/real_time": {
-          "median_ns": 1763753.3613601932,
-          "sample_stddev_ns": 9856.915607592884,
-          "cv": 0.005576304756952383,
-          "sample_count": 7,
-          "counters": {
-            "result": 1.274224115941234,
-            "expected_result": 1.274224115941234
-          }
-        },
-        "aot/cpp/dasprofile.string2float/10000/real_time": {
-          "median_ns": 1527477.1739169026,
-          "sample_stddev_ns": 8160.374787372471,
-          "cv": 0.0053287178446695055,
-          "sample_count": 7,
-          "counters": {
-            "result": 199999998.0,
-            "expected_result": 199999998.0
-          }
-        },
-        "aot/cpp/dasprofile.tree/20000/real_time": {
-          "median_ns": 3367109.7561141583,
-          "sample_stddev_ns": 45865.17868863137,
-          "cv": 0.01355614483422998,
-          "sample_count": 7,
-          "counters": {
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "aot/cpp/fields/1000/real_time": {
-          "median_ns": 6.238772193896866,
-          "sample_stddev_ns": 0.04196998494463411,
-          "cv": 0.006704580151846224,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000.0
-          }
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "median_ns": 9568.511335835634,
-          "sample_stddev_ns": 356.3093897271755,
-          "cv": 0.036737108856203696,
-          "sample_count": 7,
-          "counters": {
-            "result": 2890.0
-          }
-        },
-        "aot/cpp/host/1000/real_time": {
-          "median_ns": 915.7351659877679,
-          "sample_stddev_ns": 1.4883181599849662,
-          "cv": 0.0016244783580626346,
-          "sample_count": 7,
-          "counters": {
-            "result": 500500.0
-          }
-        },
-        "aot/cpp/spectralNorm/500/real_time": {
-          "median_ns": 1765475.949365351,
-          "sample_stddev_ns": 10333.19699836804,
-          "cv": 0.005838983493322152,
-          "sample_count": 7,
-          "counters": {
-            "result": 1274224115.0
-          }
-        },
-        "aot/first_native/arithmetic/1000/real_time": {
-          "median_ns": 936.4019781539838,
-          "sample_stddev_ns": 70.71751499219118,
-          "cv": 0.07451492470961808,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/arrays/1000/real_time": {
-          "median_ns": 2092.3899292452484,
-          "sample_stddev_ns": 126.8123275805821,
-          "cv": 0.06110395796881364,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/asyncWork/64/real_time": {
-          "median_ns": 24131.26581281427,
-          "sample_stddev_ns": 153.49568879666114,
-          "cv": 0.0063656277379518225,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/calls/1000/real_time": {
-          "median_ns": 1264.0983252840801,
-          "sample_stddev_ns": 71.33676122719262,
-          "cv": 0.05662998127350565,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/fields/1000/real_time": {
-          "median_ns": 910.7169856794604,
-          "sample_stddev_ns": 132.44581612231275,
-          "cv": 0.14414683549391183,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/gc/1000/real_time": {
-          "median_ns": 7997.920875070978,
-          "sample_stddev_ns": 141.95536019471442,
-          "cv": 0.017776677076635994,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/host/1000/real_time": {
-          "median_ns": 2238.1388844532416,
-          "sample_stddev_ns": 118.55646673166042,
-          "cv": 0.052077520119317385,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/spectralNorm/500/real_time": {
-          "median_ns": 1796673.0767636138,
-          "sample_stddev_ns": 1742.019244495243,
-          "cv": 0.0009698303627131787,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/native/arithmetic/1000/real_time": {
-          "median_ns": 10.688913800320572,
-          "sample_stddev_ns": 0.1864999876308624,
-          "cv": 0.0173574607693892,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 499500.0
-          }
-        },
-        "aot/native/arrays/1000/real_time": {
-          "median_ns": 1151.3825062305357,
-          "sample_stddev_ns": 4.6253481531762555,
-          "cv": 0.004017110830215409,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 49088.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 49472.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 96.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "result": 499500.0
-          }
-        },
-        "aot/native/asyncWork/64/real_time": {
-          "median_ns": 24995.71377765051,
-          "sample_stddev_ns": 120.61536967337295,
-          "cv": 0.004825026202985393,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 13120.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 65472.0,
-            "suspended_frames": 2.0,
-            "saved_state_bytes": 480.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 80.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 1.0,
-            "result": 2080.0
-          }
-        },
-        "aot/native/calls/1000/real_time": {
-          "median_ns": 304.16411049515284,
-          "sample_stddev_ns": 0.3875135989267573,
-          "cv": 0.0012733059695422017,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/dasprofile.dictionary/500000/real_time": {
-          "median_ns": 37968759.99978511,
-          "sample_stddev_ns": 1453731.1067635329,
-          "cv": 0.03830255744649052,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 36000864.0,
-            "allocated_bytes": 119888992.0,
-            "retained_bytes": 36000864.0,
-            "committed_bytes": 119888992.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 176.0,
-            "entry_shadow_slots": 7.0,
-            "entry_static_root_stores": 19.0,
-            "result": 13.0,
-            "expected_result": 13.0
-          }
-        },
-        "aot/native/dasprofile.expLoop/1000000/real_time": {
-          "median_ns": 3256344.961209129,
-          "sample_stddev_ns": 5715.618781002533,
-          "cv": 0.0017548961946374324,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000015.4709149387,
-            "expected_result": 1000015.4709149387
-          }
-        },
-        "aot/native/dasprofile.fibonacciLoop/6511134/real_time": {
-          "median_ns": 1187383.3333330536,
-          "sample_stddev_ns": 1236.3272934772071,
-          "cv": 0.0010407453319676982,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1781508648.0,
-            "expected_result": 1781508648.0
-          }
-        },
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 6312277.272765201,
-          "sample_stddev_ns": 39905.637555590416,
-          "cv": 0.006309639104083993,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/native/dasprofile.float2string/10000/real_time": {
-          "median_ns": 1083686.8556729427,
-          "sample_stddev_ns": 2335.7057857541267,
-          "cv": 0.0021534707790157206,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1319392.0,
-            "allocated_bytes": 1319392.0,
-            "retained_bytes": 1319392.0,
-            "committed_bytes": 1319392.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 48.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 5.0,
-            "result": 351112.0,
-            "expected_result": 351112.0
-          }
-        },
-        "aot/native/dasprofile.interop/1000000/real_time": {
-          "median_ns": 1299256.9659429316,
-          "sample_stddev_ns": 66208.1449801986,
-          "cv": 0.05002313440158157,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000000.0,
-            "expected_result": 1000000.0
-          }
-        },
-        "aot/native/dasprofile.mandelbrot/64/real_time": {
-          "median_ns": 246095.02074676502,
-          "sample_stddev_ns": 3500.64750561147,
-          "cv": 0.01414905775177654,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 107699.0,
-            "expected_result": 107699.0
-          }
-        },
-        "aot/native/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 1441220.0000088918,
-          "sample_stddev_ns": 23190.306307438008,
-          "cv": 0.016001984633618887,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 41136.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 64304.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 384.0,
-            "entry_shadow_slots": 22.0,
-            "entry_static_root_stores": 458.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "aot/native/dasprofile.particles/50000/real_time": {
-          "median_ns": 578918.5439565559,
-          "sample_stddev_ns": 13299.635134233187,
-          "cv": 0.022731819616150024,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 6800864.0,
-            "allocated_bytes": 6800864.0,
-            "retained_bytes": 6800864.0,
-            "committed_bytes": 6800864.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 160.0,
-            "entry_shadow_slots": 8.0,
-            "entry_static_root_stores": 33.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "aot/native/dasprofile.primes/14000/real_time": {
-          "median_ns": 11925688.571396418,
-          "sample_stddev_ns": 6536.715599086088,
-          "cv": 0.0005481463415629966,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1652.0,
-            "expected_result": 1652.0
-          }
-        },
-        "aot/native/dasprofile.queen/8/real_time": {
-          "median_ns": 71230.52776745899,
-          "sample_stddev_ns": 5316.061429337775,
-          "cv": 0.0746439692849439,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 13984.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 48288.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 9.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/native/dasprofile.sha256/32/real_time": {
-          "median_ns": 210790.54053766083,
-          "sample_stddev_ns": 916.3797703068095,
-          "cv": 0.0043504160326045555,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 3552.0,
-            "allocated_bytes": 24288.0,
-            "retained_bytes": 3552.0,
-            "committed_bytes": 42592.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 1.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "aot/native/dasprofile.sort/100000/real_time": {
-          "median_ns": 5837252.777786893,
-          "sample_stddev_ns": 36050.0815608631,
-          "cv": 0.006159547732217407,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 800864.0,
-            "allocated_bytes": 3201312.0,
-            "retained_bytes": 800864.0,
-            "committed_bytes": 3201312.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 240.0,
-            "entry_shadow_slots": 10.0,
-            "entry_static_root_stores": 117.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "aot/native/dasprofile.spectralNorm/500/real_time": {
-          "median_ns": 1764346.1864497373,
-          "sample_stddev_ns": 9245.950302691353,
-          "cv": 0.005222653004694108,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 13120.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 15040.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1.274224115941234,
-            "expected_result": 1.274224115941234
-          }
-        },
-        "aot/native/dasprofile.string2float/10000/real_time": {
-          "median_ns": 1753143.750011077,
-          "sample_stddev_ns": 5024.960645868972,
-          "cv": 0.002865837585467706,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1319392.0,
-            "allocated_bytes": 1319392.0,
-            "retained_bytes": 1319392.0,
-            "committed_bytes": 1319392.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 6.0,
-            "result": 199999998.0,
-            "expected_result": 199999998.0
-          }
-        },
-        "aot/native/dasprofile.tree/20000/real_time": {
-          "median_ns": 11544983.333199829,
-          "sample_stddev_ns": 124654.55256002178,
-          "cv": 0.010759398123842764,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 853984.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 1085920.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 336.0,
-            "entry_shadow_slots": 18.0,
-            "entry_static_root_stores": 49.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "aot/native/fields/1000/real_time": {
-          "median_ns": 10.195308986523488,
-          "sample_stddev_ns": 0.3877125306114243,
-          "cv": 0.037271588765736975,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000.0
-          }
-        },
-        "aot/native/gc/1000/real_time": {
-          "median_ns": 6936.770676200148,
-          "sample_stddev_ns": 69.9759025400274,
-          "cv": 0.010032781340036606,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 2890.0
-          }
-        },
-        "aot/native/host/1000/real_time": {
-          "median_ns": 1323.659088050407,
-          "sample_stddev_ns": 6.499682268513275,
-          "cv": 0.004913445373984362,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/spectralNorm/500/real_time": {
-          "median_ns": 1783939.2241261648,
-          "sample_stddev_ns": 12027.815746180237,
-          "cv": 0.006731454614314288,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 25088.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 26624.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1274224115.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 81415080.00117028,
-          "sample_stddev_ns": 359415.0264478773,
-          "cv": 0.0044074616883911,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 5221498.684285938,
-          "sample_stddev_ns": 54943.249381213536,
-          "cv": 0.010507864132935545,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 16946.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 38002.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "hot/steady/baseline/dasprofile.particles/50000/real_time": {
-          "median_ns": 3190468.181800856,
-          "sample_stddev_ns": 27690.989606126608,
-          "cv": 0.008698190750059731,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 8601504.0,
-            "allocated_bytes": 8601504.0,
-            "retained_bytes": 8601504.0,
-            "committed_bytes": 8601504.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.queen/8/real_time": {
-          "median_ns": 549665.7587596591,
-          "sample_stddev_ns": 3347.4706705401686,
-          "cv": 0.006079540041219615,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 21152.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 50720.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.sha256/32/real_time": {
-          "median_ns": 4976121.176493025,
-          "sample_stddev_ns": 74896.12255141411,
-          "cv": 0.014946795239921557,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 4192.0,
-            "allocated_bytes": 23776.0,
-            "retained_bytes": 4192.0,
-            "committed_bytes": 42464.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.sort/100000/real_time": {
-          "median_ns": 43322333.33277853,
-          "sample_stddev_ns": 397601.67626129504,
-          "cv": 0.009163263681005352,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 801504.0,
-            "allocated_bytes": 3201952.0,
-            "retained_bytes": 801504.0,
-            "committed_bytes": 3202720.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.tree/20000/real_time": {
-          "median_ns": 33179361.53829438,
-          "sample_stddev_ns": 153146.7758452959,
-          "cv": 0.0046133935749302175,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 718928.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 933392.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 11197248.276058136,
-          "sample_stddev_ns": 183475.2442381029,
-          "cv": 0.016297389138627518,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 2139671.502614978,
-          "sample_stddev_ns": 14904.76170702935,
-          "cv": 0.006954947656087143,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 11756.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 35052.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "hot/steady/optimized/dasprofile.particles/50000/real_time": {
-          "median_ns": 987056.2500089782,
-          "sample_stddev_ns": 8592.623176235182,
-          "cv": 0.00870401271922239,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 8601504.0,
-            "allocated_bytes": 8601504.0,
-            "retained_bytes": 8601504.0,
-            "committed_bytes": 8601504.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.queen/8/real_time": {
-          "median_ns": 288203.4317094113,
-          "sample_stddev_ns": 1393.2360406204407,
-          "cv": 0.0048256416692880055,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 24608.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 51872.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.sha256/32/real_time": {
-          "median_ns": 1346947.1861391622,
-          "sample_stddev_ns": 59435.769539391746,
-          "cv": 0.043219280682194425,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 4192.0,
-            "allocated_bytes": 32992.0,
-            "retained_bytes": 4192.0,
-            "committed_bytes": 47584.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.sort/100000/real_time": {
-          "median_ns": 12035577.142835662,
-          "sample_stddev_ns": 60955.28641123117,
-          "cv": 0.005058437296738885,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 801504.0,
-            "allocated_bytes": 3201952.0,
-            "retained_bytes": 801504.0,
-            "committed_bytes": 3202720.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.tree/20000/real_time": {
-          "median_ns": 16497378.260955093,
-          "sample_stddev_ns": 981564.0821386508,
-          "cv": 0.05752473619816606,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 961280.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1068032.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        }
-      },
-      "after": {
-        "aot/cpp/arithmetic/1000/real_time": {
-          "median_ns": 1.290180850658891,
-          "sample_stddev_ns": 0.08814925629783374,
-          "cv": 0.06660765186556192,
-          "sample_count": 7,
-          "counters": {
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/arrays/1000/real_time": {
-          "median_ns": 638.0826944181015,
-          "sample_stddev_ns": 0.935577054648459,
-          "cv": 0.0014656518985561844,
-          "sample_count": 7,
-          "counters": {
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/asyncWork/64/real_time": {
-          "median_ns": 13662.642541237232,
-          "sample_stddev_ns": 4181.016055490114,
-          "cv": 0.2735135731457508,
-          "sample_count": 7,
-          "counters": {
-            "result": 2080.0
-          }
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "median_ns": 917.0694428270023,
-          "sample_stddev_ns": 151.74116461839188,
-          "cv": 0.15578158149692786,
-          "sample_count": 7,
-          "counters": {
-            "result": 500500.0
-          }
-        },
-        "aot/cpp/dasprofile.dictionary/500000/real_time": {
-          "median_ns": 19436739.999218844,
-          "sample_stddev_ns": 19178997.76069601,
-          "cv": 0.6894745654281714,
-          "sample_count": 7,
-          "counters": {
-            "result": 13.0,
-            "expected_result": 13.0
-          }
-        },
-        "aot/cpp/dasprofile.expLoop/1000000/real_time": {
-          "median_ns": 4784244.186022227,
-          "sample_stddev_ns": 1039480.1926467987,
-          "cv": 0.2610758652088807,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000015.4709149387,
-            "expected_result": 1000015.4709149387
-          }
-        },
-        "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time": {
-          "median_ns": 1187319.6969673065,
-          "sample_stddev_ns": 34416.64029944979,
-          "cv": 0.028680644291108597,
-          "sample_count": 7,
-          "counters": {
-            "result": 1781508648.0,
-            "expected_result": 1781508648.0
-          }
-        },
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 2416677.777775954,
-          "sample_stddev_ns": 768678.8718006328,
-          "cv": 0.25934037093769174,
-          "sample_count": 7,
-          "counters": {
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/cpp/dasprofile.float2string/10000/real_time": {
-          "median_ns": 971750.116015308,
-          "sample_stddev_ns": 2114.840844621721,
-          "cv": 0.0021774523799485248,
-          "sample_count": 7,
-          "counters": {
-            "result": 351112.0,
-            "expected_result": 351112.0
-          }
-        },
-        "aot/cpp/dasprofile.interop/1000000/real_time": {
-          "median_ns": 913433.0409393464,
-          "sample_stddev_ns": 132106.51917305888,
-          "cv": 0.13700344225024932,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000000.0,
-            "expected_result": 1000000.0
-          }
-        },
-        "aot/cpp/dasprofile.mandelbrot/64/real_time": {
-          "median_ns": 216083.4617341515,
-          "sample_stddev_ns": 190.54123141292177,
-          "cv": 0.0008817427811995676,
-          "sample_count": 7,
-          "counters": {
-            "result": 107699.0,
-            "expected_result": 107699.0
-          }
-        },
-        "aot/cpp/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 871046.859903738,
-          "sample_stddev_ns": 31894.328342559485,
-          "cv": 0.03612551070899388,
-          "sample_count": 7,
-          "counters": {
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "aot/cpp/dasprofile.particles/50000/real_time": {
-          "median_ns": 252072.1393002577,
-          "sample_stddev_ns": 47392.47405283631,
-          "cv": 0.1693475374566555,
-          "sample_count": 7,
-          "counters": {
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "aot/cpp/dasprofile.primes/14000/real_time": {
-          "median_ns": 11929062.8570265,
-          "sample_stddev_ns": 42985.162682274226,
-          "cv": 0.003597358745848563,
-          "sample_count": 7,
-          "counters": {
-            "result": 1652.0,
-            "expected_result": 1652.0
-          }
-        },
-        "aot/cpp/dasprofile.queen/8/real_time": {
-          "median_ns": 27792.92294289412,
-          "sample_stddev_ns": 4799.774551429227,
-          "cv": 0.16001972937095232,
-          "sample_count": 7,
-          "counters": {
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/cpp/dasprofile.sha256/32/real_time": {
-          "median_ns": 91827.12158737658,
-          "sample_stddev_ns": 2437.5707661592983,
-          "cv": 0.026279953462015056,
-          "sample_count": 7,
-          "counters": {
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "aot/cpp/dasprofile.sort/100000/real_time": {
-          "median_ns": 3487160.330561802,
-          "sample_stddev_ns": 11011.62409133113,
-          "cv": 0.0031569438684487037,
-          "sample_count": 7,
-          "counters": {
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "aot/cpp/dasprofile.spectralNorm/500/real_time": {
-          "median_ns": 1773687.9166780757,
-          "sample_stddev_ns": 13176.794757999076,
-          "cv": 0.007454091118181768,
-          "sample_count": 7,
-          "counters": {
-            "result": 1.274224115941234,
-            "expected_result": 1.274224115941234
-          }
-        },
-        "aot/cpp/dasprofile.string2float/10000/real_time": {
-          "median_ns": 1526797.5903547464,
-          "sample_stddev_ns": 438758.4631441992,
-          "cv": 0.246505222003413,
-          "sample_count": 7,
-          "counters": {
-            "result": 199999998.0,
-            "expected_result": 199999998.0
-          }
-        },
-        "aot/cpp/dasprofile.tree/20000/real_time": {
-          "median_ns": 3369845.599983819,
-          "sample_stddev_ns": 16422.17647520931,
-          "cv": 0.0048735321660238196,
-          "sample_count": 7,
-          "counters": {
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "aot/cpp/fields/1000/real_time": {
-          "median_ns": 6.453953593644934,
-          "sample_stddev_ns": 1.8464820873701873,
-          "cv": 0.25828352756416384,
-          "sample_count": 7,
-          "counters": {
-            "result": 1000.0
-          }
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "median_ns": 9557.108863752452,
-          "sample_stddev_ns": 1399.1936505693432,
-          "cv": 0.13898412485274736,
-          "sample_count": 7,
-          "counters": {
-            "result": 2890.0
-          }
-        },
-        "aot/cpp/host/1000/real_time": {
-          "median_ns": 916.1877142777381,
-          "sample_stddev_ns": 152.24167706027308,
-          "cv": 0.1522557086714205,
-          "sample_count": 7,
-          "counters": {
-            "result": 500500.0
-          }
-        },
-        "aot/cpp/spectralNorm/500/real_time": {
-          "median_ns": 1771404.1840990372,
-          "sample_stddev_ns": 9074.718854174846,
-          "cv": 0.005130329192205746,
-          "sample_count": 7,
-          "counters": {
-            "result": 1274224115.0
-          }
-        },
-        "aot/first_native/arithmetic/1000/real_time": {
-          "median_ns": 892.6069204247032,
-          "sample_stddev_ns": 40.17306344703304,
-          "cv": 0.04469734721215693,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/arrays/1000/real_time": {
-          "median_ns": 2058.6524842523004,
-          "sample_stddev_ns": 102.14065280808028,
-          "cv": 0.049749807344807495,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/asyncWork/64/real_time": {
-          "median_ns": 24749.450783581084,
-          "sample_stddev_ns": 7302.026152056949,
-          "cv": 0.2663407824508313,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/calls/1000/real_time": {
-          "median_ns": 1272.703624172413,
-          "sample_stddev_ns": 91.03241451158055,
-          "cv": 0.07312187515104,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/fields/1000/real_time": {
-          "median_ns": 926.7410211974393,
-          "sample_stddev_ns": 49.70594612244467,
-          "cv": 0.054240740904137164,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/gc/1000/real_time": {
-          "median_ns": 7896.781101527935,
-          "sample_stddev_ns": 1365.5227889258126,
-          "cv": 0.15794284948048876,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/host/1000/real_time": {
-          "median_ns": 2231.610930643361,
-          "sample_stddev_ns": 219.44988352905284,
-          "cv": 0.09721172706344493,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/first_native/spectralNorm/500/real_time": {
-          "median_ns": 1791327.8260296108,
-          "sample_stddev_ns": 18704.231080826965,
-          "cv": 0.010386839598057666,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/native/arithmetic/1000/real_time": {
-          "median_ns": 10.950481200372877,
-          "sample_stddev_ns": 3.151809595448217,
-          "cv": 0.24333878354885283,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 499500.0
-          }
-        },
-        "aot/native/arrays/1000/real_time": {
-          "median_ns": 1147.7779407188036,
-          "sample_stddev_ns": 43.61268814168405,
-          "cv": 0.03745661273417058,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 57216.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 57472.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 80.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 8.0,
-            "result": 499500.0
-          }
-        },
-        "aot/native/asyncWork/64/real_time": {
-          "median_ns": 24872.369594172676,
-          "sample_stddev_ns": 8340.914503683114,
-          "cv": 0.29720745654663827,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 60992.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 65472.0,
-            "suspended_frames": 2.0,
-            "saved_state_bytes": 480.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 80.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 1.0,
-            "result": 2080.0
-          }
-        },
-        "aot/native/calls/1000/real_time": {
-          "median_ns": 303.76786528167054,
-          "sample_stddev_ns": 0.18743085255085554,
-          "cv": 0.0006170726584460299,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/dasprofile.dictionary/500000/real_time": {
-          "median_ns": 37402220.0005129,
-          "sample_stddev_ns": 17238902.462878842,
-          "cv": 0.3926984076217876,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 36000864.0,
-            "allocated_bytes": 67458912.0,
-            "retained_bytes": 36000864.0,
-            "committed_bytes": 67458912.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 144.0,
-            "entry_shadow_slots": 5.0,
-            "entry_static_root_stores": 19.0,
-            "result": 13.0,
-            "expected_result": 13.0
-          }
-        },
-        "aot/native/dasprofile.expLoop/1000000/real_time": {
-          "median_ns": 3260455.905518487,
-          "sample_stddev_ns": 8654.29261207536,
-          "cv": 0.002652667531602334,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000015.4709149387,
-            "expected_result": 1000015.4709149387
-          }
-        },
-        "aot/native/dasprofile.fibonacciLoop/6511134/real_time": {
-          "median_ns": 1187620.3647383354,
-          "sample_stddev_ns": 35788.38069249968,
-          "cv": 0.02979704930330645,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1781508648.0,
-            "expected_result": 1781508648.0
-          }
-        },
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 6344215.78931659,
-          "sample_stddev_ns": 2118170.0017481097,
-          "cv": 0.279782279487052,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/native/dasprofile.float2string/10000/real_time": {
-          "median_ns": 1086013.7339274683,
-          "sample_stddev_ns": 330335.495066485,
-          "cv": 0.25827508393320797,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1319392.0,
-            "allocated_bytes": 1319392.0,
-            "retained_bytes": 1319392.0,
-            "committed_bytes": 1319392.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 48.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 5.0,
-            "result": 351112.0,
-            "expected_result": 351112.0
-          }
-        },
-        "aot/native/dasprofile.interop/1000000/real_time": {
-          "median_ns": 1302430.4347893938,
-          "sample_stddev_ns": 363121.11345874384,
-          "cv": 0.23476232519847653,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000000.0,
-            "expected_result": 1000000.0
-          }
-        },
-        "aot/native/dasprofile.mandelbrot/64/real_time": {
-          "median_ns": 246322.81616798844,
-          "sample_stddev_ns": 9474.194687583036,
-          "cv": 0.03791769739801562,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 107699.0,
-            "expected_result": 107699.0
-          }
-        },
-        "aot/native/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 1439501.0203974824,
-          "sample_stddev_ns": 341480.76616792625,
-          "cv": 0.20825591843622673,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 29824.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 63744.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 80.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 458.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "aot/native/dasprofile.particles/50000/real_time": {
-          "median_ns": 578277.0288869882,
-          "sample_stddev_ns": 13195.515238423568,
-          "cv": 0.02258077628778235,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 6800864.0,
-            "allocated_bytes": 6800864.0,
-            "retained_bytes": 6800864.0,
-            "committed_bytes": 6800864.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 33.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "aot/native/dasprofile.primes/14000/real_time": {
-          "median_ns": 11899088.571330398,
-          "sample_stddev_ns": 25266.14426559046,
-          "cv": 0.0021224497486606246,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1652.0,
-            "expected_result": 1652.0
-          }
-        },
-        "aot/native/dasprofile.queen/8/real_time": {
-          "median_ns": 68900.06718200515,
-          "sample_stddev_ns": 2446.393989669397,
-          "cv": 0.03560637468548628,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 43936.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 58272.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 9.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/native/dasprofile.sha256/32/real_time": {
-          "median_ns": 211808.83838193645,
-          "sample_stddev_ns": 6523.096369300226,
-          "cv": 0.030296061499868993,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 3552.0,
-            "allocated_bytes": 21984.0,
-            "retained_bytes": 3552.0,
-            "committed_bytes": 41568.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 1.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "aot/native/dasprofile.sort/100000/real_time": {
-          "median_ns": 5995309.090807992,
-          "sample_stddev_ns": 779493.742050207,
-          "cv": 0.12158306761453079,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 800864.0,
-            "allocated_bytes": 3201312.0,
-            "retained_bytes": 800864.0,
-            "committed_bytes": 3201312.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 192.0,
-            "entry_shadow_slots": 7.0,
-            "entry_static_root_stores": 117.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "aot/native/dasprofile.spectralNorm/500/real_time": {
-          "median_ns": 1792457.826092647,
-          "sample_stddev_ns": 18504.37028535144,
-          "cv": 0.010290734719436213,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 62656.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 63040.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1.274224115941234,
-            "expected_result": 1.274224115941234
-          }
-        },
-        "aot/native/dasprofile.string2float/10000/real_time": {
-          "median_ns": 1779183.7837796411,
-          "sample_stddev_ns": 380681.3086451411,
-          "cv": 0.19615910057184296,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1319392.0,
-            "allocated_bytes": 1319392.0,
-            "retained_bytes": 1319392.0,
-            "committed_bytes": 1319392.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 6.0,
-            "result": 199999998.0,
-            "expected_result": 199999998.0
-          }
-        },
-        "aot/native/dasprofile.tree/20000/real_time": {
-          "median_ns": 9993980.000144802,
-          "sample_stddev_ns": 2191486.7814999497,
-          "cv": 0.20244304349584089,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 788064.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 1079008.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 144.0,
-            "entry_shadow_slots": 6.0,
-            "entry_static_root_stores": 49.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "aot/native/fields/1000/real_time": {
-          "median_ns": 10.177477600480815,
-          "sample_stddev_ns": 0.026163661741115236,
-          "cv": 0.00257311339865728,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1000.0
-          }
-        },
-        "aot/native/gc/1000/real_time": {
-          "median_ns": 6932.94905863477,
-          "sample_stddev_ns": 1177.0693457372877,
-          "cv": 0.15957583125058467,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 2890.0
-          }
-        },
-        "aot/native/host/1000/real_time": {
-          "median_ns": 1318.5772448112566,
-          "sample_stddev_ns": 4.402459153155219,
-          "cv": 0.00333406605869981,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/spectralNorm/500/real_time": {
-          "median_ns": 1776953.275127623,
-          "sample_stddev_ns": 22994.98111050143,
-          "cv": 0.012875102868095761,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 49856.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 50624.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1274224115.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 82188400.00093527,
-          "sample_stddev_ns": 26000485.257304132,
-          "cv": 0.2673492286970272,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 5336382.692313726,
-          "sample_stddev_ns": 1058638.2316672546,
-          "cv": 0.18513529120158032,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 55352.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 55352.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "hot/steady/baseline/dasprofile.particles/50000/real_time": {
-          "median_ns": 3216866.304327319,
-          "sample_stddev_ns": 414890.16342095606,
-          "cv": 0.12283001860232955,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 8601504.0,
-            "allocated_bytes": 8601504.0,
-            "retained_bytes": 8601504.0,
-            "committed_bytes": 8601504.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.queen/8/real_time": {
-          "median_ns": 505808.97129149985,
-          "sample_stddev_ns": 4305.221971160132,
-          "cv": 0.008484918475961292,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 33632.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 54880.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.sha256/32/real_time": {
-          "median_ns": 4967038.82347313,
-          "sample_stddev_ns": 107077.6354878006,
-          "cv": 0.021340220865514962,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 4192.0,
-            "allocated_bytes": 23776.0,
-            "retained_bytes": 4192.0,
-            "committed_bytes": 42464.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.sort/100000/real_time": {
-          "median_ns": 43052399.99909342,
-          "sample_stddev_ns": 11554520.296425484,
-          "cv": 0.2347139988830228,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 801504.0,
-            "allocated_bytes": 5602400.0,
-            "retained_bytes": 801504.0,
-            "committed_bytes": 5602720.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.tree/20000/real_time": {
-          "median_ns": 31412387.499585748,
-          "sample_stddev_ns": 10411745.411541343,
-          "cv": 0.2779392805480453,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 961280.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1061632.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 11231613.636482507,
-          "sample_stddev_ns": 2911323.044579338,
-          "cv": 0.23623461634106344,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 2141032.6530434648,
-          "sample_stddev_ns": 16065.118812017183,
-          "cv": 0.0074973160665883255,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 14870.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 36822.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -0.16907715681664656,
-            "expected_result": -0.16907715681664656
-          }
-        },
-        "hot/steady/optimized/dasprofile.particles/50000/real_time": {
-          "median_ns": 992227.6315735774,
-          "sample_stddev_ns": 155243.19085710193,
-          "cv": 0.14886112680854588,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 8601504.0,
-            "allocated_bytes": 8601504.0,
-            "retained_bytes": 8601504.0,
-            "committed_bytes": 8601504.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 150060.0,
-            "expected_result": 150060.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.queen/8/real_time": {
-          "median_ns": 253231.82140338555,
-          "sample_stddev_ns": 23750.23350057531,
-          "cv": 0.08898063926274362,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 15776.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 48928.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.sha256/32/real_time": {
-          "median_ns": 1345347.5936028962,
-          "sample_stddev_ns": 327356.88145331433,
-          "cv": 0.22229842501863906,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 4192.0,
-            "allocated_bytes": 59488.0,
-            "retained_bytes": 4192.0,
-            "committed_bytes": 62304.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 2048.0,
-            "expected_result": 2048.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.sort/100000/real_time": {
-          "median_ns": 12057537.49976187,
-          "sample_stddev_ns": 2007762.797983928,
-          "cv": 0.15664765604387573,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 801504.0,
-            "allocated_bytes": 5602400.0,
-            "retained_bytes": 801504.0,
-            "committed_bytes": 5602720.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": -719320850322.0,
-            "expected_result": -719320850322.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.tree/20000/real_time": {
-          "median_ns": 14273799.999955373,
-          "sample_stddev_ns": 5541964.284880211,
-          "cv": 0.31679966088835826,
-          "sample_count": 7,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 951056.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1062352.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "result": 4998.0,
-            "expected_result": 4998.0
-          }
-        }
-      }
-    },
-    "workload_comparisons": {
-      "arithmetic/1000": {
-        "before_ns": 10.688913800320572,
-        "after_ns": 10.950481200372877,
-        "time_reduction_percent": -2.4470905551175814,
-        "before_aot_over_cpp": 8.304671596207406,
-        "after_aot_over_cpp": 8.48755520962856,
-        "before_cv": 0.0173574607693892,
-        "after_cv": 0.24333878354885283,
-        "cpp_control_change_percent": 0.23963580019010777,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "arrays/1000": {
-        "before_ns": 1151.3825062305357,
-        "after_ns": 1147.7779407188036,
-        "time_reduction_percent": 0.31306412006665285,
-        "before_aot_over_cpp": 1.806739882345684,
-        "after_aot_over_cpp": 1.7987918349133696,
-        "before_cv": 0.004017110830215409,
-        "after_cv": 0.03745661273417058,
-        "cpp_control_change_percent": 0.12740735605272224,
-        "before_shadow_slots": 3.0,
-        "after_shadow_slots": 2.0,
-        "before_frame_bytes": 96.0,
-        "after_frame_bytes": 80.0,
-        "static_root_stores": 8.0
-      },
-      "asyncWork/64": {
-        "before_ns": 24995.71377765051,
-        "after_ns": 24872.369594172676,
-        "time_reduction_percent": 0.49346133731184016,
-        "before_aot_over_cpp": 1.897233529436507,
-        "after_aot_over_cpp": 1.8204655152985023,
-        "before_cv": 0.004825026202985393,
-        "after_cv": 0.29720745654663827,
-        "cpp_control_change_percent": 3.7026738284941407,
-        "before_shadow_slots": 1.0,
-        "after_shadow_slots": 1.0,
-        "before_frame_bytes": 80.0,
-        "after_frame_bytes": 80.0,
-        "static_root_stores": 1.0
-      },
-      "calls/1000": {
-        "before_ns": 304.16411049515284,
-        "after_ns": 303.76786528167054,
-        "time_reduction_percent": 0.13027349375218655,
-        "before_aot_over_cpp": 0.33117023625955017,
-        "after_aot_over_cpp": 0.3312375825600089,
-        "before_cv": 0.0012733059695422017,
-        "after_cv": 0.0006170726584460299,
-        "cpp_control_change_percent": -0.15057872770553038,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 32.0,
-        "after_frame_bytes": 32.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.dictionary/500000": {
-        "before_ns": 37968759.99978511,
-        "after_ns": 37402220.0005129,
-        "time_reduction_percent": 1.4921214158045149,
-        "before_aot_over_cpp": 1.684887784538304,
-        "after_aot_over_cpp": 1.9243052076642524,
-        "before_cv": 0.03830255744649052,
-        "after_cv": 0.3926984076217876,
-        "cpp_control_change_percent": -13.748234611516896,
-        "before_shadow_slots": 7.0,
-        "after_shadow_slots": 5.0,
-        "before_frame_bytes": 176.0,
-        "after_frame_bytes": 144.0,
-        "static_root_stores": 19.0
-      },
-      "dasprofile.expLoop/1000000": {
-        "before_ns": 3256344.961209129,
-        "after_ns": 3260455.905518487,
-        "time_reduction_percent": -0.12624412825819054,
-        "before_aot_over_cpp": 1.1370680967379752,
-        "after_aot_over_cpp": 0.6814986398571211,
-        "before_cv": 0.0017548961946374324,
-        "after_cv": 0.002652667531602334,
-        "cpp_control_change_percent": 67.0588188823232,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 32.0,
-        "after_frame_bytes": 32.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.fibonacciLoop/6511134": {
-        "before_ns": 1187383.3333330536,
-        "after_ns": 1187620.3647383354,
-        "time_reduction_percent": -0.01996250062028526,
-        "before_aot_over_cpp": 0.9992984313038787,
-        "after_aot_over_cpp": 1.0002532323617614,
-        "before_cv": 0.0010407453319676982,
-        "after_cv": 0.02979704930330645,
-        "cpp_control_change_percent": -0.07551248802782906,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.fibonacciRecursive/31": {
-        "before_ns": 6312277.272765201,
-        "after_ns": 6344215.78931659,
-        "time_reduction_percent": -0.5059745504081503,
-        "before_aot_over_cpp": 2.621749547719576,
-        "after_aot_over_cpp": 2.625180670612659,
-        "before_cv": 0.006309639104083993,
-        "after_cv": 0.279782279487052,
-        "cpp_control_change_percent": 0.3746127915654318,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.float2string/10000": {
-        "before_ns": 1083686.8556729427,
-        "after_ns": 1086013.7339274683,
-        "time_reduction_percent": -0.21471869316720404,
-        "before_aot_over_cpp": 1.1168540683514956,
-        "after_aot_over_cpp": 1.1175853915826652,
-        "before_cv": 0.0021534707790157206,
-        "after_cv": 0.25827508393320797,
-        "cpp_control_change_percent": 0.1491403915560241,
-        "before_shadow_slots": 1.0,
-        "after_shadow_slots": 1.0,
-        "before_frame_bytes": 48.0,
-        "after_frame_bytes": 48.0,
-        "static_root_stores": 5.0
-      },
-      "dasprofile.interop/1000000": {
-        "before_ns": 1299256.9659429316,
-        "after_ns": 1302430.4347893938,
-        "time_reduction_percent": -0.24425259434026625,
-        "before_aot_over_cpp": 1.42395485992085,
-        "after_aot_over_cpp": 1.4258630643030106,
-        "before_cv": 0.05002313440158157,
-        "after_cv": 0.23476232519847653,
-        "cpp_control_change_percent": 0.11009769063607955,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.mandelbrot/64": {
-        "before_ns": 246095.02074676502,
-        "after_ns": 246322.81616798844,
-        "time_reduction_percent": -0.09256401065416142,
-        "before_aot_over_cpp": 1.138188462073267,
-        "after_aot_over_cpp": 1.1399429377480104,
-        "before_cv": 0.01414905775177654,
-        "after_cv": 0.03791769739801562,
-        "cpp_control_change_percent": -0.06148753259791473,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.nbodies/33000": {
-        "before_ns": 1441220.0000088918,
-        "after_ns": 1439501.0203974824,
-        "time_reduction_percent": 0.11927253378378744,
-        "before_aot_over_cpp": 1.6566498248177728,
-        "after_aot_over_cpp": 1.6526103091130666,
-        "before_cv": 0.016001984633618887,
-        "after_cv": 0.20825591843622673,
-        "cpp_control_change_percent": 0.12486836559968406,
-        "before_shadow_slots": 22.0,
-        "after_shadow_slots": 3.0,
-        "before_frame_bytes": 384.0,
-        "after_frame_bytes": 80.0,
-        "static_root_stores": 458.0
-      },
-      "dasprofile.particles/50000": {
-        "before_ns": 578918.5439565559,
-        "after_ns": 578277.0288869882,
-        "time_reduction_percent": 0.1108126654888908,
-        "before_aot_over_cpp": 2.317094997014817,
-        "after_aot_over_cpp": 2.29409339125007,
-        "before_cv": 0.022731819616150024,
-        "after_cv": 0.02258077628778235,
-        "cpp_control_change_percent": 0.8907209756404244,
-        "before_shadow_slots": 8.0,
-        "after_shadow_slots": 2.0,
-        "before_frame_bytes": 160.0,
-        "after_frame_bytes": 64.0,
-        "static_root_stores": 33.0
-      },
-      "dasprofile.primes/14000": {
-        "before_ns": 11925688.571396418,
-        "after_ns": 11899088.571330398,
-        "time_reduction_percent": 0.22304791800298318,
-        "before_aot_over_cpp": 0.9989596341907685,
-        "after_aot_over_cpp": 0.997487289147911,
-        "before_cv": 0.0005481463415629966,
-        "after_cv": 0.0021224497486606246,
-        "cpp_control_change_percent": -0.07577175480009135,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 32.0,
-        "after_frame_bytes": 32.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.queen/8": {
-        "before_ns": 71230.52776745899,
-        "after_ns": 68900.06718200515,
-        "time_reduction_percent": 3.271716016287174,
-        "before_aot_over_cpp": 2.5511981648381328,
-        "after_aot_over_cpp": 2.479050775752285,
-        "before_cv": 0.0746439692849439,
-        "after_cv": 0.03560637468548628,
-        "cpp_control_change_percent": -0.45664937528158145,
-        "before_shadow_slots": 2.0,
-        "after_shadow_slots": 2.0,
-        "before_frame_bytes": 64.0,
-        "after_frame_bytes": 64.0,
-        "static_root_stores": 9.0
-      },
-      "dasprofile.sha256/32": {
-        "before_ns": 210790.54053766083,
-        "after_ns": 211808.83838193645,
-        "time_reduction_percent": -0.4830851715063922,
-        "before_aot_over_cpp": 2.3101722588239495,
-        "after_aot_over_cpp": 2.3066043530548135,
-        "before_cv": 0.0043504160326045555,
-        "after_cv": 0.030296061499868993,
-        "cpp_control_change_percent": 0.6385145925985825,
-        "before_shadow_slots": 1.0,
-        "after_shadow_slots": 1.0,
-        "before_frame_bytes": 64.0,
-        "after_frame_bytes": 64.0,
-        "static_root_stores": 1.0
-      },
-      "dasprofile.sort/100000": {
-        "before_ns": 5837252.777786893,
-        "after_ns": 5995309.090807992,
-        "time_reduction_percent": -2.70771746638363,
-        "before_aot_over_cpp": 1.6760386037027655,
-        "after_aot_over_cpp": 1.7192524927129211,
-        "before_cv": 0.006159547732217407,
-        "after_cv": 0.12158306761453079,
-        "cpp_control_change_percent": 0.12613045581306714,
-        "before_shadow_slots": 10.0,
-        "after_shadow_slots": 7.0,
-        "before_frame_bytes": 240.0,
-        "after_frame_bytes": 192.0,
-        "static_root_stores": 117.0
-      },
-      "dasprofile.spectralNorm/500": {
-        "before_ns": 1764346.1864497373,
-        "after_ns": 1792457.826092647,
-        "time_reduction_percent": -1.593317675341055,
-        "before_aot_over_cpp": 1.0003361156398234,
-        "after_aot_over_cpp": 1.0105824193975033,
-        "before_cv": 0.005222653004694108,
-        "after_cv": 0.010290734719436213,
-        "cpp_control_change_percent": 0.5632621621325162,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "dasprofile.string2float/10000": {
-        "before_ns": 1753143.750011077,
-        "after_ns": 1779183.7837796411,
-        "time_reduction_percent": -1.4853336338448875,
-        "before_aot_over_cpp": 1.1477381004100367,
-        "after_aot_over_cpp": 1.1653042911642622,
-        "before_cv": 0.002865837585467706,
-        "after_cv": 0.19615910057184296,
-        "cpp_control_change_percent": -0.044490587077872235,
-        "before_shadow_slots": 2.0,
-        "after_shadow_slots": 2.0,
-        "before_frame_bytes": 64.0,
-        "after_frame_bytes": 64.0,
-        "static_root_stores": 6.0
-      },
-      "dasprofile.tree/20000": {
-        "before_ns": 11544983.333199829,
-        "after_ns": 9993980.000144802,
-        "time_reduction_percent": 13.434435445175719,
-        "before_aot_over_cpp": 3.428751709752228,
-        "after_aot_over_cpp": 2.965708577328525,
-        "before_cv": 0.010759398123842764,
-        "after_cv": 0.20244304349584089,
-        "cpp_control_change_percent": 0.08125199556363594,
-        "before_shadow_slots": 18.0,
-        "after_shadow_slots": 6.0,
-        "before_frame_bytes": 336.0,
-        "after_frame_bytes": 144.0,
-        "static_root_stores": 49.0
-      },
-      "fields/1000": {
-        "before_ns": 10.195308986523488,
-        "after_ns": 10.177477600480815,
-        "time_reduction_percent": 0.17489794636182943,
-        "before_aot_over_cpp": 1.6341851681164348,
-        "after_aot_over_cpp": 1.576936904303488,
-        "before_cv": 0.037271588765736975,
-        "after_cv": 0.00257311339865728,
-        "cpp_control_change_percent": 3.4490985254850504,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "gc/1000": {
-        "before_ns": 6936.770676200148,
-        "after_ns": 6932.94905863477,
-        "time_reduction_percent": 0.05509217103701891,
-        "before_aot_over_cpp": 0.7249581917952913,
-        "after_aot_over_cpp": 0.7254232590077094,
-        "before_cv": 0.010032781340036606,
-        "after_cv": 0.15957583125058467,
-        "cpp_control_change_percent": -0.11916662564298575,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 32.0,
-        "after_frame_bytes": 32.0,
-        "static_root_stores": 0.0
-      },
-      "host/1000": {
-        "before_ns": 1323.659088050407,
-        "after_ns": 1318.5772448112566,
-        "time_reduction_percent": 0.38392387322595534,
-        "before_aot_over_cpp": 1.4454605842537753,
-        "after_aot_over_cpp": 1.439199876032758,
-        "before_cv": 0.004913445373984362,
-        "after_cv": 0.00333406605869981,
-        "cpp_control_change_percent": 0.04941912321145825,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 16.0,
-        "after_frame_bytes": 16.0,
-        "static_root_stores": 0.0
-      },
-      "spectralNorm/500": {
-        "before_ns": 1783939.2241261648,
-        "after_ns": 1776953.275127623,
-        "time_reduction_percent": 0.39160241022021536,
-        "before_aot_over_cpp": 1.0104579588113056,
-        "after_aot_over_cpp": 1.0031325945136615,
-        "before_cv": 0.006731454614314288,
-        "after_cv": 0.012875102868095761,
-        "cpp_control_change_percent": 0.3357867738621456,
-        "before_shadow_slots": 0.0,
-        "after_shadow_slots": 0.0,
-        "before_frame_bytes": 32.0,
-        "after_frame_bytes": 32.0,
-        "static_root_stores": 0.0
-      }
-    },
-    "validation": {
-      "debug_all": {
-        "command": "python -m tools.vl test debug all",
-        "cpp_suites_passed": 8,
-        "cpp_tests_passed": 2546,
-        "python_tests_passed": 216,
-        "aot_jit_language_categories": 26,
-        "aot_jit_language_cases": 481
-      },
-      "lint": {
-        "command": "python -m tools.vl lint --jobs 12",
-        "files": 766,
-        "failures": 0
-      },
-      "updated_test": {
-        "command": "python -m tools.vl test debug runtime -- --gtest_filter=NativeAbiTest.StackRootEntryInitializesReusedStorageAndReleasesRegistration",
-        "tests_passed": 1
-      },
-      "release_builds": [
-        "python -m tools.vl build release default",
-        "python -m tools.vl build release benchmarks"
-      ],
-      "targeted_before_full_regression": {
-        "root_and_escape": 25,
-        "native_runtime": 11,
-        "debugger_gc_and_storage": 74
-      },
-      "release_roots_enter": {
-        "command": "third_party/build_tools/clang/windows-amd64/bin/llvm-objdump.exe --disassemble-symbols=vela_native_v1_roots_enter -d -r out/release/obj/runtime/native/runtime.native_abi.obj",
-        "object_sha256": "49fd35ae3b32438bee3ea1e163a0db46a8f41d0c22956c4f13a979c46c0047d6",
-        "observed": "Root slots still zeroed by memset; RootRange initialized inline and Attach reached by a tail jump"
-      }
-    },
-    "focused_confirmation": {
-      "run_date": "2026-11-06T04:17:42.410569+00:00",
-      "reason": "High CV in the complete after run triggered focused repeats; all original samples remain in the primary aggregates",
-      "measurement": {
-        "repetitions": 7,
-        "minimum_time_seconds": 0.3,
-        "random_interleaving": true,
-        "logical_cpu": 2,
-        "priority": "High"
-      },
-      "command": [
-        "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-        "--benchmark_filter=^aot/(native|cpp)/dasprofile\\.(tree|sort|nbodies)/",
-        "--benchmark_min_time=0.3s",
-        "--benchmark_repetitions=7",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-root-production\\confirmation.json",
-        "--benchmark_out_format=json"
-      ],
-      "expected_cases": 6,
-      "observed_iteration_samples": 42,
-      "all_expected_cases_passed": true,
-      "all_checksums_passed": true,
-      "all_retained_heap_checks_passed": true,
-      "scope": "Subset of the same production registry and binary; the complete before run supplies the baseline",
-      "context": {
-        "date": "2026-11-06T12:15:44+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "07ea98826e2bfc6e4fa7b154627a72dcdc3ffb0b0d71bb60a02cef214d445d15/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "0",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      },
-      "results": {
-        "aot/cpp/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 870817.0478148947,
-          "sample_stddev_ns": 1473.9346215005085,
-          "cv": 0.0016922615406072096,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/cpp/dasprofile.sort/100000/real_time": {
-          "median_ns": 3501297.499982077,
-          "sample_stddev_ns": 31497.122075106276,
-          "cv": 0.008944456221916253,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/cpp/dasprofile.tree/20000/real_time": {
-          "median_ns": 3370713.492109817,
-          "sample_stddev_ns": 44404.62840288647,
-          "cv": 0.013133654984376344,
-          "sample_count": 7,
-          "counters": {}
-        },
-        "aot/native/dasprofile.nbodies/33000/real_time": {
-          "median_ns": 1446874.5704635473,
-          "sample_stddev_ns": 5976.213109624652,
-          "cv": 0.004127010379478459,
-          "sample_count": 7,
-          "counters": {
-            "entry_frame_bytes": 80.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 458.0
-          }
-        },
-        "aot/native/dasprofile.sort/100000/real_time": {
-          "median_ns": 5809463.013688338,
-          "sample_stddev_ns": 45659.632026843276,
-          "cv": 0.007843538485125798,
-          "sample_count": 7,
-          "counters": {
-            "entry_frame_bytes": 192.0,
-            "entry_shadow_slots": 7.0,
-            "entry_static_root_stores": 117.0
-          }
-        },
-        "aot/native/dasprofile.tree/20000/real_time": {
-          "median_ns": 9914593.023199284,
-          "sample_stddev_ns": 140992.29239519022,
-          "cv": 0.01413888717392515,
-          "sample_count": 7,
-          "counters": {
-            "entry_frame_bytes": 144.0,
-            "entry_shadow_slots": 6.0,
-            "entry_static_root_stores": 49.0
-          }
-        }
-      },
-      "comparisons": {
-        "dasprofile.nbodies/33000": {
-          "before_ns": 1441220.0000088918,
-          "confirmation_ns": 1446874.5704635473,
-          "time_reduction_percent": -0.39234609945884014,
-          "aot_over_cpp": 1.6615138324337242,
-          "before_cv": 0.016001984633618887,
-          "confirmation_cv": 0.004127010379478459,
-          "cpp_cv": 0.0016922615406072096,
-          "cpp_control_change_percent": 0.09845198526075016,
-          "before_shadow_slots": 22.0,
-          "after_shadow_slots": 3.0
-        },
-        "dasprofile.sort/100000": {
-          "before_ns": 5837252.777786893,
-          "confirmation_ns": 5809463.013688338,
-          "time_reduction_percent": 0.4760760781905127,
-          "aot_over_cpp": 1.659231474537104,
-          "before_cv": 0.006159547732217407,
-          "confirmation_cv": 0.007843538485125798,
-          "cpp_cv": 0.008944456221916253,
-          "cpp_control_change_percent": 0.5320481468480409,
-          "before_shadow_slots": 10.0,
-          "after_shadow_slots": 7.0
-        },
-        "dasprofile.tree/20000": {
-          "before_ns": 11544983.333199829,
-          "confirmation_ns": 9914593.023199284,
-          "time_reduction_percent": 14.122067247269577,
-          "aot_over_cpp": 2.9413929859085957,
-          "before_cv": 0.010759398123842764,
-          "confirmation_cv": 0.01413888717392515,
-          "cpp_cv": 0.013133654984376344,
-          "cpp_control_change_percent": 0.10702757726013257,
-          "before_shadow_slots": 18.0,
-          "after_shadow_slots": 6.0
-        }
-      }
-    }
-  },
-  "latest": {
     "run_date": "2026-11-06T05:25:42.006273+00:00",
     "source": {
       "revision": "c0162e5c05fb57ac68b47a185cb0360a062f0c28",
@@ -3557,6 +688,705 @@
       },
       "release_build": "python -m tools.vl build release benchmarks",
       "benchmark_iteration_samples": 144
+    }
+  },
+  "latest": {
+    "run_date": "2026-11-06T15:38:09.307752+08:00",
+    "source": {
+      "revision": "80701488051bf81a7cf66a520c3ac6af51b68461",
+      "working_tree_at_measurement": "M benchmarks/aot_benchmark.cc\n M runtime/native/native_call.cc\n M runtime/native/native_call.h",
+      "summary_updated_after_measurement": true,
+      "modified_file_sha256": {
+        "benchmarks/aot_benchmark.cc": "3cb4f95a7917de7a5b9955bfbc6785e44cb97936265475c5af2cb412b3cb0cbe",
+        "runtime/native/native_call.cc": "0f26704c14983e9f05b6ef3bca25dd094d4e928e0c1899d9f5ed5ab685bbcedb",
+        "runtime/native/native_call.h": "aad9d90f4e994e41c83e41c9f7d3b5d714d1e80d4dbe0d682f9f38a3c05c89b2"
+      },
+      "measured_file_fingerprint_sha256": "461861e472d90a7f59e8c81cec6449a5259ef20b3da24393a47cf5fae3cefc70",
+      "baseline_source": {
+        "revision": "80701488051bf81a7cf66a520c3ac6af51b68461",
+        "description": "HEAD production sources with the same entry-cost benchmark instrumentation",
+        "measured_file_sha256": {
+          "benchmarks/aot_benchmark.cc": "3cb4f95a7917de7a5b9955bfbc6785e44cb97936265475c5af2cb412b3cb0cbe",
+          "runtime/native/native_call.cc": "e33add6b78f81956706df7efcc55ee25c5afd8d3b4bba69d94fc269b28413bd2",
+          "runtime/native/native_call.h": "b129fbc9182419fd7ffd77a00a507855aa1448e2d1522d1cd4b702ebaf279a7a"
+        }
+      },
+      "binary_sha256": {
+        "before": "cd8dce7041ed19d2e24f9eb445311469d0414c74fe3f1021fe03d7d6146fe5ba",
+        "after": "88ed1c0d6bdba7a08da23dbbfa15094c5068a2c46b1621ea97c712d72a292443"
+      },
+      "native_object_sha256": {
+        "before": "181c994b33be60eb058990712518c11f670e0e261deb78ce35c54989ab642d9c",
+        "after": "ddf57e893db25c06d6f41f8e99768d09f78ff5ced6bfad11e74b0c060eec1f62"
+      },
+      "benchmark_object_sha256": {
+        "before": "a8188615cbec1d25180c605efebb6cc690b4dd05498548ce3985942b548741f6",
+        "after": "e38143803b5128b05feca84fb7ac204a44853189a5b50130500d76c034c196f1"
+      },
+      "native_abi_version": 19,
+      "native_runtime_abi": {
+        "before": "3cc1a78c1ff9d706b3abaebb3a189398b44624f3cd12be129ef982576601d48c/release",
+        "after": "7b26ecacd67279650c1a68da2146ae26ea85ca3e01487f5da708c2de3df4ac4c/release"
+      }
+    },
+    "machine": {
+      "os": "Windows",
+      "release": "11",
+      "version": "10.0.26300",
+      "architecture": "AMD64",
+      "logical_cpus": 24,
+      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+      "host": "DESKTOP-E7S678P"
+    },
+    "toolchain": {
+      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
+      "llvm_sdk": "21.1.8",
+      "runtime_configuration": "GN release; clang-cl /O2 /MT; checked arithmetic",
+      "generated_configuration": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots"
+    },
+    "build": "release",
+    "implementation": [
+      "Inline the existing InvokeNativeTarget adapter so ordinary returns avoid an external adapter call and intermediate expected/Value copies",
+      "Keep enum allocation and type resolution in the existing native_call implementation through internal::BoxNativeEnumResult",
+      "Add generated-entry and target-adapter layer benchmarks for arithmetic/calls/host, plus C++ direct and indirect arithmetic controls"
+    ],
+    "measurement": {
+      "unit": "nanoseconds per complete invocation; calls/host each execute 1000 inner steps",
+      "repetitions": 9,
+      "minimum_time_seconds": 0.5,
+      "warmup_seconds": 0.3,
+      "random_interleaving": true,
+      "affinity": "logical CPU 16",
+      "affinity_mask": 65536,
+      "driver_affinity_mask": 16580607,
+      "priority": "High",
+      "aggregation": "Median and sample CV of every iteration sample; no outlier filtering",
+      "external_load": "User confirmed external jobs had completed before these two measured runs; full regression/lint started afterwards",
+      "limitations": [
+        "Complete AOT workload includes benchmark Sample/expected/string result handling; generated and target layers separate that overhead",
+        "Generated entry and C++ direct/indirect controls have different runtime contracts; their ratios are descriptive",
+        "C++ calls uses noinline PlainStep, while generated script calls may inline; do not interpret its ratio as equal function-call cost",
+        "C++ calls control shifted by about 17%; its before/after ratio trend is not attributed to the production optimization",
+        "The tiny complete C++ arithmetic baseline has sample CV above 10%; arithmetic native layers and C++ direct/indirect controls have CV below 1%, and complete C++ median drift is below 1%",
+        "Earlier exploratory and loaded matched runs are excluded from performance conclusions because unchanged C++ controls drifted substantially"
+      ]
+    },
+    "suite": {
+      "identity": "native-entry-adapter/v1",
+      "description": "Arithmetic entry layers with calls/host controls and C++ complete workloads",
+      "expected_cases_per_stage": 14,
+      "observed_samples_per_stage": 126,
+      "all_expected_cases_passed": true,
+      "all_checksums_passed": true,
+      "all_retained_heap_checks_passed": true,
+      "plans": [
+        {
+          "stage": "before",
+          "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\before.exe",
+          "logical_cpu": 16,
+          "priority": "High",
+          "arguments": [
+            "--benchmark_filter=^(entry/(generated|target)/|entry/cpp_(direct|indirect)/|aot/(native|cpp)/)(arithmetic|calls|host)(/|$)",
+            "--benchmark_min_time=0.5s",
+            "--benchmark_min_warmup_time=0.3",
+            "--benchmark_repetitions=9",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out_format=json",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\idle_before.json"
+          ]
+        },
+        {
+          "stage": "after",
+          "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\after.exe",
+          "logical_cpu": 16,
+          "priority": "High",
+          "arguments": [
+            "--benchmark_filter=^(entry/(generated|target)/|entry/cpp_(direct|indirect)/|aot/(native|cpp)/)(arithmetic|calls|host)(/|$)",
+            "--benchmark_min_time=0.5s",
+            "--benchmark_min_warmup_time=0.3",
+            "--benchmark_repetitions=9",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out_format=json",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\idle_after.json"
+          ]
+        }
+      ]
+    },
+    "comparison": {
+      "within_run_comparable": true,
+      "comparable_to_previous": false,
+      "reason": "Previous entry measures recursion; this entry measures entry adapters and includes new layer instrumentation"
+    },
+    "benchmark_contexts": {
+      "before": {
+        "date": "2026-11-06T15:18:04+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\before.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "3cc1a78c1ff9d706b3abaebb3a189398b44624f3cd12be129ef982576601d48c/release",
+        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      },
+      "after": {
+        "date": "2026-11-06T15:19:43+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-entry-cost\\after.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "7b26ecacd67279650c1a68da2146ae26ea85ca3e01487f5da708c2de3df4ac4c/release",
+        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      }
+    },
+    "results": {
+      "before": {
+        "aot/cpp/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1.3215602399432889,
+          "cv": 0.10078930697094039,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13750272.0
+        },
+        "aot/cpp/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1128.3346550293038,
+          "cv": 0.005780785697155043,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13799424.0
+        },
+        "aot/cpp/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 941.9078064380209,
+          "cv": 0.02182151848588346,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13758464.0
+        },
+        "aot/native/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 10.838125354827312,
+          "cv": 0.0028867537678177757,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13692928.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "aot/native/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 312.6313467644694,
+          "cv": 0.006230769784361327,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13754368.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 32.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "aot/native/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1348.281886558038,
+          "cv": 0.005887713186620216,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13758464.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "entry/cpp_direct/arithmetic/real_time": {
+          "samples": 9,
+          "median_ns": 1.702157632093425,
+          "cv": 0.006122104694414403,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13754368.0
+        },
+        "entry/cpp_indirect/arithmetic/real_time": {
+          "samples": 9,
+          "median_ns": 1.7050331279271609,
+          "cv": 0.0023335224667119514,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13754368.0
+        },
+        "entry/generated/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 3.4302981085454243,
+          "cv": 0.0020928280772884176,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13758464.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/generated/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 306.33277256678343,
+          "cv": 0.021614332372460358,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13758464.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/generated/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1341.536204577928,
+          "cv": 0.004846740676328635,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13692928.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 5.729934939996422,
+          "cv": 0.0012104817634798904,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13758464.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 308.7847041501218,
+          "cv": 0.01394413069606597,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13754368.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1342.1808139406874,
+          "cv": 0.0025940111868144483,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13754368.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        }
+      },
+      "after": {
+        "aot/cpp/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1.3255735788019103,
+          "cv": 0.19025823221730115,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13737984.0
+        },
+        "aot/cpp/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 933.4767176201901,
+          "cv": 0.0003470878379709804,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13697024.0
+        },
+        "aot/cpp/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 933.9082729875437,
+          "cv": 0.0007133951436864203,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13692928.0
+        },
+        "aot/native/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 8.157816715383687,
+          "cv": 0.0031284641874150657,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13688832.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "aot/native/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 308.48777396312295,
+          "cv": 0.0042626263217541765,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13692928.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 32.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "aot/native/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1341.338570571879,
+          "cv": 0.0023357041603053663,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13701120.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          },
+          "entry_plan": {
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "suspended_frames": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "entry/cpp_direct/arithmetic/real_time": {
+          "samples": 9,
+          "median_ns": 1.6960210595294072,
+          "cv": 0.003391754558320312,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13688832.0
+        },
+        "entry/cpp_indirect/arithmetic/real_time": {
+          "samples": 9,
+          "median_ns": 1.70409659208759,
+          "cv": 0.008328689203836273,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13701120.0
+        },
+        "entry/generated/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 3.4195635366898927,
+          "cv": 0.0022760972474070843,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13783040.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/generated/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 303.7284336953197,
+          "cv": 0.0032157505075872264,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13676544.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/generated/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1336.8189499068594,
+          "cv": 0.002602650131649557,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13737984.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/arithmetic/1000/real_time": {
+          "samples": 9,
+          "median_ns": 3.9978042558627047,
+          "cv": 0.0008595300728116255,
+          "checksum": 499500,
+          "process_resident_bytes_median": 13692928.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/calls/1000/real_time": {
+          "samples": 9,
+          "median_ns": 304.8949821751313,
+          "cv": 0.0036724656560765353,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13676544.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        },
+        "entry/target/host/1000/real_time": {
+          "samples": 9,
+          "median_ns": 1339.2873048067845,
+          "cv": 0.00448361042464128,
+          "checksum": 500500,
+          "process_resident_bytes_median": 13705216.0,
+          "heap": {
+            "baseline_bytes": 320.0,
+            "allocated_bytes": 320.0,
+            "retained_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "remaining_suspended_frames": 0.0,
+            "remaining_saved_bytes": 0.0
+          }
+        }
+      }
+    },
+    "workload_comparisons": {
+      "arithmetic": {
+        "aot_cpp_ratio_before": 8.201007435947377,
+        "aot_cpp_ratio_after": 6.154178723716676,
+        "aot_after_before": 0.7526962872550821,
+        "cpp_control_drift": 0.003036818706647626,
+        "production_speedup_claimed": true,
+        "cpp_ratio_trend_comparable": true
+      },
+      "calls": {
+        "aot_cpp_ratio_before": 0.27707324717093806,
+        "aot_cpp_ratio_after": 0.330471845885544,
+        "aot_after_before": 0.9867461377618407,
+        "cpp_control_drift": -0.17269516321295042,
+        "production_speedup_claimed": false,
+        "cpp_ratio_trend_comparable": false
+      },
+      "host": {
+        "aot_cpp_ratio_before": 1.4314372142819236,
+        "aot_cpp_ratio_after": 1.4362637202912643,
+        "aot_after_before": 0.9948502490055071,
+        "cpp_control_drift": -0.008492904927424605,
+        "production_speedup_claimed": false,
+        "cpp_ratio_trend_comparable": true
+      }
+    },
+    "machine_code": {
+      "tool": "llvm-nm / llvm-objdump from the pinned build toolchain",
+      "inspected_call_site": "benchmarks/aot_benchmark.cc",
+      "target_adapter_external_reference_before": true,
+      "target_adapter_external_reference_after": false,
+      "enum_boxing_external_reference_after": true,
+      "arithmetic_generated_entry_assembly_unchanged": true,
+      "arithmetic_entry_assembly_sha256": "64a403aa58452e24a80e218232e098fce2a19a7885b53c26204383ac67cd3a80",
+      "arithmetic_entry": "vela_aot_984ac1cdaa571db25ccf67a3b1320e8b_entry_3",
+      "arithmetic_body": "Closed-form 128-bit sum followed by final signed overflow validation",
+      "preserved_entry_contracts": [
+        "Argument count, result pointer and execution validation",
+        "Stop state, exception reset, logical depth and native stack limits",
+        "Lazy global initialization and failure propagation"
+      ],
+      "cpp_controls": {
+        "direct": {
+          "call_offset": "0x55",
+          "backedge": "0x6e -> 0x50",
+          "call_remains_inside_timed_loop": true
+        },
+        "indirect": {
+          "call_offset": "0x55",
+          "backedge": "0x6d -> 0x50",
+          "call_remains_inside_timed_loop": true
+        }
+      }
+    },
+    "validation": {
+      "debug_all": {
+        "command": "python -m tools.vl test debug all",
+        "cpp_suites": 8,
+        "cpp_tests": 2549,
+        "python_tests": 216,
+        "aot_jit_corpus_categories": 26,
+        "aot_jit_corpus_cases": 481
+      },
+      "lint": {
+        "command": "python -m tools.vl lint --jobs 12",
+        "files": 769,
+        "failures": 0
+      },
+      "targeted": {
+        "runtime": 18,
+        "jit": 79,
+        "compiler": 40
+      },
+      "release_build": "python -m tools.vl build release benchmarks",
+      "format": {
+        "command": "third_party/build_tools/clang/windows-amd64/bin/clang-format.exe --dry-run --Werror benchmarks/aot_benchmark.cc runtime/native/native_call.h runtime/native/native_call.cc",
+        "files": 3,
+        "passed": true
+      },
+      "benchmark_iteration_samples": 252,
+      "benchmark_runs_completed_with_exit_zero": true,
+      "validation_run_after_benchmarks": true
     }
   }
 }

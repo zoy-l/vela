@@ -65,11 +65,32 @@ struct NativeCallableContract final {
                                                                       std::uint32_t function,
                                                                       std::span<const Value> input);
 
+namespace internal {
+
+[[nodiscard]] std::expected<Value, ExecutionStatus>
+BoxNativeEnumResult(const NativeInstance& instance, std::uint32_t type, Value value);
+
+}  // namespace internal
+
 // 参数已经过调用点绑定与验证；返回 runtime 表示，enum 结果在此完成盒装。
-[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeTarget(
+// 小型适配层在调用点内联，消除中间 expected/Value 返回槽的封装与拷贝。
+[[nodiscard]] inline std::expected<Value, ExecutionStatus> InvokeNativeTarget(
     NativeExecution& execution,
     std::uint32_t function,
-    std::span<const NativeValue> arguments);
+    std::span<const NativeValue> arguments) {
+  const auto& instance = execution.instance();
+  const auto& target = instance.image().function(function);
+  NativeValue output;
+  const auto status = static_cast<ExecutionStatus>(
+      target.entry(&execution, arguments.data(), arguments.size(), &output));
+  if (status != ExecutionStatus::Returned) {
+    return std::unexpected(status);
+  }
+  const auto value = DecodeNativeValue(output);
+  return (target.flags & kNativeEnumResult) != 0
+             ? internal::BoxNativeEnumResult(instance, target.result_type, value)
+             : std::expected<Value, ExecutionStatus>(value);
+}
 
 // indirect 参数区首槽预留给闭包环境或绑定接收者；显式实参从第二槽开始。
 extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,

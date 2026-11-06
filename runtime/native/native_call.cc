@@ -349,22 +349,10 @@ std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& exec
   return InvokeCallback(execution, *callback, arguments);
 }
 
-std::expected<Value, ExecutionStatus> InvokeNativeTarget(NativeExecution& execution,
-                                                         std::uint32_t function,
-                                                         std::span<const NativeValue> arguments) {
-  const auto& instance = execution.instance();
-  const auto& target = instance.image().function(function);
-  NativeValue output;
-  const auto status = static_cast<ExecutionStatus>(
-      target.entry(&execution, arguments.data(), arguments.size(), &output));
-  if (status != ExecutionStatus::Returned) {
-    return std::unexpected(status);
-  }
-  const auto value = DecodeNativeValue(output);
-  return (target.flags & kNativeEnumResult) != 0
-             ? BoxDynamicValue(execution.isolate().heap(), value,
-                               instance.layouts().types[target.result_type])
-             : std::expected<Value, ExecutionStatus>(value);
+std::expected<Value, ExecutionStatus> internal::BoxNativeEnumResult(const NativeInstance& instance,
+                                                                    std::uint32_t type,
+                                                                    Value value) {
+  return BoxDynamicValue(instance.isolate().heap(), value, instance.layouts().types[type]);
 }
 
 bool NativeCallableContract::HasRequiredParameters(std::size_t skipped) const {
