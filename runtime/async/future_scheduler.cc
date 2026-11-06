@@ -75,6 +75,52 @@ void FutureScheduler::Shutdown() {
   }
 }
 
+FutureRunScope::FutureRunScope(FutureScheduler& scheduler)
+    : scheduler_(&scheduler), previous_(scheduler.run_), run_(std::make_shared<FutureTaskRun>()) {
+  scheduler.run_ = run_;
+}
+
+FutureRunScope::~FutureRunScope() {
+  Close();
+}
+
+void FutureRunScope::Close() {
+  if (!run_->closed) {
+    scheduler_->CloseRun(*run_);
+    scheduler_->run_ = previous_;
+  }
+}
+
+void FutureScheduler::CloseRun(FutureTaskRun& run) {
+  assert(IsOwnerThread());
+  run.closed = true;
+  CloseRunEndpoints(run);
+  CloseRunObservations(run);
+  ReceiveMessages();
+  // 捕获对象的析构可能向其它运行投递端点清理，先移走任务，避免重入正在压缩的队列。
+  std::vector<Task> retired;
+  const auto retire = [&run, &retired](Task& task) {
+    if (task.run.get() != &run) {
+      return false;
+    }
+    retired.push_back(std::move(task));
+    return true;
+  };
+  std::erase_if(host_events_, retire);
+  std::erase_if(microtasks_, retire);
+  std::erase_if(checkpoints_, retire);
+  std::vector<std::shared_ptr<Timer::State>> timers;
+  for (const auto& event : events_) {
+    if (event.state->run.get() == &run) {
+      timers.push_back(event.state);
+    }
+  }
+  for (const auto& timer : timers) {
+    Timer::Close(*timer);
+  }
+  CloseRunFutures(run);
+}
+
 void FutureScheduler::RetireCompletionEndpoint(std::uint64_t identity) {
   const auto found = completion_endpoints_.find(identity);
   FutureCompletionEndpoint::Close(*found->second, FutureCompletionEndpoint::CloseReason::Retired);
@@ -101,11 +147,20 @@ void FutureScheduler::RemoveSuspendedFrame(std::size_t saved_bytes) noexcept {
 }
 
 void FutureScheduler::PostMicrotask(absl::AnyInvocable<void()> task) {
+  PostInRun(std::move(task), IsOwnerThread() ? run_ : nullptr);
+}
+
+void FutureScheduler::PostInRun(absl::AnyInvocable<void()> task,
+                                std::shared_ptr<FutureTaskRun> run) {
   if (IsOwnerThread()) {
-    microtasks_.push_back({.context = context_, .action = std::move(task)});
+    if (run == nullptr || !run->closed) {
+      microtasks_.push_back(
+          {.context = context_, .run = std::move(run), .action = std::move(task)});
+    }
     return;
   }
   auto message = std::make_unique<Message>();
+  message->run = std::move(run);
   message->action = std::move(task);
   auto* head = incoming_.load(std::memory_order_relaxed);
   while (true) {
@@ -116,7 +171,7 @@ void FutureScheduler::PostMicrotask(absl::AnyInvocable<void()> task) {
     }
   }
   std::ignore = message.release();
-  wakeup_.release();
+  wakeup_->release();
 }
 
 void FutureScheduler::ReceiveMessages() {
@@ -131,13 +186,19 @@ void FutureScheduler::ReceiveMessages() {
   while (ordered != nullptr) {
     std::unique_ptr<Message> current(ordered);
     ordered = ordered->next;
-    host_events_.push_back(std::move(current->action));
+    if (current->run == nullptr || !current->run->closed) {
+      host_events_.push_back({
+          .context = std::nullopt,
+          .run = std::move(current->run),
+          .action = std::move(current->action),
+      });
+    }
   }
 }
 
-void FutureScheduler::SetUnhandledErrorHandler(ErrorCallback callback) {
+FutureScheduler::ErrorCallback FutureScheduler::SetUnhandledErrorHandler(ErrorCallback callback) {
   assert(IsOwnerThread());
-  unhandled_error_handler_ = std::move(callback);
+  return std::exchange(unhandled_error_handler_, std::move(callback));
 }
 
 void FutureScheduler::NotifyUnhandledError(const Future& future, ::vela::runtime::Value error) {
@@ -157,7 +218,7 @@ HostEventSource::~HostEventSource() {
 void HostEventSource::Release() noexcept {
   if (live_.exchange(false)) {
     --scheduler_->host_sources_;
-    scheduler_->wakeup_.release();
+    scheduler_->wakeup_->release();
   }
 }
 
@@ -182,6 +243,7 @@ Timer FutureScheduler::ScheduleTimer(std::chrono::milliseconds delay,
   state->callback = std::move(callback);
   state->scheduler = this;
   state->context = context_;
+  state->run = run_;
   PushEvent(Event{
       .deadline = Clock::now() + delay,
       .sequence = next_sequence_++,
@@ -191,36 +253,51 @@ Timer FutureScheduler::ScheduleTimer(std::chrono::milliseconds delay,
   return Timer(std::move(state));
 }
 
-void FutureScheduler::DrainMicrotasks() {
-  while (!microtasks_.empty() || !checkpoints_.empty()) {
+void FutureScheduler::ExecuteTask(Task task) {
+  if (task.run != nullptr && task.run->closed) {
+    return;
+  }
+  const auto* task_run = task.run.get();
+  auto previous = std::exchange(run_, std::move(task.run));
+  const ExecutionContextScope scope(*this, task.context);
+  task.action();
+  // 回调可关闭当前运行并恢复其外层；不能再把已关闭的归属写回调度器。
+  if (run_.get() == task_run && (previous == nullptr || !previous->closed)) {
+    run_ = std::move(previous);
+  }
+}
+
+void FutureScheduler::DrainMicrotasks(const std::function<bool()>& pending) {
+  while ((!microtasks_.empty() || !checkpoints_.empty()) && (!pending || pending())) {
     if (!microtasks_.empty()) {
       auto task = std::move(microtasks_.front());
       microtasks_.pop_front();
-      const ExecutionContextScope scope(*this, task.context);
-      task.action();
+      ExecuteTask(std::move(task));
     } else {
       auto checkpoint = std::move(checkpoints_.front());
       checkpoints_.pop_front();
-      checkpoint();
+      ExecuteTask(std::move(checkpoint));
     }
   }
 }
 
-FuturePumpStep FutureScheduler::PumpOne(FuturePumpMode mode) {
+FuturePumpStep FutureScheduler::PumpOne(FuturePumpMode mode, const std::function<bool()>& pending) {
   assert(IsOwnerThread());
   const ExternalResource execution(external_resources_, ExternalResourceKind::Execution);
   while (true) {
+    if (pending && !pending()) {
+      return FuturePumpStep::Idle;
+    }
     if (!microtasks_.empty() || !checkpoints_.empty()) {
-      DrainMicrotasks();
+      DrainMicrotasks(pending);
       return FuturePumpStep::Executed;
     }
     ReceiveMessages();
     if (!host_events_.empty()) {
       auto event = std::move(host_events_.front());
       host_events_.pop_front();
-      const ExecutionContextScope scope(*this, std::nullopt);
-      event();
-      DrainMicrotasks();
+      ExecuteTask(std::move(event));
+      DrainMicrotasks(pending);
       return FuturePumpStep::Executed;
     }
     while (!events_.empty() && events_.front().state->cancelled.load()) {
@@ -228,10 +305,11 @@ FuturePumpStep FutureScheduler::PumpOne(FuturePumpMode mode) {
       Timer::Close(*event.state);
     }
     if (events_.empty()) {
-      if (mode != FuturePumpMode::WaitForHost || host_sources_.load() == 0) {
+      if (mode != FuturePumpMode::WaitForCompletion &&
+          (mode != FuturePumpMode::WaitForHost || host_sources_.load() == 0)) {
         return FuturePumpStep::Idle;
       }
-      wakeup_.acquire();
+      wakeup_->acquire();
       continue;
     }
     const auto deadline = events_.front().deadline;
@@ -239,23 +317,24 @@ FuturePumpStep FutureScheduler::PumpOne(FuturePumpMode mode) {
       if (mode == FuturePumpMode::ReadyWork) {
         return FuturePumpStep::Idle;
       }
-      std::ignore = wakeup_.try_acquire_until(deadline);
+      std::ignore = wakeup_->try_acquire_until(deadline);
       continue;
     }
-    Fire(RemoveEvent(0));
+    Fire(RemoveEvent(0), pending);
     return FuturePumpStep::Executed;
   }
 }
 
-void FutureScheduler::Fire(Event event) {
+void FutureScheduler::Fire(Event event, const std::function<bool()>& pending) {
   auto& state = *event.state;
   auto callback = std::move(state.callback);
   if (callback && !state.cancelled.load()) {
-    const ExecutionContextScope scope(*this, state.context);
-    callback();
-    DrainMicrotasks();
+    ExecuteTask(
+        {.context = state.context, .run = state.run, .action = [&callback] { callback(); }});
+    DrainMicrotasks(pending);
   }
-  if (event.interval.count() > 0 && !state.cancelled.load()) {
+  if (event.interval.count() > 0 && !state.cancelled.load() &&
+      (state.run == nullptr || !state.run->closed)) {
     state.callback = std::move(callback);
     event.deadline = Clock::now() + event.interval;
     event.sequence = next_sequence_++;

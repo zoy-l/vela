@@ -7,6 +7,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <semaphore>
 
 #include <absl/functional/any_invocable.h>
 
@@ -24,6 +25,7 @@ struct NativeSafepointQueue final {
   // 各请求来源独占一个位；生成代码通过 acquire 读取同一状态，不能丢失并发投递。
   std::atomic<std::uint8_t> requests{0};
   bool closed = false;
+  std::weak_ptr<std::counting_semaphore<>> wakeup;
 };
 
 // 请求地址随队列固定；借用深度只由 Isolate 线程读写，生成代码与运行时共用这一状态。
@@ -50,7 +52,7 @@ class NativeSafepointEndpoint final {
 // 重入脚本仍处于外层宿主借用内，必须等最外层 binding 正常返回后才能停止旧运行。
 class NativeControl final {
  public:
-  NativeControl();
+  explicit NativeControl(std::weak_ptr<std::counting_semaphore<>> wakeup = {});
   ~NativeControl();
   NativeControl(const NativeControl&) = delete;
   NativeControl& operator=(const NativeControl&) = delete;

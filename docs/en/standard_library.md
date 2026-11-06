@@ -226,13 +226,20 @@ real VS Code extension-host tests also passed.
 
 ## Process exits
 
-`vela run` uses a successful `main` result as its process exit status: void/null
-means zero, and an int in `[0, 255]` supplies that exact code. Other value types
-and out-of-range ints are runtime command errors. The result is not printed
-automatically; scripts print intended output explicitly. Embedded native execution
-continues to return the typed result without process side effects.
+`vela run`, `vela debug` and standalone AOT programs automatically invoke the
+entry module's zero-argument `main`. A returned Future is awaited. A successful
+non-void result is displayed once using the same rules as `print`, including a
+newline. Void and `Future<void>` add no output; explicit null displays `null`.
+Arrays and objects retain the existing `object` display. Embedded calls return
+the original typed value for the host to consume.
 
-Command usage errors return 64, loading/compilation/entry errors return 65, and
-unhandled runtime errors or invalid main exit values return 70. These follow
-sysexits conventions on every platform. A script may intentionally return any
-code in `[0, 255]`, including those codes. `vela check` returns zero on success.
+Successful execution returns process status 0. Unhandled execution errors and
+output failures return 1. Returned integers never select a process status.
+Completion stops the program's remaining background tasks; a pending root Future
+keeps waiting even when no producer is registered. See the
+[program lifecycle contract](../zh-CN/program_lifecycle.md).
+
+Tool commands retain their error categories: usage errors return 64, source and
+entry errors return 65, I/O errors return 74, and internal tool runtime errors
+return 70. `vela check` returns zero on success. There is no global `exit` or
+`exitCode` API.

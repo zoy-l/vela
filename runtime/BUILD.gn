@@ -304,7 +304,7 @@ executable("runtime_tests") {
     "native/native_instance_unittest.cc",
     "native/native_materialization_unittest.cc",
     "native/native_type_unittest.cc",
-    "process/process_exit_unittest.cc",
+    "process/process_entry_unittest.cc",
     "regexp/regexp_unittest.cc",
     "strings/string_case_unittest.cc",
     "strings/string_unittest.cc",

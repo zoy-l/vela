@@ -116,7 +116,10 @@ Isolate 必须晚于所属作用域、持久句柄、错误载荷、实例和执
 公共 `Local<Future<T>>` 提供 `Read(scope)` 和 `Wait(scope, WaitMode::WaitForHost)`。
 `CreateCompletion<T>(scope)` 返回 Future 与可跨线程保存的完成端点；普通 Local 和
 Persistent 只能在 Isolate 所属线程操作。端点关闭后报告 Closed，不再保活 Isolate。
-命令行应用通过 `ProcessEntry` 应用退出码规则并排空后台任务；嵌入宿主自行管理事件循环。
+命令行应用通过 `ProcessEntry` 等待并显示根结果，完成后关闭本次运行的后台任务。
+根 Future 未完成时持续等待完成或显式停止，即使没有生产者也不自动退出。
+嵌入式普通调用返回类型化值，不自动打印、不退出宿主进程，也不清理其它任务。
+宿主自行管理事件循环并选择是否等待返回的 Future。详见[程序入口与生命周期](program_lifecycle.md)。
 
 脚本可调用值保留其原生程序状态。调用必须属于相同 Isolate，并具有兼容代码身份或相同
 可重载分派域。对可调用值保根即可使其所需代码保持可达。

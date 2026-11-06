@@ -13,9 +13,11 @@ import tempfile
 import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
-from tools.test_support import native_command, vela_executable
+from tools.test_support import closed_output_command, native_command, pending_command, vela_executable
 from tools.package import create_package
 from tools.aot_c_fixture import host_source as c_host_source
+from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
+                                    PROGRAM_CASES)
 
 
 @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
@@ -106,38 +108,36 @@ class NativeDistributionTest(unittest.TestCase):
                     env: dict[str, str] | None = environment) -> subprocess.CompletedProcess:
                 return native_command(self, arguments, expected, env, cwd=work)
 
-            fixtures = [
-                ("scalar", "func main(): int { return 42; }", 42),
-                ("void", "func main(): void { print('ready'); }", 0),
-                ("await", "async func main(): Future<int> { print('first'); await 0; print('last'); return 42; }", 42),
-                ("timer", "async func main(): Future<int> { Timer.after(0, (): void => { print('timer'); }); return 42; }", 42),
-                ("composition", "async func main(): Future<int> { return await Future.value(20).then((v: int): int => v + 22); }", 42),
-                ("idle", "func main(): Future<int> { return Future.race<int>([]); }", 70),
-                ("background", "func main(): int { Future.microtask((): void => { throw Error(message: 'background'); }); return 0; }", 70),
-                ("failure", "func main(): int { return 1 / 0; }", 70),
-                ("async_failure", "async func fail(): Future<int> { await 0; return 1 / 0; }\nasync func main(): Future<int> { return await fail(); }", 70),
-                ("invalid_type", "func main(): bool { return true; }", 70),
-                ("invalid_range", "func main(): int { return 256; }", 70),
-                ("standard", "func main(): int { return Math.sqrt(1764.0).toInt(); }", 42),
-                ("typed_json", "class Item { value: int = 42; } func main(): int { "
-                 "const failed = JSON.safeParse<Item>('{\"value\":false}'); "
-                 "return !failed.success && failed.error.path == '$.value' "
-                 "? JSON.parse<Item>('{}').value : 0; }", 42),
-            ]
             applications = []
             sources = []
-            for name, text, expected in fixtures:
+            for name, text, expected, stdout in PROGRAM_CASES:
                 with self.subTest(name=name):
                     source = work / (name + " 中.vela")
                     source.write_text(text + "\n", encoding="utf-8", newline="\n")
                     sources.append(source)
                     jit = run([original, "run", source], expected, None)
+                    self.assertEqual(jit.stdout, stdout)
                     app = work / executable_name(name + " 原生")
                     run([compiler, "build", source, "-o", app])
                     native = run([app], expected)
                     self.assertEqual(native.stdout, jit.stdout)
                     self.assertEqual(native.stderr, jit.stderr)
                     applications.append((app, expected, native.stdout, native.stderr))
+
+            pending_source = work / "pending.vela"
+            pending_source.write_text(PENDING_SOURCE, encoding="utf-8", newline="\n")
+            pending_app = work / executable_name("pending")
+            run([compiler, "build", pending_source, "-o", pending_app])
+            pending_source.unlink()
+            pending_command(self, [pending_app], PENDING_OUTPUT_PREFIX, cwd=work, env=environment)
+
+            broken_source = work / "closed_output.vela"
+            broken_source.write_text(OUTPUT_FAILURE_SOURCE, encoding="utf-8", newline="\n")
+            broken_app = work / executable_name("closed_output")
+            run([compiler, "build", broken_source, "-o", broken_app])
+            broken_source.unlink()
+            self.assertIn("failed to write program output",
+                          closed_output_command(self, [broken_app], cwd=work, env=environment))
 
             libraries = []
             manifests = []

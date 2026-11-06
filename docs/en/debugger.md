@@ -6,7 +6,9 @@
 `vela debug FILE` JIT-compiles a native snapshot with instruction inspection,
 then pauses before the first instruction of zero-argument `main`. Script output
 uses stdout; debugger prompts and inspection use stderr. A completed program
-uses the ordinary script exit code. `quit` or EOF stops execution and exits `0`.
+prints its non-void result using `print` formatting and exits `0`; an unhandled
+execution error exits `1`. `quit` or EOF stops execution, prints no result and
+exits `0`.
 
 Commands:
 
@@ -63,7 +65,7 @@ on the same Isolate. Retain a low-level `runtime::Value` beyond the callback wit
 `runtime::HostRoot::Create(isolate, value)`; public `Local<T>` values use `Persist()`
 to create `Persistent<T>`. The Isolate, execution and debugger must remain alive, and the host
 must detach the observer before destroying it. Keep it installed while pumping
-asynchronous main and background work so resumed functions remain debuggable.
+asynchronous main until its root completes, so resumed functions remain debuggable.
 
 `NativeDebugContext::RequestStop()` requests `ExecutionStopped`. Stopping is not
 a script exception and does not run pending `finally` blocks or roll back prior

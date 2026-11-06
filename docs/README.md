@@ -33,6 +33,7 @@ English and Simplified Chinese editions are listed side by side below. Implement
 | **Native Execution Contracts** / 原生执行契约 | [native_execution.md](en/native_execution.md) | [native_execution.md](zh-CN/native_execution.md) |
 | **Garbage Collection** / 垃圾回收架构 | [garbage_collection.md](en/garbage_collection.md) | [garbage_collection.md](zh-CN/garbage_collection.md) |
 | **Async Functions & Futures** / 异步函数与 Future | [async_tasks.md](en/async_tasks.md) | [async_tasks.md](zh-CN/async_tasks.md) |
+| **Program Entry & Lifetime** / 程序入口与生命周期 | — | [program_lifecycle.md](zh-CN/program_lifecycle.md) |
 | **Compilation Cache** / 编译缓存 | [compilation_cache.md](en/compilation_cache.md) | [compilation_cache.md](zh-CN/compilation_cache.md) |
 | **Native Embedding** / 原生嵌入与运行时诊断 | [native_embedding.md](en/native_embedding.md) | [native_embedding.md](zh-CN/native_embedding.md) |
 | **C++ Class Bindings & Header Generation** / C++ 类绑定与头文件生成 | — | [native_class_bindings.md](zh-CN/native_class_bindings.md) |

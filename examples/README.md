@@ -1,9 +1,10 @@
 # Vela examples
 
 The examples use syntax supported by the current compiler. Use `print` to display
-values. An integer returned by `main` becomes the process exit code; `void` means
-success. The CLI also waits for an async main's Future and uses its result as the
-exit code. The examples in the table below all exit with code `0`.
+values. The CLI also displays a non-void `main` result using the same formatting,
+and automatically awaits a returned Future. Successful execution exits `0`;
+unhandled execution errors exit `1`. Entry completion stops its background tasks.
+The examples in the table below all exit with code `0`.
 
 ## Operators, iteration, classes, and async
 
@@ -19,11 +20,11 @@ output and where evaluation stops.
 | [null_safe.vela](null_safe.vela) | `?.`, `?.[]`, and `??`; skipped method calls, index expressions, and default expressions | `fallback`, `empty`, `Vela`, `no label`, `label: Vela`, `7`, `index evaluated`, `42` |
 | [inheritance.vela](inheritance.vela) | Single inheritance, implicit and explicit `super(...)`, two interfaces, inherited fields, and `override` | `2`, `40`, `2`, `42`, `42`, `bonus counter` |
 | [accessors.vela](accessors.vela) | Getter/setter property access and a computed read-only property | `10`, `21`, `42` |
-| [async_tasks.vela](async_tasks.vela) | Async main, `await`, `sleep`, `Future.wait`, `Future.value`, and `Future.microtask` | `42`, `7`, `8` |
-| [numeric_parse.vela](numeric_parse.vela) | Decimal/hexadecimal integers, nullable tryParse, and decimal exponents | `42`, `255`, `0`, `125` |
+| [async_tasks.vela](async_tasks.vela) | Async main, `await`, `sleep`, `Future.wait`, `Future.value`, and `Future.microtask` | `42`, `7`, `8`, `0` |
+| [numeric_parse.vela](numeric_parse.vela) | Decimal/hexadecimal integers, nullable tryParse, and decimal exponents | `42`, `255`, `0`, `125`, `0` |
 | [string_case.vela](string_case.vela) | Unicode full mappings, expansion, and contextual lowercasing | `vela`, `VELA`, `STRASSE`, `ος`, `i̇` |
-| [time.vela](time.vela) | Explicit-offset parsing, canonical UTC output, readonly calendar parts, and reconstruction | `2026-10-26T04:30:45.123Z`, `true`, `1970-01-01T00:00:00.000Z` |
-| [byte_data.vela](byte_data.vela) | Fixed byte storage, unaligned shared views, integer/float access, byte order, and explicit copies | `42`, `1.25`, `42`, `3` |
+| [time.vela](time.vela) | Explicit-offset parsing, canonical UTC output, readonly calendar parts, and reconstruction | `2026-10-26T04:30:45.123Z`, `true`, `1970-01-01T00:00:00.000Z`, `0` |
+| [byte_data.vela](byte_data.vela) | Fixed byte storage, unaligned shared views, integer/float access, byte order, and explicit copies | `42`, `1.25`, `42`, `3`, `0` |
 
 For example:
 
@@ -73,16 +74,16 @@ relative source files as one program.
 
 `typed_arrays.vela` demonstrates integer, boolean, string, enum, class, and
 nested arrays, contextual empty literals, array parameters and returns, and
-shared storage on assignment. It prints `second`, `true`, `42`, then exits with
-code `42`. Element types match exactly; implicit conversions
+shared storage on assignment. It prints `second`, `true`, `42`, then the returned
+result `42`, and exits `0`. Element types match exactly; implicit conversions
 are not supported.
 
 `double.vela` uses decimal and exponent literals, double parameters and returns,
 class fields and methods, and native double arrays. It prints `25`, `true`,
-then returns `14.5`. Integer and double operands cannot be mixed implicitly.
+and `14.5`. Integer and double operands cannot be mixed implicitly.
 
 `string_gc.vela` keeps strings in an object and array while creating temporary
-concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
+concatenations. It prints `Vela`, `Vela GC` and `true`.
 
 `strings.vela` exercises escapes, interpolation, explicit conversions, Unicode
 APIs, array `.join(separator)`, primitive formatting, and imports. `string_builder.vela` builds text in a loop and keeps

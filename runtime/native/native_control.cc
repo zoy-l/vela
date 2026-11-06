@@ -6,6 +6,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <semaphore>
 #include <utility>
 
 #include <absl/functional/any_invocable.h>
@@ -32,6 +33,9 @@ void NativeSafepointEndpoint::RequestStop() const noexcept {
   queue_->requests.fetch_or(kStopRequested, std::memory_order_release);
   const std::scoped_lock lock(queue_->mutex);
   queue_->closed = true;
+  if (const auto wakeup = queue_->wakeup.lock()) {
+    wakeup->release();
+  }
 }
 
 std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
@@ -42,11 +46,16 @@ std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
   }
   queue_->actions.push_back(std::move(action));
   queue_->requests.fetch_or(kQueuedAction, std::memory_order_release);
+  if (const auto wakeup = queue_->wakeup.lock()) {
+    wakeup->release();
+  }
   return {};
 }
 
-NativeControl::NativeControl()
-    : queue_(std::make_shared<NativeSafepointQueue>()), state_{.requests = &queue_->requests} {}
+NativeControl::NativeControl(std::weak_ptr<std::counting_semaphore<>> wakeup)
+    : queue_(std::make_shared<NativeSafepointQueue>()), state_{.requests = &queue_->requests} {
+  queue_->wakeup = std::move(wakeup);
+}
 
 NativeControl::~NativeControl() {
   // 关闭后的端点可独立存活；携带所有权的动作仍在所属线程释放。

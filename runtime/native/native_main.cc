@@ -13,22 +13,25 @@
 namespace vela::runtime {
 
 extern "C" int vela_native_v1_main(const NativeImage* image, std::uint32_t function) {
+  InitializeProcessOutput();
   Isolate isolate;
   auto instance = NativeInstance::Instantiate(isolate, *image);
   if (!instance) {
     std::cerr << "vela: " << instance.error().message << '\n';
-    return kRuntimeErrorExitCode;
+    return kProgramFailureExitCode;
   }
+  auto& program = **instance;
   ProcessEntry process(isolate, std::cerr);
-  NativeExecution execution(**instance);
+  NativeExecution execution(program);
   const auto result = InvokeNativeTarget(execution, function, {});
   if (!result) {
     WriteRuntimeDiagnostic(std::cerr, execution.HasException()
                                           ? execution.ExceptionDiagnostic()
                                           : execution.Diagnostic(result.error(), {}));
-    return kRuntimeErrorExitCode;
+    return kProgramFailureExitCode;
   }
-  return process.Finish(*result);
+  const auto type = program.call_signature(function).result;
+  return process.Finish(*result, type ? &program.layouts().types[*type] : nullptr);
 }
 
 }  // namespace vela::runtime

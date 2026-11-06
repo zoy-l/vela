@@ -8,7 +8,9 @@ import subprocess
 import unittest
 
 from tools.config import ROOT
-from tools.test_support import CommandTestCase
+from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
+                                    PROGRAM_CASES)
+from tools.test_support import CommandTestCase, closed_output_command, pending_command
 
 
 class CommandTest(CommandTestCase):
@@ -67,11 +69,11 @@ class CommandTest(CommandTestCase):
 
     def test_corrupt_native_cache_is_recompiled_from_checked_source(self) -> None:
         self.write("func main(): int { return 42; }")
-        self.cached_run(expected=42)
+        self.assertEqual(self.cached_run().stdout, "42\n")
         cache = next((self.directory / ".cache" / "vela" / "native" / "run").glob("*.vlobj"))
         original = cache.read_bytes()
         cache.write_bytes(b"corrupt")
-        self.command("run", self.entry, expected=42)
+        self.assertEqual(self.command("run", self.entry).stdout, "42\n")
         self.assertEqual(cache.read_bytes(), original)
         self.entry.unlink()
         self.command("run", self.entry, expected=65)
@@ -90,8 +92,10 @@ class CommandTest(CommandTestCase):
         self.write("func main():int { const value:dynamic=42; return value; }")
         for arguments in [("check", self.entry), ("run", self.entry), ("run", self.entry),
                           ("doc", self.entry, self.directory / "api.md")]:
-            result = self.command(*arguments, expected=42 if arguments[0] == "run" else 0)
+            result = self.command(*arguments)
             self.assertIn("warning: [implicit_dynamic_conversion]", result.stderr)
+            if arguments[0] == "run":
+                self.assertEqual(result.stdout, "42\n")
         (self.directory / "vela.json").write_text(
             '{"diagnostics":{"implicit_dynamic_conversion":"error"}}',
             encoding="utf-8", newline="\n")
@@ -109,12 +113,23 @@ class CommandTest(CommandTestCase):
                    "const saved: ByteData[] = [data]; "
                    "for (let i = 0; i < 1000; i++) { const temporary = ByteArray(1024); } "
                    "return saved[0].getInt64(0); }")
-        self.cached_run(expected=42)
+        self.assertEqual(self.cached_run().stdout, "42\n")
 
-    def test_async_run_and_cache_hit_wait_for_background_timers(self) -> None:
-        self.write("async func main(): Future<int> { "
-                   "Timer.after(0, (): void => { print('timer'); }); return 42; }")
-        self.assertEqual(self.cached_run(expected=42).stdout, "timer\n")
+    def test_program_lifecycle_and_result_output_survive_cache_hits(self) -> None:
+        directory = self.directory
+        for name, source, code, output in PROGRAM_CASES:
+            with self.subTest(name=name):
+                self.directory = directory / name
+                self.directory.mkdir()
+                self.entry = self.directory / "main.vela"
+                self.write(source)
+                result = self.cached_run(expected=code)
+                self.assertEqual(result.stdout, output)
+                if code == 1:
+                    self.assertIn("at $lambda" if name == "reported_background_error" else "at main",
+                                  result.stderr)
+                else:
+                    self.assertEqual(result.stderr, "")
 
     def test_full_case_mappings_match_pinned_ucd_inputs(self) -> None:
         data = (ROOT / "third_party/unicode_data/inputs/SpecialCasing.txt").read_text(encoding="utf-8")
@@ -129,28 +144,31 @@ class CommandTest(CommandTestCase):
                 statements.append(f"if ('{source}'.{method}() != '{expected}') {{ return 1; }}")
         self.assertGreater(len(statements), 200)
         self.write("func main(): int {\n" + "\n".join(statements) + "\nreturn 0; }")
-        self.cached_run()
+        self.assertEqual(self.cached_run().stdout, "0\n")
 
     def test_byte_api_source_tools_and_cached_native_execution(self) -> None:
         self.write("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
                    "func main(): int { const view = make(4); view.setInt32(0,42); return view.getInt32(0); }")
         self.format_and_document("func make(size: int): ByteData")
-        self.cached_run(expected=42)
+        self.assertEqual(self.cached_run().stdout, "42\n")
 
-    def test_async_idle_and_background_errors_are_failures(self) -> None:
-        self.write("func main(): Future<int> { return Future.race<int>([]); }")
-        self.assertIn("idle/deadlock", self.command("run", self.entry, expected=70).stderr)
-        self.write("func main(): int { Future.microtask((): void => { "
-                   "throw Error(message: 'background'); }); return 0; }")
-        self.assertIn("unhandled Future error: background", self.command("run", self.entry, expected=70).stderr)
+    def test_pending_root_without_work_does_not_exit_or_report_idle(self) -> None:
+        self.write(PENDING_SOURCE)
+        pending_command(self, [self.executable, "run", self.entry], PENDING_OUTPUT_PREFIX,
+                        cwd=self.directory)
 
     def test_async_failure_keeps_throw_and_await_locations(self) -> None:
         self.write("async func fail(): Future<int> { await 0; return 1 / 0; }\n"
                    "async func main(): Future<int> { return await fail(); }")
-        result = self.command("run", self.entry, expected=70)
+        result = self.command("run", self.entry, expected=1)
         self.assertIn("division by zero", result.stderr)
         self.assertIn("at fail", result.stderr)
         self.assertIn("at main", result.stderr)
+
+    def test_closed_output_pipe_is_an_execution_failure(self) -> None:
+        self.write(OUTPUT_FAILURE_SOURCE)
+        errors = closed_output_command(self, [self.executable, "run", self.entry], cwd=self.directory)
+        self.assertIn("failed to write program output", errors)
 
     def test_documentation_preserves_async_and_function_value_types(self) -> None:
         self.write("export async func load(): Future<int> { return 42; }\n"
@@ -166,7 +184,7 @@ class CommandTest(CommandTestCase):
                    "func main(): int { const root: dynamic = JSON.parse('[40,true,null]'); "
                    "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
         self.format_and_document("func encode(value: dynamic): string")
-        self.cached_run(expected=42)
+        self.assertEqual(self.cached_run().stdout, "42\n")
         result = self.command("repl", commands=(
             "const root: dynamic = JSON.parse('[40,true,null]');\n"
             "root[0] += 2;\nJSON.stringify(root)\n.quit\n"))
@@ -266,15 +284,15 @@ func main(): void {
         self.write("export func main(): int { return 42; }")
         output = self.directory / "原生😀.o"
         self.command("check", self.entry)
-        self.cached_run(expected=42)
+        self.assertEqual(self.cached_run().stdout, "42\n")
         self.command("build", self.entry, "--emit=obj", "--export=main", "-o", output)
         self.command("build", "--verify-manifest=" + str(output) + ".aot.json")
 
     def test_native_debugger_resumes_and_stops_async_main(self) -> None:
         self.write("async func main(): Future<int> {\n"
                    "  await sleep(1);\n  print('resumed');\n  return 42;\n}\n")
-        completed = self.command("debug", self.entry, commands="break 3\nc\nc\n", expected=42)
-        self.assertEqual(completed.stdout, "resumed\n")
+        completed = self.command("debug", self.entry, commands="break 3\nc\nc\n")
+        self.assertEqual(completed.stdout, "resumed\n42\n")
         self.assertRegex(completed.stderr, r"main pc=\d+ at [^\r\n]+:3:")
         stopped = self.command("debug", self.entry, commands="break 3\nc\nquit\n")
         self.assertEqual(stopped.stdout, "")
@@ -285,17 +303,18 @@ func main(): void {
         self.write("func child(value: int): int {\n  return value + 1;\n}\n"
                    "func main(): int {\n  let value = 40;\n  value = child(value);\n  return value + 1;\n}\n")
         result = self.command("debug", self.entry,
-                              commands="break child\ncontinue\nstack\nregisters\nprint r0\nfinish\ncontinue\n", expected=42)
+                              commands="break child\ncontinue\nstack\nregisters\nprint r0\nfinish\ncontinue\n")
         self.assertIn("#0 child pc=", result.stderr)
         self.assertIn("#1 main pc=", result.stderr)
         self.assertIn("r0 = 40", result.stderr)
         self.assertIn("debug> 40", result.stderr)
-        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stdout, "42\n")
 
     def test_source_breakpoint_stops_once_per_loop_iteration(self) -> None:
         self.write("func work(): int {\n  let i = 0;\n  while (i < 3) {\n    i = i + 1;\n  }\n  return i;\n}\n"
                    "func main(): int { return work() + 39; }\n")
-        result = self.command("debug", self.entry, commands="break 4\nc\nc\nc\nc\n", expected=42)
+        result = self.command("debug", self.entry, commands="break 4\nc\nc\nc\nc\n")
+        self.assertEqual(result.stdout, "42\n")
         self.assertEqual(len(re.findall(r"work pc=\d+ at [^\r\n]+:4:", result.stderr)), 3, result.stderr)
 
     def test_next_skips_a_call_but_step_enters_it(self) -> None:
@@ -312,7 +331,8 @@ func main(): void {
                    "func inspect(box: Box, values: int[]): int { return box.value + values[0]; }\n"
                    "func main(): int { return inspect(Box(value: 40), [2]); }\n")
         result = self.command("debug", self.entry,
-                              commands="break inspect\nc\nregisters\nfield r0 0\nelement r1 0\nc\n", expected=42)
+                              commands="break inspect\nc\nregisters\nfield r0 0\nelement r1 0\nc\n")
+        self.assertEqual(result.stdout, "42\n")
         self.assertIn("r0 = object(fields=1)", result.stderr)
         self.assertIn("r1 = array(length=1)", result.stderr)
         self.assertIn("debug> 40", result.stderr)

@@ -6,7 +6,6 @@
 #include <expected>
 #include <filesystem>
 #include <numeric>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -84,8 +83,7 @@ bool IsSuccessful(const testing::SuiteResult& result, std::size_t expected) {
 }
 
 testing::SuiteResult RunSuite(runtime::NativeInstance& instance) {
-  std::ostringstream diagnostics;
-  testing::Suite suite(instance, {}, diagnostics);
+  testing::Suite suite(instance, {});
   return suite.Run();
 }
 

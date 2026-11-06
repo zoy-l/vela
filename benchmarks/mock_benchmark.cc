@@ -98,8 +98,7 @@ std::expected<void, std::string> Execute(runtime::NativeInstance& instance, std:
   options.select = [name](const testing::TestResult& test) -> std::expected<bool, std::string> {
     return test.name == name;
   };
-  std::ostringstream diagnostics;
-  testing::Suite suite(instance, std::move(options), diagnostics);
+  testing::Suite suite(instance, std::move(options));
   const auto result = suite.Run();
   if (result.exit_code != 0 || !result.errors.empty() || result.tests.size() != 1) {
     return std::unexpected("mock benchmark failed to load or select its test");

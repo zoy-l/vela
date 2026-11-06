@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -11,6 +12,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/process/process_entry.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler {
@@ -165,7 +167,7 @@ func main(): int { task(); return 0; }
   CollectAndExpectNoAsyncState(isolate);
 }
 
-TEST(AsyncLifetimeTest, EmptyRaceReportsIdleWithoutKeepingProcessAlive) {
+TEST(AsyncLifetimeTest, HostWaitReportsIdleAndLeavesRootPending) {
   runtime::Isolate isolate;
   const auto compiled =
       test::CompileSource("func main(): Future<int> { return Future.race<int>([]); }", isolate);
@@ -173,6 +175,48 @@ TEST(AsyncLifetimeTest, EmptyRaceReportsIdleWithoutKeepingProcessAlive) {
   auto root = test::StartFuture(*compiled.instance);
   EXPECT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Idle);
   EXPECT_EQ(root.state(), runtime::FutureState::Pending);
+}
+
+TEST(AsyncLifetimeTest, ProgramCompletionReleasesSuspensionsWithoutRunningTheirFinally) {
+  runtime::Isolate isolate(1);
+  std::ostringstream output;
+  std::ostringstream errors;
+  isolate.SetOutput(output);
+  {
+    const auto compiled = test::CompileCleanSource(R"(
+const pending = Completer<void>();
+async func background(): Future<void> {
+  try { await pending.future; }
+  finally { print('finally'); }
+}
+async func timed(): Future<void> { await sleep(100000); print('timer'); }
+async func main(): Future<string> {
+  background();
+  timed();
+  await 0;
+  return 'ready';
+}
+)",
+                                                   isolate);
+    ASSERT_TRUE(compiled) << compiled.error();
+    auto& instance = **compiled;
+    const auto main = instance.FindFunction("main");
+    ASSERT_TRUE(main);
+    runtime::ProcessEntry process(isolate, errors);
+    const auto result = test::Execute(instance);
+    ASSERT_TRUE(result.Succeeded());
+    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 3U);
+    const auto type = instance.call_signature(*main).result;
+    EXPECT_EQ(process.Finish(result.value, &instance.layouts().types[*type]), 0);
+    EXPECT_EQ(output.str(), "ready\n");
+    EXPECT_TRUE(errors.str().empty());
+    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+    EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+    EXPECT_EQ(isolate.scheduler().PumpOne(), runtime::FuturePumpStep::Idle);
+  }
+  EXPECT_TRUE(isolate.ReloadBlockers().empty());
+  isolate.heap().FinishCollection();
+  CollectAndExpectNoAsyncState(isolate);
 }
 
 TEST(AsyncLifetimeTest, PendingAggregateAndCallbacksDoNotRootTheirOwnProgram) {

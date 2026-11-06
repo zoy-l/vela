@@ -1,19 +1,26 @@
 #include "runtime/process/process_entry.h"
 
-#include <expected>
+#include <functional>
 #include <ostream>
 #include <string_view>
 #include <utility>
+
+#ifndef _WIN32
+#include <csignal>
+#endif
 
 #include "base/diagnostic.h"
 #include "base/execution_status.h"
 #include "base/process_exit.h"
 #include "base/source_location.h"
 #include "runtime/async/future.h"
+#include "runtime/async/future_operations.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_io.h"
 
 namespace vela::runtime {
 namespace {
@@ -31,31 +38,22 @@ void WriteTrace(std::ostream& output, const FutureDiagnostic& diagnostic) {
 }
 
 void WriteAsyncFailure(std::ostream& output, const Future& future, std::string_view label) {
-  const auto diagnostic = future.error_diagnostic();
+  const auto& diagnostic = future.result().diagnostic;
   output << "vela: " << label;
-  if (diagnostic && !diagnostic->message.empty()) {
-    output << ": " << diagnostic->message;
+  if (!diagnostic.message.empty()) {
+    output << ": " << diagnostic.message;
   }
   output << '\n';
-  if (diagnostic) {
-    WriteTrace(output, *diagnostic);
-  }
+  WriteTrace(output, diagnostic);
 }
 
 }  // namespace
 
-std::expected<int, std::string_view> ProcessExitCode(Value value) noexcept {
-  if (value.IsNull()) {
-    return 0;
-  }
-  if (!value.IsInteger()) {
-    return std::unexpected("main must return an int exit code or void");
-  }
-  const auto code = value.AsInteger();
-  if (code < 0 || code > kMaximumExitCode) {
-    return std::unexpected("main exit code must be in the range 0..255");
-  }
-  return static_cast<int>(code);
+void InitializeProcessOutput() {
+#ifndef _WIN32
+  // 让关闭的输出管道成为可报告的 I/O 失败，而非先由默认信号动作终止进程。
+  std::signal(SIGPIPE, SIG_IGN);
+#endif
 }
 
 void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagnostic) {
@@ -70,52 +68,66 @@ void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagno
   WriteTrace(output, diagnostic);
 }
 
-ProcessEntry::ProcessEntry(Isolate& isolate, std::ostream& errors, ErrorObserver observer)
-    : isolate_(&isolate), errors_(&errors), observer_(std::move(observer)) {
-  isolate_->scheduler().SetUnhandledErrorHandler([this](const Future& future, Value error) {
-    background_failed_ = true;
-    if (observer_) {
-      observer_(future, error);
-    } else {
-      WriteAsyncFailure(*errors_, future, "unhandled Future error");
-    }
-  });
+ProcessEntry::ProcessEntry(Isolate& isolate, std::ostream& errors)
+    : isolate_(&isolate), errors_(&errors), run_(isolate.scheduler()) {
+  previous_error_handler_ =
+      isolate_->scheduler().SetUnhandledErrorHandler([this](const Future& future, Value error) {
+        if (!run_.IsOwnerOf(future)) {
+          if (previous_error_handler_) {
+            previous_error_handler_(future, error);
+          }
+          return;
+        }
+        background_failed_ = true;
+        WriteAsyncFailure(*errors_, future, "unhandled Future error");
+      });
 }
 
 ProcessEntry::~ProcessEntry() {
-  isolate_->scheduler().SetUnhandledErrorHandler({});
+  run_.Close();
+  isolate_->scheduler().SetUnhandledErrorHandler(std::move(previous_error_handler_));
 }
 
-int ProcessEntry::Finish(Value value) {
+int ProcessEntry::Finish(Value value, const TypeConstraint* result_type) {
   auto& scheduler = isolate_->scheduler();
-  const auto* future = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
-  auto root = future != nullptr ? future->Rooted() : Future::Value(value, &scheduler);
-  root.AttachHeap(isolate_->heap());
+  auto root = RootFutureValue(*isolate_, value);
   root.MarkObserved();
-  const auto& control = isolate_->native_control();
-  while (!control.IsStopRequested() &&
-         scheduler.PumpOne(FuturePumpMode::WaitForHost) == FuturePumpStep::Executed) {
+  if (AsFuture(value) != nullptr) {
+    const auto* signature = Heap::TypeOf(value).signature;
+    result_type = signature->result ? &*signature->result : nullptr;
   }
+  auto& control = isolate_->native_control();
+  const std::function<bool()> pending = [&] {
+    if (!root.is_pending()) {
+      return false;
+    }
+    return control.ProcessSafepoint() != ExecutionStatus::ExecutionStopped && root.is_pending();
+  };
+  while (pending()) {
+    static_cast<void>(scheduler.PumpOne(FuturePumpMode::WaitForCompletion, pending));
+  }
+  run_.Close();
   if (control.IsStopRequested()) {
     return 0;
   }
-  if (root.is_pending()) {
-    *errors_ << "vela: async idle/deadlock: main has no pending work\n";
-    return kRuntimeErrorExitCode;
-  }
   if (root.state() == FutureState::Failed) {
     WriteAsyncFailure(*errors_, root, "async main failed");
-    return kRuntimeErrorExitCode;
+    return kProgramFailureExitCode;
   }
   if (background_failed_) {
-    return kRuntimeErrorExitCode;
+    return kProgramFailureExitCode;
   }
-  const auto exit_code = ProcessExitCode(root.result().value);
-  if (!exit_code) {
-    *errors_ << "vela: error: " << exit_code.error() << '\n';
-    return kRuntimeErrorExitCode;
+  auto& output = isolate_->output();
+  if (result_type != nullptr) {
+    WriteValue(output, root.result().value);
+    output << '\n';
   }
-  return *exit_code;
+  output.flush();
+  if (!output) {
+    *errors_ << "vela: error: failed to write program output\n";
+    return kProgramFailureExitCode;
+  }
+  return 0;
 }
 
 }  // namespace vela::runtime

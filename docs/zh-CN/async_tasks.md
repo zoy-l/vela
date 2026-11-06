@@ -88,9 +88,7 @@ Future 有未完成、成功完成、失败完成三种可观察结果，不暴�
 
 async 函数中的 `throw`、运行时错误和 await 传播错误使用 Vela 现有异常对象与源码追踪。若未在函数内部捕获，错误成为该函数 Future 的失败结果。await 失败 Future 会在续延位置重新抛出原异常，因此既有 catch/finally 规则保持一致。异步诊断保留原始抛出位置及 await 边界。
 
-微任务检查点结束时，宿主会收到尚未处理的 Future 错误通知；稍后增加处理器时，宿主可收到相应的已处理通知。`main` 可以返回 `Future<int>`；其失败映射为程序运行失败。后台 Future 的未处理错误作为运行时诊断报告。
-
-CLI 的 `run` 命令会识别零参数的 `async func main(): Future<int>`，启动根 Future，并驱动当前 Isolate 的微任务、timer 和宿主完成事件，直到根 Future 完成或没有任何可推进的工作。成功结果转换为进程退出码；失败结果打印保留源码位置和 await 栈的异步诊断。没有生产者的未完成 Future 不会单独保持进程存活，CLI 会报告 async idle/deadlock。
+微任务检查点结束时，宿主收到尚未处理的 Future 错误通知。入口返回的 `Future<T>` 由主程序驱动自动等待；失败结果作为执行错误报告。入口完成前已经报告的后台 Future 错误也使程序失败。入口完成后不额外执行检查点来寻找后台错误。
 
 挂起的局部值、Future 结果、错误、等待者和排队回调在 GC 中保持可达。续延保留原生程序状态、代码所有权和诊断元数据，借用 Isolate；宿主必须让 Isolate 存活到其原生实例、普通 Future 句柄及活动宿主访问释放之后。原生代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
 
@@ -104,7 +102,14 @@ C++ `Future::Complete` 在所属线程调用时同步检查 Future adoption；�
 
 `FutureScheduler::PumpOne()` 和 `PumpUntil()` 在没有可执行工作或 timer 时返回 idle；`WaitForHost` 模式还会等待已登记的宿主事件源。挂起状态只保存活跃寄存器值，全局槽通过 Future 引用图追踪；不可达的未完成任务及 Future 结果循环仍可回收。REPL 的后续提交共享同一份可增长的全局存储，早先提交的续延能读取和更新当前全局值。
 
-CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没有生产者的未完成 Future 不保持进程存活；若根 Future 仍未完成且没有可推进它的工作，CLI 报告 async idle/deadlock，嵌入式 pump 则返回 idle，供宿主稍后继续。
+CLI 与独立 AOT 程序等待根 main Future，完成后停止本次运行的剩余任务，不排空后台工作。
+驱动在每个执行单元之间检查完成状态，同一批微任务也遵守该边界。当前同步单元正常返回，
+丢弃的挂起任务不会恢复执行 `finally`。非 void 结果按 `print` 规则输出，正常退出码为 0，
+未处理执行错误为 1。详见[程序入口与生命周期](program_lifecycle.md)。
+
+根 Future 未完成时，即使没有登记生产者也继续等待；没有工作时休眠，工作、timer 或显式停止
+请求负责唤醒，不隐式超时或报告死锁。普通嵌入式 pump 仍可返回 idle，由宿主稍后继续。
+关闭主程序作用域只撤销其 timer、回调、等待者和完成端点；普通导出调用不清理共享 Isolate 的任务。
 
 ## 宿主事件与 timer
 
@@ -122,7 +127,7 @@ async 语义贯通 AST、类型检查、Typed IR、优化、原生代码生成�
 
 当 await 直接消费内建 `Future.value(value)`，且载荷静态类型为 `int`、`double`、`bool` 或 `null` 时，lowering 只生成一次载荷求值和原有 await，省去无法观察身份的临时 GC Future 包装。可空的数值或布尔载荷同样适用。保存或传递 Future、等待已有 Future、dynamic 载荷以及失败工厂不采用这一融合。微任务边界、FIFO、异常处理、GC 保根与 JIT 恢复契约保持一致。
 
-必需回归覆盖：首个 await 前的同步副作用、无 await 的完成、已完成 Future 的异步续延、FIFO 通知、多 waiter、Future 采用、Future 组合的成功与失败、timeout、Completer、跨 await 的 catch/finally、所有调用形式、异步 main、未处理错误、挂起期间 GC、宿主线程完成、timer 顺序和 idle/deadlock 边界。
+必需回归覆盖：首个 await 前的同步副作用、无 await 的完成、已完成 Future 的异步续延、FIFO 通知、多 waiter、Future 采用、Future 组合的成功与失败、timeout、Completer、跨 await 的 catch/finally、所有调用形式、异步 main、未处理错误、挂起期间 GC、宿主线程完成、timer 顺序、宿主 idle 结果与主程序完成边界。
 
 Release 基准分别测量无 await 的 async 调用、已完成 Future 的 await、挂起/恢复、并发 Future 数量、挂起状态的 GC 压力和大量 timer。报告同步原生回归、每个挂起执行保留的内存和首次异步分配成本。
 

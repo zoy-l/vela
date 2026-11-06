@@ -46,7 +46,7 @@ SuiteResult Execute(std::string_view source, std::ostream& output, SuiteOptions 
   if (!instance) {
     return {};
   }
-  Suite suite(**instance, std::move(options), output);
+  Suite suite(**instance, std::move(options));
   return suite.Run();
 }
 
@@ -415,7 +415,7 @@ func main(): void {
     auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
     ASSERT_TRUE(instance);
     {
-      Suite suite(**instance, {}, output);
+      Suite suite(**instance, {});
       const auto result = suite.Run();
       ASSERT_EQ(result.tests.size(), 1U);
       EXPECT_EQ(result.tests.front().status, TestStatus::Passed);

@@ -1,0 +1,6 @@
+interface:
+  display_name: "性能优化"
+  short_description: "每次修改先测目标单项基准，确认收益后再执行回归与静态检查"
+  default_prompt: "使用 $optimize-performance 优化指定负载，每次修改后先测单项，有收益再扩大验证。"
+policy:
+  allow_implicit_invocation: true

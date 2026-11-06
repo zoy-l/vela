@@ -59,7 +59,7 @@ func main(): void {
     isolate.SetOutput(output);
     SuiteOptions options;
     options.is_cancelled = [&output] { return output.str().contains("observing\n"); };
-    Suite suite(**instance, std::move(options), output);
+    Suite suite(**instance, std::move(options));
     const auto result = suite.Run();
     ASSERT_EQ(result.tests.size(), 1U);
     EXPECT_EQ(result.tests.front().status, TestStatus::Cancelled);
@@ -83,7 +83,7 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
     ASSERT_TRUE(instance);
-    Suite suite(**instance, {}, output);
+    Suite suite(**instance, {});
     const auto result = suite.Run();
     EXPECT_EQ(result.exit_code, 0) << output.str();
     ASSERT_FALSE(result.tests.empty());

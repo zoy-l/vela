@@ -176,6 +176,42 @@ TEST(FutureTest, TimerCancellationPreservesRemainingInsertionOrderAcrossHeapRepa
   EXPECT_EQ(calls, expected);
 }
 
+TEST(FutureTest, ClosingRunInsideTimerPreservesOuterRunAndStopsPeriodicRescheduling) {
+  FutureScheduler scheduler;
+  FutureRunScope outer(scheduler);
+  FutureRunScope inner(scheduler);
+  int timer_calls = 0;
+  static_cast<void>(scheduler.Periodic(std::chrono::milliseconds(1), [&] {
+    ++timer_calls;
+    inner.Close();
+  }));
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  EXPECT_EQ(timer_calls, 1);
+  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
+  Future next(&scheduler);
+  EXPECT_TRUE(outer.IsOwnerOf(next));
+  int task_calls = 0;
+  scheduler.PostMicrotask([&] { ++task_calls; });
+  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  EXPECT_EQ(task_calls, 1);
+}
+
+TEST(FutureTest, ClosingRunCanRetireAnOutsideEndpointCapturedByAQueuedTask) {
+  FutureScheduler scheduler;
+  auto capture = std::make_shared<int>();
+  const std::weak_ptr<int> released = capture;
+  auto completer = scheduler.CreateHostCompleter();
+  completer.future().ObserveResult([capture = std::move(capture)](const FutureResult&) {});
+  auto endpoint = std::move(completer).Detach();
+  FutureRunScope run(scheduler);
+  scheduler.PostMicrotask([endpoint = std::move(endpoint)] {});
+  run.Close();
+  EXPECT_FALSE(released.expired());
+  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  EXPECT_TRUE(released.expired());
+  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
+}
+
 TEST(FutureTest, CancellationTokenRunsCallbacksOnce) {
   CancellationToken token;
   int calls = 0;

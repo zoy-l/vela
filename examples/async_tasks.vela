@@ -13,6 +13,6 @@ async func main(): Future<int> {
   const deferred: int = await Future.microtask((): int => 8);
   print(deferred); // 8
 
-  // The CLI waits for this Future and uses its result as the process exit code.
+  // The CLI waits for this Future, prints its result and exits successfully.
   return 0;
 }

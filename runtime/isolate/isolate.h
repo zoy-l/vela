@@ -166,7 +166,7 @@ class Isolate final {
   std::ostream* output_ = nullptr;
   TestBridge* test_bridge_ = nullptr;
   Heap heap_;
-  NativeControl native_control_;
+  NativeControl native_control_{scheduler_.wakeup()};
   NativeDispatch native_dispatch_;
 };
 

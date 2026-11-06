@@ -158,9 +158,8 @@ SuiteResult ExecuteSuite(runtime::NativeInstance& instance,
   const auto identity = options.suite;
   const auto file = options.file;
   options.emit = [&reporter](const ReportEvent& event) { reporter.Emit(event); };
-  std::ostringstream diagnostics;
   auto& isolate = instance.isolate();
-  Suite suite(instance, std::move(options), diagnostics);
+  Suite suite(instance, std::move(options));
   ScriptOutput buffer(reporter, suite, identity, file);
   std::ostream captured(&buffer);
   auto& previous = isolate.output();

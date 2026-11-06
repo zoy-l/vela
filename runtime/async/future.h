@@ -35,6 +35,8 @@ class Heap;
 class RootRange;
 class FutureCompletionEndpoint;
 class FutureObservation;
+struct FutureTaskRun;
+class FutureRunScope;
 
 enum class FutureState : std::uint8_t { Pending, Succeeded, Failed };
 enum class FutureCompletionError : std::uint8_t {
@@ -44,7 +46,12 @@ enum class FutureCompletionError : std::uint8_t {
   Closed,
 };
 [[nodiscard]] ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept;
-enum class FuturePumpMode : std::uint8_t { AvailableWork, WaitForHost, ReadyWork };
+enum class FuturePumpMode : std::uint8_t {
+  AvailableWork,
+  WaitForHost,
+  ReadyWork,
+  WaitForCompletion,
+};
 
 class HostEventSource final {
  public:
@@ -163,12 +170,14 @@ class Future final {
   void Retain() noexcept;
   void Unroot() noexcept;
   void ReportUnhandledError() const;
+  void TrackRun(const std::shared_ptr<FutureTaskRun>& run) const;
   explicit Future(std::shared_ptr<SharedState> state, Rooting rooting);
   std::expected<void, FutureCompletionError> RequestCompletion(FutureResult&& result);
   void Publish(FutureResult result);
   void NotifyObserver(std::function<void(const FutureResult&)> callback,
                       std::shared_ptr<std::vector<::vela::runtime::Value>> references,
-                      std::optional<ExecutionContext> context) const;
+                      std::optional<ExecutionContext> context,
+                      std::shared_ptr<FutureTaskRun> run) const;
   [[nodiscard]] std::expected<void, FutureCompletionError> CheckAdoption(
       const Future& source) const;
   void Follow(const Future& source);
@@ -177,9 +186,38 @@ class Future final {
   friend class FutureScheduler;
   friend class FutureCompletionEndpoint;
   friend class FutureObservation;
+  friend struct FutureTaskRun;
+  friend class FutureRunScope;
   [[nodiscard]] Heap& heap() const noexcept;
   std::shared_ptr<SharedState> state_;
   Rooting rooting_ = Rooting::External;
+};
+
+// 一次主程序的任务归属；关闭后只释放捕获资源，不恢复脚本续延。
+struct FutureTaskRun final {
+ private:
+  friend class Future;
+  friend class FutureScheduler;
+  friend class FutureRunScope;
+  bool closed = false;
+  absl::flat_hash_map<Future::SharedState*, std::weak_ptr<Future::SharedState>> futures;
+};
+
+class FutureRunScope final {
+ public:
+  explicit FutureRunScope(FutureScheduler& scheduler);
+  ~FutureRunScope();
+  FutureRunScope(const FutureRunScope&) = delete;
+  FutureRunScope& operator=(const FutureRunScope&) = delete;
+  FutureRunScope(FutureRunScope&&) = delete;
+  FutureRunScope& operator=(FutureRunScope&&) = delete;
+  void Close();
+  [[nodiscard]] bool IsOwnerOf(const Future& future) const noexcept;
+
+ private:
+  FutureScheduler* scheduler_;
+  std::shared_ptr<FutureTaskRun> previous_;
+  std::shared_ptr<FutureTaskRun> run_;
 };
 
 // 所属线程上的作用域观察能力；取消、完成和关闭均释放回调及源 Future 的临时根。
@@ -277,6 +315,7 @@ class Timer final {
     std::function<void()> callback;
     FutureScheduler* scheduler = nullptr;
     std::optional<ExecutionContext> context;
+    std::shared_ptr<FutureTaskRun> run;
     // 仅所属线程读写；取消在该线程按索引直接移除尚未触发的事件。
     std::size_t event_index = kNotQueued;
   };
@@ -307,12 +346,13 @@ class FutureScheduler final {
   [[nodiscard]] std::uint64_t NewErrorIdentity() noexcept {
     return next_error_identity_.fetch_add(1, std::memory_order_relaxed);
   }
-  void SetUnhandledErrorHandler(ErrorCallback callback);
+  ErrorCallback SetUnhandledErrorHandler(ErrorCallback callback);
   [[nodiscard]] Completer CreateHostCompleter();
   [[nodiscard]] Timer After(std::chrono::milliseconds delay, std::function<void()> callback);
   [[nodiscard]] Timer Periodic(std::chrono::milliseconds interval, std::function<void()> callback);
-  // 执行一个宿主事件及其产生的全部微任务；Idle 表示当前没有可推进的工作。
-  [[nodiscard]] FuturePumpStep PumpOne(FuturePumpMode mode = FuturePumpMode::AvailableWork);
+  // 默认排空本轮微任务；pending 在每个执行单元之间限定调用者的完成边界。
+  [[nodiscard]] FuturePumpStep PumpOne(FuturePumpMode mode = FuturePumpMode::AvailableWork,
+                                       const std::function<bool()>& pending = {});
   [[nodiscard]] FuturePumpResult PumpUntil(Future& root,
                                            FuturePumpMode mode = FuturePumpMode::AvailableWork);
   [[nodiscard]] bool IsOwnerThread() const noexcept;
@@ -323,6 +363,7 @@ class FutureScheduler final {
   [[nodiscard]] std::size_t saved_state_bytes() const noexcept { return saved_state_bytes_; }
   [[nodiscard]] ExternalResources& external_resources() noexcept { return external_resources_; }
   void AppendExternalResources(std::vector<ExternalResourceInfo>& result) const;
+  [[nodiscard]] std::weak_ptr<std::counting_semaphore<>> wakeup() const noexcept { return wakeup_; }
 
  private:
   friend class Future;
@@ -330,6 +371,11 @@ class FutureScheduler final {
   friend class HostEventSource;
   friend class FutureCompletionEndpoint;
   friend class FutureObservation;
+  friend class FutureRunScope;
+  void CloseRun(FutureTaskRun& run);
+  static void CloseRunFutures(FutureTaskRun& run);
+  void CloseRunObservations(const FutureTaskRun& run);
+  void CloseRunEndpoints(const FutureTaskRun& run);
   void CloseObservations();
   absl::flat_hash_set<FutureObservation::State*> observations_;
   ExternalResources external_resources_;
@@ -351,11 +397,11 @@ class FutureScheduler final {
     }
   };
 
-  void DrainMicrotasks();
+  void DrainMicrotasks(const std::function<bool()>& pending);
   [[nodiscard]] Timer ScheduleTimer(std::chrono::milliseconds delay,
                                     std::chrono::milliseconds interval,
                                     std::function<void()> callback);
-  void Fire(Event event);
+  void Fire(Event event, const std::function<bool()>& pending);
   void PushEvent(Event event);
   [[nodiscard]] Event RemoveEvent(std::size_t index);
   void ReorderEvent(std::size_t index) noexcept;
@@ -364,27 +410,33 @@ class FutureScheduler final {
   // 生产者只发布不可变消息；消费者独占本地队列与 Future/GC 状态。
   struct Message final {
     Message* next = nullptr;
+    std::shared_ptr<FutureTaskRun> run;
     absl::AnyInvocable<void()> action;
   };
   static_assert(std::atomic<Message*>::is_always_lock_free);
   void ReceiveMessages();
+  void PostInRun(absl::AnyInvocable<void()> task, std::shared_ptr<FutureTaskRun> run);
   std::atomic<Message*> incoming_{nullptr};
-  std::deque<absl::AnyInvocable<void()>> host_events_;
-  std::counting_semaphore<> wakeup_{0};
+  struct Task final {
+    std::optional<ExecutionContext> context;
+    std::shared_ptr<FutureTaskRun> run;
+    absl::AnyInvocable<void()> action;
+  };
+  void ExecuteTask(Task task);
+  std::deque<Task> host_events_;
+  std::shared_ptr<std::counting_semaphore<>> wakeup_ =
+      std::make_shared<std::counting_semaphore<>>(0);
   std::atomic_size_t host_sources_{0};
   std::size_t suspended_frames_ = 0;
   std::size_t saved_state_bytes_ = 0;
-  struct Microtask final {
-    std::optional<ExecutionContext> context;
-    absl::AnyInvocable<void()> action;
-  };
-  std::deque<Microtask> microtasks_;
-  std::deque<absl::AnyInvocable<void()>> checkpoints_;
+  std::deque<Task> microtasks_;
+  std::deque<Task> checkpoints_;
   std::vector<Event> events_;
   std::uint64_t next_sequence_ = 0;
   ErrorCallback unhandled_error_handler_;
   const std::thread::id owner_ = std::this_thread::get_id();
   std::optional<ExecutionContext> context_;
+  std::shared_ptr<FutureTaskRun> run_;
   std::atomic_uint64_t next_error_identity_{1};
 };
 

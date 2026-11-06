@@ -9,6 +9,8 @@
 #include <string>
 #include <utility>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/utf8.h"
 #include "runtime/heap/heap.h"
 #include "runtime/value/value.h"
@@ -17,7 +19,10 @@ namespace vela::runtime {
 
 struct FutureCompletionEndpoint::State final {
   State(FutureScheduler& owner, std::uint64_t completion_identity, Completer target)
-      : scheduler(&owner), identity(completion_identity), completer(std::move(target)) {}
+      : scheduler(&owner),
+        identity(completion_identity),
+        completer(std::move(target)),
+        run(owner.run_) {}
 
   std::expected<void, FutureCompletionError> CheckRequest() const {
     if (completed) {
@@ -32,14 +37,16 @@ struct FutureCompletionEndpoint::State final {
   void Retire() const {
     auto* owner = scheduler;
     const auto completion_identity = identity;
-    owner->PostMicrotask(
-        [owner, completion_identity] { owner->RetireCompletionEndpoint(completion_identity); });
+    owner->PostInRun(
+        [owner, completion_identity] { owner->RetireCompletionEndpoint(completion_identity); },
+        run);
   }
 
   std::mutex mutex;
   FutureScheduler* scheduler;
   std::uint64_t identity;
   std::optional<Completer> completer;
+  std::shared_ptr<FutureTaskRun> run;
   bool completed = false;
 };
 
@@ -83,6 +90,17 @@ void FutureCompletionEndpoint::Close(State& state, CloseReason reason) {
   }
 }
 
+void FutureScheduler::CloseRunEndpoints(const FutureTaskRun& run) {
+  absl::erase_if(completion_endpoints_, [&run](const auto& entry) {
+    auto& state = *entry.second;
+    if (state.run.get() != &run) {
+      return false;
+    }
+    FutureCompletionEndpoint::Close(state, FutureCompletionEndpoint::CloseReason::Shutdown);
+    return true;
+  });
+}
+
 std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Complete(Value value) const {
   return Settle({.state = FutureState::Succeeded, .value = value, .diagnostic = {}});
 }
@@ -104,26 +122,28 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteTex
   }
   auto* scheduler = state->scheduler;
   state->completed = true;
-  scheduler->PostMicrotask([state, text = std::move(text)] {
-    const std::scoped_lock completion_lock(state->mutex);
-    if (state->scheduler == nullptr) {
-      return;
-    }
-    auto& completer = *state->completer;
-    auto status = ExecutionStatus::TypeError;
-    if (!InvalidUtf8Offset(text)) {
-      auto* string = completer.future().heap().AllocateString(text);
-      if (string != nullptr) {
-        std::ignore = completer.Complete(Value::String(string));
+  scheduler->PostInRun(
+      [state, text = std::move(text)] {
+        const std::scoped_lock completion_lock(state->mutex);
+        if (state->scheduler == nullptr) {
+          return;
+        }
+        auto& completer = *state->completer;
+        auto status = ExecutionStatus::TypeError;
+        if (!InvalidUtf8Offset(text)) {
+          auto* string = completer.future().heap().AllocateString(text);
+          if (string != nullptr) {
+            std::ignore = completer.Complete(Value::String(string));
+            state->Retire();
+            return;
+          }
+          status = ExecutionStatus::OutOfMemory;
+        }
+        std::ignore = completer.CompleteError(
+            Value::Null(), {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
         state->Retire();
-        return;
-      }
-      status = ExecutionStatus::OutOfMemory;
-    }
-    std::ignore = completer.CompleteError(
-        Value::Null(), {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
-    state->Retire();
-  });
+      },
+      state->run);
   return {};
 }
 

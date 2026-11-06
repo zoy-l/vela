@@ -9,7 +9,6 @@
 #include <expected>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <ranges>
 #include <sstream>
 #include <string>
@@ -152,13 +151,10 @@ constexpr std::size_t kTearDownAll = 3;
 
 }  // namespace
 
-Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options, std::ostream& diagnostics)
-    : isolate_(&instance.isolate()),
-      instance_(&instance),
-      options_(std::move(options)),
-      process_(*isolate_, diagnostics, [this](const auto& future, auto value) {
-        Unhandled(future, value);
-      }) {
+Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options)
+    : isolate_(&instance.isolate()), instance_(&instance), options_(std::move(options)) {
+  previous_error_handler_ = isolate_->scheduler().SetUnhandledErrorHandler(
+      [this](const auto& future, auto value) { Unhandled(future, value); });
   assert(isolate_->test_bridge() == nullptr);
   isolate_->SetTestBridge(this);
   scopes_.emplace(0, &root_);
@@ -172,6 +168,7 @@ Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options, std::ostre
 
 Suite::~Suite() {
   isolate_->scheduler().Shutdown();
+  isolate_->scheduler().SetUnhandledErrorHandler(std::move(previous_error_handler_));
   isolate_->SetTestBridge(nullptr);
 }
 

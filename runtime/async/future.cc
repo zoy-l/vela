@@ -39,7 +39,13 @@ ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept {
 
 struct Future::SharedState final {
   SharedState() = default;
-  ~SharedState() = default;
+  ~SharedState() {
+    for (const auto& weak : runs) {
+      if (const auto owner = weak.lock()) {
+        owner->futures.erase(this);
+      }
+    }
+  }
   SharedState(const SharedState&) = delete;
   SharedState& operator=(const SharedState&) = delete;
   SharedState(SharedState&&) = delete;
@@ -48,6 +54,7 @@ struct Future::SharedState final {
     std::function<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
     std::optional<ExecutionContext> context;
+    std::shared_ptr<FutureTaskRun> run;
     std::weak_ptr<FutureObservation::State> subscription;
   };
   void CancelWaiter(std::size_t index);
@@ -61,13 +68,16 @@ struct Future::SharedState final {
   std::size_t cancelled_waiters = 0;
   FutureScheduler* scheduler = nullptr;
   std::optional<ExecutionContext> creation_context;
+  std::shared_ptr<FutureTaskRun> run;
+  std::vector<std::weak_ptr<FutureTaskRun>> runs;
   Heap* heap = nullptr;
   Root root{*this};
   std::shared_ptr<std::vector<::vela::runtime::Value>> retained;
   std::weak_ptr<SharedState> adopted;
 };
 
-struct FutureObservation::State final {
+struct FutureObservation::State final
+    : public std::enable_shared_from_this<FutureObservation::State> {
   State(Future source,
         FutureScheduler& owner,
         absl::AnyInvocable<void(const FutureResult&)> action,
@@ -76,6 +86,7 @@ struct FutureObservation::State final {
         scheduler(&owner),
         callback(std::move(action)),
         context(owner.context()),
+        run(owner.run_),
         memory(std::move(reservation)) {}
 
   void Cancel() noexcept {
@@ -109,6 +120,7 @@ struct FutureObservation::State final {
   std::optional<std::size_t> waiter_index;
   absl::AnyInvocable<void(const FutureResult&)> callback;
   std::optional<ExecutionContext> context;
+  std::shared_ptr<FutureTaskRun> run;
   HostMemory memory;
 };
 
@@ -158,6 +170,55 @@ void FutureScheduler::CloseObservations() {
   }
 }
 
+void FutureScheduler::CloseRunObservations(const FutureTaskRun& run) {
+  std::vector<std::shared_ptr<FutureObservation::State>> retired;
+  for (auto* observation : observations_) {
+    if (observation->run.get() == &run) {
+      retired.push_back(observation->shared_from_this());
+    }
+  }
+  for (const auto& observation : retired) {
+    observation->Cancel();
+  }
+}
+
+void FutureScheduler::CloseRunFutures(FutureTaskRun& run) {
+  auto futures = std::move(run.futures);
+  for (const auto& [identity, weak] : futures) {
+    const auto state = weak.lock();
+    if (state == nullptr) {
+      continue;
+    }
+    // 先移交被撤销回调，再压缩索引；捕获对象的析构可能取消同一个 Future 的其它观察。
+    std::vector<Future::SharedState::Waiter> retired;
+    std::erase_if(state->waiters, [&run, &retired](Future::SharedState::Waiter& waiter) {
+      if (waiter.run.get() == &run || (!waiter.callback && waiter.subscription.expired())) {
+        retired.push_back(std::move(waiter));
+        return true;
+      }
+      return false;
+    });
+    state->cancelled_waiters = 0;
+    for (std::size_t index = 0; index < state->waiters.size(); ++index) {
+      if (const auto observation = state->waiters[index].subscription.lock()) {
+        observation->waiter_index = index;
+      }
+    }
+    if (state->run.get() == &run) {
+      state->retained.reset();
+      state->adopted.reset();
+    }
+    std::erase_if(state->runs, [&run](const auto& weak_run) {
+      const auto owner = weak_run.lock();
+      return owner == nullptr || owner.get() == &run;
+    });
+  }
+}
+
+bool FutureRunScope::IsOwnerOf(const Future& future) const noexcept {
+  return future.state_->run == run_;
+}
+
 // 微任务独占监听器：回调、稳定根及结果句柄共用一次分配，取消排队也能立即释放根。
 struct Future::Observer final {
   Observer(Future source,
@@ -190,6 +251,8 @@ Future::Future(FutureScheduler* scheduler)
   state_->scheduler = scheduler;
   if (scheduler != nullptr) {
     state_->creation_context = scheduler->context();
+    state_->run = scheduler->run_;
+    TrackRun(state_->run);
     state_->external.Attach(scheduler->external_resources(), ExternalResourceKind::Future);
   }
   Retain();
@@ -218,7 +281,7 @@ void Future::Release() noexcept {
   Unroot();
   state_.reset();
   if (host_thread) {
-    scheduler->wakeup_.release();
+    scheduler->wakeup_->release();
     scheduler->host_accesses_.fetch_sub(1, std::memory_order_release);
   }
 }
@@ -272,6 +335,12 @@ Future Future::Rooted() const {
 
 Future Future::Retained() const {
   return Future(state_, Rooting::Retained);
+}
+
+void Future::TrackRun(const std::shared_ptr<FutureTaskRun>& run) const {
+  if (run != nullptr && run->futures.try_emplace(state_.get(), state_).second) {
+    state_->runs.emplace_back(run);
+  }
 }
 
 void Future::KeepAlive(std::shared_ptr<std::vector<::vela::runtime::Value>> references) {
@@ -365,6 +434,8 @@ std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, He
   const auto newly_bound = state_->scheduler == nullptr;
   if (newly_bound) {
     state_->creation_context = scheduler.context();
+    state_->run = scheduler.run_;
+    TrackRun(state_->run);
     state_->external.Attach(scheduler.external_resources(), ExternalResourceKind::Future);
   }
   state_->scheduler = &scheduler;
@@ -376,7 +447,11 @@ std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, He
   if (newly_bound && state_->completion.state == FutureState::Failed &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {
     const auto self = Retained();
-    scheduler.checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
+    scheduler.checkpoints_.push_back({
+        .context = state_->creation_context,
+        .run = state_->run,
+        .action = [self] { self.ReportUnhandledError(); },
+    });
   }
   return {};
 }
@@ -434,17 +509,25 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
     heap->WriteRootBarrier(*references);
   }
   const auto context = state_->scheduler != nullptr ? state_->scheduler->context() : std::nullopt;
+  const auto run = state_->scheduler != nullptr ? state_->scheduler->run_ : nullptr;
+  if (run != nullptr) {
+    if (run->closed) {
+      return;
+    }
+    TrackRun(run);
+  }
   MarkObserved();
   if (state_->completion.state == FutureState::Pending) {
     state_->waiters.push_back({
         .callback = std::move(callback),
         .references = std::move(references),
         .context = context,
+        .run = run,
         .subscription = {},
     });
     return;
   }
-  NotifyObserver(std::move(callback), std::move(references), context);
+  NotifyObserver(std::move(callback), std::move(references), context, run);
 }
 
 std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
@@ -457,6 +540,7 @@ std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
   }
   auto observation = std::make_shared<FutureObservation::State>(
       Retained(), scheduler, std::move(callback), std::move(memory));
+  TrackRun(scheduler.run_);
   scheduler.observations_.insert(observation.get());
   MarkObserved();
   if (state_->completion.state == FutureState::Pending) {
@@ -465,11 +549,13 @@ std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
         .callback = {},
         .references = {},
         .context = {},
+        .run = scheduler.run_,
         .subscription = observation,
     });
   } else {
     scheduler.microtasks_.push_back({
         .context = observation->context,
+        .run = observation->run,
         .action = [observation] { observation->Invoke(); },
     });
   }
@@ -478,12 +564,17 @@ std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
 
 void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
                             std::shared_ptr<std::vector<::vela::runtime::Value>> references,
-                            std::optional<ExecutionContext> context) const {
+                            std::optional<ExecutionContext> context,
+                            std::shared_ptr<FutureTaskRun> run) const {
+  if (run != nullptr && run->closed) {
+    return;
+  }
   auto observer =
       std::make_unique<Observer>(Retained(), std::move(callback), std::move(references));
   if (state_->scheduler != nullptr) {
     state_->scheduler->microtasks_.push_back({
         .context = context,
+        .run = std::move(run),
         .action = [observer = std::move(observer)] { observer->Invoke(); },
     });
   } else {
@@ -540,10 +631,11 @@ std::expected<void, FutureCompletionError> Future::RequestCompletion(FutureResul
   }
   if (state_->scheduler != nullptr && !state_->scheduler->IsOwnerThread()) {
     Future self(state_, Rooting::Retained);
-    state_->scheduler->PostMicrotask(
+    state_->scheduler->PostInRun(
         [self = std::move(self), result = std::move(result)]() mutable {
           self.Publish(std::move(result));
-        });
+        },
+        state_->run);
     return {};
   }
   Publish(std::move(result));
@@ -589,17 +681,23 @@ void Future::Publish(FutureResult result) {
       if (observation->future) {
         state_->scheduler->microtasks_.push_back({
             .context = observation->context,
+            .run = observation->run,
             .action = [observation] { observation->Invoke(); },
         });
       }
     } else if (waiter.callback) {
-      NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context);
+      NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context,
+                     std::move(waiter.run));
     }
   }
   if (state_->scheduler != nullptr &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {
     const auto self = Retained();
-    state_->scheduler->checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
+    state_->scheduler->checkpoints_.push_back({
+        .context = state_->creation_context,
+        .run = state_->run,
+        .action = [self] { self.ReportUnhandledError(); },
+    });
   }
 }
 

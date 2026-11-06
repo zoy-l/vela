@@ -88,7 +88,7 @@ A Future has three observable outcomes: pending, completed with a value, or comp
 
 Throws, runtime errors, and await propagation in async functions use Vela's existing exception objects and source traces. An error not caught in the function becomes its Future's failed result. Awaiting a failed Future rethrows the original exception at the continuation, preserving existing catch/finally behavior. Async diagnostics retain the original throw location and await boundaries.
 
-At the end of a microtask checkpoint, the host is notified about unhandled Future errors; if a handler is attached later, the host may receive a handled notification. `main` may return `Future<int>`; its failure becomes the program's execution failure. Unhandled errors from background Futures are reported as runtime diagnostics.
+At the end of a microtask checkpoint, the host is notified about unhandled Future errors. A returned `Future<T>` is awaited by the program entry driver; its failure becomes an execution error. Background Future errors reported before entry completion also fail the program. Completion does not execute additional checkpoints to discover later background errors.
 
 Suspended locals, Future results, errors, waiters, and queued callbacks remain reachable to the GC. Continuations retain native program state, code ownership and diagnostic metadata and borrow their Isolate. The host must keep the Isolate alive until its native instances, ordinary Future handles and active host accesses are released. Native code runs only on the owning Isolate thread; external threads post completion messages for that thread to apply to Futures.
 
@@ -102,7 +102,9 @@ For C++ `Future::Complete`, an owner-thread call checks Future adoption synchron
 
 `FutureScheduler::PumpOne()` and `PumpUntil()` return idle when no immediately available work or timer can advance execution. Their `WaitForHost` mode also waits for registered native event sources. Suspensions retain live register values and trace global slots through the Future graph; unreachable pending tasks and cycles involving Future results remain collectible. REPL submissions share the same growing global storage, so continuations from earlier submissions observe and update current globals.
 
-The CLI waits for the root main Future and all live host event sources. A pending Future with no producer does not keep the process alive; if the root Future remains pending with no work that can advance it, the CLI reports async idle/deadlock. An embedding pump returns idle so the host may resume it later.
+The CLI and standalone AOT driver wait for the root main Future, then stop the run's remaining tasks without draining background work. Completion is checked between execution units, including within one microtask batch. The current synchronous unit returns normally; discarded suspended tasks do not resume their `finally` blocks. Non-void results use `print` formatting, successful execution exits 0, and unhandled execution errors exit 1. See [program entry and lifetime](../zh-CN/program_lifecycle.md).
+
+A pending root continues waiting even without a registered producer. The driver sleeps until work, a timer or an explicit stop wakes it; there is no implicit timeout or deadlock failure. An ordinary embedding pump may still return idle for its host to resume later. Closing a program run cancels only its timers, callbacks, waiters and completion endpoints; ordinary exported calls do not close the shared Isolate's tasks.
 
 ## Host Events and Timers
 
@@ -120,7 +122,7 @@ Async semantics flow through the AST, type checker, Typed IR, optimizer, native 
 
 When await directly consumes the built-in `Future.value(value)` with a statically known `int`, `double`, `bool`, or `null` payload, lowering evaluates the payload once and emits the original await without an unobservable temporary GC Future wrapper. Nullable numeric and boolean payloads are also eligible. Stored or passed Futures, existing Future inputs, dynamic payloads, and error factories retain their ordinary construction. Microtask boundaries, FIFO order, exception handling, GC roots, and JIT recovery follow the same contracts.
 
-Required regressions cover synchronous effects before the first await, completion without await, asynchronous continuation of an already-complete Future, FIFO notification, multiple waiters, Future adoption, Future composition success and failure, timeout, Completer, catch/finally across await, all call forms, async main, unhandled errors, GC during suspension, host-thread completion, timer ordering, and idle/deadlock boundaries.
+Required regressions cover synchronous effects before the first await, completion without await, asynchronous continuation of an already-complete Future, FIFO notification, multiple waiters, Future adoption, Future composition success and failure, timeout, Completer, catch/finally across await, all call forms, async main, unhandled errors, GC during suspension, host-thread completion, timer ordering, host idle results, and the program completion boundary.
 
 Release benchmarks separately measure async calls without await, awaiting a completed Future, suspend/resume, concurrent Future count, GC pressure from suspended state, and timer scale. Report synchronous native regression, retained memory per suspended execution, and first async allocation cost.
 

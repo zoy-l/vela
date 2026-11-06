@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <iosfwd>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,8 +26,8 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_instance.h"
-#include "runtime/process/process_entry.h"
 #include "runtime/testing/test_bridge.h"
+#include "runtime/value/value.h"
 #include "vela/types.h"
 
 namespace vela::testing {
@@ -48,7 +47,7 @@ struct SuiteOptions final {
 // 原生实例由执行线程拥有，生命周期覆盖 Suite；报告只保留已复制的数据。
 class Suite final : public runtime::TestBridge {
  public:
-  Suite(runtime::NativeInstance& instance, SuiteOptions options, std::ostream& diagnostics);
+  Suite(runtime::NativeInstance& instance, SuiteOptions options);
   ~Suite() override;
   Suite(const Suite&) = delete;
   Suite& operator=(const Suite&) = delete;
@@ -204,7 +203,7 @@ class Suite final : public runtime::TestBridge {
   absl::flat_hash_map<const runtime::NominalType*, MockFailureKind> mock_failures_;
   std::vector<std::optional<runtime::ExecutionContext>> callback_contexts_;
   SuiteResult result_;
-  runtime::ProcessEntry process_;
+  runtime::FutureScheduler::ErrorCallback previous_error_handler_;
 };
 
 }  // namespace vela::testing

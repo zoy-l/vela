@@ -59,8 +59,10 @@ Async completion errors use `FutureAlreadyCompleted` for a second completion req
 and `FutureSelfAdoption` for a direct or indirect adoption cycle. `TimeoutException`
 is an independent throwable class whose default code is `Timeout`. An external
 `Future<T>` completing with an incompatible value or a non-throwable error produces
-`TypeError`. `AsyncIdle` is a host execution status when the root Future has no
+`TypeError`. `AsyncIdle` is an embedding/test execution status when a Future has no
 producer that can advance it; it is not an exception injected into the pending task.
+The standalone program driver keeps waiting for its root and does not treat idle
+as failure.
 See [async contracts](async_tasks.md) for propagation and scheduling.
 
 Finally executes on normal completion, return, break, continue, and exception

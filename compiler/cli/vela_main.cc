@@ -47,6 +47,7 @@
 namespace {
 
 using vela::kIoErrorExitCode;
+using vela::kProgramFailureExitCode;
 using vela::kRuntimeErrorExitCode;
 using vela::kSourceErrorExitCode;
 using vela::kUsageExitCode;
@@ -131,7 +132,7 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
   auto instance = vela::runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   if (!instance) {
     std::cerr << "vela: " << instance.error().message << '\n';
-    return kSourceErrorExitCode;
+    return kProgramFailureExitCode;
   }
   auto& program = **instance;
   const auto main = program.FindFunction("main");
@@ -139,6 +140,7 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
     std::cerr << "vela: run requires a zero-argument main function\n";
     return kSourceErrorExitCode;
   }
+  vela::runtime::InitializeProcessOutput();
   if (mode == ExecutionMode::Debug) {
     return vela::tooling::RunDebugConsole(program, *main, std::cin, std::cerr);
   }
@@ -162,9 +164,10 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
                                                          .status = result.status,
                                                          .origin = result.origin,
                                                      });
-    return kRuntimeErrorExitCode;
+    return kProgramFailureExitCode;
   }
-  return process.Finish(result.value);
+  const auto type = program.call_signature(*main).result;
+  return process.Finish(result.value, type ? &program.layouts().types[*type] : nullptr);
 }
 
 enum class FormatMode : std::uint8_t { Output, Write, Check };

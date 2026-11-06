@@ -605,9 +605,10 @@ int RunDebugConsole(runtime::NativeInstance& instance,
   control.SetDebugger(&debugger);
   runtime::ProcessEntry process(instance.isolate(), output);
   const auto result = runtime::ExecuteNativeFunction(instance, function);
-  int code = kRuntimeErrorExitCode;
+  int code = kProgramFailureExitCode;
   if (result.Succeeded()) {
-    code = process.Finish(result.value);
+    const auto type = instance.call_signature(function).result;
+    code = process.Finish(result.value, type ? &instance.layouts().types[*type] : nullptr);
   } else if (result.status != ExecutionStatus::ExecutionStopped) {
     runtime::WriteRuntimeDiagnostic(output, {
                                                 .message = result.message,

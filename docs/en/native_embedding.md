@@ -129,8 +129,12 @@ Internal callers use the fallible `runtime::HostRoot::Create(isolate, value)`
 before allocating or collecting. Public hosts should use typed entries to receive
 rooted success values and error payloads through the same boundary.
 
-Command-line applications use `ProcessEntry` to apply exit-code rules and drain
-background work; an embedded host controls its own event loop.
+Command-line applications use `ProcessEntry` to wait for the root result, display
+it and close that run's background tasks. A pending root waits until completion
+or explicit stop, even without a producer. Ordinary embedded calls return typed
+results without printing, exiting the host or clearing other tasks. An embedded
+host controls its own event loop and chooses whether to wait for returned Futures.
+See [program entry and lifetime](../zh-CN/program_lifecycle.md).
 
 Public `Local<Future<T>>` values provide `Read(scope)` and
 `Wait(scope, WaitMode::WaitForHost)`. `CreateCompletion<T>(scope)` returns a Future
