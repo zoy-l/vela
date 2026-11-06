@@ -33,7 +33,7 @@ NativeResult internal::BoxNativeArgument(NativeExecution& execution,
   const auto boxed =
       BoxDynamicValue(execution.isolate().heap(), value, instance.layouts().types[index]);
   if (!boxed) {
-    return std::unexpected(vela::Error{.status = boxed.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(vela::Error::FromStatus(boxed.error()));
   }
   return *boxed;
 }

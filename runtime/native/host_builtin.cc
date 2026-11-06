@@ -57,25 +57,24 @@ Result<void> UnicodeArray(HandleScope& scope,
   auto& heap = isolate.heap();
   const auto type = OutputArrayType(isolate, builtin);
   if (!type) {
-    return std::unexpected(Error{.status = type.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(type.error()));
   }
   const runtime::RootRange type_root(heap, std::span(&*type, 1));
   const auto length = runtime::ExecuteBuiltin(
       builtin == Builtin::StringCodePoints ? Builtin::StringLength : Builtin::StringGraphemeLength,
       std::span(&text, 1), heap);
   if (!length) {
-    return std::unexpected(Error{.status = length.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(length.error()));
   }
   auto* array = heap.AllocateArray(*type->array, static_cast<std::size_t>(length->AsInteger()));
   if (array == nullptr) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   // 字素填充会分配字符串；先把目标数组交给调用者已登记的结果根。
   StoreHostResult(heap, output, runtime::Value::Object(array));
   const auto filled = runtime::ExecuteBuiltin(builtin, std::array{text, output}, heap);
   if (!filled) {
-    return std::unexpected(Error{.status = filled.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(filled.error()));
   }
   return {};
 }
@@ -98,7 +97,7 @@ Result<void> ExecuteHostBuiltin(HandleScope& scope,
     if (HasRegExpArrayLayout(builtin)) {
       const auto type = OutputArrayType(isolate, builtin);
       if (!type) {
-        return std::unexpected(Error{.status = type.error(), .message = {}, .stack_trace = {}});
+        return std::unexpected(Error::FromStatus(type.error()));
       }
       contract = *type;
       type_root.emplace(heap, std::span(&contract, 1));
@@ -118,7 +117,7 @@ Result<void> ExecuteHostBuiltin(HandleScope& scope,
   const auto result = IsByteBuiltin(builtin) ? runtime::ExecuteByteBuiltin(builtin, arguments, heap)
                                              : runtime::ExecuteBuiltin(builtin, arguments, heap);
   if (!result) {
-    return std::unexpected(Error{.status = result.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(result.error()));
   }
   StoreHostResult(heap, output, *result);
   return {};

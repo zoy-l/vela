@@ -43,7 +43,7 @@ struct HandleAccess final {
   [[nodiscard]] static Result<Local<T>> Root(HandleScope& scope, runtime::Value value) noexcept {
     const auto stored = scope.Store(value);
     if (!stored) {
-      return std::unexpected(Error{.status = stored.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(stored.error()));
     }
     return Local<T>(scope, **stored);
   }

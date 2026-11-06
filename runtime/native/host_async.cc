@@ -26,12 +26,11 @@ Result<void> PublishFuture(HandleScope& scope,
                            runtime::TypeConstraint type,
                            runtime::Value& output) {
   if (object == nullptr) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   const auto bound = runtime::Heap::BindRuntimeType(*object, type);
   if (!bound) {
-    return std::unexpected(Error{.status = bound.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(bound.error()));
   }
   StoreHostResult(scope.isolate().heap(), output, runtime::Value::Object(object));
   return {};
@@ -45,11 +44,7 @@ runtime::FutureState HostFutureState(runtime::Value future) noexcept {
 
 Result<void> CompletionResult(std::expected<void, runtime::FutureCompletionError> result) {
   if (!result) {
-    return std::unexpected(Error{
-        .status = runtime::FutureCompletionStatus(result.error()),
-        .message = {},
-        .stack_trace = {},
-    });
+    return std::unexpected(Error::FromStatus(runtime::FutureCompletionStatus(result.error())));
   }
   return {};
 }
@@ -70,7 +65,7 @@ Result<runtime::FutureCompletionEndpoint> CreateHostCompletion(HandleScope& scop
   auto completer = isolate.scheduler().CreateHostCompleter();
   auto raw = runtime::AllocatedValue(heap.AllocateFuture(completer.future()));
   if (!raw) {
-    return std::unexpected(Error{.status = raw.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(raw.error()));
   }
   // 源 Future 和接收端在同一托管图内；完成校验不以外部 Persistent 保活自身。
   const runtime::RootRange source_root(heap, &*raw, 1, std::nullopt);
@@ -83,7 +78,7 @@ Result<runtime::FutureCompletionEndpoint> CreateHostCompletion(HandleScope& scop
           .origin = {},
       });
   if (!checked) {
-    return std::unexpected(Error{.status = checked.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(checked.error()));
   }
   StoreHostResult(heap, output, *checked);
   return std::move(completer).Detach();
@@ -99,8 +94,7 @@ Result<void> ReadHostCompletion(HandleScope& scope,
                                 const runtime::FutureResult& result,
                                 runtime::Value& output) {
   if (result.state == runtime::FutureState::Pending) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::AsyncIdle, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::AsyncIdle));
   }
   if (result.state == runtime::FutureState::Failed) {
     return std::unexpected(CaptureHostError(scope.isolate(), result.diagnostic.status, result.value,
@@ -121,8 +115,7 @@ Result<void> WaitHostFuture(HandleScope& scope,
                                                   : runtime::FuturePumpMode::AvailableWork;
   std::ignore = isolate.scheduler().PumpUntil(source, pump);
   if (isolate.native_control().IsStopRequested()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::ExecutionStopped, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::ExecutionStopped));
   }
   return ReadHostCompletion(scope, source.result(), output);
 }
@@ -143,8 +136,7 @@ Result<void> GetHostFuture(HandleScope& scope, runtime::Value completer, runtime
 Result<void> CompleteHostFuture(runtime::HeapObject& completer, runtime::Value value) {
   const auto& type = runtime::Heap::TypeOf(runtime::Value::Object(&completer)).signature->result;
   if (type ? !runtime::Heap::IsValueOfType(value, *type) : !value.IsNull()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidCast));
   }
   return CompletionResult(runtime::Heap::GetCompleter(completer)->Complete(value));
 }
@@ -153,8 +145,7 @@ Result<void> AdoptHostFuture(runtime::HeapObject& completer, runtime::Value futu
   auto type = runtime::Heap::TypeOf(runtime::Value::Object(&completer));
   type.object_kind = runtime::ObjectKind::Future;
   if (!runtime::Heap::IsValueOfType(future, type)) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidCast));
   }
   return CompletionResult(
       runtime::Heap::GetCompleter(completer)->Adopt(*runtime::Heap::GetFuture(*future.AsObject())));
@@ -163,8 +154,7 @@ Result<void> AdoptHostFuture(runtime::HeapObject& completer, runtime::Value futu
 Result<void> FailHostFuture(HandleScope& scope, runtime::Value completer, Error error) {
   const auto& root = HandleAccess::ReadErrorPayload(error);
   if (!root.IsEmpty() && &root.isolate() != &scope.isolate()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   auto& future = *runtime::Heap::GetCompleter(*completer.AsObject());
   return CompletionResult(

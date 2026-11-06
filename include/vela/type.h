@@ -36,9 +36,9 @@ class Type final {
   }
   [[nodiscard]] runtime::Isolate& isolate() const noexcept { return binding_.isolate(); }
   [[nodiscard]] Result<HostValue<T>> Cast(HandleScope& scope, Local<Value> value) const {
-    if (&scope.isolate() != &isolate() || &value.isolate() != &isolate()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    const auto& owner = isolate();
+    if (&scope.isolate() != &owner || &value.isolate() != &owner) {
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
     return internal::ReceiveHostValue<T>(scope, [&](runtime::Value& output) {
       return internal::CastHostValue(scope, internal::HandleAccess::Read(value),
@@ -65,7 +65,7 @@ class Type final {
   [[nodiscard]] static Result<Type> FromBinding(
       std::expected<runtime::HostType, ExecutionStatus> binding) {
     if (!binding) {
-      return std::unexpected(Error{.status = binding.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(binding.error()));
     }
     return Type(std::move(*binding));
   }

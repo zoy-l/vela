@@ -26,7 +26,7 @@ Error CaptureHostError(runtime::Isolate& isolate,
                        runtime::Value payload,
                        runtime::FutureDiagnostic diagnostic) {
   if (status == ExecutionStatus::OutOfMemory || status == ExecutionStatus::ExecutionStopped) {
-    return {.status = status, .message = {}, .stack_trace = {}};
+    return Error::FromStatus(status);
   }
   Error result{
       .status = status,
@@ -37,7 +37,7 @@ Error CaptureHostError(runtime::Isolate& isolate,
   if (!payload.IsNull()) {
     auto rooted = runtime::HostRoot::Create(isolate, payload);
     if (!rooted) {
-      return {.status = rooted.error(), .message = {}, .stack_trace = {}};
+      return Error::FromStatus(rooted.error());
     }
     HandleAccess::SetErrorPayload(result, std::move(*rooted));
   }
@@ -69,8 +69,7 @@ Result<void> CastHostValue(HandleScope& scope,
                            runtime::TypeConstraint type,
                            runtime::Value& output) {
   if (!runtime::Heap::IsValueOfType(value, type)) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidCast));
   }
   StoreHostResult(scope.isolate().heap(), output, value);
   return {};
@@ -85,7 +84,7 @@ Result<void> InvokeHostCallable(HandleScope& scope,
   if (parent != nullptr) {
     const auto resolved = runtime::ResolveNativeCallable(parent->instance(), callable);
     if (!resolved) {
-      return std::unexpected(Error{.status = resolved.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(resolved.error()));
     }
   }
   auto* environment = runtime::Heap::NativeEnvironment(*callable.AsObject());

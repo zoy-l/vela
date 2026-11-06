@@ -1,7 +1,3 @@
 source_set("bindings") {
   sources = [ "vela/bindings.h" ]
 }
-
-group("host") {
-  public_deps = [ "//runtime" ]
-}

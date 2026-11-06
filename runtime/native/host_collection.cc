@@ -29,8 +29,7 @@ Result<runtime::Value> StoreElementValue(runtime::Value value, const runtime::Ar
   const auto* nominal = layout.element.nominal;
   if (nominal != nullptr && nominal->IsEnum() &&
       !runtime::Heap::IsValueOfType(value, layout.value_type())) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::TypeError));
   }
   return runtime::UnboxDynamicValue(value, layout.element);
 }
@@ -42,7 +41,7 @@ Result<void> ReceiveStoredElement(HandleScope& scope,
   auto& heap = scope.isolate().heap();
   const auto boxed = runtime::BoxDynamicValue(heap, value, layout.element);
   if (!boxed) {
-    return std::unexpected(Error{.status = boxed.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(boxed.error()));
   }
   StoreHostResult(heap, output, *boxed);
   return {};
@@ -56,7 +55,7 @@ Result<void> ReadHostArray(HandleScope& scope,
                            runtime::Value& output) {
   const auto value = runtime::ReadIndex(*array.AsObject(), index);
   if (!value) {
-    return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(value.error()));
   }
   return ReceiveStoredElement(scope, *value, *runtime::Heap::ArrayTypeOf(*array.AsObject()),
                               output);
@@ -74,7 +73,7 @@ Result<void> WriteHostArray(HandleScope& scope,
   const auto written =
       runtime::WriteIndex(scope.isolate().heap(), *array.AsObject(), index, *stored);
   if (!written) {
-    return std::unexpected(Error{.status = written.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(written.error()));
   }
   return {};
 }
@@ -91,8 +90,7 @@ Result<void> CreateHostContainer(HandleScope& scope,
   auto* object = type.array != nullptr ? heap.AllocateArray(*type.array, 0)
                                        : heap.AllocateCollection(*type.collection);
   if (object == nullptr) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   StoreHostResult(heap, output, runtime::Value::Object(object));
   return {};
@@ -116,7 +114,7 @@ Result<void> ExecuteHostArray(HandleScope& scope,
   }
   const auto result = runtime::ExecuteArrayBuiltin(builtin, arguments, heap);
   if (!result) {
-    return std::unexpected(Error{.status = result.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(result.error()));
   }
   StoreHostResult(heap, output, *result);
   return {};
@@ -133,7 +131,7 @@ Result<HostPresence> TakeHostArray(HandleScope& scope,
   const auto value =
       runtime::ExecuteArrayBuiltin(builtin, std::span(&array, 1), scope.isolate().heap());
   if (!value) {
-    return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(value.error()));
   }
   auto result = ReceiveStoredElement(scope, *value, *runtime::Heap::ArrayTypeOf(object), output);
   if (!result) {
@@ -167,7 +165,7 @@ Result<void> ExecuteHostCollection(HandleScope& scope,
   }
   const auto result = runtime::ExecuteCollectionBuiltin(builtin, arguments, scope.isolate().heap());
   if (!result) {
-    return std::unexpected(Error{.status = result.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(result.error()));
   }
   StoreHostResult(scope.isolate().heap(), output, *result);
   return {};
@@ -184,7 +182,7 @@ Result<HostPresence> ReadHostMap(HandleScope& scope,
   }
   const auto value = runtime::Heap::FindCollectionValue(map, *stored);
   if (!value) {
-    return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(value.error()));
   }
   if (!*value) {
     return HostPresence::Missing;
@@ -209,14 +207,13 @@ Result<void> ProjectHostCollection(HandleScope& scope,
   const auto* array_type = isolate.CreateArrayLayout(*elements);
   auto* array = heap.AllocateArray(*array_type, *runtime::Heap::CollectionLength(object));
   if (array == nullptr) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   // 数组已经引用新布局；即使后续填充失败，布局也须随该对象一起经 GC 退休。
   transaction.CommitStructural();
   const auto result = heap.CopyCollection(object, *array, projection);
   if (!result) {
-    return std::unexpected(Error{.status = result.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(result.error()));
   }
   StoreHostResult(heap, output, runtime::Value::Object(array));
   return {};

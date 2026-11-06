@@ -211,8 +211,7 @@ struct NativeCodec<Local<T>> final {
   }
   static NativeResult Encode(NativeContext& context, Local<T> value) {
     if (&context.isolate() != &value.isolate()) {
-      return std::unexpected(
-          vela::Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+      return std::unexpected(vela::Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
     return vela::internal::HandleAccess::Read(value);
   }

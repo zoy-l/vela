@@ -111,11 +111,7 @@ NativeResult NativeContext::String(std::string_view text) const {
   }
   auto* string = isolate_->heap().AllocateString(text);
   if (string == nullptr) {
-    return std::unexpected(vela::Error{
-        .status = vela::ExecutionStatus::OutOfMemory,
-        .message = {},
-        .stack_trace = {},
-    });
+    return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
   }
   return Value::String(string);
 }
@@ -133,11 +129,7 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
   }
   auto* object = isolate_->heap().AllocateFuture(std::move(bound));
   if (object == nullptr) {
-    return std::unexpected(vela::Error{
-        .status = vela::ExecutionStatus::OutOfMemory,
-        .message = {},
-        .stack_trace = {},
-    });
+    return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
   }
   const auto raw = Value::Object(object);
   const RootRange source_root(isolate_->heap(), &raw, 1, std::nullopt);
@@ -158,8 +150,7 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
   };
   const auto constraint = resolve();
   if (!constraint) {
-    return std::unexpected(
-        vela::Error{.status = constraint.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(vela::Error::FromStatus(constraint.error()));
   }
   constexpr std::string_view kCompletionMessage =
       "native Future completion does not match its type";
@@ -172,8 +163,7 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
           : execution_->Diagnostic(ExecutionStatus::TypeError, kCompletionMessage);
   const auto checked = BindFutureCompletion(isolate(), raw, *constraint, diagnostic);
   if (!checked) {
-    return std::unexpected(
-        vela::Error{.status = checked.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(vela::Error::FromStatus(checked.error()));
   }
   return vela::internal::HandleAccess::Root<vela::Value>(scope, *checked);
 }
@@ -189,9 +179,8 @@ CancellationToken internal::NativeCodec<CancellationToken>::Decode(Value value) 
 NativeResult internal::NativeCodec<CancellationToken>::Encode(NativeContext& context,
                                                               const CancellationToken& token) {
   const auto value = AllocatedValue(context.isolate().heap().AllocateCancellationToken(token));
-  return value.transform_error([](ExecutionStatus status) {
-    return vela::Error{.status = status, .message = {}, .stack_trace = {}};
-  });
+  return value.transform_error(
+      [](ExecutionStatus status) { return vela::Error::FromStatus(status); });
 }
 
 std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {

@@ -31,7 +31,7 @@ Result<Local<T>> CreateBuiltinContainer(HandleScope& scope) {
     const auto type =
         runtime::ResolveBuiltinNativeType(scope.isolate(), runtime::internal::NativeTypeOf<T>());
     if (!type) {
-      return std::unexpected(Error{.status = type.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(type.error()));
     }
     return CreateHostContainer(scope, *type, output);
   });
@@ -40,8 +40,7 @@ Result<Local<T>> CreateBuiltinContainer(HandleScope& scope) {
 template <class T>
 Result<Local<T>> CreateTypedContainer(HandleScope& scope, const Type<T>& type) {
   if (&scope.isolate() != &type.isolate()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   return ReceiveHostValue<T>(scope, [&](runtime::Value& output) {
     return CreateHostContainer(scope, TypeAccess::Read(type).constraint(), output);

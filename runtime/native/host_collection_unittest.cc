@@ -208,6 +208,24 @@ TEST(HostCollectionTest, CollectionKeysPreserveLanguageNumericEquality) {
   EXPECT_EQ(values->Size(), 2);
 }
 
+TEST(HostCollectionTest, NestedNullableElementsUseOneOptionalAtTheHostBoundary) {
+  runtime::Isolate isolate(1);
+  HandleScope scope(isolate);
+  const auto values = CreateArray<Nullable<Nullable<String>>>(scope);
+  const auto text = CreateString(scope, "flattened");
+  ASSERT_TRUE(values.has_value());
+  ASSERT_TRUE(text.has_value());
+  ASSERT_TRUE(values->Push(scope, *text));
+  ASSERT_TRUE(values->Push(scope, std::nullopt));
+  const auto present = values->Get(scope, 0);
+  const auto null = values->Get(scope, 1);
+  ASSERT_TRUE(present.has_value());
+  ASSERT_TRUE(null.has_value());
+  ASSERT_TRUE(present->has_value());
+  EXPECT_EQ((**present).Utf8(), "flattened");
+  EXPECT_FALSE(*null);
+}
+
 TEST(HostTypeTest, TypeCopiesShareOneCloseBlockerAndReleaseTheirNativeStorage) {
   runtime::Isolate isolate(1);
   const auto baseline = isolate.heap().allocated_bytes();
@@ -256,6 +274,9 @@ TEST(HostTypeTest, CastAndCollectionOperationsRejectForeignIsolates) {
   const auto cast = type->Cast(foreign, array->ToValue());
   ASSERT_FALSE(cast);
   EXPECT_EQ(cast.error().status, ExecutionStatus::InvalidIsolate);
+  const auto foreign_value = type->Cast(scope, text->ToValue());
+  ASSERT_FALSE(foreign_value);
+  EXPECT_EQ(foreign_value.error().status, ExecutionStatus::InvalidIsolate);
   const auto integer = Type<std::int64_t>::Bind(first);
   ASSERT_TRUE(integer.has_value());
   const auto invalid = integer->Cast(scope, array->ToValue());

@@ -36,6 +36,10 @@ class ErrorPayload final {
 };
 
 struct Error final {
+  [[nodiscard]] static Error FromStatus(ExecutionStatus status) noexcept {
+    return {.status = status, .message = {}, .stack_trace = {}};
+  }
+
   ExecutionStatus status = ExecutionStatus::NativeFailure;
   std::string message;
   std::vector<runtime::FutureTraceFrame> stack_trace;

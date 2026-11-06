@@ -28,8 +28,7 @@ Result<Local<CancellationToken>> CancellationSource::ToLocal(HandleScope& scope)
         auto& heap = scope.isolate().heap();
         auto* object = heap.AllocateCancellationToken(token_);
         if (object == nullptr) {
-          return std::unexpected(
-              Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+          return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
         }
         internal::StoreHostResult(heap, output, runtime::Value::Object(object));
         return {};
@@ -70,7 +69,7 @@ Result<Local<Timer>> ScheduleTimer(HandleScope& scope,
   if (const auto* parent = isolate.native_control().state().host_execution; parent != nullptr) {
     const auto checked = runtime::ResolveNativeCallable(parent->instance(), *callable);
     if (!checked) {
-      return std::unexpected(Error{.status = checked.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(checked.error()));
     }
   }
   auto instance =
@@ -89,7 +88,7 @@ Result<Local<Timer>> ScheduleTimer(HandleScope& scope,
         },
         runtime::NativeFutureCallbacks(instance));
     if (!result) {
-      return std::unexpected(Error{.status = result.error(), .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(result.error()));
     }
     internal::StoreHostResult(isolate.heap(), output, *result);
     return {};

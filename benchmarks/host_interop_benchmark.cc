@@ -323,7 +323,7 @@ void Roots(benchmark::State& state) {
     } else {
       auto root = runtime::HostRoot::Create(isolate, internal::HandleAccess::Read(*text));
       if (!root) {
-        return std::unexpected(Error{.status = root.error(), .message = {}, .stack_trace = {}});
+        return std::unexpected(Error::FromStatus(root.error()));
       }
       benchmark::DoNotOptimize(*root);
     }

@@ -107,8 +107,7 @@ Result<runtime::Value> EncodeHostValue(HandleScope& scope, const HostValue<T>& v
     return EncodeHostScalar<T>(value);
   } else {
     if (&scope.isolate() != &value.isolate()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
     return HandleAccess::Read(value);
   }
@@ -130,8 +129,7 @@ Result<std::array<runtime::Value, sizeof...(Args)>> EncodeHostArguments(
       return true;
     };
     if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
   }
   return values;
@@ -195,8 +193,7 @@ struct HostFunctionCall<Function<R(Args...)>> final {
         std::is_same_v<std::tuple<std::remove_cvref_t<Actual>...>, std::tuple<HostValue<Args>...>>,
         "callback arguments must match the declared Vela types exactly");
     if (&scope.isolate() != &callable.isolate()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
     auto values = EncodeHostArguments<Args...>(scope, std::forward<Actual>(arguments)...);
     if (!values) {

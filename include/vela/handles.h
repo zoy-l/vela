@@ -236,7 +236,7 @@ template <class T>
 Result<Persistent<T>> Local<T>::Persist() const noexcept {
   auto root = runtime::HostRoot::Create(isolate(), *value_);
   if (!root) {
-    return std::unexpected(Error{.status = root.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(root.error()));
   }
   return Persistent<T>(std::move(*root));
 }
@@ -244,16 +244,14 @@ Result<Persistent<T>> Local<T>::Persist() const noexcept {
 template <class T>
 Result<Local<T>> HandleScope::Localize(const runtime::HostRoot& root) noexcept {
   if (root.IsEmpty()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   if (&root.isolate() != isolate_) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   const auto stored = Store(root.value());
   if (!stored) {
-    return std::unexpected(Error{.status = stored.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(stored.error()));
   }
   return Local<T>(*this, **stored);
 }

@@ -46,16 +46,14 @@ bool IsOwner(const VelaAotScope* scope) {
 
 Result<Value> ReadSlot(VelaAotLocal local) {
   if (local.slot == nullptr) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   return *static_cast<const Value*>(local.slot);
 }
 
 Result<Value> ReadLocal(VelaAotLocal local) {
   if (!IsOwner(local.scope)) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   return ReadSlot(local);
 }
@@ -88,8 +86,7 @@ Result<Value> Invoke(NativeExecution& execution,
   constexpr std::size_t kInlineArguments = 8;
   NativeBuffer<Value, kInlineArguments> storage(scope.isolate().heap(), input.size());
   if (!storage.IsAllocated()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   const auto values = storage.values();
   for (std::size_t index = 0; index < input.size(); ++index) {
@@ -112,12 +109,7 @@ namespace aot {
 
 Error TakeError(VelaAotStatus status, VelaAotError* error) {
   const std::unique_ptr<VelaAotError> owned(error);
-  return owned ? std::move(owned->detail)
-               : Error{
-                     .status = static_cast<ExecutionStatus>(status),
-                     .message = {},
-                     .stack_trace = {},
-                 };
+  return owned ? std::move(owned->detail) : Error::FromStatus(static_cast<ExecutionStatus>(status));
 }
 
 VelaAotLocal Borrow(Local<vela::Value> value) noexcept {
@@ -151,8 +143,7 @@ Result<VelaAotValue> Encode(HandleScope& scope, Value value) {
 
 Result<Value> Decode(HandleScope& scope, const VelaAotValue& input) {
   if (input.reserved_byte != 0 || input.reserved_half != 0 || input.reserved_word != 0) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::TypeError));
   }
   switch (input.kind) {
     case VELA_AOT_NULL:
@@ -171,15 +162,13 @@ Result<Value> Decode(HandleScope& scope, const VelaAotValue& input) {
       return Value::Double(std::bit_cast<double>(input.payload));
     case VELA_AOT_LOCAL:
       if (input.local.scope == nullptr || &input.local.scope->isolate() != &scope.isolate()) {
-        return std::unexpected(
-            Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+        return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
       }
       return ReadSlot(input.local);
     default:
       break;
   }
-  return std::unexpected(
-      Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
+  return std::unexpected(Error::FromStatus(ExecutionStatus::TypeError));
 }
 
 Result<Local<vela::Value>> ReceiveLocal(HandleScope& scope, const VelaAotValue& value) {

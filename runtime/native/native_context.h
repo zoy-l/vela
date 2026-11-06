@@ -69,19 +69,11 @@ class NativeContext final {
     static_assert(std::is_nothrow_destructible_v<T>);
     auto memory = ReserveHostMemory(sizeof(T));
     if (!memory.IsReserved()) {
-      return std::unexpected(vela::Error{
-          .status = vela::ExecutionStatus::OutOfMemory,
-          .message = {},
-          .stack_trace = {},
-      });
+      return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
     }
     std::unique_ptr<T> value(::new (std::nothrow) T(std::forward<Args>(arguments)...));
     if (value == nullptr) {
-      return std::unexpected(vela::Error{
-          .status = vela::ExecutionStatus::OutOfMemory,
-          .message = {},
-          .stack_trace = {},
-      });
+      return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
     }
     return NativeConstructed<T>{.memory = std::move(memory), .value = std::move(value)};
   }

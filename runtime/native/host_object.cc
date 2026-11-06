@@ -32,19 +32,17 @@ namespace {
 
 Result<runtime::HeapObject*> ResolveHostProgram(HandleScope& scope, const runtime::HostType& type) {
   if (&type.isolate() != &scope.isolate()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   const auto program = type.program();
   if (!program) {
-    return std::unexpected(Error{.status = program.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(program.error()));
   }
   auto* parent = scope.isolate().native_control().state().host_execution;
   if (parent != nullptr) {
     const auto& state = runtime::Heap::NativeProgram(**program);
     if (state.code_identity != &parent->instance().code_identity()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
     }
   }
   return *program;
@@ -55,8 +53,7 @@ Result<runtime::HeapObject*> ResolveMemberProgram(HandleScope& scope,
                                                   runtime::Value receiver,
                                                   const runtime::TypeConstraint& contract) {
   if (!runtime::Heap::IsValueOfType(receiver, contract)) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidCast, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidCast));
   }
   return ResolveHostProgram(scope, type);
 }
@@ -75,20 +72,17 @@ Result<void> ConstructHostObject(HandleScope& scope,
   const auto& state = runtime::Heap::NativeProgram(**program);
   const auto found = state.class_indices.find(type.constraint().nominal);
   if (found == state.class_indices.end()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   const auto target = instance.image().classes.values()[found->second].constructor;
   if (target == runtime::kNoNativeIndex) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   const auto& signature = instance.call_signature(target);
   const auto count = signature.parameters.size() / 2;
   runtime::ValueBuffer storage(signature.parameters.size());
   if (!storage.IsAllocated()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::OutOfMemory, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::OutOfMemory));
   }
   const auto values = storage.values();
   for (std::size_t index = 0; index < count; ++index) {
@@ -97,16 +91,14 @@ Result<void> ConstructHostObject(HandleScope& scope,
   for (const auto& argument : arguments) {
     const auto parameter = signature.ParameterIndex(argument.name);
     if (!parameter || *parameter >= count || values[*parameter + count].AsBoolean()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
     }
     values[*parameter] = argument.value;
     values[*parameter + count] = runtime::Value::Boolean(true);
   }
   for (std::size_t index = 0; index < count; ++index) {
     if (!signature.parameters[index].optional && !values[index + count].AsBoolean()) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidEntry, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
     }
   }
   runtime::NativeExecution execution(instance,
@@ -129,19 +121,17 @@ Result<void> ReadHostEnum(HandleScope& scope,
   }
   const auto contract = type.constraint();
   if (contract.nominal == nullptr || !contract.nominal->IsEnum()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::TypeError, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::TypeError));
   }
   const auto& state = runtime::Heap::NativeProgram(**program);
   const auto member = state.enum_members.find(std::pair(contract.nominal, name));
   if (member == state.enum_members.end()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidField, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidField));
   }
   const auto ordinal = runtime::Value::Integer(member->second);
   const auto value = runtime::BoxDynamicValue(scope.isolate().heap(), ordinal, contract);
   if (!value) {
-    return std::unexpected(Error{.status = value.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(value.error()));
   }
   StoreHostResult(scope.isolate().heap(), output, *value);
   return {};
@@ -161,7 +151,7 @@ Result<void> ReadHostMember(HandleScope& scope,
   auto instance = runtime::NativeInstance::Borrow(**program);
   auto expected = runtime::ResolveInstanceNativeType(instance, result_type);
   if (!expected) {
-    return std::unexpected(Error{.status = expected.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(expected.error()));
   }
   const runtime::RootRange result_type_root(scope.isolate().heap(), std::span(&*expected, 1),
                                             std::nullopt);

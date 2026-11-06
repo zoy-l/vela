@@ -101,11 +101,7 @@ std::expected<void, vela::Error> NativeContext::SetHostMemory(NativeType type,
   }
   const auto size = binding->description->size;
   if (extra_bytes > std::numeric_limits<std::size_t>::max() - size) {
-    return std::unexpected(vela::Error{
-        .status = vela::ExecutionStatus::OutOfMemory,
-        .message = {},
-        .stack_trace = {},
-    });
+    return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
   }
   auto& heap = isolate_->heap();
   auto* wrapper = heap.FindHostObject(binding->layout->nominal_type(), object);
@@ -117,11 +113,7 @@ std::expected<void, vela::Error> NativeContext::SetHostMemory(NativeType type,
     });
   }
   if (!heap.SetHostMemory(*wrapper, size + extra_bytes)) {
-    return std::unexpected(vela::Error{
-        .status = vela::ExecutionStatus::OutOfMemory,
-        .message = {},
-        .stack_trace = {},
-    });
+    return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
   }
   return {};
 }

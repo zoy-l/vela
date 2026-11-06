@@ -92,15 +92,15 @@ struct LogicalType<Future<T>> : LogicalType<T> {};
 template <class T>
 struct LogicalType<Completer<T>> : LogicalType<T> {};
 template <class Tag>
-struct LogicalType<Object<Tag>> : std::true_type {
+struct LogicalType<Object<Tag>> {
   static constexpr bool kValid = true;
 };
 template <class Tag>
-struct LogicalType<Enum<Tag>> : std::true_type {
+struct LogicalType<Enum<Tag>> {
   static constexpr bool kValid = true;
 };
 template <class T>
-struct LogicalType<Host<T>> : std::true_type {
+struct LogicalType<Host<T>> {
   static constexpr bool kValid = true;
 };
 

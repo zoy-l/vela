@@ -84,8 +84,7 @@ template <class R, class... Args, class Entry>
       return true;
     };
     if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(
-          Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
   }
   VelaAotValue result{};

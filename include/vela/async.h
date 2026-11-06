@@ -46,7 +46,7 @@ template <class T, class Callback>
                            action(handles, std::move(result));
                          });
   if (!observation) {
-    return std::unexpected(Error{.status = observation.error(), .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(observation.error()));
   }
   return std::move(*observation);
 }
@@ -129,8 +129,7 @@ template <class T>
 [[nodiscard]] Result<CompletionPair<T>> CreateCompletion(HandleScope& scope,
                                                          const Type<Future<T>>& type) {
   if (&scope.isolate() != &type.isolate()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   auto destination = internal::HandleAccess::Root<Value>(scope, runtime::Value::Null());
   if (!destination) {
@@ -161,8 +160,7 @@ template <class T>
 [[nodiscard]] Result<Local<Completer<T>>> CreateCompleter(HandleScope& scope,
                                                           const Type<Completer<T>>& type) {
   if (&scope.isolate() != &type.isolate()) {
-    return std::unexpected(
-        Error{.status = ExecutionStatus::InvalidIsolate, .message = {}, .stack_trace = {}});
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
   }
   return internal::ReceiveHostValue<Completer<T>>(scope, [&](runtime::Value& output) {
     return internal::CreateHostCompleter(scope, internal::TypeAccess::Read(type).constraint(),
