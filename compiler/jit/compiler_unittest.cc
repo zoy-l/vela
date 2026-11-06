@@ -295,6 +295,39 @@ export func changed(): int { let value = 42; const text = value.toString(); valu
   }
 }
 
+TEST(JitCompilerTest, IndexedAppendKeepsCodePointSnapshotsAcrossReloadableFramesAndGc) {
+  constexpr std::size_t kAppends = 200;
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+export func build(value: string): string {
+  const builder = String(); const point = value[1]; value = 'changed';
+  for (let index = 0; index < 200; index++) { builder.append(point); }
+  try { builder.append(value[value.length]); }
+  catch (error: Error) { builder.append('|caught'); }
+  return builder.toString();
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "build");
+    ASSERT_TRUE(entry);
+    const std::array arguments{runtime::Value::String(isolate.heap().AllocateString("A😀中"))};
+    const auto result = entry->Invoke(arguments);
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->IsString());
+    std::string expected;
+    for (std::size_t index = 0; index < kAppends; ++index) {
+      expected += "😀";
+    }
+    expected += "|caught";
+    EXPECT_EQ(result->AsString()->value(), expected);
+  }
+}
+
 TEST(JitCompilerTest, SquareRootIntrinsicPreservesFloatingPointErrorsAndHostOverrides) {
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();

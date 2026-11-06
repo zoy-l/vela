@@ -567,6 +567,7 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
           instruction.index == static_cast<std::uint32_t>(Builtin::CollectionSize) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::StringByteLength) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringCodePointAt) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCapacity) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayMutation) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCheckMutation)) {

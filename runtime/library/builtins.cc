@@ -1,6 +1,7 @@
 #include "runtime/library/builtins.h"
 #include "runtime/library/numeric_parse.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +50,25 @@ Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
   return Value::String(*joined);
 }
 
+Result AppendCodePoint(HeapObject& builder, Value value, Heap& heap) {
+  if (!value.IsInteger()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto point = value.AsInteger();
+  if (point < 0 || std::cmp_greater(point, kUnicodeMaximum) ||
+      (std::cmp_greater_equal(point, kHighSurrogateFirst) &&
+       std::cmp_less_equal(point, kLowSurrogateLast))) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  constexpr std::size_t kMaximumUtf8Width = 4;
+  std::array<char, kMaximumUtf8Width> bytes{};
+  const auto width = EncodeUtf8(static_cast<std::uint32_t>(point), bytes);
+  if (const auto appended = heap.AppendString(builder, {bytes.data(), width}); !appended) {
+    return std::unexpected(appended.error());
+  }
+  return Value::Null();
+}
+
 Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   if (builtin == Builtin::NewMutableString) {
     return AllocatedValue(heap.AllocateMutableString());
@@ -63,6 +83,9 @@ Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments,
     return AllocatedValue(heap.BuildString(builder));
   }
   const auto text = arguments[1];
+  if (builtin == Builtin::MutableStringAppendCodePoint) {
+    return AppendCodePoint(builder, text, heap);
+  }
   if (!text.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -83,15 +106,18 @@ Result Slice(Builtin builtin,
   if (start < 0 || std::cmp_greater(start, string.length())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  const auto end = builtin == Builtin::StringIndex ? start + 1 : arguments[2].AsInteger();
+  const auto indexed = builtin != Builtin::StringSlice;
+  const auto end = indexed ? start + 1 : arguments[2].AsInteger();
   if (end < start || std::cmp_greater(end, string.length())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
   const auto offset = string.ByteOffset(static_cast<std::uint32_t>(start));
   const auto text = string.value();
-  const auto end_offset = builtin == Builtin::StringIndex
-                              ? offset + DecodeUtf8Prefix(text.substr(offset)).width
-                              : string.ByteOffset(static_cast<std::uint32_t>(end));
+  if (builtin == Builtin::StringCodePointAt) {
+    return Value::Integer(DecodeUtf8Prefix(text.substr(offset)).value);
+  }
+  const auto end_offset = indexed ? offset + DecodeUtf8Prefix(text.substr(offset)).width
+                                  : string.ByteOffset(static_cast<std::uint32_t>(end));
   return AllocatedValue(heap.AllocateString(text.substr(offset, end_offset - offset)));
 }
 
@@ -244,6 +270,7 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
       return ArrayJoin(arguments, heap);
     case Builtin::NewMutableString:
     case Builtin::MutableStringAppend:
+    case Builtin::MutableStringAppendCodePoint:
     case Builtin::MutableStringToString:
       return MutableStringOperation(builtin, arguments, heap);
     default:
@@ -258,7 +285,8 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     return Value::Integer(static_cast<std::int64_t>(
         builtin == Builtin::StringLength ? string.length() : text.size()));
   }
-  if (builtin == Builtin::StringIndex || builtin == Builtin::StringSlice) {
+  if (builtin == Builtin::StringIndex || builtin == Builtin::StringSlice ||
+      builtin == Builtin::StringCodePointAt) {
     return Slice(builtin, string, arguments, heap);
   }
   if (!arguments[1].IsString()) {

@@ -138,6 +138,40 @@ func reassigned(value: int): int { let text = value.toString(); text = 'kept'; r
   }
 }
 
+TEST(PreparationTest, FusesOnlyIndexedStringsWhoseSingleConsumerAppendsThem) {
+  const auto prepared = Prepare(R"(
+func direct(text: string, index: int): string {
+  const builder = String(); builder.append(text[index]); return builder.toString();
+}
+func delayed(text: string, index: int): string {
+  const builder = String(); const point = text[index]; const copy = point;
+  text = 'replaced'; builder.append(copy); return builder.toString();
+}
+func observed(text: string, index: int): string {
+  const builder = String(); const point = text[index]; print(point);
+  builder.append(point); return builder.toString();
+}
+func reassigned(text: string, index: int): string {
+  const builder = String(); let point = text[index]; point = 'kept';
+  builder.append(point); return builder.toString();
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  for (const auto& function : prepared.program.functions) {
+    const auto expected = function.name == "direct" || function.name == "delayed" ? 1 : 0;
+    for (const auto builtin : {Builtin::StringCodePointAt, Builtin::MutableStringAppendCodePoint}) {
+      EXPECT_EQ(std::ranges::count_if(function.instructions,
+                                      [builtin](const auto& instruction) {
+                                        return instruction.opcode == Opcode::BuiltinCall &&
+                                               instruction.index ==
+                                                   static_cast<std::uint32_t>(builtin);
+                                      }),
+                expected)
+          << function.name;
+    }
+  }
+}
+
 TEST(PreparationTest, PreservesUnboundNativeImportsWithoutRuntimeState) {
   auto result = Prepare(R"(
 external func read(): int = "host.read";

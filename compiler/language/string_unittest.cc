@@ -322,6 +322,63 @@ TEST_F(StringLanguageTest, SearchHandlesLongRepeatedPrefixesInLinearTime) {
   EXPECT_EQ(Text(source), "3968,false");
 }
 
+TEST_F(StringAllocationTest, IndexedAppendDoesNotMaterializeSingleCharacterStrings) {
+  EXPECT_EQ(Text(R"(
+func main(): string {
+  const text = '0123456789abcdef';
+  const builder = String();
+  for (let index = 0; index < text.length; index++) { builder.append(text[index]); }
+  return builder.toString();
+})"),
+            "0123456789abcdef");
+  ExpectAllocations(2, "0123456789abcdef");
+}
+
+TEST_F(StringLanguageTest, IndexedAppendPreservesUnicodeSnapshotsAndReceiverEvaluationOrder) {
+  constexpr std::size_t kRepetitions = 100;
+  constexpr std::string_view kSource = R"(
+class State { builder: String; text: string; }
+func replace(state: State): int {
+  state.builder = String(); state.text = 'replaced'; return 1;
+}
+func main(): string {
+  const original = String();
+  const state = State(builder: original, text: 'A中😀');
+  state.builder.append(state.text[replace(state)]);
+  const text = 'A中😀e\u{301}\0';
+  for (let repeat = 0; repeat < 100; repeat++) {
+    for (let index = 0; index < text.length; index++) { original.append(text[index]); }
+  }
+  return original.toString() + '|' + state.builder.toString();
+})";
+  std::string expected = "中";
+  for (std::size_t repeat = 0; repeat < kRepetitions; ++repeat) {
+    expected.append("A中😀é\0", sizeof("A中😀é\0") - 1);
+  }
+  expected += '|';
+  EXPECT_EQ(Text(kSource), expected);
+}
+
+TEST_F(StringLanguageTest, IndexedAppendBoundsFailurePreservesPrefixAndIndexLocation) {
+  EXPECT_EQ(Text(R"(
+func main(): string {
+  const builder = String(); builder.append('kept');
+  try { builder.append('中'[1]); } catch (error: Error) { builder.append('|caught'); }
+  return builder.toString();
+})"),
+            "kept|caught");
+  const auto result =
+      Run("func main(): string {\n"
+          "  const builder = String();\n"
+          "  builder.append(\n"
+          "    '中'[-1]);\n"
+          "  return builder.toString();\n"
+          "}\n");
+  EXPECT_EQ(result.status, ExecutionStatus::IndexOutOfBounds);
+  ASSERT_FALSE(result.stack_trace.empty());
+  EXPECT_EQ(result.stack_trace.front().line, 4U);
+}
+
 class StringBoundsTest : public StringLanguageTest,
                          public testing::WithParamInterface<const char*> {};
 

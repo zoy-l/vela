@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <limits>
+#include <queue>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "base/native_program_mode.h"
@@ -21,14 +24,51 @@ bool HasManagedValue(const ir::Function& function, ir::RegisterId reg) {
   return kind == Kind::Dynamic || IsReferenceKind(kind);
 }
 
-void AssignRootSlots(NativeRootPlan& plan) {
+struct RootLifetime final {
+  ir::RegisterId reg = 0;
+  std::size_t begin = std::numeric_limits<std::size_t>::max();
+  std::size_t end = 0;
+
+  void Include(std::size_t instruction) {
+    begin = std::min(begin, instruction);
+    end = std::max(end, instruction);
+  }
+};
+
+void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetimes) {
+  ir::RegisterSet candidates(plan.slots.size());
   for (const auto& stores : plan.stores) {
     for (const auto reg : stores) {
-      auto& slot = plan.slots.at(reg);
-      if (!slot) {
-        slot = plan.count++;
-      }
+      candidates.Insert(reg);
     }
+  }
+  std::vector<RootLifetime> ordered;
+  candidates.ForEach([&](ir::RegisterId reg) {
+    auto lifetime = lifetimes[reg];
+    lifetime.reg = reg;
+    ordered.push_back(lifetime);
+  });
+  std::ranges::sort(ordered, [](const auto& left, const auto& right) {
+    return left.begin != right.begin ? left.begin < right.begin : left.reg < right.reg;
+  });
+  using SlotEnd = std::pair<std::size_t, std::size_t>;
+  std::priority_queue<SlotEnd, std::vector<SlotEnd>, std::greater<>> active;
+  std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>> available;
+  for (const auto& lifetime : ordered) {
+    // 同一指令的输入、输出和清空点共用边界，不能因成功路径上的定义而覆盖异常活跃值。
+    while (!active.empty() && active.top().first < lifetime.begin) {
+      available.push(active.top().second);
+      active.pop();
+    }
+    std::size_t slot = 0;
+    if (available.empty()) {
+      slot = plan.count++;
+    } else {
+      slot = available.top();
+      available.pop();
+    }
+    plan.slots.at(lifetime.reg) = slot;
+    active.emplace(lifetime.end, slot);
   }
   for (auto& clears : plan.clears) {
     std::erase_if(clears, [&](ir::RegisterId reg) { return !plan.slots.at(reg).has_value(); });
@@ -160,7 +200,8 @@ void RecordLiveRoots(NativeRootPlan& plan,
                      const ir::Function& function,
                      std::size_t index,
                      const ir::RegisterAccess& access,
-                     InstructionLiveness liveness) {
+                     InstructionLiveness liveness,
+                     std::span<RootLifetime> lifetimes) {
   const auto& instruction = function.instructions[index];
   auto& stores = plan.stores[index];
   auto& clears = plan.clears[index];
@@ -171,6 +212,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
     if (!HasManagedValue(function, reg)) {
       return;
     }
+    lifetimes[reg].Include(index);
     if (safepoint) {
       stores.push_back(reg);
     }
@@ -180,6 +222,8 @@ void RecordLiveRoots(NativeRootPlan& plan,
   });
   if (access.defines_value && HasManagedValue(function, instruction.dst)) {
     clears.push_back(instruction.dst);
+    // 逆向传递只会从成功后继删除 dst；其余 after 值已包含在 before 中。
+    lifetimes[instruction.dst].Include(index);
   }
   std::ranges::sort(clears);
   const auto duplicate = std::ranges::unique(clears);
@@ -201,6 +245,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   const auto graph = ir::BuildFlowGraph(function);
   const auto required = recovery.values;
   const auto blocks = ir::AnalyzeLiveness(function, graph, functions, required);
+  std::vector<RootLifetime> lifetimes(function.register_count);
   ir::RegisterSet after(function.register_count);
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
     const auto& block = graph.blocks.at(block_index);
@@ -216,10 +261,10 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
         live.ForEach([&](ir::RegisterId reg) { plan.checkpoints[index].push_back(reg); });
       }
-      RecordLiveRoots(plan, function, index, access, {.before = live, .after = after});
+      RecordLiveRoots(plan, function, index, access, {.before = live, .after = after}, lifetimes);
     }
   }
-  AssignRootSlots(plan);
+  AssignRootSlots(plan, lifetimes);
   plan.count = std::max(plan.count, recovery.minimum_root_count);
   PlanRematerialization(plan, function, functions);
   return plan;

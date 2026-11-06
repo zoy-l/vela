@@ -361,6 +361,8 @@ source_set("native") {
     "native/native_roots.h",
     "native/native_values.cc",
     "native/native_values.h",
+    "native/recursive_inliner.cc",
+    "native/recursive_inliner.h",
     "native/reference_emitter.cc",
     "native/scalar_emitter.cc",
   ]
@@ -535,9 +537,12 @@ executable("vela_aot_tests") {
     "aot/reachability_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/escape_analysis_unittest.cc",
+    "native/field_access_unittest.cc",
     "native/host_header_unittest.cc",
     "native/integer_bit_optimizer_unittest.cc",
     "native/integer_loop_optimizer_unittest.cc",
+    "native/native_roots_unittest.cc",
+    "native/recursive_inliner_unittest.cc",
   ]
   deps = [
     ":aot",

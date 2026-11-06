@@ -163,7 +163,8 @@ extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
                                            RootRange* range) noexcept {
   const auto size = static_cast<std::size_t>(count);
   std::uninitialized_value_construct_n(roots, size);
-  std::construct_at(range, execution->isolate().heap(), roots, size, std::nullopt);
+  std::construct_at(range, std::nullopt);
+  range->Attach(execution->isolate().heap(), roots, size);
 }
 
 extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {

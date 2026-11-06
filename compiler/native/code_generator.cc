@@ -41,9 +41,7 @@
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
-#include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
-#include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
@@ -62,6 +60,7 @@
 #include "compiler/native/native_image_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "compiler/native/recursive_inliner.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
@@ -100,41 +99,6 @@ bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index
     }
   }
   return calls != 0 && calls <= kMaximumRecursiveCalls;
-}
-
-void UnrollRecursion(llvm::Function& function) {
-  constexpr std::size_t kMaximumRecursiveInlineDepth = 2;
-  // 每层都使用原始快照，二叉递归最多复制六份小函数体；逻辑帧、受查算术和
-  // 恢复点一并内联。不能复制已展开的正式函数，否则单层内就会指数膨胀。
-  llvm::ValueToValueMapTy values;
-  auto* snapshot = llvm::CloneFunction(&function, values);
-  for (auto& block : *snapshot) {
-    for (auto& instruction : block) {
-      auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
-      if (call != nullptr && call->getCalledFunction() == snapshot) {
-        call->setCalledFunction(&function);
-      }
-    }
-  }
-  for (std::size_t depth = 0; depth < kMaximumRecursiveInlineDepth; ++depth) {
-    llvm::SmallVector<llvm::CallBase*, 4> calls;
-    for (auto& block : function) {
-      for (auto& instruction : block) {
-        auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
-        if (call != nullptr && call->getCalledFunction() == &function) {
-          calls.push_back(call);
-        }
-      }
-    }
-    for (auto* call : calls) {
-      call->setCalledFunction(snapshot);
-      llvm::InlineFunctionInfo information;
-      if (!llvm::InlineFunction(*call, information).isSuccess()) {
-        call->setCalledFunction(&function);
-      }
-    }
-  }
-  snapshot->eraseFromParent();
 }
 
 bool CanUseBoundedLeaf(const ir::Function& function) {
@@ -748,7 +712,7 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
   }
   if (optimization == NativeOptimization::Release) {
     for (auto* function : generated.recursive_functions) {
-      UnrollRecursion(*function);
+      InlineRecursion(*function);
     }
     generated.recursive_functions.clear();
     Optimize(module, *generated.machine);

@@ -757,6 +757,7 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
       .field_targets = &field_targets,
       .temporary_count = PlanTemporaryCount(escape.function.get(), program, roots),
       .field_accesses = {},
+      .field_kind_writes = FindFieldKindWrites(escape.function.get(), program, roots.safepoints),
       .direct_calls = {},
       .array_element_bits = {},
   };

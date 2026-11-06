@@ -26,6 +26,7 @@
 #include "base/opcode.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
@@ -173,7 +174,9 @@ void FunctionEmitter::WriteHeapValue(llvm::Value* address,
   WriteStoredValue(RecordAddress(address, region), reg);
 }
 
-void FunctionEmitter::WriteStoredValue(StoredValueAddress address, ir::RegisterId reg) {
+void FunctionEmitter::WriteStoredValue(StoredValueAddress address,
+                                       ir::RegisterId reg,
+                                       FieldKindWrite kind_write) {
   const auto& type = source_.value_types.at(reg);
   auto* value = Load(reg);
   auto* encoded = EncodeValue(builder_, value, type);
@@ -183,7 +186,9 @@ void FunctionEmitter::WriteStoredValue(StoredValueAddress address, ir::RegisterI
   } else {
     StoreMemory(builder_.CreateExtractValue(encoded, 0), address.payload, address.payload_region);
   }
-  StoreMemory(builder_.CreateExtractValue(encoded, 1), address.kind, address.kind_region);
+  if (kind_write == FieldKindWrite::Required) {
+    StoreMemory(builder_.CreateExtractValue(encoded, 1), address.kind, address.kind_region);
+  }
 }
 
 void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) {
@@ -257,7 +262,7 @@ void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
     const auto& type = source_.value_types.at(instruction.dst);
     Store(instruction.dst, ReadStoredValue(address, type), type);
   } else {
-    WriteStoredValue(address, instruction.lhs);
+    WriteStoredValue(address, instruction.lhs, field_kind_writes_.at(instruction_index_));
     EmitWriteBarrier(object, instruction.lhs);
   }
 }

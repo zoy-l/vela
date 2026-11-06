@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <span>
 
 #include <gtest/gtest.h>
 
@@ -96,6 +98,45 @@ TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
   EXPECT_EQ(string->value(), "rooted");
   execution.Exit();
   EXPECT_EQ(execution.current_frame(), nullptr);
+}
+
+TEST(NativeAbiTest, StackRootEntryInitializesReusedStorageAndReleasesRegistration) {
+  Isolate isolate(1);
+  const auto image = EmptyImage();
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  NativeExecution execution(**instance);
+  auto& heap = isolate.heap();
+  const auto baseline = heap.object_count();
+  constexpr std::size_t kRoots = 2;
+  constexpr std::byte kDiscardedStorage{0xa5};
+  alignas(Value) std::array<std::byte, sizeof(Value) * kRoots> values{};
+  alignas(RootRange) std::array<std::byte, sizeof(RootRange)> storage{};
+  void* values_storage = values.data();
+  void* range_storage = storage.data();
+  auto* roots = static_cast<Value*>(values_storage);
+  auto* range = static_cast<RootRange*>(range_storage);
+  for (std::size_t reuse = 0; reuse < kRoots; ++reuse) {
+    values.fill(kDiscardedStorage);
+    storage.fill(kDiscardedStorage);
+    vela_native_v1_roots_enter(&execution, roots, kRoots, range);
+    const std::unique_ptr<RootRange, decltype(&vela_native_v1_roots_exit)> registration(
+        range, &vela_native_v1_roots_exit);
+    for (const auto value : std::span(roots, kRoots)) {
+      EXPECT_TRUE(value.IsNull());
+      EXPECT_EQ(EncodeNativeValue(value).payload, 0U);
+    }
+    for (auto& value : std::span(roots, kRoots)) {
+      value = Value::String(heap.AllocateString("retained"));
+      ASSERT_NE(value.AsString(), nullptr);
+      heap.Collect();
+    }
+    for (const auto value : std::span(roots, kRoots)) {
+      EXPECT_EQ(value.AsString()->value(), "retained");
+    }
+  }
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
 }
 
 TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {

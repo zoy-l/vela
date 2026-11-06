@@ -145,6 +145,8 @@ enum class Builtin : std::uint8_t {
   TestControl,
   MockInspect,
   ScalarTextLength,
+  StringCodePointAt,
+  MutableStringAppendCodePoint,
   Count,
 };
 
@@ -219,6 +221,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::IntTryParse:
     case Builtin::DateToUTC:
     case Builtin::MutableStringAppend:
+    case Builtin::MutableStringAppendCodePoint:
+    case Builtin::StringCodePointAt:
     case Builtin::StringIndexOf:
     case Builtin::StringIncludes:
     case Builtin::StringStartsWith:

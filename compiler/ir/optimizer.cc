@@ -347,13 +347,53 @@ bool CanMeasureScalarText(const frontend::TypeDescriptor& input) {
          (input.kind == Kind::Int || input.kind == Kind::Double || input.kind == Kind::Bool);
 }
 
-bool IsScalarTextConversion(const Instruction& instruction) {
+bool IsTemporaryString(const Instruction& instruction) {
   return instruction.opcode == Opcode::BuiltinCall &&
-         instruction.index == static_cast<std::uint32_t>(Builtin::ScalarToString);
+         (instruction.index == static_cast<std::uint32_t>(Builtin::ScalarToString) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringIndex));
 }
 
-void FuseScalarTextLengths(Function& function, std::span<const Function> functions) {
-  if (std::ranges::none_of(function.instructions, IsScalarTextConversion)) {
+enum class TemporaryStringFusion : std::uint8_t { None, Integer };
+
+bool CanScalarizeTemporaryString(const Instruction& instruction, const Function& function) {
+  if (!IsTemporaryString(instruction)) {
+    return false;
+  }
+  const auto& input = function.value_types.at(instruction.lhs);
+  if (instruction.index == static_cast<std::uint32_t>(Builtin::ScalarToString)) {
+    return CanMeasureScalarText(input);
+  }
+  return input.kind == frontend::TypeDescriptor::Kind::String && !input.nullable;
+}
+
+TemporaryStringFusion FuseStringConsumer(Instruction& producer,
+                                         Instruction& consumer,
+                                         RegisterId value) {
+  if (consumer.opcode != Opcode::BuiltinCall) {
+    return TemporaryStringFusion::None;
+  }
+  const auto operation = static_cast<Builtin>(producer.index);
+  const auto target = static_cast<Builtin>(consumer.index);
+  if (operation == Builtin::ScalarToString &&
+      (target == Builtin::StringLength || target == Builtin::StringByteLength)) {
+    // 标量文本只含 ASCII；唯一消费是长度时，不产生可逃逸的字符串身份。
+    producer.index = static_cast<std::uint32_t>(Builtin::ScalarTextLength);
+    consumer.opcode = Opcode::Move;
+    consumer.index = 0;
+    return TemporaryStringFusion::Integer;
+  }
+  if (operation == Builtin::StringIndex && target == Builtin::MutableStringAppend &&
+      consumer.lhs + 1 == value) {
+    // 索引检查和追加仍在各自的原位置执行；仅将不逃逸的临时字符串替换为码点。
+    producer.index = static_cast<std::uint32_t>(Builtin::StringCodePointAt);
+    consumer.index = static_cast<std::uint32_t>(Builtin::MutableStringAppendCodePoint);
+    return TemporaryStringFusion::Integer;
+  }
+  return TemporaryStringFusion::None;
+}
+
+void FuseTemporaryStrings(Function& function, std::span<const Function> functions) {
+  if (std::ranges::none_of(function.instructions, IsTemporaryString)) {
     return;
   }
   std::vector<std::size_t> definitions(function.register_count);
@@ -376,11 +416,7 @@ void FuseScalarTextLengths(Function& function, std::span<const Function> functio
   }
   using Kind = frontend::TypeDescriptor::Kind;
   for (auto& producer : code) {
-    if (!IsScalarTextConversion(producer)) {
-      continue;
-    }
-    const auto& input = function.value_types.at(producer.lhs);
-    if (!CanMeasureScalarText(input)) {
+    if (!CanScalarizeTemporaryString(producer, function)) {
       continue;
     }
     std::vector<RegisterId> path;
@@ -392,14 +428,7 @@ void FuseScalarTextLengths(Function& function, std::span<const Function> functio
         reg = consumer.dst;
         continue;
       }
-      if (consumer.opcode == Opcode::BuiltinCall &&
-          (consumer.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
-           consumer.index == static_cast<std::uint32_t>(Builtin::StringByteLength))) {
-        // 标量文本只含 ASCII；唯一消费是长度时，不产生可逃逸的字符串身份。
-        // 在格式化的原位置计算长度，并保留 Move 链，避免跨越输入改写或控制流。
-        producer.index = static_cast<std::uint32_t>(Builtin::ScalarTextLength);
-        consumer.opcode = Opcode::Move;
-        consumer.index = 0;
+      if (FuseStringConsumer(producer, consumer, reg) == TemporaryStringFusion::Integer) {
         for (const auto value : path) {
           function.value_types.at(value) = {.kind = Kind::Int, .name = frontend::kIntTypeName};
         }
@@ -425,7 +454,7 @@ void Optimize(Function& function,
   ThreadJumps(function, origins);
   const auto graph = RemoveUnreachable(function, origins);
   RemoveUnusedValues(function, functions, graph, origins);
-  FuseScalarTextLengths(function, functions);
+  FuseTemporaryStrings(function, functions);
   RemoveUnusedHandlers(function);
 }
 

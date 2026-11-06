@@ -23,6 +23,7 @@ struct NativeRootPlan final {
   bool debug_values = false;
   bool bounded_polls = false;
   std::size_t count = 0;
+  // 槽位按包含异常边和清空点的保守活跃区间复用，不是寄存器的唯一身份。
   std::vector<std::optional<std::size_t>> slots;
   std::vector<std::vector<ir::RegisterId>> stores;
   std::vector<std::vector<ir::RegisterId>> clears;

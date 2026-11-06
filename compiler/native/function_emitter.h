@@ -65,6 +65,7 @@ struct FunctionEmissionFacts final {
   const FieldTargets* field_targets = nullptr;
   std::size_t temporary_count = 0;
   std::vector<std::optional<std::uint32_t>> field_accesses;
+  std::vector<FieldKindWrite> field_kind_writes;
   std::vector<std::optional<CallableTarget>> direct_calls;
   std::vector<std::uint64_t> array_element_bits;
 };
@@ -93,6 +94,7 @@ class FunctionEmitter final {
         field_targets_(*facts.field_targets),
         temporary_count_(facts.temporary_count),
         field_accesses_(facts.field_accesses),
+        field_kind_writes_(facts.field_kind_writes),
         direct_calls_(facts.direct_calls),
         generated_(generated),
         body_(SelectBody(generated[function_index], kind)),
@@ -200,7 +202,9 @@ class FunctionEmitter final {
                                   llvm::Value& index,
                                   llvm::Value* kind_offset);
   llvm::Value* ReadStoredValue(StoredValueAddress address, const SourceType& type);
-  void WriteStoredValue(StoredValueAddress address, ir::RegisterId reg);
+  void WriteStoredValue(StoredValueAddress address,
+                        ir::RegisterId reg,
+                        FieldKindWrite kind_write = FieldKindWrite::Required);
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
   void WriteHeapValue(llvm::Value* address,
                       ir::RegisterId reg,
@@ -279,6 +283,7 @@ class FunctionEmitter final {
   const FieldTargets& field_targets_;
   std::size_t temporary_count_;
   const std::vector<std::optional<std::uint32_t>>& field_accesses_;
+  const std::vector<FieldKindWrite>& field_kind_writes_;
   const std::vector<std::optional<CallableTarget>>& direct_calls_;
   std::span<const GeneratedFunction> generated_;
   llvm::Function* body_;

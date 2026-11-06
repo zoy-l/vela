@@ -10,6 +10,7 @@
 #include "gtest/gtest.h"
 
 #include "base/builtin.h"
+#include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/library/builtins.h"
@@ -39,6 +40,44 @@ TEST(StringGcTest, StoresEmptyAndEmbeddedNullBytes) {
   EXPECT_EQ(heap.object_count(), 2U);
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST(StringGcTest, IndexedCodePointsAppendWithoutManagedCharacterAllocations) {
+  Heap heap(1);
+  constexpr std::string_view kText("A中😀é\0", sizeof("A中😀é\0") - 1);
+  std::array roots{Value::String(heap.AllocateString(kText)), Value::Null()};
+  RootRange root(heap, roots.data(), roots.size());
+  roots.back() = Value::Object(heap.AllocateMutableString());
+  ASSERT_NE(roots.front().AsString(), nullptr);
+  ASSERT_NE(roots.back().AsObject(), nullptr);
+  constexpr auto kExpected = std::to_array<std::int64_t>({65, 20013, 128512, 101, 769, 0});
+  for (std::size_t index = 0; index < kExpected.size(); ++index) {
+    const auto count = heap.object_count();
+    const std::array indexed{roots.front(), Value::Integer(static_cast<std::int64_t>(index))};
+    const auto point = ExecuteBuiltin(Builtin::StringCodePointAt, indexed, heap);
+    ASSERT_TRUE(point);
+    ASSERT_TRUE(point->IsInteger());
+    EXPECT_EQ(point->AsInteger(), kExpected.at(index));
+    EXPECT_EQ(heap.object_count(), count);
+    const std::array appended{roots.back(), *point};
+    ASSERT_TRUE(ExecuteBuiltin(Builtin::MutableStringAppendCodePoint, appended, heap));
+  }
+  EXPECT_EQ(heap.object_count(), roots.size());
+  const auto built = ExecuteBuiltin(Builtin::MutableStringToString, std::span(roots).last(1), heap);
+  ASSERT_TRUE(built);
+  EXPECT_EQ(built->AsString()->value(), kText);
+  for (const auto index : {-1, 6}) {
+    const std::array arguments{roots.front(), Value::Integer(index)};
+    const auto result = ExecuteBuiltin(Builtin::StringCodePointAt, arguments, heap);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), ExecutionStatus::IndexOutOfBounds);
+  }
+  for (const auto point : {-1, 0xD800, 0xDFFF, 0x110000}) {
+    const std::array arguments{roots.back(), Value::Integer(point)};
+    const auto result = ExecuteBuiltin(Builtin::MutableStringAppendCodePoint, arguments, heap);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), ExecutionStatus::TypeError);
+  }
 }
 
 TEST(StringGcTest, AccountsAndReleasesLargePayload) {

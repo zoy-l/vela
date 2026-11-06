@@ -28,7 +28,7 @@ struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 18;
+inline constexpr std::uint32_t kNativeAbiVersion = 19;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {

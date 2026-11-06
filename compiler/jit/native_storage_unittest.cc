@@ -24,6 +24,7 @@
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::jit {
@@ -248,6 +249,60 @@ export func run(): double {
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 0.0);
   EXPECT_TRUE(std::signbit(result.value.AsDouble()));
+}
+
+TEST_P(NativeStorageTest, FieldUpdatesKeepHostVisibleKindsAndGcReferencesAfterConstruction) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileSource(**compiler, R"(
+external func text(): string;
+class Fields {
+  scalar: double;
+  flag: bool;
+  count: int;
+  optional: double? = null;
+  any: dynamic = null;
+  label: string;
+  constructor(seed: double) {
+    this.scalar = seed; this.flag = false; this.count = 0; this.label = text();
+  }
+  update(): void {
+    this.scalar += 1.0; this.flag = !this.flag; this.count += 2;
+    this.optional = 3.0; this.optional = null; this.any = 4.0; this.any = text();
+  }
+}
+export func run(): Fields {
+  const fields = Fields(1.0); fields.update(); text(); return fields;
+}
+)",
+                                      {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+  ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&CollectText>("text")));
+  auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  ASSERT_TRUE(instance) << instance.error().message;
+  const auto run = (*instance)->FindFunction("run");
+  ASSERT_TRUE(run);
+  const auto result = runtime::ExecuteNativeFunction(**instance, *run);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  runtime::RootRange root(isolate.heap(), &result.value, 1);
+  isolate.heap().Collect();
+  const auto& object = *result.value.AsObject();
+  const auto scalar = runtime::Heap::LoadField(object, 0);
+  const auto flag = runtime::Heap::LoadField(object, 1);
+  const auto count = runtime::Heap::LoadField(object, 2);
+  ASSERT_TRUE(scalar.IsDouble());
+  EXPECT_DOUBLE_EQ(scalar.AsDouble(), 2.0);
+  ASSERT_TRUE(flag.IsBoolean());
+  EXPECT_TRUE(flag.AsBoolean());
+  ASSERT_TRUE(count.IsInteger());
+  EXPECT_EQ(count.AsInteger(), 2);
+  EXPECT_TRUE(runtime::Heap::LoadField(object, 3).IsNull());
+  for (const auto index : {4U, 5U}) {
+    const auto text = runtime::Heap::LoadField(object, index);
+    ASSERT_TRUE(text.IsString());
+    EXPECT_EQ(text.AsString()->value(), "retained");
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Tiers,

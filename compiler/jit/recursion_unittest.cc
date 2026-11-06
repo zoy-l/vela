@@ -72,7 +72,7 @@ func divide(depth: int, divisor: int): int {
   if (depth == 0) { return 84 / divisor; }
   return divide(depth - 1, divisor);
 }
-export func fail(): int { return divide(3, 0); }
+export func fail(depth: int): int { return divide(depth, 0); }
 export func caught(): int {
   try { return divide(3, 0); }
   catch (error: Error) { return error.code == 'DivisionByZero' ? fibonacci(10) : 0; }
@@ -90,13 +90,17 @@ export func overflow(depth: int): int {
   if (!fail || !caught || !fibonacci || !overflow) {
     FAIL() << "missing recursion entry";
   }
-  const auto failed = runtime::ExecuteNativeFunction(instance, *fail);
-  EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
-  ASSERT_EQ(failed.stack_trace.size(), 5U);
-  for (std::size_t index = 0; index < 4; ++index) {
-    EXPECT_EQ(failed.stack_trace.at(index).function, "divide");
+  for (const std::int64_t depth : {0, 3, 4, 7, 8}) {
+    const std::array arguments{runtime::Value::Integer(depth)};
+    const auto failed = runtime::ExecuteNativeFunction(instance, *fail, arguments);
+    EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
+    const auto recursive_frames = static_cast<std::size_t>(depth) + 1;
+    ASSERT_EQ(failed.stack_trace.size(), recursive_frames + 1);
+    for (std::size_t index = 0; index < recursive_frames; ++index) {
+      EXPECT_EQ(failed.stack_trace.at(index).function, "divide");
+    }
+    EXPECT_EQ(failed.stack_trace.back().function, "fail");
   }
-  EXPECT_EQ(failed.stack_trace.back().function, "fail");
   const auto handled = runtime::ExecuteNativeFunction(instance, *caught);
   ASSERT_TRUE(handled.Succeeded());
   EXPECT_EQ(handled.value.AsInteger(), 55);
@@ -135,33 +139,39 @@ export func throughLeaf(): int { return leaf(41); }
   if (!descend || !through_leaf) {
     FAIL() << "missing stack depth entry";
   }
-  runtime::NativeExecution execution(instance);
-  std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - 1);
-  for (auto& frame : outer) {
-    execution.MaterializeFrame(frame, *descend);
+  for (const std::size_t remaining : {1U, 3U, 4U, 5U, 8U}) {
+    runtime::NativeExecution execution(instance);
+    std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - remaining);
+    for (auto& frame : outer) {
+      execution.MaterializeFrame(frame, *descend);
+    }
+    const auto fitting_depth = static_cast<std::int64_t>(remaining - 1);
+    const std::array fitting{runtime::Value::Integer(fitting_depth)};
+    const auto returned = runtime::InvokeNativeFunction(execution, *descend, fitting);
+    ASSERT_TRUE(returned);
+    EXPECT_EQ(returned->AsInteger(), 42);
+    for (const auto depth : {remaining, remaining + 1}) {
+      const std::array arguments{runtime::Value::Integer(static_cast<std::int64_t>(depth))};
+      const auto exceeded = runtime::InvokeNativeFunction(execution, *descend, arguments);
+      ASSERT_FALSE(exceeded);
+      EXPECT_EQ(exceeded.error(), ExecutionStatus::StackOverflow);
+      EXPECT_EQ(execution.current_frame(), &outer.back());
+    }
+    if (remaining == 1) {
+      const auto leaf_exceeded = runtime::InvokeNativeFunction(execution, *through_leaf);
+      ASSERT_FALSE(leaf_exceeded);
+      EXPECT_EQ(leaf_exceeded.error(), ExecutionStatus::StackOverflow);
+      EXPECT_EQ(execution.current_frame(), &outer.back());
+    }
+    while (execution.current_frame() != nullptr) {
+      execution.Exit();
+    }
+    const std::array zero{runtime::Value::Integer(0)};
+    const auto reused = runtime::InvokeNativeFunction(execution, *descend, zero);
+    ASSERT_TRUE(reused);
+    EXPECT_EQ(reused->AsInteger(), 42);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
-  const std::array zero{runtime::Value::Integer(0)};
-  const auto returned = runtime::InvokeNativeFunction(execution, *descend, zero);
-  ASSERT_TRUE(returned);
-  EXPECT_EQ(returned->AsInteger(), 42);
-  for (const std::int64_t depth : {1, 2, 3, 4}) {
-    const std::array arguments{runtime::Value::Integer(depth)};
-    const auto exceeded = runtime::InvokeNativeFunction(execution, *descend, arguments);
-    ASSERT_FALSE(exceeded);
-    EXPECT_EQ(exceeded.error(), ExecutionStatus::StackOverflow);
-    EXPECT_EQ(execution.current_frame(), &outer.back());
-  }
-  const auto leaf_exceeded = runtime::InvokeNativeFunction(execution, *through_leaf);
-  ASSERT_FALSE(leaf_exceeded);
-  EXPECT_EQ(leaf_exceeded.error(), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.current_frame(), &outer.back());
-  while (execution.current_frame() != nullptr) {
-    execution.Exit();
-  }
-  const auto reused = runtime::InvokeNativeFunction(execution, *descend, zero);
-  ASSERT_TRUE(reused);
-  EXPECT_EQ(reused->AsInteger(), 42);
-  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions) {
@@ -236,7 +246,6 @@ export func fail(depth: int): int { return 8 / (walk(depth) - 2); }
     const auto value = runtime::InvokeNativeFunction(execution, *walk, arguments);
     ASSERT_TRUE(value);
     EXPECT_EQ(value->AsInteger(), 2);
-    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_EQ(execution.current_frame(), nullptr);
     // 先完成调用期间已标记旧根的增量周期，再检查下一周期确实回收已退出帧的对象。
     heap.FinishCollection();
