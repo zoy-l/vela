@@ -12,6 +12,7 @@
 
 #include "base/builtin.h"
 #include "base/layout_description.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -21,19 +22,58 @@ namespace {
 
 constexpr auto kUnknownBits = std::numeric_limits<std::uint64_t>::max();
 
-class MoveAliases final {
+class ArrayAliases final {
  public:
-  explicit MoveAliases(const ir::Function& function)
-      : parents_(function.register_count), ranks_(function.register_count) {
-    std::ranges::iota(parents_, ir::RegisterId{0});
-    for (const auto& instruction : function.instructions) {
-      if (instruction.opcode == Opcode::Move) {
-        Unite(instruction.dst, instruction.lhs);
+  explicit ArrayAliases(const ir::Program& program)
+      : initializers_(program.functions.size(), false),
+        closed_(program.native_mode == NativeProgramMode::Closed) {
+    auto count = program.global_initializers.size();
+    for (const auto& function : program.functions) {
+      offsets_.push_back(count);
+      count += function.register_count;
+    }
+    parents_.resize(count);
+    ranks_.resize(count);
+    std::ranges::iota(parents_, std::size_t{0});
+    if (closed_) {
+      for (const auto initializer : program.global_initializers) {
+        initializers_.at(initializer) = true;
+      }
+    }
+    for (std::size_t index = 0; index < program.functions.size(); ++index) {
+      for (const auto& instruction : program.functions.at(index).instructions) {
+        const auto local = [&](ir::RegisterId reg) { return Node(index, reg); };
+        if (instruction.opcode == Opcode::Move) {
+          Unite(local(instruction.dst), local(instruction.lhs));
+        } else if (closed_ && instruction.opcode == Opcode::GetGlobal) {
+          Unite(local(instruction.dst), instruction.index);
+        } else if (closed_ && instruction.opcode == Opcode::SetGlobal) {
+          Unite(local(instruction.lhs), instruction.index);
+        }
+      }
+    }
+    if (closed_) {
+      for (std::size_t global = 0; global < program.global_initializers.size(); ++global) {
+        const auto index = program.global_initializers.at(global);
+        for (const auto& instruction : program.functions.at(index).instructions) {
+          if (instruction.opcode == Opcode::Return) {
+            Unite(Node(index, instruction.dst), global);
+          }
+        }
       }
     }
   }
 
-  ir::RegisterId Find(ir::RegisterId reg) {
+  [[nodiscard]] std::size_t size() const { return parents_.size(); }
+  [[nodiscard]] std::size_t Node(std::size_t function, ir::RegisterId reg) const {
+    return offsets_.at(function) + reg;
+  }
+  [[nodiscard]] bool IsGlobalAccess(std::size_t function, Opcode opcode) const {
+    return closed_ && (opcode == Opcode::GetGlobal || opcode == Opcode::SetGlobal ||
+                       (opcode == Opcode::Return && initializers_.at(function)));
+  }
+
+  std::size_t Find(std::size_t reg) {
     while (reg != parents_.at(reg)) {
       auto& parent = parents_.at(reg);
       parent = parents_.at(parent);
@@ -43,7 +83,7 @@ class MoveAliases final {
   }
 
  private:
-  void Unite(ir::RegisterId first, ir::RegisterId second) {
+  void Unite(std::size_t first, std::size_t second) {
     auto left = Find(first);
     auto right = Find(second);
     if (left == right) {
@@ -58,7 +98,10 @@ class MoveAliases final {
     }
   }
 
-  std::vector<ir::RegisterId> parents_;
+  std::vector<std::size_t> offsets_;
+  std::vector<bool> initializers_;
+  bool closed_;
+  std::vector<std::size_t> parents_;
   std::vector<std::uint8_t> ranks_;
 };
 
@@ -148,6 +191,7 @@ bool IsArrayAccess(const ir::Instruction& instruction, ir::RegisterId reg) {
         case Builtin::ArrayMutation:
         case Builtin::ArrayCheckMutation:
         case Builtin::ArrayReserve:
+        case Builtin::ArrayClear:
         case Builtin::ArrayPush:
           return true;
         default:
@@ -165,60 +209,83 @@ struct ArrayState final {
 };
 
 void RecordWrite(const ir::Instruction& instruction,
-                 MoveAliases& aliases,
+                 std::size_t function,
+                 ArrayAliases& aliases,
                  std::span<ArrayState> arrays,
                  std::span<const std::uint64_t> values) {
   if (instruction.opcode == Opcode::SetIndex) {
-    arrays[aliases.Find(instruction.dst)].bits |= values[instruction.rhs];
+    arrays[aliases.Find(aliases.Node(function, instruction.dst))].bits |= values[instruction.rhs];
   } else if (instruction.opcode == Opcode::BuiltinCall &&
              instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush)) {
-    arrays[aliases.Find(instruction.lhs)].bits |= values[instruction.lhs + 1];
+    arrays[aliases.Find(aliases.Node(function, instruction.lhs))].bits |=
+        values[instruction.lhs + 1];
   }
+}
+
+std::vector<std::uint64_t> ArrayRegisterBits(const ir::Function& function,
+                                             std::size_t function_index,
+                                             ArrayAliases& aliases,
+                                             std::span<const ArrayState> arrays) {
+  const auto count = function.register_count;
+  std::vector<std::uint64_t> bits(count, kUnknownBits);
+  for (ir::RegisterId reg = 0; reg < count; ++reg) {
+    const auto& array = arrays[aliases.Find(aliases.Node(function_index, reg))];
+    if (array.local && !array.escaped) {
+      bits.at(reg) = array.bits;
+    }
+  }
+  return bits;
 }
 
 }  // namespace
 
-std::vector<std::uint64_t> FindPrivateArrayElementBits(const ir::Function& function,
-                                                       const ir::Program& program) {
-  if (std::ranges::none_of(function.instructions, [&](const auto& instruction) {
-        return HasLocalArrayDefinition(instruction, program);
+std::vector<std::vector<std::uint64_t>> FindArrayElementBits(const ir::Program& program) {
+  if (std::ranges::none_of(program.functions, [&](const auto& function) {
+        return std::ranges::any_of(function.instructions, [&](const auto& instruction) {
+          return HasLocalArrayDefinition(instruction, program);
+        });
       })) {
-    return {};
+    return std::vector<std::vector<std::uint64_t>>(program.functions.size());
   }
-  MoveAliases aliases(function);
-  std::vector<ArrayState> arrays(function.register_count);
-  for (ir::RegisterId reg = 0; reg < function.parameter_count; ++reg) {
-    arrays.at(aliases.Find(reg)).escaped = true;
-  }
-  std::vector<ir::RegisterAccess> accesses;
-  accesses.reserve(function.instructions.size());
-  for (const auto& instruction : function.instructions) {
-    const auto access = ir::AnalyzeRegisters(instruction, program.functions);
-    accesses.push_back(access);
-    if (access.defines_value && instruction.opcode != Opcode::Move) {
-      auto& array = arrays.at(aliases.Find(instruction.dst));
-      if (HasLocalArrayDefinition(instruction, program)) {
-        array.local = true;
-      } else if (instruction.opcode != Opcode::LoadNull) {
-        array.escaped = true;
-      }
+  ArrayAliases aliases(program);
+  std::vector<ArrayState> arrays(aliases.size());
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    const auto& function = program.functions.at(index);
+    const auto state = [&](ir::RegisterId reg) -> ArrayState& {
+      return arrays.at(aliases.Find(aliases.Node(index, reg)));
+    };
+    for (ir::RegisterId reg = 0; reg < function.parameter_count; ++reg) {
+      state(reg).escaped = true;
     }
-    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-      if (!IsArrayAccess(instruction, reg)) {
-        arrays.at(aliases.Find(reg)).escaped = true;
+    std::vector<ir::RegisterAccess> accesses;
+    accesses.reserve(function.instructions.size());
+    for (const auto& instruction : function.instructions) {
+      const auto access = ir::AnalyzeRegisters(instruction, program.functions);
+      accesses.push_back(access);
+      const auto global_access = aliases.IsGlobalAccess(index, instruction.opcode);
+      if (access.defines_value && instruction.opcode != Opcode::Move && !global_access) {
+        auto& array = state(instruction.dst);
+        if (HasLocalArrayDefinition(instruction, program)) {
+          array.local = true;
+        } else if (instruction.opcode != Opcode::LoadNull) {
+          array.escaped = true;
+        }
       }
-    });
-  }
-  const auto values = IntegerBits(function, accesses);
-  for (const auto& instruction : function.instructions) {
-    RecordWrite(instruction, aliases, arrays, values);
-  }
-  std::vector<std::uint64_t> result(function.register_count, kUnknownBits);
-  for (ir::RegisterId reg = 0; reg < function.register_count; ++reg) {
-    const auto& array = arrays.at(aliases.Find(reg));
-    if (array.local && !array.escaped) {
-      result.at(reg) = array.bits;
+      ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
+        if (!global_access && !IsArrayAccess(instruction, reg)) {
+          state(reg).escaped = true;
+        }
+      });
     }
+    const auto values = IntegerBits(function, accesses);
+    for (const auto& instruction : function.instructions) {
+      RecordWrite(instruction, index, aliases, arrays, values);
+    }
+  }
+  std::vector<std::vector<std::uint64_t>> result;
+  result.reserve(program.functions.size());
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    result.push_back(ArrayRegisterBits(program.functions.at(index), index, aliases, arrays));
   }
   return result;
 }

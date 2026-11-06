@@ -49,6 +49,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/array_analysis.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
@@ -521,6 +522,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
+    std::span<const std::uint64_t> array_element_bits,
     llvm::Constant* image,
     std::size_t index,
     const FunctionDeclarations& declarations,
@@ -537,15 +539,16 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
                                     ? std::span<const GeneratedFunction>(optimized)
                                     : std::span<const GeneratedFunction>(generated);
   const auto emission_tier = target.baseline_body == nullptr ? tier : NativeCodeTier::Baseline;
-  auto emitted =
-      EmitFunction(module, program, calls, field_targets, image, index, emission_entries,
-                   body_dependencies, debugging, emission_tier, escape, declarations.borrowable);
+  auto emitted = EmitFunction(module, program, calls, field_targets, array_element_bits, image,
+                              index, emission_entries, body_dependencies, debugging, emission_tier,
+                              escape, declarations.borrowable);
   if (!emitted) {
     return emitted;
   }
   if (const auto& borrow = borrows[index]) {
-    const auto borrowed = EmitBorrowedFunction(module, program, calls, field_targets, image, index,
-                                               borrow->plan, generated, debugging);
+    const auto borrowed =
+        EmitBorrowedFunction(module, program, calls, field_targets, array_element_bits, image,
+                             index, borrow->plan, generated, debugging);
     if (!borrowed) {
       return std::unexpected(borrowed.error());
     }
@@ -555,8 +558,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
   }
   if (target.baseline_body != nullptr) {
     auto optimized_metrics =
-        EmitFunction(module, program, calls, field_targets, image, index, optimized,
-                     body_dependencies, debugging, NativeCodeTier::Optimized, escape);
+        EmitFunction(module, program, calls, field_targets, array_element_bits, image, index,
+                     optimized, body_dependencies, debugging, NativeCodeTier::Optimized, escape);
     if (!optimized_metrics) {
       return optimized_metrics;
     }
@@ -678,6 +681,8 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     image = emitted->data;
   }
   std::vector<NativeFunctionMetrics> metrics;
+  // 在逃逸改写前分析一次规范程序，所有入口和代码层级共享同一组写入事实。
+  const auto array_element_bits = FindArrayElementBits(program);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     output.function_symbols.push_back(FunctionSymbols(generated.at(index), optimized.at(index)));
     if (!reused.empty() && reused[index] != 0) {
@@ -686,9 +691,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     }
     const auto& function = program.functions.at(index);
     auto& dependencies = output.body_dependencies.at(index);
-    auto emitted =
-        EmitDeclaredFunction(module, program, calls, field_targets, image, index, *declarations,
-                             dependencies, debugging, tier, escape, borrows);
+    auto emitted = EmitDeclaredFunction(module, program, calls, field_targets,
+                                        array_element_bits.at(index), image, index, *declarations,
+                                        dependencies, debugging, tier, escape, borrows);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }

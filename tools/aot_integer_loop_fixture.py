@@ -62,6 +62,34 @@ func caught(bound: int, initial: int): int {
   } finally { effects = 7; }
   return sum;
 }
+let boundedValues: int[] = [];
+let boundedAlias = boundedValues;
+let unboundedValues: int[] = [];
+func increment(value: int): int { return value + 1; }
+func prepareBounded(count: int, seed: int): void {
+  boundedAlias.clear();
+  boundedAlias.reserve(count);
+  for (let index = 0; index < count; index++) { boundedAlias.push((seed ^ index) & 1023); }
+}
+func boundedSum(): int {
+  const values = boundedValues;
+  const count = values.length;
+  let sum = 0;
+  for (let index = 0; index < count; index++) { sum += increment(values[index]); }
+  return sum;
+}
+func arrayPrefix(count: int, initial: int, term: int): int {
+  unboundedValues = [1, term, 0];
+  let sum = initial;
+  effects = 0;
+  try {
+    for (let index = 0; index < count; index++) {
+      effects = index;
+      sum += increment(unboundedValues[index]);
+    }
+  } catch (error: Error) { return sum; }
+  return sum;
+}
 export func calculate(operation: int, start: int, bound: int, initial: int, term: int): int {
   if (operation == 0) { return ascending(bound, initial); }
   if (operation == 1) { return descending(bound, initial); }
@@ -73,6 +101,9 @@ export func calculate(operation: int, start: int, bound: int, initial: int, term
   if (operation == 7) { return sideEffects(bound, initial); }
   if (operation == 8) { return inclusive(start, bound); }
   if (operation == 9) { const result = caught(bound, initial); return result + effects; }
+  if (operation == 10) { prepareBounded(bound, term); return boundedSum(); }
+  if (operation == 11) { return arrayPrefix(bound, initial, term); }
+  if (operation == 12) { return effects; }
   return 0;
 }
 """
@@ -198,6 +229,47 @@ TEST_F(NativeIntegerLoopTest, MatchesCheckedArithmeticAcrossSmallRangesAndIntege
         }
       }
     }
+  }
+}
+
+TEST_F(NativeIntegerLoopGcTest, ClosedArrayRangesHoldAcrossCallsAliasesEmptyAndChunkBoundaries) {
+  NativeExecution execution(*instance);
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  for (const std::int64_t count : {0, 1, 1000, 1024, 1025, 4097}) {
+    for (const auto seed : std::array<std::int64_t, 3>{-1, 42, maximum}) {
+      std::int64_t expected = 0;
+      for (std::int64_t index = 0; index < count; ++index) {
+        expected += ((seed ^ index) & 1023) + 1;
+      }
+      const std::array arguments{Integer(10), Integer(0), Integer(count), Integer(0), Integer(seed)};
+      NativeValue result;
+      ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+      EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected) << count << ' ' << seed;
+      EXPECT_EQ(execution.current_frame(), nullptr);
+      EXPECT_FALSE(execution.HasException());
+    }
+  }
+}
+
+TEST_F(NativeIntegerLoopGcTest, UnknownGlobalWritesKeepOverflowAndBoundsFailurePrefixes) {
+  NativeExecution execution(*instance);
+  const auto minimum = std::numeric_limits<std::int64_t>::min();
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  const std::array<std::array<std::int64_t, 5>, 5> cases{{
+      {3, 0, maximum, 2, 1}, {3, maximum - 2, 0, maximum, 1},
+      {4, 0, 0, 4, 3}, {0, 42, maximum, 42, 0}, {3, minimum, minimum, minimum + 2, 1},
+  }};
+  for (const auto& item : cases) {
+    SCOPED_TRACE(::testing::PrintToString(item));
+    const std::array arguments{Integer(11), Integer(0), Integer(item[0]), Integer(item[1]), Integer(item[2])};
+    NativeValue result;
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[3]);
+    const std::array observed{Integer(12), Integer(0), Integer(0), Integer(0), Integer(0)};
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[4]);
+    EXPECT_EQ(execution.current_frame(), nullptr);
+    EXPECT_FALSE(execution.HasException());
   }
 }
 '''

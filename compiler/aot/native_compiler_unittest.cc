@@ -590,6 +590,43 @@ TEST(NativeCompilerTest, EliminatesIntegerReductionsWithDynamicBounds) {
   }
 }
 
+TEST(NativeCompilerTest, VectorizesBoundedClosedGlobalArrayReductionsAfterInlining) {
+  const auto prepared = Prepare(R"(
+let values: int[] = [];
+export func prepare(count: int, seed: int): void {
+  values.clear();
+  values.reserve(count);
+  for (let index = 0; index < count; index++) { values.push((seed ^ index) & 1023); }
+}
+func increment(value: int): int { return value + 1; }
+export func sum(): int {
+  const data = values;
+  const count = data.length;
+  let total = 0;
+  for (let index = 0; index < count; index++) { total += increment(data[index]); }
+  return total;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result =
+      Compile(prepared.program, {.exports = {"prepare", "sum"}, .preserve_ir = true});
+  ASSERT_TRUE(result.has_value()) << frontend::DiagnosticsText(result.error());
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  const auto entry = std::ranges::find(result->exports, "sum", &NativeExport::name);
+  ASSERT_NE(entry, result->exports.end());
+  const auto* function = module->getFunction("vela_aot_entry_" + std::to_string(entry->function));
+  ASSERT_NE(function, nullptr);
+  const auto vector_sum =
+      std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
+        const auto* type = instruction.getType();
+        return instruction.getOpcode() == llvm::Instruction::Add && type->isVectorTy() &&
+               type->getScalarType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits);
+      });
+  EXPECT_TRUE(vector_sum) << result->llvm_ir;
+}
+
 TEST(NativeCompilerTest, FoldsUnobservedUnitFieldUpdates) {
   const auto prepared = Prepare(R"(
 class Box { value: int; }

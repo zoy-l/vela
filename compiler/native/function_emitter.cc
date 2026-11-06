@@ -1,7 +1,6 @@
 #include "compiler/native/function_emitter.h"
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
-#include "compiler/native/array_analysis.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
@@ -756,6 +755,7 @@ NativeRootPlan EscapeRoots(const ir::Program& program,
 
 FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
                                         const FieldTargets& field_targets,
+                                        std::span<const std::uint64_t> array_element_bits,
                                         std::size_t function_index,
                                         const EscapePlan& escape,
                                         const NativeRootPlan& roots,
@@ -770,8 +770,7 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
   };
   const auto& canonical = program.functions.at(function_index);
   if (roots.bounded_polls) {
-    // 规范 IR 保留经对象字段、闭包和借用调用逃逸的真实用途。
-    facts.array_element_bits = FindPrivateArrayElementBits(canonical, program);
+    facts.array_element_bits = array_element_bits;
   }
   if (tier == NativeCodeTier::Optimized) {
     facts.direct_calls = FindDirectCalls(escape.function.get(), program);
@@ -817,6 +816,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
+    std::span<const std::uint64_t> array_element_bits,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
@@ -830,15 +830,16 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   const auto& function = generated[function_index];
   const auto frame_recovery =
       function.HasRecovery(tier) ? NativeFrameRecovery::Required : NativeFrameRecovery::None;
-  const auto facts = PlanEmissionFacts(program, field_targets, function_index, escape, roots, tier);
+  const auto facts = PlanEmissionFacts(program, field_targets, array_element_bits, function_index,
+                                       escape, roots, tier);
   if (std::ranges::any_of(escape.allocations, &AllocationSite::stack_record)) {
     const auto frame =
         PlanNativeFrame(module, program, escape, roots, facts.temporary_count, frame_recovery,
                         NativeEntryKind::Initial, generated, facts.direct_calls);
     if (frame.bytes > kMaximumNativeStackBytes) {
       // 在 LLVM body 发射前完成表示选择；超预算记录使用普通调用所需的堆物化。
-      return EmitFunction(module, program, calls, field_targets, image, function_index, generated,
-                          body_dependencies, debugging, tier,
+      return EmitFunction(module, program, calls, field_targets, array_element_bits, image,
+                          function_index, generated, body_dependencies, debugging, tier,
                           EscapeOptimization::ScalarReplacement);
     }
   }
@@ -891,6 +892,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
+    std::span<const std::uint64_t> array_element_bits,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,
@@ -901,8 +903,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
                                                           plan.borrowed_fields);
   const auto roots = PlanNativeRoots(function, program.functions, program.native_mode, debugging,
                                      {.values = required, .safepoints = {}});
-  const auto facts = PlanEmissionFacts(program, field_targets, function_index, plan, roots,
-                                       NativeCodeTier::Baseline);
+  const auto facts = PlanEmissionFacts(program, field_targets, array_element_bits, function_index,
+                                       plan, roots, NativeCodeTier::Baseline);
   FunctionEmitter borrowed(module, program, calls, image, function_index, plan, generated, roots,
                            facts, NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
   if (const auto emitted = borrowed.Emit(); !emitted) {

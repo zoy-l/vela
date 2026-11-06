@@ -740,7 +740,7 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
                             llvm::MDNode::get(module_.getContext(), {}));
       }
       if (storage == builder_.getInt64Ty() && array_reg < array_element_bits_.size()) {
-        const auto bits = array_element_bits_.at(array_reg);
+        const auto bits = array_element_bits_[array_reg];
         if (bits != std::numeric_limits<std::uint64_t>::max()) {
           loaded->setMetadata(
               llvm::LLVMContext::MD_range,

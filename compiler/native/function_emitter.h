@@ -67,7 +67,7 @@ struct FunctionEmissionFacts final {
   std::vector<std::optional<std::uint32_t>> field_accesses;
   std::vector<FieldKindWrite> field_kind_writes;
   std::vector<std::optional<CallableTarget>> direct_calls;
-  std::vector<std::uint64_t> array_element_bits;
+  std::span<const std::uint64_t> array_element_bits;
 };
 
 class FunctionEmitter final {
@@ -336,7 +336,7 @@ class FunctionEmitter final {
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
-  const std::vector<std::uint64_t>& array_element_bits_;
+  std::span<const std::uint64_t> array_element_bits_;
   const NativeRootPlan& roots_;
 };
 
@@ -345,6 +345,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
+    std::span<const std::uint64_t> array_element_bits,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
@@ -359,6 +360,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
+    std::span<const std::uint64_t> array_element_bits,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,

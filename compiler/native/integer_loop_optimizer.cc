@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/ADT/APInt.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -22,6 +23,7 @@
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/CFG.h>
+#include <llvm/IR/ConstantRange.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -36,8 +38,12 @@
 #include <llvm/IR/PatternMatch.h>
 #include <llvm/IR/ValueHandle.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar/CorrelatedValuePropagation.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/JumpThreading.h>
+#include <llvm/Transforms/Scalar/SROA.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
@@ -739,6 +745,89 @@ void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result) {
   update.call->eraseFromParent();
 }
 
+bool HasBoundedReductionPrefixes(const CountedLoop& counted,
+                                 llvm::PHINode& accumulator,
+                                 const CheckedUpdate& update,
+                                 llvm::ScalarEvolution& evolution) {
+  auto* left = update.call->getArgOperand(0);
+  auto* term = update.call->getArgOperand(1);
+  const auto subtract = update.call->getIntrinsicID() == llvm::Intrinsic::ssub_with_overflow;
+  if (term == &accumulator && !subtract) {
+    std::swap(left, term);
+  }
+  if (left != &accumulator) {
+    return false;
+  }
+  const auto range = [&](llvm::Value* value) {
+    return evolution.getSignedRange(evolution.getSCEV(value));
+  };
+  const auto start =
+      range(counted.index->getIncomingValueForBlock(counted.loop->getLoopPreheader()));
+  const auto bound = range(counted.bound);
+  // 使用 i128 计算整个循环的最大迭代数和所有前缀的上下界，不能只证明片段内
+  // 的增量，也不能只检查最终和；正负项抵消时仍须保留首次溢出的可观察位置。
+  constexpr unsigned kProofBits = kIntegerBits * 2;
+  auto count = counted.direction == 1
+                   ? bound.getSignedMax().sext(kProofBits) - start.getSignedMin().sext(kProofBits)
+                   : start.getSignedMax().sext(kProofBits) - bound.getSignedMin().sext(kProofBits);
+  if (count.isNegative()) {
+    count = llvm::APInt(kProofBits, 0);
+  }
+  const auto initial =
+      range(accumulator.getIncomingValueForBlock(counted.loop->getLoopPreheader()));
+  const auto terms = range(term);
+  const auto minimum =
+      subtract ? -terms.getSignedMax().sext(kProofBits) : terms.getSignedMin().sext(kProofBits);
+  const auto maximum =
+      subtract ? -terms.getSignedMin().sext(kProofBits) : terms.getSignedMax().sext(kProofBits);
+  const auto lower = initial.getSignedMin().sext(kProofBits) +
+                     (minimum.isNegative() ? minimum * count : llvm::APInt(kProofBits, 0));
+  const auto upper = initial.getSignedMax().sext(kProofBits) +
+                     (maximum.isStrictlyPositive() ? maximum * count : llvm::APInt(kProofBits, 0));
+  return lower.sge(llvm::APInt::getSignedMinValue(kIntegerBits).sext(kProofBits)) &&
+         upper.sle(llvm::APInt::getSignedMaxValue(kIntegerBits).sext(kProofBits));
+}
+
+class BoundedReductionPass : public llvm::PassInfoMixin<BoundedReductionPass> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
+    auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
+    auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    llvm::SmallVector<CheckedUpdate> updates;
+    for (auto* loop : loops.getLoopsInPreorder()) {
+      const auto counted = MatchCountedLoop(*loop, dominators);
+      if (!counted) {
+        continue;
+      }
+      for (auto& phi : loop->getHeader()->phis()) {
+        if (&phi == counted->index || !phi.getType()->isIntegerTy(kIntegerBits)) {
+          continue;
+        }
+        const auto update = MatchUpdate(phi.getIncomingValueForBlock(loop->getLoopLatch()), *loop);
+        const llvm::BasicBlockEdge continuing(
+            counted->condition->getParent(),
+            counted->condition->getSuccessor(1 - counted->exit_edge));
+        if (update && dominators.dominates(continuing, update->call->getParent()) &&
+            HasBoundedReductionPrefixes(*counted, phi, *update, evolution)) {
+          updates.push_back(*update);
+        }
+      }
+    }
+    for (const auto& update : updates) {
+      llvm::IRBuilder<> builder(update.call);
+      auto* left = update.call->getArgOperand(0);
+      auto* right = update.call->getArgOperand(1);
+      auto* value = update.call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow
+                        ? builder.CreateNSWAdd(left, right)
+                        : builder.CreateNSWSub(left, right);
+      ReplaceUpdate(update, value);
+    }
+    return updates.empty() ? llvm::PreservedAnalyses::all() : llvm::PreservedAnalyses::none();
+  }
+};
+
 llvm::Value* ReductionPrefixFits(llvm::IRBuilder<>& builder,
                                  const CountedLoop& counted,
                                  llvm::Value* initial,
@@ -1129,6 +1218,22 @@ void AddBoundedPollPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::EarlyCSEPass());
   passes.addPass(llvm::DCEPass());
+  passes.addPass(llvm::SimplifyCFGPass());
+  passes.addPass(llvm::LoopSimplifyPass());
+  passes.addPass(llvm::LCSSAPass());
+  // 先完成规范计数循环的字段折叠和精确归约；后续 CVP/JumpThreading 可把零边界改为
+  // 符号测试并剥离首轮，届时原有的有界前缀和证明已不再可见。
+  passes.addPass(FieldLoopPass());
+  passes.addPass(IntegerLoopPass());
+  // 内联的标量计算先消费 load 范围，再在分块产生循环携带初值之前证明完整归约。
+  passes.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+  passes.addPass(llvm::InstCombinePass());
+  passes.addPass(llvm::CorrelatedValuePropagationPass());
+  passes.addPass(llvm::JumpThreadingPass());
+  passes.addPass(llvm::InstCombinePass());
+  passes.addPass(llvm::SimplifyCFGPass());
+  passes.addPass(llvm::LoopSimplifyPass());
+  passes.addPass(BoundedReductionPass());
   passes.addPass(llvm::SimplifyCFGPass());
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::LCSSAPass());

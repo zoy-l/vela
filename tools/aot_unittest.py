@@ -1273,7 +1273,7 @@ export async func calculate(): Future<int> {
             c_flags[c_flags.index(str(executable))] = str(c_executable)
             self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 58 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 60 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
