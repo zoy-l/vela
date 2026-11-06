@@ -5,6 +5,21 @@ external func workloadSize(): int = 'benchmark.size';
 external func hostStep(value: int): int = 'benchmark.step';
 
 let count = workloadSize();
+let numericValues: int[] = [];
+
+export func prepareNumeric(size: int, seed: int): void {
+  numericValues.clear();
+  numericValues.reserve(size);
+  let state = seed;
+  for (let index = 0; index < size; index++) {
+    state = (state * 1664525 + 1013904223) & 0x7fffffff;
+    numericValues.push(state & 1023);
+  }
+}
+
+export func entryScalar(value: int): int {
+  return value + 1;
+}
 
 class Box {
   value: int;
@@ -16,19 +31,22 @@ func step(value: int): int {
 }
 
 export func arithmetic(): int {
-  const size = count;
+  const values = numericValues;
+  const size = values.length;
   let sum = 0;
   for (let index = 0; index < size; index ++) {
-    sum += index;
+    const value = values[index];
+    sum += value * value;
   }
   return sum;
 }
 
 export func calls(): int {
-  const size = count;
+  const values = numericValues;
+  const size = values.length;
   let sum = 0;
   for (let index = 0; index < size; index ++) {
-    sum += step(index);
+    sum += step(values[index]);
   }
   return sum;
 }

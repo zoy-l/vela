@@ -190,9 +190,15 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
     return std::unexpected(std::move(error));
   }
   llvm::TargetOptions options;
+  const llvm::Triple target_triple(triple);
+  if (placement == NativeCodePlacement::Linked && target_triple.getArch() == llvm::Triple::x86_64) {
+    // x64 指令缓存行为 64 字节；固定热循环对齐，避免前序函数体积变化增加取指行数。
+    constexpr unsigned kX64LoopAlignment = 64;
+    options.LoopAlignment = kX64LoopAlignment;
+  }
   const auto cpu = TargetCpu(placement);
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
-      llvm::Triple(triple), cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
+      target_triple, cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
       llvm::CodeGenOptLevel::Default, placement == NativeCodePlacement::Dynamic));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
@@ -214,6 +220,13 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
       [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         AddIntegerBitPasses(pipeline);
       });
+  passes.registerCGSCCOptimizerLateEPCallback(
+      [](llvm::CGSCCPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        // 内联后、循环旋转前处理纯调用；旋转会把计数条件化简为退出相等判断。
+        llvm::FunctionPassManager functions;
+        AddBoundedPollPasses(functions);
+        pipeline.addPass(llvm::createCGSCCToFunctionPassAdaptor(std::move(functions)));
+      });
   // 宿主调用约定随实例固定；允许克隆循环，将 direct/checked 分派移到循环外。
   // 使用 LLVM 自带的体积阈值控制复制，不改变循环内错误和逻辑栈帧语义。
   passes.registerLateLoopOptimizationsEPCallback(
@@ -222,7 +235,6 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
       });
   passes.registerScalarOptimizerLateEPCallback(
       [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
-        // 内联和范围化简后才能识别含小型纯函数调用的有界循环。
         AddIntegerLoopPasses(pipeline);
       });
   passes.registerModuleAnalyses(modules);

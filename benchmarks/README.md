@@ -87,6 +87,30 @@ The build emits source through the production `vela build` interface.
 Generated `out/release/gen/benchmarks/*_native/build_metrics.json` records
 compilation/publication time, object size, target and build identities.
 
+The basic arithmetic workload sums squares from a runtime-prepared `int64`
+array at 1,000, 4,096 and 65,536 elements. C++ and Vela prepare the same bounded
+sequence from seed 42 before timing. Each invocation reads the array; the input
+cannot be replaced by a closed-form sum over loop indices. `calls` reduces the
+same input through an increment function. Both compilers may inline that function
+normally, so this case measures optimized script calls, not forced call latency.
+The host-call case retains the shared, non-inlined C++ host function on both paths.
+
+Synchronous cases have a dedicated runner with scalar result consumption and
+checksum validation. Future completion and scheduler work are compiled only into
+the async runner. Benchmark-only `Sample` records and string error results are
+not part of steady timing. Runtime status/type checks and Vela's generated entry,
+overflow and GC contracts remain timed. Each iteration has a compiler memory
+barrier on both sides so read-only input work cannot be reused across iterations.
+There is no repeated-operation loop added solely to divide away entry overhead,
+and no subtraction of independently timed wrappers.
+
+The `aot_workload_contract=runtime-inputs/specialized-completion/v2` context marks
+this boundary. The suite has 24 workload names and 26 workload/size pairs;
+aggregate ratios weight each selected size separately. Earlier arithmetic
+results used a closed-form sum and an asymmetric result wrapper, and earlier
+`calls` results forced C++ calls to remain out of line. Those timings are not a
+performance baseline for the revised workload contract.
+
 The [16 algorithm workloads](algorithms/README.md) use the same Vela source for AOT
 and JIT. Input preparation is excluded from steady timing, every invocation checks
 its result, and stateful particles advance between calls. No daScript installation
@@ -122,9 +146,16 @@ suite/tier pairs. Process memory includes every prepared image in the process.
 The `entry/` component benchmarks in `vela_aot_benchmarks` measure native stack-bound
 queries, execution construction/destruction, and instance borrow/release separately.
 Those components use a closed image and exclude instance preparation. The
-`entry/baseline_arithmetic` and `entry/optimized_arithmetic` cases measure generated
-reloadable entries with one retained version and execution context; they exclude
-the development-session lookup and activation lifetime. Run them after building
+`entry/generated/scalar` and `entry/target/scalar` measure a scalar increment at
+the generated AOT entry and the production target adapter. `entry/baseline_scalar`
+and `entry/optimized_scalar` measure retained reloadable entries. They encode a
+runtime scalar argument, check status/type and consume the result on every call,
+while excluding the development-session lookup and activation lifetime.
+`entry/cpp_direct/scalar` and `entry/cpp_indirect/scalar` call a non-inlined C++
+scalar function with the same runtime value and checksum. C++ returns an integer
+in a register; Vela uses its status/output ABI and runtime checks, so these
+component times describe different entry contracts and are not algorithm ratios.
+Run them after building
 Release benchmarks with `out/release/vela_aot_benchmarks --benchmark_filter='^entry/'`.
 These independent measurements help locate fixed costs; their times are not additive
 and do not replace the complete reloadable invocation measured by `hot/steady/`.

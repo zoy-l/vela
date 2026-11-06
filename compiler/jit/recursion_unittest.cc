@@ -132,11 +132,17 @@ export func descend(depth: int): int {
   return descend(depth - 1);
 }
 export func throughLeaf(): int { return leaf(41); }
+export func throughLoop(count: int): int {
+  let result = 0;
+  for (let index = 0; index < count; index++) { result = leaf(result); }
+  return result;
+}
 )"));
   auto instance = BorrowInstance();
   const auto descend = instance.FindFunction("descend");
   const auto through_leaf = instance.FindFunction("throughLeaf");
-  if (!descend || !through_leaf) {
+  const auto through_loop = instance.FindFunction("throughLoop");
+  if (!descend || !through_leaf || !through_loop) {
     FAIL() << "missing stack depth entry";
   }
   for (const std::size_t remaining : {1U, 3U, 4U, 5U, 8U}) {
@@ -163,6 +169,20 @@ export func throughLeaf(): int { return leaf(41); }
       EXPECT_EQ(leaf_exceeded.error(), ExecutionStatus::StackOverflow);
       EXPECT_EQ(execution.current_frame(), &outer.back());
     }
+    const std::array empty{runtime::Value::Integer(0)};
+    const auto empty_loop = runtime::InvokeNativeFunction(execution, *through_loop, empty);
+    ASSERT_TRUE(empty_loop);
+    EXPECT_EQ(empty_loop->AsInteger(), 0);
+    const std::array iterations{runtime::Value::Integer(4096)};
+    const auto loop_result = runtime::InvokeNativeFunction(execution, *through_loop, iterations);
+    if (remaining == 1) {
+      ASSERT_FALSE(loop_result);
+      EXPECT_EQ(loop_result.error(), ExecutionStatus::StackOverflow);
+    } else {
+      ASSERT_TRUE(loop_result);
+      EXPECT_EQ(loop_result->AsInteger(), 4096);
+    }
+    EXPECT_EQ(execution.current_frame(), &outer.back());
     while (execution.current_frame() != nullptr) {
       execution.Exit();
     }

@@ -158,6 +158,9 @@ llvm::Value* FunctionEmitter::LoadSafepointRequests() {
   // 请求字属于 Isolate，地址在整个执行期间固定；请求值仍必须在每个安全点原子读取。
   MarkInvariant(*requests_address);
   auto* requests = builder_.CreateLoad(builder_.getInt8Ty(), requests_address);
+  requests->setMetadata(
+      kNativePollReadyStateMetadata,
+      llvm::MDNode::get(module_.getContext(), llvm::ConstantAsMetadata::get(builder_.getInt8(0))));
   // 零值分支不读取跨线程发布的数据；慢路径 ProcessSafepoint 用 acquire 读取并消费请求。
   // 探测本身只需原子性，不能让 acquire 阻断无请求执行片段内的字段和数组优化。
   requests->setAtomic(llvm::AtomicOrdering::Monotonic);
@@ -172,6 +175,10 @@ void FunctionEmitter::Poll() {
     // 被调用方可能已消耗发布请求并使当前帧失效；返回后仍须在下一安全点恢复。
     auto* tier = builder_.CreateLoad(
         builder_.getInt8Ty(), ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
+    tier->setMetadata(
+        kNativePollReadyStateMetadata,
+        llvm::MDNode::get(context, llvm::ConstantAsMetadata::get(builder_.getInt8(
+                                       static_cast<std::uint8_t>(NativeCodeTier::Optimized)))));
     required = builder_.CreateOr(
         required, builder_.CreateICmpEQ(
                       tier, builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Baseline))));

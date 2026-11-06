@@ -136,5 +136,65 @@ func main(): int { return fail(); }
   }
 }
 
+TEST(OptimizationTest, PureCallArrayLoopsPreserveOverflowAndBoundsPrefixesAcrossChunks) {
+  runtime::Isolate isolate(1);
+  const auto result = test::RunInteger(R"(
+class Outcome { total: int; index: int; code: string; }
+func step(value: int): int { return value + 1; }
+func calculate(values: int[], count: int): Outcome {
+  let total = 0;
+  let index = 0;
+  try {
+    for (; index < count; index++) { total += step(values[index]); }
+  } catch (error: Error) {
+    return Outcome(total: total, index: index, code: error.code);
+  }
+  return Outcome(total: total, index: index, code: '');
+}
+func main(): int {
+  const maximum = 9223372036854775807;
+  const first = calculate([4, maximum, 7], 3);
+  if (first.total != 5 || first.index != 1 || first.code != 'IntegerOverflow') { return 1; }
+  const second = calculate([maximum - 1, 1, 7], 3);
+  if (second.total != maximum || second.index != 1 || second.code != 'IntegerOverflow') { return 2; }
+  const values: int[] = [];
+  for (let index = 0; index < 4096; index++) { values.push(1); }
+  const whole = calculate(values, 4096);
+  if (whole.total != 8192 || whole.index != 4096 || whole.code != '') { return 3; }
+  const empty = calculate(values, 0);
+  if (empty.total != 0 || empty.index != 0 || empty.code != '') { return 4; }
+  values[1025] = maximum;
+  const later = calculate(values, 4096);
+  if (later.total != 2050 || later.index != 1025 || later.code != 'IntegerOverflow') { return 5; }
+  const short = calculate([1, 1], 4096);
+  return short.total == 4 && short.index == 2 && short.code == 'IndexOutOfBounds' ? 42 : 6;
+}
+)",
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(OptimizationTest, PureCallLoopFailuresRetainTheCalleeAndCallerFrames) {
+  runtime::Isolate isolate;
+  const auto compiled = test::CompileSource(R"(
+func step(value: int): int { return value + 1; }
+func calculate(values: int[]): int {
+  let total = 0;
+  for (let index = 0; index < values.length; index++) { total += step(values[index]); }
+  return total;
+}
+func main(): int { return calculate([1, 9223372036854775807, 3]); }
+)",
+                                            isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = test::Execute(*compiled.instance);
+  EXPECT_EQ(result.status, ExecutionStatus::IntegerOverflow);
+  ASSERT_EQ(result.stack_trace.size(), 3U);
+  EXPECT_EQ(result.stack_trace[0].function, "step");
+  EXPECT_EQ(result.stack_trace[1].function, "calculate");
+  EXPECT_EQ(result.stack_trace[2].function, "main");
+}
+
 }  // namespace
 }  // namespace vela::compiler

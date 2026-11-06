@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "benchmarks/algorithms/workloads.h"
+#include "benchmarks/aot_benchmark_kernels.h"
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/aot_benchmark_types.h"
 #include "benchmarks/aot_native/entries.h"
@@ -39,15 +41,11 @@ namespace vela::benchmarks {
 namespace {
 
 std::int64_t WorkloadSize([[maybe_unused]] runtime::NativeContext& context) noexcept {
-  return kAotBenchmarkCases.front().size;
+  return kAotWorkloadSize;
 }
 
 [[clang::noinline]] std::int64_t HostStep([[maybe_unused]] runtime::NativeContext& context,
                                           std::int64_t value) noexcept {
-  return value + 1;
-}
-
-[[clang::noinline]] std::int64_t PlainStep(std::int64_t value) {
   return value + 1;
 }
 
@@ -59,67 +57,56 @@ std::expected<void, std::string> RegisterHost(runtime::Isolate& isolate) {
   return {};
 }
 
-struct Sample final {
-  std::int64_t value = 0;
-  std::size_t suspended_frames = 0;
-  std::size_t saved_bytes = 0;
-};
-
-std::int64_t ArithmeticSum(std::int64_t size) {
-  std::int64_t sum = 0;
-  for (std::int64_t index = 0; index < size; ++index) {
-    sum += index;
+std::expected<void, ExecutionStatus> PrepareNative(runtime::NativeExecution& execution,
+                                                   AotBenchmarkCase problem) {
+  if (problem.kernel != AotKernel::Arithmetic && problem.kernel != AotKernel::Calls) {
+    return {};
   }
-  return sum;
+  const std::array arguments{
+      runtime::EncodeNativeValue(runtime::Value::Integer(problem.size)),
+      runtime::EncodeNativeValue(runtime::Value::Integer(kAotInputSeed)),
+  };
+  const auto result = runtime::InvokeNativeTarget(execution, kAotPrepareNumeric, arguments);
+  if (!result) {
+    return std::unexpected(result.error());
+  }
+  return {};
 }
 
-[[clang::noinline]] std::int64_t ArithmeticEntry(std::int64_t size) {
-  benchmark::DoNotOptimize(size);
-  return ArithmeticSum(size);
-}
-
-std::expected<Sample, std::string> ResolveResult(runtime::Isolate& isolate,
-                                                 runtime::Value value,
-                                                 AotCompletion completion) {
-  Sample sample;
+std::expected<runtime::Value, ExecutionStatus> AwaitResult(runtime::Isolate& isolate,
+                                                           runtime::Value value) {
+  runtime::RootRange root(isolate.heap(), &value, 1);
+  auto* future = value.IsObject() ? runtime::Heap::GetFuture(*value.AsObject()) : nullptr;
+  if (future == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
   auto& scheduler = isolate.scheduler();
-  if (completion == AotCompletion::Future) {
-    runtime::RootRange root(isolate.heap(), &value, 1);
-    auto* future = value.IsObject() ? runtime::Heap::GetFuture(*value.AsObject()) : nullptr;
-    if (future == nullptr) {
-      return std::unexpected("async benchmark returned a non-Future");
+  if (scheduler.PumpUntil(*future) == runtime::FuturePumpResult::Idle ||
+      future->state() != runtime::FutureState::Succeeded) {
+    return std::unexpected(ExecutionStatus::NativeFailure);
+  }
+  return future->value().value_or(runtime::Value::Null());
+}
+
+template <AotCompletion Completion>
+std::expected<runtime::Value, ExecutionStatus> CompleteResult(
+    runtime::Isolate& isolate,
+    std::expected<runtime::Value, ExecutionStatus> value) {
+  if constexpr (Completion == AotCompletion::Future) {
+    if (value) {
+      return AwaitResult(isolate, *value);
     }
-    sample.suspended_frames = scheduler.suspended_frame_count();
-    sample.saved_bytes = scheduler.saved_state_bytes();
-    if (scheduler.PumpUntil(*future) == runtime::FuturePumpResult::Idle ||
-        future->state() != runtime::FutureState::Succeeded) {
-      return std::unexpected("async benchmark failed or became idle");
-    }
-    value = future->value().value_or(runtime::Value::Null());
   }
-  if (!value.IsInteger()) {
-    return std::unexpected("benchmark returned a non-int checksum");
-  }
-  sample.value = value.AsInteger();
-  return sample;
+  return value;
 }
 
-std::expected<Sample, std::string> RunNative(runtime::NativeExecution& execution,
-                                             const AotBenchmarkCase& problem) {
-  const auto value = runtime::InvokeNativeTarget(execution, problem.function, {});
-  if (!value) {
-    return std::unexpected(execution.HasException() ? execution.ExceptionDiagnostic().message
-                                                    : "native benchmark execution failed");
-  }
-  return ResolveResult(execution.isolate(), *value, problem.completion);
+void ReportPendingState(benchmark::State& state, runtime::Isolate& isolate) {
+  auto& scheduler = isolate.scheduler();
+  state.counters["suspended_frames"] = static_cast<double>(scheduler.suspended_frame_count());
+  state.counters["saved_state_bytes"] = static_cast<double>(scheduler.saved_state_bytes());
 }
 
-void ReportSample(benchmark::State& state, Sample sample) {
-  state.counters["result"] = static_cast<double>(sample.value);
-  state.counters["suspended_frames"] = static_cast<double>(sample.suspended_frames);
-  state.counters["saved_state_bytes"] = static_cast<double>(sample.saved_bytes);
-}
-
+template <AotCompletion Completion>
 void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
   runtime::Isolate isolate;
   if (const auto registered = RegisterHost(isolate); !registered) {
@@ -132,24 +119,34 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
     return;
   }
   runtime::NativeExecution execution(**instance);
-  const auto warm = RunNative(execution, problem);
-  if (!warm || warm->value != problem.expected) {
-    state.SkipWithError(warm ? "native warm-up checksum mismatch" : warm.error());
+  if (!PrepareNative(execution, problem)) {
+    state.SkipWithError("native input preparation failed");
+    return;
+  }
+  const auto invoked = runtime::InvokeNativeTarget(execution, problem.function, {});
+  ReportPendingState(state, isolate);
+  const auto warm = CompleteResult<Completion>(isolate, invoked);
+  if (!warm || !warm->IsInteger() || warm->AsInteger() != problem.expected) {
+    state.SkipWithError("native warm-up checksum mismatch");
     return;
   }
   CollectHeapBaseline(state, isolate.heap());
-  ReportSample(state, *warm);
+  state.counters["result"] = static_cast<double>(problem.expected);
+  state.counters["expected_result"] = static_cast<double>(problem.expected);
   state.counters["entry_shadow_slots"] = static_cast<double>(problem.shadow_slots);
   state.counters["entry_frame_bytes"] = static_cast<double>(problem.frame_bytes);
   state.counters["entry_static_root_stores"] = static_cast<double>(problem.root_stores);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = RunNative(execution, problem);
-    if (!result || result->value != problem.expected) {
-      state.SkipWithError(result ? "native checksum mismatch" : result.error());
+    benchmark::ClobberMemory();
+    const auto result = CompleteResult<Completion>(
+        isolate, runtime::InvokeNativeTarget(execution, problem.function, {}));
+    if (!result || !result->IsInteger() || result->AsInteger() != problem.expected) {
+      state.SkipWithError("native checksum mismatch");
       return;
     }
-    benchmark::DoNotOptimize(result->value);
+    auto value = result->AsInteger();
+    benchmark::DoNotOptimize(value);
   }
   ReportAotHeap(state, isolate);
 }
@@ -157,7 +154,7 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
 enum class EntryCallLayer : std::uint8_t { Generated, Target };
 
 template <EntryCallLayer Layer>
-void NativeEntryLayer(benchmark::State& state, AotBenchmarkCase problem) {
+void NativeEntryLayer(benchmark::State& state) {
   runtime::Isolate isolate;
   if (const auto registered = RegisterHost(isolate); !registered) {
     state.SkipWithError(registered.error());
@@ -169,67 +166,72 @@ void NativeEntryLayer(benchmark::State& state, AotBenchmarkCase problem) {
     return;
   }
   runtime::NativeExecution execution(**instance);
-  const auto warm = runtime::InvokeNativeTarget(execution, problem.function, {});
-  if (!warm || !warm->IsInteger() || warm->AsInteger() != problem.expected) {
+  auto input = kEntryInput;
+  std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(input))};
+  const auto warm = runtime::InvokeNativeTarget(execution, kAotScalarEntry, arguments);
+  if (!warm || !warm->IsInteger() || warm->AsInteger() != kEntryExpected) {
     state.SkipWithError("entry warm-up checksum mismatch");
     return;
   }
-  auto entry = (*instance)->image().function(problem.function).entry;
+  auto entry = (*instance)->image().function(kAotScalarEntry).entry;
   benchmark::DoNotOptimize(entry);
   CollectHeapBaseline(state, isolate.heap());
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
+    benchmark::DoNotOptimize(input);
+    arguments.front() = runtime::EncodeNativeValue(runtime::Value::Integer(input));
     runtime::Value value;
     if constexpr (Layer == EntryCallLayer::Generated) {
       runtime::NativeValue output;
-      const auto status = entry(&execution, nullptr, 0, &output);
+      const auto status = entry(&execution, arguments.data(), arguments.size(), &output);
       if (status != runtime::ToNativeStatus(ExecutionStatus::Returned)) {
         state.SkipWithError("generated entry failed");
         return;
       }
       value = runtime::DecodeNativeValue(output);
     } else {
-      const auto result = runtime::InvokeNativeTarget(execution, problem.function, {});
+      const auto result = runtime::InvokeNativeTarget(execution, kAotScalarEntry, arguments);
       if (!result) {
         state.SkipWithError("native target failed");
         return;
       }
       value = *result;
     }
-    if (!value.IsInteger() || value.AsInteger() != problem.expected) {
+    if (!value.IsInteger() || value.AsInteger() != kEntryExpected) {
       state.SkipWithError("entry checksum mismatch");
       return;
     }
-    benchmark::DoNotOptimize(value.AsInteger());
+    auto result = value.AsInteger();
+    benchmark::DoNotOptimize(result);
   }
-  state.counters["result"] = static_cast<double>(problem.expected);
-  state.counters["expected_result"] = static_cast<double>(problem.expected);
+  state.counters["result"] = static_cast<double>(kEntryExpected);
+  state.counters["expected_result"] = static_cast<double>(kEntryExpected);
   ReportAotHeap(state, isolate);
 }
 
 enum class CppEntryCall : std::uint8_t { Direct, Indirect };
 
 template <CppEntryCall Call>
-void CppArithmeticEntry(benchmark::State& state) {
-  auto size = kAotBenchmarkCases.front().size;
-  benchmark::DoNotOptimize(size);
-  auto* entry = &ArithmeticEntry;
+void CppEntry(benchmark::State& state) {
+  auto input = kEntryInput;
+  auto* entry = &CppScalarEntry;
   benchmark::DoNotOptimize(entry);
-  const auto expected = kAotBenchmarkCases.front().expected;
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = Call == CppEntryCall::Direct ? ArithmeticEntry(size) : entry(size);
-    if (result != expected) {
+    benchmark::DoNotOptimize(input);
+    auto result = Call == CppEntryCall::Direct ? CppScalarEntry(input) : entry(input);
+    if (result != kEntryExpected) {
       state.SkipWithError("C++ entry checksum mismatch");
       return;
     }
     benchmark::DoNotOptimize(result);
   }
-  state.counters["result"] = static_cast<double>(expected);
-  state.counters["expected_result"] = static_cast<double>(expected);
+  state.counters["result"] = static_cast<double>(kEntryExpected);
+  state.counters["expected_result"] = static_cast<double>(kEntryExpected);
   ReportAotResident(state);
 }
 
+template <AotCompletion Completion>
 void JitSteady(benchmark::State& state,
                AotBenchmarkCase problem,
                const std::shared_ptr<JitWorkload>& workload) {
@@ -248,36 +250,51 @@ void JitSteady(benchmark::State& state,
     return;
   }
   auto& isolate = *setup->isolate;
-  const auto run = [&]() -> std::expected<Sample, std::string> {
-    const auto value = InvokeJitWorkload(*setup, problem.name);
-    if (!value) {
-      return std::unexpected("JIT benchmark execution failed");
+  if (problem.kernel == AotKernel::Arithmetic || problem.kernel == AotKernel::Calls) {
+    const auto entry = isolate.native_dispatch().FindEntry(setup->program->entry, "prepareNumeric");
+    const std::array arguments{
+        runtime::Value::Integer(problem.size),
+        runtime::Value::Integer(kAotInputSeed),
+    };
+    if (!entry || !entry->Invoke(arguments)) {
+      state.SkipWithError("JIT input preparation failed");
+      return;
     }
-    return ResolveResult(isolate, *value, problem.completion);
-  };
+  }
   const auto first_started = std::chrono::steady_clock::now();
-  const auto warm = run();
+  const auto invoked = InvokeJitWorkload(*setup, problem.name);
+  auto& scheduler = isolate.scheduler();
+  const auto suspended_frames = scheduler.suspended_frame_count();
+  const auto saved_bytes = scheduler.saved_state_bytes();
+  const auto warm = CompleteResult<Completion>(isolate, invoked);
   ReportJitFirstExecution(state, first_started);
-  if (!warm || warm->value != problem.expected) {
-    state.SkipWithError(warm ? "JIT warm-up checksum mismatch" : warm.error());
+  if (!warm || !warm->IsInteger() || warm->AsInteger() != problem.expected) {
+    state.SkipWithError("JIT warm-up checksum mismatch");
     return;
   }
   CollectHeapBaseline(state, isolate.heap());
-  ReportSample(state, *warm);
+  state.counters["result"] = static_cast<double>(problem.expected);
+  state.counters["expected_result"] = static_cast<double>(problem.expected);
+  state.counters["suspended_frames"] = static_cast<double>(suspended_frames);
+  state.counters["saved_state_bytes"] = static_cast<double>(saved_bytes);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = run();
-    if (!result || result->value != problem.expected) {
-      state.SkipWithError(result ? "JIT checksum mismatch" : result.error());
+    benchmark::ClobberMemory();
+    const auto result =
+        CompleteResult<Completion>(isolate, InvokeJitWorkload(*setup, problem.name));
+    if (!result || !result->IsInteger() || result->AsInteger() != problem.expected) {
+      state.SkipWithError("JIT checksum mismatch");
       return;
     }
-    benchmark::DoNotOptimize(result->value);
+    auto value = result->AsInteger();
+    benchmark::DoNotOptimize(value);
   }
   ReportJitSetup(state, *setup);
   ReportJitMemory(state, *setup);
 }
 
-std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int64_t size) {
+std::expected<std::int64_t, ExecutionStatus> CppAsync(runtime::Isolate& isolate,
+                                                      std::int64_t size) {
   auto& scheduler = isolate.scheduler();
   runtime::Future result(&scheduler);
   std::int64_t index = 0;
@@ -302,13 +319,13 @@ std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int6
   };
   advance(0);
   if (scheduler.PumpUntil(result) == runtime::FuturePumpResult::Idle || completion_error) {
-    return std::unexpected("C++ async benchmark became idle");
+    return std::unexpected(ExecutionStatus::NativeFailure);
   }
   const auto value = result.value().value_or(runtime::Value::Null());
   if (!value.IsInteger()) {
-    return std::unexpected("C++ async benchmark returned a non-int checksum");
+    return std::unexpected(ExecutionStatus::TypeError);
   }
-  return Sample{.value = value.AsInteger()};
+  return value.AsInteger();
 }
 
 std::int64_t CppSpectralNorm() {
@@ -318,7 +335,9 @@ std::int64_t CppSpectralNorm() {
   return static_cast<std::int64_t>(workload.Run() * kFixedPointScale);
 }
 
-std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmarkCase problem) {
+std::int64_t CppRun(runtime::Isolate& isolate,
+                    AotBenchmarkCase problem,
+                    std::span<const std::int64_t> numeric_values) {
   auto size = problem.size;
   benchmark::DoNotOptimize(size);
   std::int64_t sum = 0;
@@ -328,12 +347,10 @@ std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmar
   };
   switch (problem.kernel) {
     case AotKernel::Arithmetic:
-      sum = ArithmeticSum(size);
+      sum = CppArithmetic(numeric_values);
       break;
     case AotKernel::Calls:
-      for (std::int64_t index = 0; index < size; ++index) {
-        sum += PlainStep(index);
-      }
+      sum = CppCalls(numeric_values);
       break;
     case AotKernel::Fields: {
       auto box = std::make_unique<Box>();
@@ -376,28 +393,45 @@ std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmar
       break;
     }
     case AotKernel::Async:
-      return CppAsync(isolate, size);
+      std::unreachable();
     case AotKernel::SpectralNorm:
-      return Sample{.value = CppSpectralNorm()};
+      return CppSpectralNorm();
   }
-  return Sample{.value = sum};
+  return sum;
 }
 
+template <AotCompletion Completion>
 void CppSteady(benchmark::State& state, AotBenchmarkCase problem) {
   runtime::Isolate isolate;
+  const auto numeric_values =
+      problem.kernel == AotKernel::Arithmetic || problem.kernel == AotKernel::Calls
+          ? PrepareNumericValues({.size = problem.size, .seed = kAotInputSeed})
+          : std::vector<std::int64_t>{};
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = CppRun(isolate, problem);
-    if (!result || result->value != problem.expected) {
-      state.SkipWithError("C++ benchmark checksum mismatch");
-      return;
+    benchmark::ClobberMemory();
+    if constexpr (Completion == AotCompletion::Future) {
+      auto result = CppAsync(isolate, problem.size);
+      if (!result || *result != problem.expected) {
+        state.SkipWithError("C++ async benchmark checksum mismatch");
+        return;
+      }
+      benchmark::DoNotOptimize(*result);
+    } else {
+      auto result = CppRun(isolate, problem, numeric_values);
+      if (result != problem.expected) {
+        state.SkipWithError("C++ benchmark checksum mismatch");
+        return;
+      }
+      benchmark::DoNotOptimize(result);
     }
-    benchmark::DoNotOptimize(result->value);
   }
   state.counters["result"] = static_cast<double>(problem.expected);
+  state.counters["expected_result"] = static_cast<double>(problem.expected);
   ReportAotResident(state);
 }
 
+template <AotCompletion Completion>
 void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -416,11 +450,16 @@ void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {
         return;
       }
       runtime::NativeExecution execution(**instance);
+      if (!PrepareNative(execution, problem)) {
+        state.ResumeTiming();
+        state.SkipWithError("native input preparation failed");
+        return;
+      }
       state.ResumeTiming();
-      auto result = RunNative(execution, problem);
-      benchmark::DoNotOptimize(result);
+      const auto result = CompleteResult<Completion>(
+          isolate, runtime::InvokeNativeTarget(execution, problem.function, {}));
       state.PauseTiming();
-      if (!result || result->value != problem.expected) {
+      if (!result || !result->IsInteger() || result->AsInteger() != problem.expected) {
         state.ResumeTiming();
         state.SkipWithError("first native execution checksum mismatch");
         return;
@@ -477,42 +516,67 @@ void JitEntryCost(benchmark::State& state, const std::shared_ptr<JitWorkload>& w
   }
   auto instance =
       runtime::NativeInstance::Borrow(setup->isolate->native_dispatch().current_state());
-  const auto function = instance.FindFunction("arithmetic");
+  const auto function = instance.FindFunction("entryScalar");
   if (!function) {
-    state.SkipWithError("arithmetic entry is missing");
+    state.SkipWithError("scalar entry is missing");
     return;
   }
   runtime::NativeExecution execution(instance);
-  const auto& problem = kAotBenchmarkCases.front();
-  const auto warm = runtime::InvokeNativeTarget(execution, *function, {});
-  if (!warm || !warm->IsInteger() || warm->AsInteger() != problem.expected) {
-    state.SkipWithError("arithmetic warm-up checksum mismatch");
+  auto input = kEntryInput;
+  std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(input))};
+  const auto warm = runtime::InvokeNativeTarget(execution, *function, arguments);
+  if (!warm || !warm->IsInteger() || warm->AsInteger() != kEntryExpected) {
+    state.SkipWithError("scalar warm-up checksum mismatch");
     return;
   }
   // 诊断生成代码本身的入口成本；此版本及激活在整个测量期间保活。
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = runtime::InvokeNativeTarget(execution, *function, {});
-    benchmark::DoNotOptimize(result);
-    if (!result || !result->IsInteger() || result->AsInteger() != problem.expected) {
-      state.SkipWithError("arithmetic checksum mismatch");
+    benchmark::DoNotOptimize(input);
+    arguments.front() = runtime::EncodeNativeValue(runtime::Value::Integer(input));
+    const auto result = runtime::InvokeNativeTarget(execution, *function, arguments);
+    if (!result || !result->IsInteger() || result->AsInteger() != kEntryExpected) {
+      state.SkipWithError("scalar checksum mismatch");
       return;
     }
+    auto value = result->AsInteger();
+    benchmark::DoNotOptimize(value);
+  }
+  state.counters["result"] = static_cast<double>(kEntryExpected);
+  state.counters["expected_result"] = static_cast<double>(kEntryExpected);
+}
+
+template <AotCompletion Completion>
+void RegisterWorkload(AotBenchmarkCase problem,
+                      const std::array<std::shared_ptr<JitWorkload>, 2>& tiers) {
+  const auto suffix = std::string(problem.name) + "/" + std::to_string(problem.size);
+  benchmark::RegisterBenchmark("aot/native/" + suffix, NativeSteady<Completion>, problem)
+      ->UseRealTime();
+  benchmark::RegisterBenchmark("aot/cpp/" + suffix, CppSteady<Completion>, problem)->UseRealTime();
+  benchmark::RegisterBenchmark("aot/first_native/" + suffix, NativeFirst<Completion>, problem)
+      ->UseRealTime();
+  constexpr std::array kTierNames{"baseline", "optimized"};
+  for (std::size_t index = 0; index < tiers.size(); ++index) {
+    const auto name = "hot/steady/" + std::string(kTierNames[index]) + "/" + suffix;
+    const auto& workload = tiers[index];
+    RegisterJitPreparation(name, workload);
+    benchmark::RegisterBenchmark(name, JitSteady<Completion>, problem, workload)->UseRealTime();
   }
 }
 
 int RegisterAotBenchmarks() {
   benchmark::AddCustomContext("jit_steady_setup", "shared-image/fresh-isolate/v1");
-  const auto baseline =
-      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Baseline);
-  const auto optimized =
-      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
+  const std::array tiers{
+      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Baseline),
+      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Optimized),
+  };
   benchmark::AddCustomContext("aot_runtime_abi", std::string(runtime::NativeRuntimeAbiIdentity()));
   benchmark::AddCustomContext(
       "aot_codegen",
       "LLVM " +
           std::string(compiler::NativeOptimizationName(compiler::NativeOptimization::Release)) +
           "; generic CPU; PIC; checked arithmetic; explicit roots");
+  benchmark::AddCustomContext("aot_workload_contract", "runtime-inputs/specialized-completion/v2");
   benchmark::RegisterBenchmark("entry/stack_bounds", NativeEntryCost<EntryOperation::StackBounds>)
       ->UseRealTime();
   benchmark::RegisterBenchmark("entry/execution", NativeEntryCost<EntryOperation::Execution>)
@@ -520,38 +584,27 @@ int RegisterAotBenchmarks() {
   benchmark::RegisterBenchmark("entry/instance_borrow",
                                NativeEntryCost<EntryOperation::InstanceBorrow>)
       ->UseRealTime();
-  benchmark::RegisterBenchmark("entry/cpp_direct/arithmetic",
-                               CppArithmeticEntry<CppEntryCall::Direct>)
+  benchmark::RegisterBenchmark("entry/cpp_direct/scalar", CppEntry<CppEntryCall::Direct>)
       ->UseRealTime();
-  benchmark::RegisterBenchmark("entry/cpp_indirect/arithmetic",
-                               CppArithmeticEntry<CppEntryCall::Indirect>)
+  benchmark::RegisterBenchmark("entry/cpp_indirect/scalar", CppEntry<CppEntryCall::Indirect>)
       ->UseRealTime();
-  const std::string baseline_entry = "entry/baseline_arithmetic";
-  const std::string optimized_entry = "entry/optimized_arithmetic";
-  RegisterJitPreparation(baseline_entry, baseline);
-  RegisterJitPreparation(optimized_entry, optimized);
-  benchmark::RegisterBenchmark(baseline_entry, JitEntryCost, baseline)->UseRealTime();
-  benchmark::RegisterBenchmark(optimized_entry, JitEntryCost, optimized)->UseRealTime();
+  benchmark::RegisterBenchmark("entry/generated/scalar",
+                               NativeEntryLayer<EntryCallLayer::Generated>)
+      ->UseRealTime();
+  benchmark::RegisterBenchmark("entry/target/scalar", NativeEntryLayer<EntryCallLayer::Target>)
+      ->UseRealTime();
+  const std::string baseline_entry = "entry/baseline_scalar";
+  const std::string optimized_entry = "entry/optimized_scalar";
+  RegisterJitPreparation(baseline_entry, tiers.front());
+  RegisterJitPreparation(optimized_entry, tiers.back());
+  benchmark::RegisterBenchmark(baseline_entry, JitEntryCost, tiers.front())->UseRealTime();
+  benchmark::RegisterBenchmark(optimized_entry, JitEntryCost, tiers.back())->UseRealTime();
   for (const auto& problem : kAotBenchmarkCases) {
-    const auto suffix = std::string(problem.name) + "/" + std::to_string(problem.size);
-    if (problem.kernel == AotKernel::Arithmetic || problem.kernel == AotKernel::Calls ||
-        problem.kernel == AotKernel::Host) {
-      benchmark::RegisterBenchmark("entry/generated/" + suffix,
-                                   NativeEntryLayer<EntryCallLayer::Generated>, problem)
-          ->UseRealTime();
-      benchmark::RegisterBenchmark("entry/target/" + suffix,
-                                   NativeEntryLayer<EntryCallLayer::Target>, problem)
-          ->UseRealTime();
+    if (problem.completion == AotCompletion::Future) {
+      RegisterWorkload<AotCompletion::Future>(problem, tiers);
+    } else {
+      RegisterWorkload<AotCompletion::Immediate>(problem, tiers);
     }
-    benchmark::RegisterBenchmark("aot/native/" + suffix, NativeSteady, problem)->UseRealTime();
-    benchmark::RegisterBenchmark("aot/cpp/" + suffix, CppSteady, problem)->UseRealTime();
-    benchmark::RegisterBenchmark("aot/first_native/" + suffix, NativeFirst, problem)->UseRealTime();
-    const auto baseline_name = "hot/steady/baseline/" + suffix;
-    const auto optimized_name = "hot/steady/optimized/" + suffix;
-    RegisterJitPreparation(baseline_name, baseline);
-    RegisterJitPreparation(optimized_name, optimized);
-    benchmark::RegisterBenchmark(baseline_name, JitSteady, problem, baseline)->UseRealTime();
-    benchmark::RegisterBenchmark(optimized_name, JitSteady, problem, optimized)->UseRealTime();
   }
   return 0;
 }

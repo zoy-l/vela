@@ -15,6 +15,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_symbols.h"
@@ -154,8 +155,12 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     if (target.leaf_guard != nullptr) {
       ready = builder_.CreateAnd(ready, builder_.CreateCall(target.leaf_guard, arguments));
     }
-    builder_.CreateCondBr(ready, leaf, observable,
-                          llvm::MDBuilder(context).createLikelyBranchWeights());
+    auto* branch = builder_.CreateCondBr(builder_.CreateNot(ready), observable, leaf,
+                                         llvm::MDBuilder(context).createUnlikelyBranchWeights());
+    if (target.leaf_guard == nullptr) {
+      // 纯叶调用沿用循环的有界轮询预算；异常分支仍建立完整调用链。
+      branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
+    }
     builder_.SetInsertPoint(leaf);
     auto* computed = builder_.CreateCall(target.leaf, arguments);
     builder_.CreateCondBr(

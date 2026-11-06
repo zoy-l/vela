@@ -40,6 +40,8 @@ def aot_entries(cases: list[dict], manifest: dict) -> list[str]:
               'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
               "namespace vela::benchmarks {",
               "inline const auto* const kAotBenchmarkImage = " + manifest["image"] + "();",
+              "inline constexpr std::uint32_t kAotPrepareNumeric = " + str(indices["prepareNumeric"]) + ";",
+              "inline constexpr std::uint32_t kAotScalarEntry = " + str(indices["entryScalar"]) + ";",
               "inline constexpr auto kAotBenchmarkCases = std::to_array<AotBenchmarkCase>({"]
     for case in cases:
         header.append("  {.name = " + json.dumps(case["name"]) + ", .kernel = AotKernel::" +
@@ -71,9 +73,8 @@ def algorithm_entries(cases: list[dict], manifest: dict) -> list[str]:
 
 def generate(compiler: Path, source: Path, cases_path: Path, output: Path, suite: str) -> None:
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
-    exports = [case["name"] for case in cases]
-    if suite == "algorithms":
-        exports.insert(0, "prepare")
+    exports = list(dict.fromkeys(case["name"] for case in cases))
+    exports = (["prepare"] if suite == "algorithms" else ["prepareNumeric", "entryScalar"]) + exports
     manifest = compile_workloads(compiler, source, exports, output)
     header = algorithm_entries(cases, manifest) if suite == "algorithms" else aot_entries(cases, manifest)
     (output / "entries.h").write_text("\n".join(header), encoding="utf-8", newline="\n")

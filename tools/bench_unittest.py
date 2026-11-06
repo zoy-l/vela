@@ -118,11 +118,24 @@ class BenchmarkReportTest(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent / "benchmarks"
         basic = json.loads((root / "aot_cases.json").read_text(encoding="utf-8"))
         algorithms = json.loads((root / "algorithms/cases.json").read_text(encoding="utf-8"))
-        names = [case["name"] for case in basic + algorithms]
-        self.assertEqual(len(names), 24)
-        self.assertEqual(len(names), len(set(names)))
-        self.assertIn("spectralNormInt", [case["name"] for case in basic])
-        self.assertIn("spectralNorm", [case["name"] for case in algorithms])
+        cases = basic + algorithms
+        keys = [(case["name"], case["size"]) for case in cases]
+        self.assertEqual(len(keys), 26)
+        self.assertEqual(len(keys), len(set(keys)))
+        basic_names = {case["name"] for case in basic}
+        algorithm_names = {case["name"] for case in algorithms}
+        self.assertFalse(basic_names & algorithm_names)
+        self.assertIn("spectralNormInt", basic_names)
+        self.assertIn("spectralNorm", algorithm_names)
+        numeric = [case for case in basic if case["name"] == "arithmetic"]
+        self.assertEqual([case["size"] for case in numeric], [1000, 4096, 65536])
+        for case in numeric:
+            seed = 42
+            expected = 0
+            for _ in range(case["size"]):
+                seed = (seed * 1664525 + 1013904223) & 0x7fffffff
+                expected += (seed & 1023) ** 2
+            self.assertEqual(case["expected"], expected)
 
     def test_unqualified_workloads_keep_distinct_preparation_suites(self) -> None:
         report = reloadable_samples(1)

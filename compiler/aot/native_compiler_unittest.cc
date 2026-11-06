@@ -242,6 +242,66 @@ export func run(values: int[]): int {
   EXPECT_GT(loops_seen, 0U);
 }
 
+bool HasBoundedCheckedArrayLoop(const llvm::Loop& loop) {
+  bool has_array_load = false;
+  bool has_overflow_check = false;
+  for (const auto* block : loop.blocks()) {
+    for (const auto& instruction : *block) {
+      if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+        if (load->isAtomic()) {
+          return false;
+        }
+        has_array_load = has_array_load ||
+                         load->getType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits);
+      }
+      if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+        const auto* callee = call->getCalledFunction();
+        if (callee == nullptr || !callee->isIntrinsic()) {
+          return false;
+        }
+        has_overflow_check =
+            has_overflow_check || callee->getName().starts_with("llvm.sadd.with.overflow");
+      }
+    }
+  }
+  return has_array_load && has_overflow_check;
+}
+
+TEST(NativeCompilerTest, BoundsPureInlinedCallsInArrayLoops) {
+  const auto prepared = Prepare(R"(
+func step(value: int): int { return value + 1; }
+export func run(values: int[]): int {
+  const count = values.length;
+  let result = 0;
+  for (let index = 0; index < count; index++) { result += step(values[index]); }
+  return result;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"run"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  std::size_t bounded_loops = 0;
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      if (!loop->getSubLoops().empty()) {
+        continue;
+      }
+      if (HasBoundedCheckedArrayLoop(*loop)) {
+        ++bounded_loops;
+      }
+    }
+  }
+  EXPECT_GT(bounded_loops, 0U) << result->llvm_ir;
+}
+
 TEST(NativeCompilerTest, UsesWordRotationsForProvenLoopValues) {
   const auto prepared = Prepare(R"(
 func rotate(value: int, bits: int): int {

@@ -114,6 +114,10 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
              "uses a fresh instance and includes lazy initialization, with instantiation excluded.",
              "C++ uses ordinary values, vector/string/unique_ptr ownership, and the same host kernel. "
              "Its async case queues two Future observation boundaries per element on the shared scheduler.",
+             "Arithmetic computes a sum of squares over runtime-prepared int64 data; calls reduces "
+             "the same data through an increment function with normal inlining on both sides. "
+             "Input preparation is excluded. Ratios include the real language entry and safety contracts, "
+             "not a subtraction of independently timed wrappers.",
              "Memory counters describe the Vela GC heap and saved continuations; they are not process RSS.", "",
              "| Workload | Size | AOT us | C++ us | First AOT us | AOT/C++ | CV AOT/C++ |",
              "| --- | ---: | ---: | ---: | ---: | ---: | --- |"]
@@ -349,7 +353,8 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
              "Compilation and warm-up are excluded from steady timing. Named dispatch, precise roots, "
              "safepoints, external fields and ordinary GC remain enabled. Optimized code retains "
              "old-version baseline recovery; the closed AOT comparison uses its normal layout and call policy.",
-             "Arithmetic that C++ simplifies as a whole is a separate case; its ratio does not predict JIT gains.", "",
+             "Arithmetic reads runtime-prepared arrays; calls permits normal inlining in every backend. "
+             "Input preparation is excluded from steady timing.", "",
              "| Workload | Size | C++ us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | AOT/C++ | Optimized/C++ | CV C++/AOT/baseline/optimized |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     ratios = {backend: [] for backend in ("baseline", "optimized")}
@@ -376,11 +381,10 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         if values:
             ratio = math.exp(mean(math.log(value) for value in values))
             lines.append(f"Geometric mean {backend} JIT/AOT over {len(keys)} paired workloads: {ratio:.2f}x.")
-            selected = [value for key, value in zip(keys, values)
-                        if key[0] not in {"arithmetic", "fields"}]
+            selected = [value for key, value in zip(keys, values) if key[0] != "fields"]
             if selected and len(selected) != len(values):
                 ratio = math.exp(mean(math.log(value) for value in selected))
-                lines.append(f"Geometric mean {backend} JIT/AOT excluding arithmetic and fields "
+                lines.append(f"Geometric mean {backend} JIT/AOT excluding fields "
                              f"over {len(selected)} paired workloads: {ratio:.2f}x.")
     suite_fields = ("suite_preparation_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns",
                     "code_total_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
