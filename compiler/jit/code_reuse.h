@@ -9,6 +9,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/fingerprint.h"
 #include "compiler/jit/code_inputs.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/native/native_image.h"
@@ -28,7 +29,7 @@ struct ReusableCode final {
 // 开发会话拥有弱代码索引；实际映像与直接调用边持有代码，不因缓存延长旧版本生命周期。
 struct CodeReuseCache final {
   struct Source final {
-    std::string fingerprint;
+    Fingerprint fingerprint;
     std::vector<std::string> symbols;
     native::NativeFunctionMetrics metrics;
     runtime::NativeEntry entry = nullptr;

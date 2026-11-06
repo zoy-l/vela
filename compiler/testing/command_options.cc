@@ -2,17 +2,15 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
+#include "base/integer_parse.h"
 #include "base/path.h"
 #include "compiler/testing/pattern.h"
 #include "compiler/testing/settings.h"
@@ -44,13 +42,11 @@ std::expected<void, std::string> ReadRunnerOption(TestCommandOptions& options, O
     }
     options.reporter = *reporter;
   } else if (name == "--concurrency") {
-    std::uint32_t count = 0;
-    const auto bytes = std::span(value);
-    const auto parsed = std::from_chars(bytes.data(), bytes.last(0).data(), count);
-    if (parsed.ec != std::errc() || parsed.ptr != bytes.last(0).data() || count == 0) {
+    const auto count = ParseUint32(value);
+    if (!count || *count == 0) {
       return std::unexpected("--concurrency must be a positive integer");
     }
-    options.concurrency = count;
+    options.concurrency = *count;
   }
   return {};
 }
@@ -86,7 +82,7 @@ std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
       std::to_array<std::string_view>({"--config", "--timeout", "--reporter", "--concurrency"});
   constexpr auto kFilterOptions =
       std::to_array<std::string_view>({"--name", "--plain-name", "--tags", "--exclude-tags"});
-  const auto argument = arguments.subspan(index).front();
+  const auto argument = arguments[index];
   const auto separator = argument.find('=');
   const auto name = argument.substr(0, separator);
   const bool runner = std::ranges::find(kRunnerOptions, name) != kRunnerOptions.end();
@@ -101,7 +97,7 @@ std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
     if (++index == arguments.size()) {
       return std::unexpected(std::string(name) + " requires a value");
     }
-    value = arguments.subspan(index).front();
+    value = arguments[index];
   }
   return runner ? ReadRunnerOption(options, {.name = name, .value = value})
                 : ReadFilterOption(options, {.name = name, .value = value});
@@ -114,7 +110,7 @@ std::expected<TestCommandOptions, std::string> ParseTestCommandOptions(
   TestCommandOptions options;
   bool positional = false;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const auto argument = arguments.subspan(index).front();
+    const auto argument = arguments[index];
     if (argument.empty()) {
       return std::unexpected("test path must not be empty");
     }

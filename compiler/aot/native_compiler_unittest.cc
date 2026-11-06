@@ -36,6 +36,7 @@
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/test_sources.h"
@@ -109,10 +110,10 @@ export func main(): int { let total = 0; try {
     source += "} catch (error: Error) { return -1; } return total; }";
     const auto prepared = Prepare(source);
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-    const std::vector<std::uint8_t> exports(prepared.program.functions.size(), 0);
     const auto calls = native::PlanNativeCalls(prepared.program, NativeCodeTier::Baseline);
+    const auto fields = native::FindFieldTargets(prepared.program);
     const auto generated = native::Generate(
-        prepared.program, calls, "root_cleanup", exports, native::NativeDebugging::Safepoints,
+        prepared.program, calls, fields, "root_cleanup", native::NativeDebugging::Safepoints,
         NativeCodeTier::Baseline, native::EscapeOptimization::Disabled);
     ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
     for (const auto& function : *generated->module) {

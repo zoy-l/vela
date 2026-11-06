@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <llvm/IR/Constants.h>
@@ -25,8 +24,8 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
   if (checkpoint.objects.empty()) {
     return llvm::ConstantPointerNull::get(pointer);
   }
-  const auto prefix = generated_.subspan(function_index_).front().body->getName().str() +
-                      "_virtual_" + std::to_string(instruction);
+  const auto prefix =
+      generated_[function_index_].body->getName().str() + "_virtual_" + std::to_string(instruction);
   if (auto* existing = module_.getNamedGlobal(prefix)) {
     return existing;
   }
@@ -46,9 +45,6 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
   for (const auto& object : checkpoint.objects) {
     const auto& allocation = escape_.allocations.at(object.allocation);
     const auto root = roots_.slots.at(allocation.reference);
-    if (!root) {
-      std::unreachable();
-    }
     std::vector<llvm::Constant*> fields;
     fields.reserve(object.fields.size());
     for (const auto& field : object.fields) {

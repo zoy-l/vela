@@ -74,7 +74,7 @@ void PropagateCopies(Function& function,
                                     : std::nullopt;
       const auto previous = values.find(destination);
       if (source_value && previous != values.end() && previous->second == *source_value) {
-        keep.subspan(index).front() = 0;
+        keep[index] = 0;
         continue;
       }
       InvalidateRepresentative(destination, values, representatives);
@@ -192,10 +192,6 @@ std::optional<Constant> EvaluateBinary(const Instruction& instruction,
       return lhs == rhs;
     case Opcode::NotEqualBool:
       return lhs != rhs;
-    case Opcode::AndBool:
-      return lhs && rhs;
-    case Opcode::OrBool:
-      return lhs || rhs;
     default:
       return std::nullopt;
   }
@@ -262,7 +258,7 @@ void FoldConstants(Function& function,
   for (const auto& block : graph.blocks) {
     constants.erase(constants.begin(), constants.end());
     for (std::size_t index = block.begin; index < block.end; ++index) {
-      auto& retained = keep.subspan(index).front();
+      auto& retained = keep[index];
       if (retained == 0) {
         continue;
       }
@@ -351,7 +347,15 @@ bool CanMeasureScalarText(const frontend::TypeDescriptor& input) {
          (input.kind == Kind::Int || input.kind == Kind::Double || input.kind == Kind::Bool);
 }
 
+bool IsScalarTextConversion(const Instruction& instruction) {
+  return instruction.opcode == Opcode::BuiltinCall &&
+         instruction.index == static_cast<std::uint32_t>(Builtin::ScalarToString);
+}
+
 void FuseScalarTextLengths(Function& function, std::span<const Function> functions) {
+  if (std::ranges::none_of(function.instructions, IsScalarTextConversion)) {
+    return;
+  }
   std::vector<std::size_t> definitions(function.register_count);
   std::vector<std::size_t> uses(function.register_count);
   std::vector<std::size_t> consumers(function.register_count);
@@ -372,8 +376,7 @@ void FuseScalarTextLengths(Function& function, std::span<const Function> functio
   }
   using Kind = frontend::TypeDescriptor::Kind;
   for (auto& producer : code) {
-    if (producer.opcode != Opcode::BuiltinCall ||
-        producer.index != static_cast<std::uint32_t>(Builtin::ScalarToString)) {
+    if (!IsScalarTextConversion(producer)) {
       continue;
     }
     const auto& input = function.value_types.at(producer.lhs);

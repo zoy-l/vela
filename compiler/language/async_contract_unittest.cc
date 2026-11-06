@@ -536,9 +536,12 @@ async func main(): Future<int> {
 enum Choice { first, second }
 async func main(): Future<int> {
   const selected = await Future.sync((): Choice => Choice.second);
+  const present = await Future.sync((): Choice? => Choice.first);
+  const absent = await Future.sync((): Choice? => null);
   const token: dynamic = CancellationToken();
   token.cancel();
-  return selected == Choice.second && token.isCancelled ? 42 : 0;
+  return selected == Choice.second && present == Choice.first && absent == null &&
+         token.isCancelled ? 42 : 0;
 })",
                               42},
                     AsyncCase{"AwaitCompletionHasNoIntermediateForwardingTurn", R"(

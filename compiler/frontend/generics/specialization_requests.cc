@@ -31,6 +31,8 @@ class SpecializationRequests final {
  private:
   [[nodiscard]] const std::string* Name(DeclarationId declaration) const;
   [[nodiscard]] std::optional<TypeName> Type(const TypeIdentity& identity) const;
+  [[nodiscard]] std::optional<std::vector<TypeName>> Types(
+      std::span<const TypeIdentity> identities) const;
   [[nodiscard]] std::expected<std::optional<GenericSpecialization>, Diagnostic> Request(
       const DeclarationRecord& record) const;
   std::span<const DeclarationRecord> records_;
@@ -46,20 +48,22 @@ SpecializationRequests::SpecializationRequests(const Program& program,
 }
 
 const std::string* SpecializationRequests::Name(DeclarationId declaration) const {
-  const auto& record = records_.subspan(static_cast<std::size_t>(declaration.value)).front();
+  const auto& record = records_[static_cast<std::size_t>(declaration.value)];
   if (record.retired) {
     return nullptr;
   }
   if (!record.key.arguments.empty()) {
     return Name(record.key.owner);
   }
-  const auto& module = records_.subspan(static_cast<std::size_t>(record.key.owner.value)).front();
+  const auto& module = records_[static_cast<std::size_t>(record.key.owner.value)];
   const auto found = names_.find(OriginKey{module.key.name, record.key.kind, record.key.name});
   return found == names_.end() ? nullptr : &found->second;
 }
 
 std::optional<TypeName> SpecializationRequests::Type(const TypeIdentity& identity) const {
   TypeName type;
+  type.name = identity.builtin;
+  std::span<const TypeIdentity> arguments = identity.arguments;
   using Kind = TypeIdentity::Kind;
   switch (identity.kind) {
     case Kind::Declared: {
@@ -68,17 +72,10 @@ std::optional<TypeName> SpecializationRequests::Type(const TypeIdentity& identit
         return std::nullopt;
       }
       type.name = *name;
-      const auto& record =
-          records_.subspan(static_cast<std::size_t>(identity.declaration.value)).front();
+      const auto& record = records_[static_cast<std::size_t>(identity.declaration.value)];
       type.kind = record.key.arguments.empty() ? TypeName::Kind::Named : TypeName::Kind::Generic;
-      for (const auto& argument : record.key.arguments) {
-        auto child = Type(argument);
-        if (!child) {
-          return std::nullopt;
-        }
-        type.arguments.push_back(std::move(*child));
-      }
-      return type;
+      arguments = record.key.arguments;
+      break;
     }
     case Kind::Builtin:
       type.kind = TypeName::Kind::Named;
@@ -96,15 +93,26 @@ std::optional<TypeName> SpecializationRequests::Type(const TypeIdentity& identit
       type.kind = TypeName::Kind::Generic;
       break;
   }
-  type.name = identity.builtin;
-  for (const auto& argument : identity.arguments) {
-    auto child = Type(argument);
+  auto children = Types(arguments);
+  if (!children) {
+    return std::nullopt;
+  }
+  type.arguments = std::move(*children);
+  return type;
+}
+
+std::optional<std::vector<TypeName>> SpecializationRequests::Types(
+    std::span<const TypeIdentity> identities) const {
+  std::vector<TypeName> result;
+  result.reserve(identities.size());
+  for (const auto& identity : identities) {
+    auto child = Type(identity);
     if (!child) {
       return std::nullopt;
     }
-    type.arguments.push_back(std::move(*child));
+    result.push_back(std::move(*child));
   }
-  return type;
+  return result;
 }
 
 std::expected<std::optional<GenericSpecialization>, Diagnostic> SpecializationRequests::Request(
@@ -114,7 +122,7 @@ std::expected<std::optional<GenericSpecialization>, Diagnostic> SpecializationRe
                       record.key.kind == DeclarationKind::Selector;
   auto owner = record.key.owner;
   if (method) {
-    owner = records_.subspan(static_cast<std::size_t>(owner.value)).front().key.owner;
+    owner = records_[static_cast<std::size_t>(owner.value)].key.owner;
   }
   const auto* name = Name(owner);
   // 模板本身删除时仍遵循目标已删除语义，不为旧声明复活新身份。
@@ -122,22 +130,10 @@ std::expected<std::optional<GenericSpecialization>, Diagnostic> SpecializationRe
     return std::nullopt;
   }
   GenericSpecialization request{.name = *name, .arguments = {}};
-  const auto convert =
-      [&](std::span<const TypeIdentity> arguments) -> std::optional<std::vector<TypeName>> {
-    std::vector<TypeName> result;
-    for (const auto& argument : arguments) {
-      auto type = Type(argument);
-      if (!type) {
-        return std::nullopt;
-      }
-      result.push_back(std::move(*type));
-    }
-    return result;
-  };
-  const auto& owner_record = records_.subspan(static_cast<std::size_t>(owner.value)).front();
-  auto arguments = convert(record.key.arguments);
+  const auto& owner_record = records_[static_cast<std::size_t>(owner.value)];
+  auto arguments = Types(record.key.arguments);
   auto owner_arguments =
-      method ? convert(owner_record.key.arguments) : std::optional(std::vector<TypeName>{});
+      method ? Types(owner_record.key.arguments) : std::optional(std::vector<TypeName>{});
   if (!arguments || !owner_arguments) {
     return std::unexpected(Diagnostic{
         .location = {},
@@ -175,7 +171,7 @@ std::expected<std::vector<GenericSpecialization>, Diagnostics> SpecializationReq
           },
       });
     }
-    const auto& record = records_.subspan(static_cast<std::size_t>(identity.value)).front();
+    const auto& record = records_[static_cast<std::size_t>(identity.value)];
     pending.push_back(record.key.owner);
     if (!record.retired && !record.key.arguments.empty()) {
       auto request = Request(record);

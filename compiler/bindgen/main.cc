@@ -228,12 +228,10 @@ int Collect(const Options& options) {
     llvm::errs() << "cannot resolve binding input: " << failure.message() << '\n';
     return 1;
   }
-  collection.module.inputs.assign(files->inputs().begin(), files->inputs().end());
   collection.module.input_fingerprints = files->fingerprints();
   std::optional<llvm::json::Object> emitted;
   if (!options.output.getValue().empty()) {
-    const std::vector<std::string> headers(collection.headers.begin(), collection.headers.end());
-    auto products = Emit(collection.module, headers, options.output.getValue());
+    auto products = Emit(collection.module, collection.headers, options.output.getValue());
     if (!products) {
       llvm::errs() << products.error() << '\n';
       return 1;

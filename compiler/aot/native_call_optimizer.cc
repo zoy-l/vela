@@ -8,6 +8,7 @@
 
 #include "base/callable.h"
 #include "base/opcode.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 
@@ -64,16 +65,8 @@ void DevirtualizeNativeCalls(ir::Program& program) {
       code.push_back(instruction);
     }
     offsets.back() = static_cast<std::uint32_t>(code.size());
-    for (auto& instruction : code) {
-      if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
-          instruction.opcode == Opcode::JumpIfNull) {
-        instruction.index = offsets.at(instruction.index);
-      }
-    }
-    for (auto& handler : function.handlers) {
-      handler.target = offsets.at(handler.target);
-    }
     function.instructions = std::move(code);
+    ir::RemapJumpTargets(function, offsets);
   }
 }
 

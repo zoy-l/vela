@@ -33,6 +33,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/library/standard_library.h"
 #include "runtime/native/native_image.h"
@@ -40,14 +41,13 @@
 namespace vela::compiler::aot {
 namespace {
 
-std::expected<absl::flat_hash_set<std::string>, std::string> SelectExports(
-    const ir::Program& program,
-    std::span<const std::string> names) {
+std::expected<void, std::string> SelectExports(ir::Program& program,
+                                               std::span<const std::string> names) {
   absl::flat_hash_map<std::string_view, bool> functions;
   for (const auto& function : program.functions) {
     functions.emplace(function.name, function.is_exported);
   }
-  absl::flat_hash_set<std::string> selected;
+  absl::flat_hash_set<std::string_view> selected;
   for (const auto& name : names) {
     const auto found = functions.find(name);
     if (found == functions.end() || !found->second) {
@@ -55,7 +55,10 @@ std::expected<absl::flat_hash_set<std::string>, std::string> SelectExports(
     }
     selected.insert(name);
   }
-  return selected;
+  for (auto& function : program.functions) {
+    function.is_exported = selected.contains(function.name);
+  }
+  return {};
 }
 
 std::expected<std::uint32_t, std::string> SelectMain(const ir::Program& program) {
@@ -121,7 +124,7 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
     }
     main = *entry;
   }
-  PruneNativeProgram(program, options.exports, main);
+  PruneNativeProgram(program, main);
   ElideNativeResultBindings(program);
   DevirtualizeNativeCalls(program);
   if (main) {
@@ -165,11 +168,9 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   }
   const auto main = *prepared;
   std::vector<NativeExport> exports;
-  std::vector<std::uint8_t> export_flags(program.functions.size(), 0);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
-    if (selected->contains(function.name)) {
-      export_flags.at(index) = 1;
+    if (function.is_exported) {
       exports.push_back({
           .name = function.name,
           .symbol = options.module_name + "_export_" + std::to_string(index),
@@ -179,7 +180,8 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   }
   const auto generating = Clock::now();
   const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Baseline);
-  auto generated = native::Generate(program, calls, options.module_name, export_flags,
+  const auto fields = native::FindFieldTargets(program);
+  auto generated = native::Generate(program, calls, fields, options.module_name,
                                     native::NativeDebugging::Safepoints, NativeCodeTier::Baseline,
                                     options.escape, options.placement);
   if (!generated) {

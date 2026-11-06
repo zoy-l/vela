@@ -1,3 +1,4 @@
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/lowerer.h"
 
 #include <cstddef>
@@ -115,11 +116,10 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
     const auto receiver = LowerExpression(object);
     Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = object.location});
     if ((method && expression.callee->null_safe) || (!method && expression.null_safe)) {
-      null_jump = current_function_->instructions.size();
-      Emit({.opcode = Opcode::JumpIfNull, .lhs = base, .location = expression.location});
+      null_jump = BeginNullSafe(base, expression.location);
     }
   }
-  LowerBuiltinDefaults(builtin, expression, base);
+  LowerBuiltinDefaults(builtin, base, expression.location);
   if (indexed) {
     const auto index = LowerExpression(*expression.index);
     Emit({
@@ -133,10 +133,8 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
   }
   if (HasRegExpArrayLayout(builtin)) {
     auto type = result_type;
+    type.name = frontend::NonNullableTypeName(type);
     type.nullable = false;
-    if (type.name.ends_with('?')) {
-      type.name = type.name.substr(0, type.name.size() - 1);
-    }
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = static_cast<RegisterId>(base + arity - 1),
@@ -144,15 +142,15 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
         .location = expression.location,
     });
   }
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   FinishNullSafe(null_jump, result, expression.location);
   return {.reg = result, .type = result_type};
 }
 
 void Lowerer::LowerBuiltinDefaults(Builtin builtin,
-                                   const frontend::Expression& expression,
-                                   RegisterId base) {
+                                   RegisterId base,
+                                   frontend::SourceLocation location) {
   const auto arity = BuiltinArity(builtin);
   if (builtin == Builtin::NewRegExp) {
     for (std::size_t index = 1; index < arity; ++index) {
@@ -160,40 +158,37 @@ void Lowerer::LowerBuiltinDefaults(Builtin builtin,
           .opcode = Opcode::LoadBool,
           .dst = static_cast<RegisterId>(base + index),
           .immediate = index == 2 ? 1 : 0,
-          .location = expression.location,
+          .location = location,
       });
     }
   }
   if (builtin == Builtin::RegExpAllMatches || builtin == Builtin::RegExpMatchAsPrefix) {
-    Emit({.opcode = Opcode::LoadInt, .dst = base + 2, .location = expression.location});
+    Emit({.opcode = Opcode::LoadInt, .dst = base + 2, .location = location});
   }
-  if (builtin == Builtin::ArrayJoin && expression.arguments.empty()) {
-    frontend::Expression separator;
-    separator.text = ",";
-    separator.location = expression.location;
-    const auto value = LowerStringLiteral(separator);
+  if (builtin == Builtin::ArrayJoin) {
+    const auto value = EmitStringConstant(",", location);
     Emit({
         .opcode = Opcode::Move,
         .dst = base + 1,
         .lhs = value.reg,
-        .location = expression.location,
+        .location = location,
     });
   } else if (builtin == Builtin::ArraySlice || builtin == Builtin::ArrayFill ||
              builtin == Builtin::ByteArraySlice) {
     const auto start = base + (builtin == Builtin::ArrayFill ? 2 : 1);
-    Emit({.opcode = Opcode::LoadInt, .dst = start, .location = expression.location});
+    Emit({.opcode = Opcode::LoadInt, .dst = start, .location = location});
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = start + 1,
         .immediate = std::numeric_limits<std::int64_t>::max(),
-        .location = expression.location,
+        .location = location,
     });
   }
   if (builtin >= Builtin::ByteDataGetInt16 && builtin <= Builtin::ByteDataSetFloat64) {
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = static_cast<RegisterId>(base + arity - 1),
-        .location = expression.location,
+        .location = location,
     });
   }
 }

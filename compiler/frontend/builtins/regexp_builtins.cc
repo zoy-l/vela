@@ -20,23 +20,11 @@ constexpr std::size_t Index(Builtin builtin) {
   return static_cast<std::size_t>(builtin) - static_cast<std::size_t>(Builtin::NewRegExp);
 }
 
-struct MemberGroups final {
-  std::span<const Member> pattern;
-  std::span<const Member> match;
-};
-
-std::span<const Member> SelectMembers(Kind receiver, MemberGroups members) noexcept {
-  if (receiver == Kind::RegExp) {
-    return members.pattern;
-  }
-  return receiver == Kind::RegExpMatch ? members.match : std::span<const Member>();
-}
-
 }  // namespace
 
 const FunctionDescriptor& RegExpBuiltinSignature(Builtin builtin) {
   static const auto signatures = [] {
-    std::array<FunctionDescriptor, Index(Builtin::Count)> result;
+    std::array<FunctionDescriptor, Index(Builtin::RegExpMatchNamedGroup) + 1> result;
     const TypeDescriptor integer{.kind = Kind::Int, .name = kIntTypeName};
     const TypeDescriptor boolean{.kind = Kind::Bool, .name = kBoolTypeName};
     const TypeDescriptor text{.kind = Kind::String, .name = kStringTypeName};
@@ -128,7 +116,10 @@ std::span<const Member> RegExpMethods(Kind receiver) {
       {"groups", Builtin::RegExpMatchGroups},
       {"namedGroup", Builtin::RegExpMatchNamedGroup},
   });
-  return SelectMembers(receiver, {.pattern = pattern, .match = match});
+  if (receiver == Kind::RegExp) {
+    return pattern;
+  }
+  return receiver == Kind::RegExpMatch ? std::span(match) : std::span<const Member>{};
 }
 
 std::span<const Member> RegExpProperties(Kind receiver) {
@@ -147,7 +138,10 @@ std::span<const Member> RegExpProperties(Kind receiver) {
       {"groupCount", Builtin::RegExpMatchGroupCount},
       {"groupNames", Builtin::RegExpMatchGroupNames},
   });
-  return SelectMembers(receiver, {.pattern = pattern, .match = match});
+  if (receiver == Kind::RegExp) {
+    return pattern;
+  }
+  return receiver == Kind::RegExpMatch ? std::span(match) : std::span<const Member>{};
 }
 
 }  // namespace vela::frontend

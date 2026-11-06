@@ -20,7 +20,7 @@ std::unique_ptr<Expression> Parser::ParseArrayLiteral() {
       break;
     }
   }
-  if (!Expect(TokenKind::RightBracket, "expected ']' after array literal")) {
+  if (Expect(TokenKind::RightBracket, "expected ']' after array literal") == nullptr) {
     return nullptr;
   }
   return expression;
@@ -40,7 +40,7 @@ std::unique_ptr<Expression> Parser::ParseMapLiteral() {
     } else {
       entry.key = ParseExpression();
     }
-    if (!Expect(TokenKind::Colon, "expected ':' after map key")) {
+    if (Expect(TokenKind::Colon, "expected ':' after map key") == nullptr) {
       expression->entries.push_back(std::move(entry));
       break;
     }
@@ -55,7 +55,7 @@ std::unique_ptr<Expression> Parser::ParseMapLiteral() {
       break;
     }
   }
-  if (Expect(TokenKind::RightBrace, "expected '}' after map literal")) {
+  if (Expect(TokenKind::RightBrace, "expected '}' after map literal") != nullptr) {
     AnnotatePrevious(TokenRole::MapDelimiter);
   }
   return expression;

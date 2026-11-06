@@ -32,6 +32,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
 #include "compiler/testing/command.h"
+#include "compiler/testing/settings.h"
 #include "compiler/tooling/documentation/documentation.h"
 #include "compiler/tooling/format/formatter.h"
 #include "compiler/tooling/lsp/language_server.h"
@@ -134,7 +135,7 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
   }
   auto& program = **instance;
   const auto main = program.FindFunction("main");
-  if (!main || program.image().functions.values().subspan(*main).front().parameter_count != 0) {
+  if (!main || program.image().functions.values()[*main].parameter_count != 0) {
     std::cerr << "vela: run requires a zero-argument main function\n";
     return kSourceErrorExitCode;
   }
@@ -142,7 +143,15 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
     return vela::tooling::RunDebugConsole(program, *main, std::cin, std::cerr);
   }
   if (vela::testing::HasTestModule(program)) {
-    return vela::testing::RunDirectSuite(program, path, {.output = std::cout, .errors = std::cerr});
+    return vela::testing::RunDirectSuite(
+        program, path,
+        {
+            .output = std::cout,
+            .errors = std::cerr,
+            .terminal = vela::tooling::IsInteractiveStandardOutput()
+                            ? vela::testing::TerminalMode::Interactive
+                            : vela::testing::TerminalMode::Plain,
+        });
   }
   vela::runtime::ProcessEntry process(isolate, std::cerr);
   const auto result = vela::runtime::ExecuteNativeFunction(program, *main);
@@ -160,11 +169,18 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
 
 enum class FormatMode : std::uint8_t { Output, Write, Check };
 
+int PublishTextArtifact(const std::filesystem::path& path, std::string_view text) {
+  const auto written = vela::WriteFileAtomically(path, std::as_bytes(std::span(text)));
+  if (!written) {
+    vela::WriteError(std::cerr, vela::PathText(path), vela::SourceLocation(), written.error());
+    return kIoErrorExitCode;
+  }
+  return 0;
+}
+
 int DocumentFile(std::string_view path, const std::filesystem::path& output) {
-  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  const auto options = ReadDiagnosticOptions(path);
   if (!options) {
-    vela::frontend::WriteDiagnostic(std::cerr,
-                                    vela::compiler::ConfigurationDiagnostic(options.error()));
     return options.error().exit_code;
   }
   const auto documentation = vela::tooling::GenerateDocumentation(path, *options);
@@ -172,13 +188,7 @@ int DocumentFile(std::string_view path, const std::filesystem::path& output) {
   if (!documentation.Succeeded()) {
     return kSourceErrorExitCode;
   }
-  const auto written =
-      vela::WriteFileAtomically(output, std::as_bytes(std::span(documentation.markdown)));
-  if (!written) {
-    vela::WriteError(std::cerr, vela::PathText(output), vela::SourceLocation(), written.error());
-    return kIoErrorExitCode;
-  }
-  return 0;
+  return PublishTextArtifact(output, documentation.markdown);
 }
 
 int FormatFile(std::string_view path, FormatMode mode) {
@@ -202,14 +212,10 @@ int FormatFile(std::string_view path, FormatMode mode) {
     if (*formatted == source) {
       return 0;
     }
-    const auto written = vela::WriteFileAtomically(file, std::as_bytes(std::span(*formatted)));
-    if (!written) {
-      vela::WriteError(std::cerr, path, vela::SourceLocation(), written.error());
-      return kIoErrorExitCode;
-    }
-  } else {
-    std::cout << *formatted;
+    return PublishTextArtifact(file, *formatted);
   }
+  std::cout << *formatted;
+
   return 0;
 }
 
@@ -236,13 +242,7 @@ int HostHeaderCommand(std::span<char*> arguments) {
     vela::WriteError(std::cerr, path, vela::SourceLocation(), header.error());
     return kSourceErrorExitCode;
   }
-  const auto output = vela::Utf8Path(arguments[3]);
-  const auto written = vela::WriteFileAtomically(output, std::as_bytes(std::span(*header)));
-  if (!written) {
-    vela::WriteError(std::cerr, vela::PathText(output), vela::SourceLocation(), written.error());
-    return kIoErrorExitCode;
-  }
-  return 0;
+  return PublishTextArtifact(vela::Utf8Path(arguments[3]), *header);
 }
 
 int FormatCommand(std::span<char*> arguments) {
@@ -252,8 +252,7 @@ int FormatCommand(std::span<char*> arguments) {
   if (arguments.size() == 2) {
     const std::string_view option = arguments.front();
     if (option == "--write" || option == "--check") {
-      return FormatFile(arguments.subspan(1).front(),
-                        option == "--write" ? FormatMode::Write : FormatMode::Check);
+      return FormatFile(arguments[1], option == "--write" ? FormatMode::Write : FormatMode::Check);
     }
   }
   std::cerr << "vela: fmt [--write|--check] requires one source file\n";
@@ -326,16 +325,23 @@ int TestCommand(std::span<char*> arguments) {
   for (const auto* argument : arguments) {
     options.emplace_back(argument);
   }
-  return vela::testing::TestCommand(options, {.output = std::cout, .errors = std::cerr});
+  return vela::testing::TestCommand(options,
+                                    {
+                                        .output = std::cout,
+                                        .errors = std::cerr,
+                                        .terminal = vela::tooling::IsInteractiveStandardOutput()
+                                                        ? vela::testing::TerminalMode::Interactive
+                                                        : vela::testing::TerminalMode::Plain,
+                                    });
 }
 
-int WriteArtifactCommand(std::string_view command, std::span<char*> arguments) {
+int DocumentCommand(std::span<char*> arguments) {
   if (arguments.size() != 2) {
-    std::cerr << "vela: " << command << " requires a source and output path\n";
+    std::cerr << "vela: doc requires a source and output path\n";
     return kUsageExitCode;
   }
   const std::string_view source = arguments.front();
-  const auto output = vela::Utf8Path(arguments.subspan(1).front());
+  const auto output = vela::Utf8Path(arguments[1]);
   return DocumentFile(source, output);
 }
 
@@ -347,7 +353,7 @@ int main(int argc, char** argv) {
     PrintUsage(std::cout);
     return kUsageExitCode;
   }
-  const std::string_view command = arguments.subspan(1).front();
+  const std::string_view command = arguments[1];
   if (command == "--help" || command == "-h") {
     PrintUsage(std::cout);
     return 0;
@@ -384,7 +390,7 @@ int main(int argc, char** argv) {
     return DevelopmentCommand(arguments.subspan(2));
   }
   if (command == "doc") {
-    return WriteArtifactCommand(command, arguments.subspan(2));
+    return DocumentCommand(arguments.subspan(2));
   }
   if (command == "host-header") {
     return HostHeaderCommand(arguments.subspan(2));
@@ -396,7 +402,7 @@ int main(int argc, char** argv) {
       PrintUsage(std::cerr);
       return kUsageExitCode;
     }
-    const std::string_view path = arguments.subspan(2).front();
+    const std::string_view path = arguments[2];
     return RunFile(path, command == "debug" ? ExecutionMode::Debug : ExecutionMode::Run);
   }
 

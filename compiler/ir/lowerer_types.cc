@@ -62,8 +62,6 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
       break;
     case Opcode::LoadBool:
     case Opcode::NotBool:
-    case Opcode::AndBool:
-    case Opcode::OrBool:
     case Opcode::EqualInt:
     case Opcode::NotEqualInt:
     case Opcode::LessInt:
@@ -156,14 +154,17 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
   }
 }
 
-void Lowerer::RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type) {
+void Lowerer::RecordValueType(RegisterId reg,
+                              const frontend::TypeDescriptor& type,
+                              ValueTypeRecording recording) {
   auto& types = current_function_->value_types;
   if (types.size() <= reg) {
     types.resize(static_cast<std::size_t>(reg) + 1);
   }
   auto& recorded = types.at(reg);
   using Kind = frontend::TypeDescriptor::Kind;
-  if (recorded.kind == Kind::Invalid || recorded.kind == Kind::Null) {
+  if (recording == ValueTypeRecording::Declare || recorded.kind == Kind::Invalid ||
+      recorded.kind == Kind::Null) {
     recorded = type;
   }
 }

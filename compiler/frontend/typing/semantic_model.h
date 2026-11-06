@@ -68,6 +68,7 @@ struct TypeDescriptor final {
 
 [[nodiscard]] TypeDescriptor MakeArrayType(const TypeDescriptor& element);
 [[nodiscard]] TypeDescriptor MakeNullableType(TypeDescriptor type);
+[[nodiscard]] std::string_view NonNullableTypeName(const TypeDescriptor& type) noexcept;
 
 struct FunctionDescriptor final {
   enum class ParameterPresence : std::uint8_t { Required, Optional };
@@ -115,6 +116,13 @@ struct MemberReference final {
   std::string member;
 };
 
+enum class CallArgumentNames : std::uint8_t { Declared, Positional };
+
+struct CallDescriptor final {
+  FunctionDescriptor signature;
+  CallArgumentNames argument_names = CallArgumentNames::Declared;
+};
+
 struct MethodTemplate final {
   std::string owner;
   const Function* declaration = nullptr;
@@ -138,15 +146,12 @@ struct ClassDescriptor final {
   absl::flat_hash_map<std::string, Field> static_fields;
   absl::flat_hash_set<std::string> interfaces;
   absl::flat_hash_map<std::pair<std::string, std::string>, MemberReference> interface_targets;
-  absl::flat_hash_map<std::pair<std::string, std::string>, MethodTemplate>
-      interface_method_templates;
 };
 
 struct InterfaceDescriptor final {
   TypeDescriptor type;
   absl::node_hash_map<std::string, FunctionDescriptor> methods;
   absl::flat_hash_map<std::string, MethodTemplate> method_templates;
-  absl::flat_hash_map<std::string, const Function*> method_applications;
   std::uint32_t index = 0;
 };
 
@@ -188,6 +193,7 @@ struct JSONDecodeRequest final {
 
 // 以 AST 节点为键的检查事实。泛型模板按抽象参数检查时写入独立的一组，执行降级只读取具体声明的事实。
 struct NodeFacts {
+  absl::node_hash_map<const Expression*, CallDescriptor> call_targets;
   std::vector<LambdaDescriptor> lambdas;
   absl::flat_hash_map<const Expression*, std::size_t> lambda_indices;
   absl::flat_hash_map<const void*, std::uint32_t> bindings;

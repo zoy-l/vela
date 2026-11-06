@@ -1,4 +1,3 @@
-#include "compiler/frontend/syntax/names.h"
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
@@ -163,8 +162,7 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
   const auto arity = BuiltinArity(builtin);
   const auto base = AllocateRegisterWindow(arity, {});
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = 0, .location = {}});
-  frontend::Expression expression;
-  LowerBuiltinDefaults(builtin, expression, base);
+  LowerBuiltinDefaults(builtin, base, {});
   if (builtin == Builtin::ArraySplice) {
     Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = {}});
     Emit({
@@ -203,7 +201,7 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
     } else if (builtin == Builtin::StringGraphemes) {
       count_builtin = Builtin::StringGraphemeLength;
     }
-    const auto count = AllocateTemporary({});
+    const auto count = AllocateRegister({});
     EmitBuiltinCall(count_builtin, count, base, {});
     Emit({
         .opcode = Opcode::NewDynamicArray,
@@ -216,8 +214,8 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
   if (HasRegExpArrayLayout(builtin)) {
     auto type = function.return_type;
     if (type.nullable) {
+      type.name = frontend::NonNullableTypeName(type);
       type.nullable = false;
-      type.name = type.name.substr(0, type.name.size() - 1);
     }
     Emit({
         .opcode = Opcode::LoadInt,
@@ -226,7 +224,7 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
         .location = {},
     });
   }
-  const auto result = AllocateTemporary({});
+  const auto result = AllocateRegister({});
   EmitBuiltinCall(builtin, result, base, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
   function.register_count = next_register_;
@@ -243,14 +241,7 @@ void Lowerer::PublishMemberFunction(const frontend::TypeDescriptor& receiver,
   const auto receiver_type = RegisterRuntimeType(receiver);
   auto member_target = target;
   if (kind == MemberKind::Method) {
-    const std::vector<frontend::Capture> captures{
-        {
-            .name = std::string(frontend::kReceiverName),
-            .type = receiver,
-            .binding = 0,
-            .kind = frontend::BindingKind::Constant,
-        },
-    };
+    const std::array captures{MakeReceiverCapture(receiver)};
     member_target = CallableClass(target, CallableMode::BoundMethod, captures);
   }
   program_.members.push_back({

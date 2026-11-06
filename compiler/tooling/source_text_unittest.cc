@@ -1,6 +1,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/source_lines.h"
 #include "base/source_location.h"
 #include "gtest/gtest.h"
 
@@ -79,7 +80,7 @@ TEST(SourceTextTest, IndexesInvalidDiskBytesWithoutAcceptingThemAsEditorText) {
   text += "\xff\xf0";
   text += "\r\nnext";
   EXPECT_FALSE(SourceText::Create(text));
-  const SourceLineIndex index(text);
+  const SourceLineIndex index(IndexSourceLines(text));
   EXPECT_EQ(
       index.PositionAt(text, SourceLocation{.line = 1, .column = 10}, PositionEncoding::Utf16),
       (TextPosition{.line = 0, .character = 5}));

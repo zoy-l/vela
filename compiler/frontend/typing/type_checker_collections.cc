@@ -154,11 +154,7 @@ std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
     return std::nullopt;
   }
   const auto& result = method->signature.return_type;
-  if (result.kind == Type::Kind::Array) {
-    static_cast<void>(
-        ArrayType(generic_arguments_.at(receiver.name)
-                      .at(name == "keys" || receiver.kind == Type::Kind::Set ? 0 : 1)));
-  } else if (result.nullable) {
+  if (result.nullable) {
     types_.try_emplace(result.name, result);
   }
   return BuiltinMethod{.operation = method->operation, .signature = std::move(method->signature)};
@@ -168,41 +164,45 @@ std::optional<CollectionMethod> ResolveCollectionBuiltin(const TypeDescriptor& r
                                                          std::span<const TypeDescriptor> arguments,
                                                          std::string_view name) {
   using Type = TypeDescriptor;
+  const auto methods = CollectionMethods(receiver.kind);
+  const auto method =
+      std::ranges::find(methods, name, &std::pair<std::string_view, Builtin>::first);
+  if (method == methods.end()) {
+    return std::nullopt;
+  }
+  const auto builtin = method->second;
   FunctionDescriptor signature;
   signature.return_type = {.kind = Type::Kind::Void, .name = kVoidTypeName};
-  const auto operation = receiver.kind == Type::Kind::Set ? FindSetOperation(name) : std::nullopt;
-  if (operation) {
-    signature.return_type = receiver;
-    signature.AddParameter("other", receiver);
-    return CollectionMethod{.operation = *operation, .signature = std::move(signature)};
-  }
-  Builtin builtin = Builtin::CollectionSize;
-  if (name == "has" || name == "delete" || (name == "add" && receiver.kind == Type::Kind::Set)) {
-    if (name == "has") {
-      builtin = Builtin::CollectionHas;
-    } else if (name == "delete") {
-      builtin = Builtin::CollectionDelete;
-    } else {
-      builtin = Builtin::SetAdd;
-    }
-    signature.return_type = {.kind = Type::Kind::Bool, .name = kBoolTypeName};
-    signature.AddParameter(receiver.kind == Type::Kind::Set ? "value" : "key", arguments.front());
-  } else if (name == "clear") {
-    builtin = Builtin::CollectionClear;
-  } else if (name == "get" && receiver.kind == Type::Kind::Map) {
-    builtin = Builtin::MapGet;
-    signature.AddParameter("key", arguments.front());
-    signature.return_type = MakeNullableType(arguments.back());
-  } else if (name == "set" && receiver.kind == Type::Kind::Map) {
-    builtin = Builtin::MapSet;
-    signature.AddParameter("key", arguments.front());
-    signature.AddParameter("value", arguments.back());
-  } else if (name == "values" || (name == "keys" && receiver.kind == Type::Kind::Map)) {
-    const bool keys = name == "keys" || receiver.kind == Type::Kind::Set;
-    builtin = keys ? Builtin::CollectionKeys : Builtin::CollectionValues;
-    signature.return_type = MakeArrayType(keys ? arguments.front() : arguments.back());
-  } else {
-    return std::nullopt;
+  switch (builtin) {
+    case Builtin::SetUnion:
+    case Builtin::SetIntersection:
+    case Builtin::SetDifference:
+      signature.return_type = receiver;
+      signature.AddParameter("other", receiver);
+      break;
+    case Builtin::CollectionHas:
+    case Builtin::CollectionDelete:
+    case Builtin::SetAdd:
+      signature.return_type = {.kind = Type::Kind::Bool, .name = kBoolTypeName};
+      signature.AddParameter(receiver.kind == Type::Kind::Set ? "value" : "key", arguments.front());
+      break;
+    case Builtin::CollectionClear:
+      break;
+    case Builtin::MapGet:
+      signature.AddParameter("key", arguments.front());
+      signature.return_type = MakeNullableType(arguments.back());
+      break;
+    case Builtin::MapSet:
+      signature.AddParameter("key", arguments.front());
+      signature.AddParameter("value", arguments.back());
+      break;
+    case Builtin::CollectionKeys:
+    case Builtin::CollectionValues:
+      signature.return_type =
+          MakeArrayType(builtin == Builtin::CollectionKeys ? arguments.front() : arguments.back());
+      break;
+    default:
+      std::unreachable();
   }
   return CollectionMethod{.operation = builtin, .signature = std::move(signature)};
 }

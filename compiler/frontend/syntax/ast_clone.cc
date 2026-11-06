@@ -291,6 +291,7 @@ Program AstCloner::CloneProgram(const Program& source) {
     imported.location = Relocate(imported.location);
   }
   result.sources = source.sources;
+  result.import_sources = source.import_sources;
   result.file_resolutions = source.file_resolutions;
   result.standard_names = source.standard_names;
   result.origins = source.origins;
@@ -301,11 +302,15 @@ Program AstCloner::CloneProgram(const Program& source) {
       member.location = Relocate(member.location);
     }
   }
-  result.aliases = source.aliases;
-  for (auto& alias : result.aliases) {
-    alias.location = Relocate(alias.location);
-    alias.target = CloneType(alias.target);
-    alias.type_parameters = CloneTypeParameters(alias.type_parameters);
+  result.aliases.reserve(source.aliases.size());
+  for (const auto& alias : source.aliases) {
+    result.aliases.push_back({
+        .name = alias.name,
+        .target = CloneType(alias.target),
+        .location = Relocate(alias.location),
+        .type_parameters = CloneTypeParameters(alias.type_parameters),
+        .export_kind = alias.export_kind,
+    });
   }
   for (const auto& function : source.functions) {
     result.functions.push_back(CloneFunction(function));

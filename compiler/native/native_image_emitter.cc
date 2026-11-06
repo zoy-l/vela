@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -135,6 +137,7 @@ class ImageEmitter final {
   llvm::StructType* json_parameter_;
   llvm::StructType* json_plan_;
   bool has_compatible_layout_ = true;
+  absl::flat_hash_map<std::string_view, llvm::Constant*> texts_;
 };
 
 ImageEmitter::ImageEmitter(llvm::Module& module)
@@ -443,12 +446,17 @@ llvm::Constant* ImageEmitter::Declarations(
 }
 
 llvm::Constant* ImageEmitter::Text(std::string_view value) {
+  const auto [found, inserted] = texts_.try_emplace(value, nullptr);
+  if (!inserted) {
+    return found->second;
+  }
   auto* bytes = llvm::ConstantDataArray::getString(context_, value, false);
   auto* storage = new llvm::GlobalVariable(module_, bytes->getType(), true,
                                            llvm::GlobalValue::PrivateLinkage, bytes, "vela.utf8");
   storage->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  return Record(text_,
-                {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), value.size())});
+  found->second = Record(
+      text_, {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), value.size())});
+  return found->second;
 }
 
 llvm::Constant* ImageEmitter::Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values) {
@@ -560,8 +568,8 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
                                         std::span<llvm::Function* const> entries) {
   std::vector<llvm::Constant*> constants;
   for (std::size_t index = 0; index < functions.size(); ++index) {
-    const auto& function = functions.subspan(index).front();
-    auto* entry = entries.subspan(index).front();
+    const auto& function = functions[index];
+    auto* entry = entries[index];
     std::vector<llvm::Constant*> parameters;
     for (const auto& parameter : function.parameters.values()) {
       parameters.push_back(Record(call_parameter_, {

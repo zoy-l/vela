@@ -314,17 +314,18 @@ void DevelopmentConsole::OwnerCommand(const std::string& command) {
   } else if (command == ".status") {
     Print(session_->result());
     const auto code = session_->code_resources();
-    const auto layouts = session_->isolate().layout_counts();
-    errors << "heap " << session_->isolate().heap().allocated_bytes() << " bytes, " << code.batches
-           << " code batch(es), " << code.images << " source image(s), " << code.functions
-           << " function(s), " << layouts.classes << " class layout(s)\n";
-    errors << "external fields " << session_->isolate().heap().instance_field_bytes() << " bytes, "
-           << session_->isolate().heap().instance_type_count() << " live instance type(s)\n";
+    auto& isolate = session_->isolate();
+    const auto& heap = isolate.heap();
+    const auto layouts = isolate.layout_counts();
+    errors << "heap " << heap.allocated_bytes() << " bytes, " << code.batches << " code batch(es), "
+           << code.images << " source image(s), " << code.functions << " function(s), "
+           << layouts.classes << " class layout(s)\n";
+    errors << "external fields " << heap.instance_field_bytes() << " bytes, "
+           << heap.instance_type_count() << " live instance type(s)\n";
     errors << "code " << code.executable_bytes << " bytes, read-only image " << code.read_only_bytes
            << " bytes, writable image " << code.writable_bytes << " bytes\n";
     errors << (compilation_.tier == NativeCodeTier::Optimized ? "optimized" : "baseline") << ", "
-           << session_->isolate().native_dispatch().deoptimized_frames()
-           << " deoptimized frame(s)\n";
+           << isolate.native_dispatch().deoptimized_frames() << " deoptimized frame(s)\n";
   } else if (command == ".gc") {
     session_->isolate().heap().Collect();
     errors << "collection completed\n";

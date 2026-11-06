@@ -17,7 +17,6 @@
 #include "compiler/frontend/builtins/byte_builtins.h"
 #include "compiler/frontend/builtins/regexp_builtins.h"
 #include "compiler/frontend/typing/semantic_model.h"
-#include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
@@ -120,17 +119,31 @@ std::span<const std::pair<std::string_view, ArrayAlgorithm>> ArrayAlgorithms() n
   return kAlgorithms;
 }
 
-std::optional<Builtin> FindSetOperation(std::string_view name) {
-  if (name == "union") {
-    return Builtin::SetUnion;
+std::span<const std::pair<std::string_view, Builtin>> CollectionMethods(Kind receiver) noexcept {
+  static constexpr auto kSet = std::to_array<std::pair<std::string_view, Builtin>>({
+      {"has", Builtin::CollectionHas},
+      {"delete", Builtin::CollectionDelete},
+      {"clear", Builtin::CollectionClear},
+      {"values", Builtin::CollectionKeys},
+      {"add", Builtin::SetAdd},
+      {"union", Builtin::SetUnion},
+      {"intersection", Builtin::SetIntersection},
+      {"difference", Builtin::SetDifference},
+  });
+  static constexpr auto kMap = std::to_array<std::pair<std::string_view, Builtin>>({
+      {"has", Builtin::CollectionHas},
+      {"delete", Builtin::CollectionDelete},
+      {"clear", Builtin::CollectionClear},
+      {"values", Builtin::CollectionValues},
+      {"keys", Builtin::CollectionKeys},
+      {"get", Builtin::MapGet},
+      {"set", Builtin::MapSet},
+  });
+  if (receiver == Kind::Set) {
+    return kSet;
   }
-  if (name == "intersection") {
-    return Builtin::SetIntersection;
-  }
-  if (name == "difference") {
-    return Builtin::SetDifference;
-  }
-  return std::nullopt;
+  return receiver == Kind::Map ? std::span(kMap)
+                               : std::span<const std::pair<std::string_view, Builtin>>{};
 }
 
 std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
@@ -237,18 +250,7 @@ FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
 }
 
 FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
-                                           const TypeDescriptor& element,
-                                           const TypeDescriptor& accumulator) {
-  const auto callback = ArrayCallbackSignature(algorithm, element, accumulator);
-  std::string name = "(";
-  for (const auto& parameter : callback.parameters) {
-    if (name.back() != '(') {
-      name += ", ";
-    }
-    name += parameter.type.name;
-  }
-  name += ") => ";
-  name += callback.return_type.name;
+                                           const FunctionDescriptor& callback) {
   FunctionDescriptor method;
   method.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
   if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every) {
@@ -256,21 +258,20 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   } else if (algorithm == ArrayAlgorithm::FindIndex) {
     method.return_type = {.kind = Kind::Int, .name = kIntTypeName};
   } else if (algorithm == ArrayAlgorithm::Map) {
-    method.return_type = MakeArrayType(accumulator);
+    method.return_type = MakeArrayType(callback.return_type);
   } else if (algorithm == ArrayAlgorithm::Reduce) {
-    method.return_type = accumulator;
+    method.return_type = callback.return_type;
   } else if (algorithm == ArrayAlgorithm::Sort) {
-    method.return_type = MakeArrayType(element);
+    method.return_type = MakeArrayType(callback.parameters.front().type);
     method.optional_parameters.insert("compareFn");
   }
   std::string parameter = "callbackFn";
   if (algorithm == ArrayAlgorithm::Sort) {
     parameter = "compareFn";
   }
-  method.AddParameter(std::move(parameter),
-                      {.kind = Kind::Function, .name = InternTypeName(std::move(name))});
+  method.AddParameter(std::move(parameter), MakeFunctionType(callback));
   if (algorithm == ArrayAlgorithm::Reduce) {
-    method.AddParameter("initialValue", accumulator);
+    method.AddParameter("initialValue", callback.return_type);
   }
   return method;
 }
@@ -297,36 +298,42 @@ const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
 }
 
 std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {
-  if (const auto builtin = FindMember(RegExpProperties(receiver), name)) {
-    return builtin;
+  return FindMember(BuiltinProperties(receiver), name);
+}
+
+std::span<const std::pair<std::string_view, Builtin>> BuiltinProperties(Kind receiver) noexcept {
+  using Member = std::pair<std::string_view, Builtin>;
+  static constexpr auto kBytes = std::to_array<Member>({{"length", Builtin::ByteArrayLength}});
+  static constexpr auto kData = std::to_array<Member>({{"byteLength", Builtin::ByteDataLength}});
+  static constexpr auto kArray = std::to_array<Member>({
+      {"length", Builtin::ArrayLength},
+      {"capacity", Builtin::ArrayCapacity},
+  });
+  static constexpr auto kString = std::to_array<Member>({
+      {"length", Builtin::StringLength},
+      {"byteLength", Builtin::StringByteLength},
+      {"graphemeLength", Builtin::StringGraphemeLength},
+  });
+  static constexpr auto kCollection = std::to_array<Member>({{"size", Builtin::CollectionSize}});
+  if (receiver == Kind::RegExp || receiver == Kind::RegExpMatch) {
+    return RegExpProperties(receiver);
   }
-  if (receiver == Kind::ByteArray && name == "length") {
-    return Builtin::ByteArrayLength;
+  if (receiver == Kind::ByteArray) {
+    return kBytes;
   }
-  if (receiver == Kind::ByteData && name == "byteLength") {
-    return Builtin::ByteDataLength;
+  if (receiver == Kind::ByteData) {
+    return kData;
   }
   if (receiver == Kind::Array) {
-    if (name == "length") {
-      return Builtin::ArrayLength;
-    }
-    if (name == "capacity") {
-      return Builtin::ArrayCapacity;
-    }
-  } else if (receiver == Kind::String) {
-    if (name == "length") {
-      return Builtin::StringLength;
-    }
-    if (name == "byteLength") {
-      return Builtin::StringByteLength;
-    }
-    if (name == "graphemeLength") {
-      return Builtin::StringGraphemeLength;
-    }
-  } else if ((receiver == Kind::Set || receiver == Kind::Map) && name == "size") {
-    return Builtin::CollectionSize;
+    return kArray;
   }
-  return std::nullopt;
+  if (receiver == Kind::String) {
+    return kString;
+  }
+  if (receiver == Kind::Set || receiver == Kind::Map) {
+    return kCollection;
+  }
+  return {};
 }
 
 bool IsBuiltinName(std::string_view name) {
@@ -340,15 +347,18 @@ bool IsBuiltinName(std::string_view name) {
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
-  const bool numeric = receiver == Kind::Int || receiver == Kind::Double;
+  return FindMember(BuiltinMethods(receiver), name);
+}
+
+std::span<const std::pair<std::string_view, Builtin>> BuiltinMethods(Kind receiver) noexcept {
   if (receiver == Kind::RegExp || receiver == Kind::RegExpMatch) {
-    return FindMember(RegExpMethods(receiver), name);
+    return RegExpMethods(receiver);
   }
   if (receiver == Kind::ByteArray || receiver == Kind::ByteData) {
-    return FindMember(ByteMethods(receiver), name);
+    return ByteMethods(receiver);
   }
   if (receiver == Kind::String) {
-    constexpr auto methods = std::to_array<std::pair<std::string_view, Builtin>>({
+    static constexpr auto methods = std::to_array<std::pair<std::string_view, Builtin>>({
         {"codePoints", Builtin::StringCodePoints},
         {"graphemes", Builtin::StringGraphemes},
         {"graphemeSlice", Builtin::StringGraphemeSlice},
@@ -360,33 +370,38 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
         {"startsWith", Builtin::StringStartsWith},
         {"endsWith", Builtin::StringEndsWith},
     });
-    return FindMember(methods, name);
+    return methods;
   }
   if (receiver == Kind::Invalid) {
-    if (name == kByteArrayTypeName) {
-      return Builtin::NewByteArray;
-    }
-    if (name == kRegExpTypeName) {
-      return Builtin::NewRegExp;
-    }
-    if (name == kMutableStringTypeName) {
-      return Builtin::NewMutableString;
-    }
-  } else if (numeric && name == "toInt") {
-    return Builtin::NumericToInt;
-  } else if (numeric && name == "toDouble") {
-    return Builtin::NumericToDouble;
-  } else if ((numeric || receiver == Kind::Bool) && name == "toString") {
-    return Builtin::ScalarToString;
-  } else if (receiver == Kind::MutableString) {
-    if (name == "append") {
-      return Builtin::MutableStringAppend;
-    }
-    if (name == "toString") {
-      return Builtin::MutableStringToString;
-    }
+    static constexpr auto kConstructors = std::to_array<std::pair<std::string_view, Builtin>>({
+        {kByteArrayTypeName, Builtin::NewByteArray},
+        {kRegExpTypeName, Builtin::NewRegExp},
+        {kMutableStringTypeName, Builtin::NewMutableString},
+    });
+    return kConstructors;
   }
-  return std::nullopt;
+  if (receiver == Kind::Int || receiver == Kind::Double) {
+    static constexpr auto kNumeric = std::to_array<std::pair<std::string_view, Builtin>>({
+        {"toInt", Builtin::NumericToInt},
+        {"toDouble", Builtin::NumericToDouble},
+        {"toString", Builtin::ScalarToString},
+    });
+    return kNumeric;
+  }
+  if (receiver == Kind::Bool) {
+    static constexpr auto kBoolean = std::to_array<std::pair<std::string_view, Builtin>>({
+        {"toString", Builtin::ScalarToString},
+    });
+    return kBoolean;
+  }
+  if (receiver == Kind::MutableString) {
+    static constexpr auto kMutable = std::to_array<std::pair<std::string_view, Builtin>>({
+        {"append", Builtin::MutableStringAppend},
+        {"toString", Builtin::MutableStringToString},
+    });
+    return kMutable;
+  }
+  return {};
 }
 
 }  // namespace vela::frontend

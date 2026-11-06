@@ -18,6 +18,49 @@
 
 namespace vela::ir {
 
+std::string InitializerKey(InitializerKind kind, std::string_view name) {
+  std::string key;
+  switch (kind) {
+    case InitializerKind::Global:
+      key = "$global.";
+      break;
+    case InitializerKind::StaticField:
+      key = "$static.";
+      break;
+    case InitializerKind::InstanceField:
+      key = "$field.";
+      break;
+    case InitializerKind::ConstructorFactory:
+      key = "$construct.";
+      break;
+  }
+  key += name;
+  return key;
+}
+namespace {
+
+template <class Method>
+DeclarationKind DescribeMethodKind(const Method& method) {
+  if (method.is_getter) {
+    return DeclarationKind::Getter;
+  }
+  if (method.is_setter) {
+    return DeclarationKind::Setter;
+  }
+  return method.storage == frontend::MemberStorage::Static ? DeclarationKind::StaticMethod
+                                                           : DeclarationKind::Method;
+}
+
+}  // namespace
+
+DeclarationKind MethodDeclarationKind(const frontend::Function& method) {
+  return DescribeMethodKind(method);
+}
+
+DeclarationKind MethodDeclarationKind(const frontend::FunctionDescriptor& method) {
+  return DescribeMethodKind(method);
+}
+
 std::string MethodKey(std::string_view owner, DeclarationKind kind, std::string_view name) {
   constexpr std::string_view kGetterPrefix = "$get.";
   constexpr std::string_view kSetterPrefix = "$set.";
@@ -33,13 +76,7 @@ std::string MethodKey(std::string_view owner, DeclarationKind kind, std::string_
 }
 
 std::string MethodKey(std::string_view owner, const frontend::Function& method) {
-  auto kind = DeclarationKind::Method;
-  if (method.is_getter) {
-    kind = DeclarationKind::Getter;
-  } else if (method.is_setter) {
-    kind = DeclarationKind::Setter;
-  }
-  return MethodKey(owner, kind, method.name);
+  return MethodKey(owner, MethodDeclarationKind(method), method.name);
 }
 
 namespace {
@@ -183,14 +220,13 @@ void DeclarationBinder::BindFunction(const frontend::Function& function, Declara
     return;
   }
   std::uint32_t local = 0;
-  frontend::VisitLambdas(
-      *function.body, [&](const frontend::Expression& expression, const frontend::Function*) {
-        result_.functions.emplace(expression.function.get(), FunctionIdentity{
-                                                                 .declaration = identity,
-                                                                 .revision = result_.revision,
-                                                                 .local = ++local,
-                                                             });
-      });
+  frontend::VisitLambdas(*function.body, [&](const frontend::Expression& expression) {
+    result_.functions.emplace(expression.function.get(), FunctionIdentity{
+                                                             .declaration = identity,
+                                                             .revision = result_.revision,
+                                                             .local = ++local,
+                                                         });
+  });
 }
 
 void DeclarationBinder::BindExpression(const frontend::Expression* expression,
@@ -199,14 +235,13 @@ void DeclarationBinder::BindExpression(const frontend::Expression* expression,
     return;
   }
   std::uint32_t local = 0;
-  frontend::VisitLambdas(
-      *expression, [&](const frontend::Expression& lambda, const frontend::Function*) {
-        result_.functions.emplace(lambda.function.get(), FunctionIdentity{
-                                                             .declaration = identity,
-                                                             .revision = result_.revision,
-                                                             .local = ++local,
-                                                         });
-      });
+  frontend::VisitLambdas(*expression, [&](const frontend::Expression& lambda) {
+    result_.functions.emplace(lambda.function.get(), FunctionIdentity{
+                                                         .declaration = identity,
+                                                         .revision = result_.revision,
+                                                         .local = ++local,
+                                                     });
+  });
 }
 
 void DeclarationBinder::BindClass(const frontend::Class& owner) {
@@ -237,21 +272,13 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
     BindFunction(*owner.constructor, constructor);
   }
   for (const auto& method : owner.methods) {
-    auto kind = method.storage == frontend::MemberStorage::Static ? DeclarationKind::StaticMethod
-                                                                  : DeclarationKind::Method;
-    if (method.is_getter) {
-      kind = DeclarationKind::Getter;
-    } else if (method.is_setter) {
-      kind = DeclarationKind::Setter;
-    }
+    const auto kind = MethodDeclarationKind(method);
     const auto identity = Method(declaration, kind, method, definition);
     result_.named_functions.emplace(MethodKey(owner.name, kind, method.name), identity);
     BindFunction(method, identity);
   }
   for (const auto& method : owner.method_templates) {
-    const auto kind = method.storage == frontend::MemberStorage::Static
-                          ? DeclarationKind::StaticMethod
-                          : DeclarationKind::Method;
+    const auto kind = MethodDeclarationKind(method);
     static_cast<void>(Method(declaration, kind, method, definition));
   }
   for (const auto& field : owner.fields) {
@@ -262,13 +289,14 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
       const auto name = owner.name + '.' + field.name;
       result_.globals.emplace(name, identity);
       const auto target = initializer(identity, kind, field.name);
-      result_.named_functions.emplace("$static." + name, target);
+      result_.named_functions.emplace(InitializerKey(InitializerKind::StaticField, name), target);
       BindExpression(field.initializer.get(), target);
     } else {
       fields.fields.emplace(field.name, identity);
       if (field.initializer != nullptr) {
         const auto target = initializer(identity, kind, field.name);
-        result_.named_functions.emplace("$field." + owner.name + '.' + field.name, target);
+        result_.named_functions.emplace(
+            InitializerKey(InitializerKind::InstanceField, owner.name + '.' + field.name), target);
         BindExpression(field.initializer.get(), target);
       }
     }
@@ -352,7 +380,7 @@ DeclarationBindings DeclarationBinder::Run() {
       result_.named_functions.emplace(name, identity);
     } else if (origin.kind == DeclarationKind::Global) {
       result_.globals.emplace(name, identity);
-      result_.named_functions.emplace("$global." + name,
+      result_.named_functions.emplace(InitializerKey(InitializerKind::Global, name),
                                       Member(identity, DeclarationKind::Initializer, ""));
     } else {
       result_.nominals.emplace(name, identity);
@@ -368,7 +396,8 @@ DeclarationBindings DeclarationBinder::Run() {
     BindInterface(interface);
   }
   for (const auto& global : source_->globals) {
-    BindExpression(global.initializer.get(), result_.named_functions.at("$global." + global.name));
+    BindExpression(global.initializer.get(), result_.named_functions.at(InitializerKey(
+                                                 InitializerKind::Global, global.name)));
   }
   InheritFields();
   identities_->FinishUpdate();

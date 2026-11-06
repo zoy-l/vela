@@ -98,16 +98,12 @@ std::string CodeCacheKey(const llvm::Module& module, NativeOptimization optimiza
 std::expected<CachedObject, std::string> ReadCodeCache(const std::filesystem::path& directory,
                                                        std::string_view key) {
   const auto path = CachePath(directory, key);
-  std::error_code error;
-  const auto exists = std::filesystem::exists(path, error);
-  if (error) {
-    return std::unexpected("cannot inspect JIT code cache: " + error.message());
-  }
-  if (!exists) {
-    return CachedObject{.status = CodeCacheStatus::Miss, .object = {}};
-  }
   auto bytes = ReadBinaryFile(path);
   if (!bytes) {
+    std::error_code error;
+    if (!std::filesystem::exists(path, error) && !error) {
+      return CachedObject{.status = CodeCacheStatus::Miss, .object = {}};
+    }
     return std::unexpected(bytes.error());
   }
   return Decode(std::move(*bytes), key);

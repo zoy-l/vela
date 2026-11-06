@@ -29,7 +29,6 @@ struct TextRange final {
 class SourceLineIndex final {
  public:
   SourceLineIndex() = default;
-  explicit SourceLineIndex(std::string_view text);
   explicit SourceLineIndex(SourceLines lines) : lines_(std::move(lines)) {}
   void Reset(std::string_view text);
   [[nodiscard]] std::expected<std::size_t, std::string> OffsetAt(std::string_view text,

@@ -42,6 +42,14 @@ TypeDescriptor MakeNullableType(TypeDescriptor type) {
   return type;
 }
 
+std::string_view NonNullableTypeName(const TypeDescriptor& type) noexcept {
+  if (!type.nullable) {
+    return type.name;
+  }
+  return type.kind == TypeDescriptor::Kind::Function ? type.name.substr(1, type.name.size() - 3)
+                                                     : type.name.substr(0, type.name.size() - 1);
+}
+
 TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature) {
   std::string name = "(";
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {

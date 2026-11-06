@@ -184,7 +184,7 @@ export func caught(): int {
 }
 export func answer(): int { return divide(2); }
 )",
-                                    NativeCodeTier::Optimized);
+                                    NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   EXPECT_NE(compiled->llvm_ir.find("call.typed.entry"), std::string::npos);
   runtime::Isolate isolate(1);
@@ -306,7 +306,7 @@ export func failure(): string {
   catch (error: Error) { return error.message; }
 }
 )",
-                                      tier);
+                                      tier, test::IRPreservation::Preserve);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     EXPECT_NE(compiled->llvm_ir.find("llvm.sqrt.f64"), std::string::npos);
     runtime::Isolate isolate(1);
@@ -353,7 +353,8 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
   const auto compiled = CompileText(**compiler,
                                     "func twice(value: int): int { return value * 2; } "
-                                    "export func answer(): int { return twice(21); }");
+                                    "export func answer(): int { return twice(21); }",
+                                    NativeCodeTier::Baseline, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
   EXPECT_NE(compiled->llvm_ir.find("@vela_native_v3_call_declaration"), std::string::npos);
@@ -643,7 +644,7 @@ export func read(): int {
   return point.x + point.text.length + values.length - 1;
 }
 )",
-                                    NativeCodeTier::Optimized);
+                                    NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   const auto functions = compiled->image->functions.values();
   const auto found = std::ranges::find(functions, "read",
@@ -1372,7 +1373,7 @@ export func prefix(initial: int, bound: int): int {
   return result;
 }
 )",
-                                      tier);
+                                      tier, test::IRPreservation::Preserve);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     EXPECT_NE(compiled->llvm_ir.find(".bounded"), std::string::npos) << compiled->llvm_ir;
     runtime::Isolate isolate;
@@ -1523,7 +1524,7 @@ export func prefix(initial: int): int {
   return result;
 }
 )",
-                                    NativeCodeTier::Optimized);
+                                    NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   EXPECT_NE(compiled->llvm_ir.find(".bounded"), std::string::npos);
   runtime::Isolate isolate;
@@ -1575,7 +1576,7 @@ export func fail(count: int, cutoff: int): int {
   return -1;
 }
 )",
-                                      tier);
+                                      tier, test::IRPreservation::Preserve);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     EXPECT_NE(compiled->llvm_ir.find("poll.chunk"), std::string::npos);
     runtime::Isolate isolate;

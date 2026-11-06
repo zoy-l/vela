@@ -43,6 +43,11 @@ void Put(BinaryWriter& writer, const layout::Type& type) {
   Put(writer, type.index);
 }
 
+void Put(BinaryWriter& writer, Fingerprint fingerprint) {
+  writer.Write(fingerprint.low);
+  writer.Write(fingerprint.high);
+}
+
 template <class T, class Write>
 void Sequence(BinaryWriter& writer, const std::vector<T>& values, Write write) {
   Put(writer, values.size());
@@ -94,8 +99,8 @@ void Signature(BinaryWriter& writer, const ir::Function& function, const ir::Pro
   }
 }
 
-std::vector<std::string> ClassInputs(const ir::Program& program) {
-  std::vector<std::string> fingerprints;
+std::vector<Fingerprint> ClassInputs(const ir::Program& program) {
+  std::vector<Fingerprint> fingerprints;
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
     const auto& type = program.classes.at(index);
     const auto& layout = program.layouts.classes.at(index);
@@ -130,18 +135,18 @@ std::vector<std::string> ClassInputs(const ir::Program& program) {
       output.Write(layout::TypeKey(
           program.layouts, {.kind = layout::Type::Kind::Callable, .index = *layout.callable_type}));
     }
-    fingerprints.push_back(ContentFingerprint(output.bytes()).Hex());
+    fingerprints.push_back(ContentFingerprint(output.bytes()));
   }
   return fingerprints;
 }
 
-std::vector<std::string> SignatureInputs(const ir::Program& program) {
-  std::vector<std::string> signatures;
+std::vector<Fingerprint> SignatureInputs(const ir::Program& program) {
+  std::vector<Fingerprint> signatures;
   signatures.reserve(program.functions.size());
   for (const auto& function : program.functions) {
     BinaryWriter writer;
     Signature(writer, function, program);
-    signatures.push_back(ContentFingerprint(writer.bytes()).Hex());
+    signatures.push_back(ContentFingerprint(writer.bytes()));
   }
   return signatures;
 }
@@ -149,7 +154,7 @@ std::vector<std::string> SignatureInputs(const ir::Program& program) {
 void InstructionLayouts(BinaryWriter& writer,
                         const ir::Instruction& instruction,
                         const ir::Program& program,
-                        const std::vector<std::string>& classes) {
+                        const std::vector<Fingerprint>& classes) {
   const auto& layouts = program.layouts;
   if (instruction.array_type != ir::kInvalidArrayType) {
     const auto& array = layouts.arrays.at(layouts.array_types.at(instruction.array_type));
@@ -158,7 +163,7 @@ void InstructionLayouts(BinaryWriter& writer,
   }
   switch (instruction.opcode) {
     case Opcode::NewInstance:
-      writer.Write(classes.at(instruction.index));
+      Put(writer, classes.at(instruction.index));
       break;
     case Opcode::NewCollection: {
       const auto& collection =
@@ -216,8 +221,8 @@ void InstructionInputs(BinaryWriter& writer,
                        const ir::Function& function,
                        const ir::Program& program,
                        NativeCodeTier tier,
-                       const std::vector<std::string>& classes,
-                       const std::vector<std::string>& signatures,
+                       const std::vector<Fingerprint>& classes,
+                       const std::vector<Fingerprint>& signatures,
                        const absl::flat_hash_map<DeclarationId, native::FieldTarget>& fields) {
   Put(writer, function.instructions.size());
   for (const auto& instruction : function.instructions) {
@@ -228,10 +233,10 @@ void InstructionInputs(BinaryWriter& writer,
       const auto target = fields.at(*instruction.field_declaration);
       Put(writer, target.owner);
       Put(writer, target.slot);
-      writer.Write(classes.at(target.owner));
+      Put(writer, classes.at(target.owner));
     }
     if (instruction.opcode == Opcode::Call) {
-      writer.Write(signatures.at(instruction.index));
+      Put(writer, signatures.at(instruction.index));
     }
   }
 }
@@ -240,13 +245,13 @@ void InstructionInputs(BinaryWriter& writer,
 
 std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
                                                    const native::NativeCallPlan& calls,
+                                                   const native::FieldTargets& fields,
                                                    NativeCodeTier tier,
                                                    std::uint8_t optimization,
                                                    std::uint8_t debugging,
                                                    std::uint8_t escape) {
   const auto classes = ClassInputs(program);
   const auto signatures = SignatureInputs(program);
-  const auto fields = native::FindFieldTargets(program);
   absl::flat_hash_map<std::string_view, std::size_t> class_indices;
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
     class_indices.emplace(program.classes.at(index).name, index);
@@ -278,17 +283,17 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
     Put(writer, optimization);
     Put(writer, debugging);
     Put(writer, escape);
-    writer.Write(signatures.at(inputs.size()));
+    Put(writer, signatures.at(inputs.size()));
     Put(writer, function.register_count);
     Put(writer, function.is_exported);
     Sequence(writer, function.value_types, [&](BinaryWriter& output, const auto& type) {
       Put(output, type);
-      const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
+      const auto name = frontend::NonNullableTypeName(type);
       const auto found = class_indices.find(name);
       Put(output, found != class_indices.end());
       if (found != class_indices.end()) {
         Put(output, found->second);
-        output.Write(classes.at(found->second));
+        Put(output, classes.at(found->second));
       }
     });
     Sequence(writer, function.doubles, [](BinaryWriter& output, double value) {
@@ -299,7 +304,7 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
     FunctionCodeInputs input;
     InstructionInputs(writer, function, program, tier, classes, signatures, fields);
     input.dependencies = calls.dependencies.at(inputs.size());
-    input.fingerprint = ContentFingerprint(writer.bytes()).Hex();
+    input.fingerprint = ContentFingerprint(writer.bytes());
     inputs.push_back(std::move(input));
   }
   return inputs;

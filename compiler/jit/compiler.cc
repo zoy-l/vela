@@ -32,6 +32,7 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include "base/declaration.h"
+#include "compiler/native/field_access.h"
 #ifndef NDEBUG
 #include "base/native_program_mode.h"
 #endif
@@ -44,7 +45,6 @@
 #include "compiler/jit/engine.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
-#include "compiler/native/host_header.h"
 #include "compiler/native/native_image_data.h"
 #include "runtime/native/native_image.h"
 
@@ -189,31 +189,21 @@ std::expected<CompiledObject, std::string> PrepareObject(native::NativeModule& g
   return result;
 }
 
-std::vector<std::uint8_t> ExportedFunctions(const ir::Program& program) {
-  assert(program.native_mode != NativeProgramMode::Reloadable || program.revision != 0);
-  std::vector<std::uint8_t> exports;
-  exports.reserve(program.functions.size());
-  for (const auto& function : program.functions) {
-    exports.push_back(function.is_exported ? 1 : 0);
-  }
-  return exports;
-}
-
 void ApplyCodeReuse(native::NativeModule& generated,
                     const CodeReuseCache& reuse,
                     std::uint64_t batch,
                     CodeReusePlan& reuse_plan) {
   for (std::size_t index = 0; index < reuse_plan.reused.size(); ++index) {
-    if (reuse_plan.reused.at(index) != 0 && generated.function_symbols.at(index).empty()) {
-      generated.function_symbols.at(index) = reuse.sources.at(index).symbols;
+    if (reuse_plan.reused[index] != 0 && generated.function_symbols[index].empty()) {
+      generated.function_symbols[index] = reuse.sources[index].symbols;
     }
   }
   BindReusableCode(*generated.module, reuse, generated.function_symbols, batch, reuse_plan);
   for (std::size_t index = 0; index < reuse_plan.reused.size(); ++index) {
-    if (reuse_plan.reused.at(index) != 0) {
-      const auto& source = reuse.sources.at(index);
-      generated.function_metrics.at(index) = source.metrics;
-      generated.body_dependencies.at(index) = source.body_dependencies;
+    if (reuse_plan.reused[index] != 0) {
+      const auto& source = reuse.sources[index];
+      generated.function_metrics[index] = source.metrics;
+      generated.body_dependencies[index] = source.body_dependencies;
     }
   }
 }
@@ -244,11 +234,11 @@ std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& gener
                                                const CodeReusePlan& reuse_plan) {
   std::vector<FunctionEntrySymbols> entry_symbols;
   for (std::size_t index = 0; index < generated.entry_functions.size(); ++index) {
-    const auto* entry = generated.entry_functions.at(index);
-    const auto reused = !reuse_plan.reused.empty() && reuse_plan.reused.at(index) != 0;
+    const auto* entry = generated.entry_functions[index];
+    const auto reused = !reuse_plan.reused.empty() && reuse_plan.reused[index] != 0;
     entry_symbols.push_back({
         .boxed = reused ? std::string() : entry->getName().str(),
-        .typed = reused ? std::string() : generated.typed_functions.at(index)->getName().str(),
+        .typed = reused ? std::string() : generated.typed_functions[index]->getName().str(),
     });
   }
   return entry_symbols;
@@ -310,12 +300,12 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
   std::vector<runtime::NativeEntry> addresses;
   std::vector<runtime::NativeTypedEntry> typed_addresses;
   for (std::size_t index = 0; index < entry_symbols.size(); ++index) {
-    const auto& symbol = entry_symbols.at(index);
-    addresses.push_back(symbol.boxed.empty() ? reuse->sources.at(index).entry
+    const auto& symbol = entry_symbols[index];
+    addresses.push_back(symbol.boxed.empty() ? reuse->sources[index].entry
                                              : resolved.find(interned.Get(symbol.boxed))
                                                    ->second.getAddress()
                                                    .toPtr<runtime::NativeEntry>());
-    typed_addresses.push_back(symbol.typed.empty() ? reuse->sources.at(index).typed_entry
+    typed_addresses.push_back(symbol.typed.empty() ? reuse->sources[index].typed_entry
                                                    : resolved.find(interned.Get(symbol.typed))
                                                          ->second.getAddress()
                                                          .toPtr<runtime::NativeTypedEntry>());
@@ -357,14 +347,14 @@ void UpdateSourceCache(CodeReuseCache& reuse,
   reuse.sources.clear();
   const auto functions = image.functions.values();
   for (std::size_t index = 0; index < reuse_plan.inputs.size(); ++index) {
-    const auto& function = functions.subspan(index).front();
+    const auto& function = functions[index];
     reuse.sources.push_back({
-        .fingerprint = std::move(reuse_plan.inputs.at(index).fingerprint),
-        .symbols = std::move(generated.function_symbols.at(index)),
-        .metrics = generated.function_metrics.at(index),
+        .fingerprint = reuse_plan.inputs[index].fingerprint,
+        .symbols = std::move(generated.function_symbols[index]),
+        .metrics = generated.function_metrics[index],
         .entry = function.entry,
         .typed_entry = function.typed_entry,
-        .body_dependencies = std::move(generated.body_dependencies.at(index)),
+        .body_dependencies = std::move(generated.body_dependencies[index]),
     });
   }
 }
@@ -402,15 +392,6 @@ CodeResourceCounts Compiler::resource_counts() const noexcept {
 std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::Program& program,
                                                                       const CompileOptions& options,
                                                                       CodeReuseCache* reuse) {
-  const auto exports = ExportedFunctions(program);
-  std::string host_header;
-  if (options.host_namespace) {
-    auto emitted = native::EmitHostDeclarations(program, *options.host_namespace);
-    if (!emitted) {
-      return std::unexpected(Diagnostic(emitted.error()));
-    }
-    host_header = std::move(*emitted);
-  }
   using Clock = std::chrono::steady_clock;
   CompileTimings timings;
   const auto generation_started = Clock::now();
@@ -418,11 +399,12 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   std::unique_lock<std::mutex> reuse_lock;
   CodeReusePlan reuse_plan;
   const auto calls = native::PlanNativeCalls(program, options.tier);
+  const auto fields = native::FindFieldTargets(program);
   auto compiled_functions = program.functions.size();
   if (reuse != nullptr) {
     assert(program.native_mode == NativeProgramMode::Reloadable);
     reuse_lock = std::unique_lock(reuse->mutex);
-    reuse_plan = PlanCodeReuse(DescribeCodeInputs(program, calls, options.tier,
+    reuse_plan = PlanCodeReuse(DescribeCodeInputs(program, calls, fields, options.tier,
                                                   static_cast<std::uint8_t>(options.optimization),
                                                   static_cast<std::uint8_t>(options.debugging),
                                                   static_cast<std::uint8_t>(options.escape)),
@@ -430,7 +412,7 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   }
   const std::string module_name = "vela_jit";
   auto generated =
-      native::Generate(program, calls, module_name, exports, options.debugging, options.tier,
+      native::Generate(program, calls, fields, module_name, options.debugging, options.tier,
                        options.escape, NativeCodePlacement::Dynamic, reuse_plan.reused);
   timings.generation = Clock::now() - generation_started;
   if (!generated) {
@@ -504,7 +486,6 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
       .cache = cached.status,
       .timings = timings,
       .compiled_functions = compiled_functions,
-      .host_header = std::move(host_header),
   };
 }
 

@@ -20,6 +20,7 @@ source_set("base") {
     "fingerprint.cc",
     "fingerprint.h",
     "integer_arithmetic.h",
+    "integer_parse.h",
     "json_decode.h",
     "layout_description.cc",
     "layout_description.h",

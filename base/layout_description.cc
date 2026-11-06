@@ -15,7 +15,9 @@ void AppendPart(std::string& output, std::string_view part) {
   output += part;
 }
 
-std::string_view ScalarName(Type::Kind kind) {
+}  // namespace
+
+std::string_view ScalarTypeName(Type::Kind kind) noexcept {
   using Kind = Type::Kind;
   switch (kind) {
     case Kind::Dynamic:
@@ -50,10 +52,12 @@ std::string_view ScalarName(Type::Kind kind) {
     case Kind::Callable:
     case Kind::Future:
     case Kind::Completer:
-      std::unreachable();
+      return {};
   }
   std::unreachable();
 }
+
+namespace {
 
 void AppendTypeKey(std::string& output, const Program& program, const Type& type) {
   using Kind = Type::Kind;
@@ -100,7 +104,7 @@ void AppendTypeKey(std::string& output, const Program& program, const Type& type
       break;
     }
     default:
-      AppendPart(output, ScalarName(type.kind));
+      AppendPart(output, ScalarTypeName(type.kind));
       break;
   }
   output += '}';

@@ -23,6 +23,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 
@@ -44,6 +45,7 @@ struct GeneratedFunction final {
   llvm::Function* borrowed = nullptr;
   llvm::Function* leaf = nullptr;
   llvm::Function* leaf_guard = nullptr;
+  bool square_root = false;
   [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
     return tier == NativeCodeTier::Optimized && recovery != nullptr;
   }
@@ -60,6 +62,8 @@ enum class NativeEntryKind : std::uint8_t {
 
 // 同一分流的 initial、resume、leaf 和恢复入口共享不可变分析结果。
 struct FunctionEmissionFacts final {
+  const FieldTargets* field_targets = nullptr;
+  std::size_t temporary_count = 0;
   std::vector<std::optional<std::uint32_t>> field_accesses;
   std::vector<std::optional<CallableTarget>> direct_calls;
   std::vector<std::uint64_t> array_element_bits;
@@ -86,10 +90,12 @@ class FunctionEmitter final {
         source_(escape.function.get()),
         origins_(escape.origins),
         function_index_(function_index),
+        field_targets_(*facts.field_targets),
+        temporary_count_(facts.temporary_count),
         field_accesses_(facts.field_accesses),
         direct_calls_(facts.direct_calls),
         generated_(generated),
-        body_(SelectBody(generated.subspan(function_index).front(), kind)),
+        body_(SelectBody(generated[function_index], kind)),
         kind_(kind),
         tier_(tier),
         builder_(module.getContext()),
@@ -128,6 +134,8 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void PrepareTraceFrame();
+  void InitializeTraceFrame(llvm::Value* frame);
+  void PrepareInlineRuntimeCall();
   void CacheGlobals();
   void SetPosition();
   void PrepareRuntimeCall();
@@ -162,6 +170,7 @@ class FunctionEmitter final {
   void StoreCheckpoint();
   void InitializeDebugValues();
   void StoreDebugValues();
+  std::vector<std::uint8_t> debug_live_;
   llvm::Constant* VirtualGraph(std::size_t instruction);
   void Recover();
   void RecoverIfInvalidated();
@@ -175,7 +184,6 @@ class FunctionEmitter final {
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
   void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
-  bool CanInlineSquareRoot(const ir::Function& function) const;
   llvm::Value* SquareRootCondition(llvm::Value& entries, llvm::Value* operand);
   void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
@@ -198,6 +206,9 @@ class FunctionEmitter final {
                       ir::RegisterId reg,
                       MemoryRegion region = MemoryRegion::Values);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
+  void EmitFieldAccess(const ir::Instruction& instruction,
+                       llvm::Value* object,
+                       const StoredValueAddress& address);
   llvm::BasicBlock* EmitFieldReadiness(llvm::Value* storage,
                                        const ir::Instruction& instruction,
                                        llvm::Value* slot,
@@ -240,7 +251,7 @@ class FunctionEmitter final {
   void InitializeRecords();
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
-  std::expected<void, std::string> PrepareFrame();
+  void PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
   llvm::Value* HasStackBudget(llvm::Value* depth);
@@ -251,7 +262,7 @@ class FunctionEmitter final {
   llvm::Value* Output();
   void EmitAsyncFailure(llvm::Value* status);
   void EmitAsyncReturn(const ir::Instruction& instruction);
-  std::expected<void, std::string> EmitAsyncInstruction(const ir::Instruction& instruction);
+  void EmitAsyncInstruction(const ir::Instruction& instruction);
   void EmitAwait(const ir::Instruction& instruction);
   void EmitResumeDispatch();
   void StoreAsyncResult();
@@ -265,6 +276,8 @@ class FunctionEmitter final {
   std::span<const std::size_t> origins_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
+  const FieldTargets& field_targets_;
+  std::size_t temporary_count_;
   const std::vector<std::optional<std::uint32_t>>& field_accesses_;
   const std::vector<std::optional<CallableTarget>>& direct_calls_;
   std::span<const GeneratedFunction> generated_;
@@ -326,6 +339,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
     const NativeCallPlan& calls,
+    const FieldTargets& field_targets,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
@@ -339,6 +353,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     llvm::Module& module,
     const ir::Program& program,
     const NativeCallPlan& calls,
+    const FieldTargets& field_targets,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,

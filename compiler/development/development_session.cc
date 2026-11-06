@@ -276,7 +276,6 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   result.timings.native = code->timings;
   result.diagnostics = source->snapshot().diagnostics;
   result.timings.frontend = source->snapshot().timings;
-  result.cache = code->cache;
   result.changes = Changes(update);
   result.changes.compiled_functions = code->compiled_functions;
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),

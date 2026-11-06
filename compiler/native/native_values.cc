@@ -175,6 +175,23 @@ llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& t
   return builder.getInt1(type.kind != Kind::Null && type.kind != Kind::Void);
 }
 
+llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type) {
+  return HasValidity(type) ? builder.CreateExtractValue(value, 1) : value;
+}
+
+llvm::Value* MakeOptional(Builder& builder,
+                          llvm::Value* present,
+                          llvm::Value* payload,
+                          const SourceType& type) {
+  auto* result = builder.CreateInsertValue(
+      llvm::PoisonValue::get(ValueType(builder.getContext(), type)), present, 0);
+  return builder.CreateInsertValue(result, payload, 1);
+}
+
+void MarkInvariant(llvm::LoadInst& load) {
+  load.setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(load.getContext(), {}));
+}
+
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type) {
   auto* representation = NativeRecordType(builder.getContext());
   llvm::Value* record = llvm::Constant::getNullValue(representation);
@@ -187,7 +204,7 @@ llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType&
     bits = builder.CreateExtractValue(value, 0);
     kind = builder.CreateExtractValue(value, 1);
   } else {
-    auto* payload = HasValidity(type) ? builder.CreateExtractValue(value, 1) : value;
+    auto* payload = PayloadOf(builder, value, type);
     if (IsReferenceKind(type.kind)) {
       bits = builder.CreatePtrToInt(payload, builder.getInt64Ty());
     } else if (type.kind == Kind::Double) {
@@ -230,9 +247,7 @@ llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType
   if (!HasValidity(type)) {
     return payload;
   }
-  auto* result = builder.CreateInsertValue(
-      llvm::PoisonValue::get(ValueType(builder.getContext(), type)), present, 0);
-  return builder.CreateInsertValue(result, payload, 1);
+  return MakeOptional(builder, present, payload, type);
 }
 
 llvm::Value* Convert(Builder& builder,
@@ -248,14 +263,12 @@ llvm::Value* Convert(Builder& builder,
   if (source.kind == Kind::Null || source.kind == Kind::Void) {
     return llvm::Constant::getNullValue(ValueType(builder.getContext(), target));
   }
-  auto* payload = HasValidity(source) ? builder.CreateExtractValue(value, 1) : value;
+  auto* payload = PayloadOf(builder, value, source);
   if (!HasValidity(target)) {
     return payload;
   }
   auto* present = IsPresent(builder, value, source);
-  auto* result = builder.CreateInsertValue(
-      llvm::PoisonValue::get(ValueType(builder.getContext(), target)), present, 0);
-  return builder.CreateInsertValue(result, payload, 1);
+  return MakeOptional(builder, present, payload, target);
 }
 
 void EmitExecutionBoundary(Builder& builder) {
@@ -276,7 +289,7 @@ void EmitExecutionBoundary(Builder& builder) {
   // 构造时确定的线程栈状态只在真实入口验证，内部 typed 调用复用此契约。
   auto* stack_status =
       builder.CreateLoad(builder.getInt8Ty(), address(NativeMemoryLayout::kExecutionStackStatus));
-  stack_status->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(context, {}));
+  MarkInvariant(*stack_status);
   ReturnOnFailure(builder, *function, stack_status);
   auto* first = llvm::BasicBlock::Create(context, "execution.first", function);
   auto* ready = llvm::BasicBlock::Create(context, "execution.ready", function);

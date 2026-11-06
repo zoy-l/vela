@@ -17,7 +17,6 @@
 #include "base/execution_status.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/compiler.h"
@@ -84,7 +83,6 @@ struct DevelopmentResult final {
   std::optional<ExecutionStatus> execution = std::nullopt;
   DevelopmentChanges changes;
   DevelopmentTimings timings;
-  jit::CodeCacheStatus cache = jit::CodeCacheStatus::Disabled;
 };
 
 struct DevelopmentSessionIdentity final {};

@@ -412,7 +412,7 @@ extern "C" VelaAotStatus vela_aot_v2_future_wait(VelaAotScope* scope,
 }
 
 extern "C" const char* vela_aot_v2_status_code(VelaAotStatus status) {
-  return status <= ToNativeStatus(ExecutionStatus::TargetDeleted)
+  return status <= ToNativeStatus(ExecutionStatus::ExecutionTimedOut)
              ? ExecutionStatusCode(static_cast<ExecutionStatus>(status)).data()
              : "InvalidStatus";
 }

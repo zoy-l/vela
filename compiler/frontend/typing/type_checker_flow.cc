@@ -273,10 +273,7 @@ StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& 
   if (iterable.kind == Type::Kind::Array) {
     element = array_elements_.at(collection.name);
   } else if (iterable.kind == Type::Kind::Set || iterable.kind == Type::Kind::Map) {
-    const auto arguments = generic_arguments_.find(collection.name);
-    if (arguments != generic_arguments_.end() && !arguments->second.empty()) {
-      element = arguments->second.front();
-    }
+    element = generic_arguments_.at(collection.name).front();
   }
   if (!IsValid(element) || iterable.nullable) {
     AddDiagnostic(statement.iterable->location, "'in' requires a non-null array, set, or map");

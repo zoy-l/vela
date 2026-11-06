@@ -71,7 +71,7 @@ class ScalarRewriter final {
            std::span<const BlockState> blocks,
            std::span<const std::optional<std::size_t>> allocations) {
     for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
-      const auto& state = blocks.subspan(index).front();
+      const auto& state = blocks[index];
       auto values = state.reached ? state.values : State(blocks.front().values.size());
       const auto& block = graph.blocks.at(index);
       for (auto position = block.begin; position < block.end; ++position) {
@@ -79,13 +79,13 @@ class ScalarRewriter final {
         targets_.at(position) = function_->instructions.size();
         const auto& instruction = original_.at(position);
         RecordCheckpoint(values);
-        RewriteInstruction(instruction, allocations.subspan(position).front(), values);
+        RewriteInstruction(instruction, allocations[position], values);
         if (!plan_->checkpoints.empty() &&
             function_->instructions.size() == targets_.at(position)) {
           Emit({.opcode = Opcode::LoadNull, .dst = marker_, .location = {}});
         }
         Transfer(instruction, ir::AnalyzeRegisters(instruction, program_->functions),
-                 allocations.subspan(position).front(), *plan_, *program_, values);
+                 allocations[position], *plan_, *program_, values);
       }
     }
     targets_.back() = function_->instructions.size();
@@ -115,7 +115,7 @@ class ScalarRewriter final {
     }
     auto& checkpoint = plan_->checkpoints.at(position_);
     std::uint64_t objects = 0;
-    for (const auto reg : live_.subspan(position_).front()) {
+    for (const auto reg : live_[position_]) {
       const auto object = ScalarObject(*plan_, values.at(reg));
       if (object) {
         checkpoint.aliases.push_back({.reg = reg, .allocation = *object});

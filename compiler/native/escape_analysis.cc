@@ -129,7 +129,7 @@ std::optional<std::size_t> BorrowedReceiver(const EscapePlan& plan,
   if (instruction.opcode != Opcode::Call || plan.borrowable.empty()) {
     return std::nullopt;
   }
-  const auto type = plan.borrowable.subspan(instruction.index).front();
+  const auto type = plan.borrowable[instruction.index];
   const auto object = ScalarObject(plan, values.at(instruction.lhs));
   if (!type || !object || (MayHeap(values) & (std::uint64_t{1} << *object)) != 0) {
     return std::nullopt;
@@ -210,7 +210,11 @@ void Transfer(const ir::Instruction& instruction,
     values.at(field).initialized = true;
     return;
   }
-  if (NeedsHeap(plan, program, instruction, values)) {
+  const auto needs_heap =
+      instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField
+          ? !virtual_receiver
+          : NeedsHeap(plan, program, instruction, values);
+  if (needs_heap) {
     ir::ForEachUse(instruction, access,
                    [&](ir::RegisterId reg) { Publish(plan, values, values.at(reg).objects); });
   }
@@ -230,8 +234,7 @@ void Transfer(const ir::Instruction& instruction,
       Publish(plan, values, value.objects);
     }
   } else if (instruction.opcode == Opcode::Move ||
-             (instruction.opcode == Opcode::CheckedCast &&
-              !NeedsHeap(plan, program, instruction, values))) {
+             (instruction.opcode == Opcode::CheckedCast && !needs_heap)) {
     value = values.at(instruction.lhs);
   } else if (instruction.opcode == Opcode::GetField && virtual_receiver) {
     value = values.at(plan.allocations.at(*receiver).state_offset + instruction.index);
@@ -242,11 +245,12 @@ void Transfer(const ir::Instruction& instruction,
 State BeforeFailure(const EscapePlan& plan,
                     const ir::Program& program,
                     const ir::Instruction& instruction,
+                    const ir::RegisterAccess& access,
                     const State& values) {
   auto exceptional = values;
   if (NeedsHeap(plan, program, instruction, values)) {
     std::uint64_t published = 0;
-    ir::ForEachUse(instruction, ir::AnalyzeRegisters(instruction, program.functions),
+    ir::ForEachUse(instruction, access,
                    [&](ir::RegisterId reg) { published |= values.at(reg).objects; });
     // 物化可能先失败，也可能调用已进入并修改对象后才抛错。
     // 异常合流必须保留这两种表示，不能假定失败意味着尚未物化。
@@ -255,9 +259,20 @@ State BeforeFailure(const EscapePlan& plan,
   return exceptional;
 }
 
+std::vector<ir::RegisterAccess> RegisterAccesses(const ir::Function& function,
+                                                 const ir::Program& program) {
+  std::vector<ir::RegisterAccess> result;
+  result.reserve(function.instructions.size());
+  for (const auto& instruction : function.instructions) {
+    result.push_back(ir::AnalyzeRegisters(instruction, program.functions));
+  }
+  return result;
+}
+
 std::vector<BlockState> Solve(const ir::Function& function,
                               const ir::Program& program,
                               const ir::FlowGraph& graph,
+                              std::span<const ir::RegisterAccess> accesses,
                               std::span<const std::optional<std::size_t>> allocations,
                               const EscapePlan& plan,
                               std::size_t state_size,
@@ -284,11 +299,10 @@ std::vector<BlockState> Solve(const ir::Function& function,
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions.at(position);
       if (instruction.handler && ir::AnalyzeEffects(instruction).may_fail) {
-        exceptional = BeforeFailure(plan, program, instruction, values);
+        exceptional = BeforeFailure(plan, program, instruction, accesses[position], values);
         handler = graph.instruction_blocks.at(function.handlers.at(*instruction.handler).target);
       }
-      Transfer(instruction, ir::AnalyzeRegisters(instruction, program.functions),
-               allocations.subspan(position).front(), plan, program, values);
+      Transfer(instruction, accesses[position], allocations[position], plan, program, values);
     }
     const auto propagate = [&](std::size_t successor, const State& incoming) {
       if (Merge(states.at(successor), incoming) && queued.at(successor) == 0) {
@@ -332,7 +346,8 @@ void InspectProvenance(EscapePlan& plan, const Provenance& value) {
 
 std::vector<std::vector<ir::RegisterId>> LiveBefore(const ir::Function& function,
                                                     const ir::Program& program,
-                                                    const ir::FlowGraph& graph) {
+                                                    const ir::FlowGraph& graph,
+                                                    std::span<const ir::RegisterAccess> accesses) {
   const auto blocks = ir::AnalyzeLiveness(function, graph, program.functions);
   std::vector<std::vector<ir::RegisterId>> result(function.instructions.size());
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
@@ -340,8 +355,7 @@ std::vector<std::vector<ir::RegisterId>> LiveBefore(const ir::Function& function
     auto live = blocks.at(index).live_out;
     for (auto position = block.end; position > block.begin;) {
       const auto& instruction = function.instructions.at(--position);
-      ir::TransferLiveness(function, graph, blocks, instruction,
-                           ir::AnalyzeRegisters(instruction, program.functions), live);
+      ir::TransferLiveness(function, graph, blocks, instruction, accesses[position], live);
       live.ForEach([&](ir::RegisterId reg) { result.at(position).push_back(reg); });
     }
   }
@@ -394,8 +408,8 @@ void InspectRecovery(EscapePlan& plan,
 void InspectBoundary(EscapePlan& plan,
                      const ir::Program& program,
                      const ir::Instruction& instruction,
+                     const ir::RegisterAccess& access,
                      const State& values) {
-  const auto access = ir::AnalyzeRegisters(instruction, program.functions);
   if (instruction.handler && !ir::AnalyzeEffects(instruction).may_fail &&
       NeedsHeap(plan, program, instruction, values)) {
     ir::ForEachUse(instruction, access,
@@ -433,15 +447,15 @@ void InspectLifetime(EscapePlan& plan,
 void InspectInstruction(EscapePlan& plan,
                         const ir::Program& program,
                         const ir::Instruction& instruction,
+                        const ir::RegisterAccess& access,
                         std::optional<std::size_t> allocation,
                         const State& values,
                         std::span<const ir::RegisterId> live) {
   if (program.native_mode == NativeProgramMode::Reloadable) {
     InspectRecovery(plan, instruction, values, live);
   }
-  InspectBoundary(plan, program, instruction, values);
+  InspectBoundary(plan, program, instruction, access, values);
   InspectLifetime(plan, instruction, allocation, values, live);
-  const auto access = ir::AnalyzeRegisters(instruction, program.functions);
   ir::ForEachUse(instruction, access,
                  [&](ir::RegisterId reg) { InspectProvenance(plan, values.at(reg)); });
   if (NeedsHeap(plan, program, instruction, values)) {
@@ -456,12 +470,13 @@ void InspectInstruction(EscapePlan& plan,
 void Inspect(EscapePlan& plan,
              const ir::Program& program,
              const ir::FlowGraph& graph,
+             std::span<const ir::RegisterAccess> accesses,
              std::span<const BlockState> blocks,
              std::span<const std::optional<std::size_t>> allocations,
              std::span<const std::vector<ir::RegisterId>> live) {
   const auto& function = plan.function.get();
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
-    const auto& state = blocks.subspan(index).front();
+    const auto& state = blocks[index];
     if (!state.reached) {
       continue;
     }
@@ -469,11 +484,10 @@ void Inspect(EscapePlan& plan,
     const auto& block = graph.blocks.at(index);
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions.at(position);
-      const auto allocation = allocations.subspan(position).front();
-      InspectInstruction(plan, program, instruction, allocation, values,
-                         live.subspan(position).front());
-      Transfer(instruction, ir::AnalyzeRegisters(instruction, program.functions), allocation, plan,
-               program, values);
+      const auto allocation = allocations[position];
+      InspectInstruction(plan, program, instruction, accesses[position], allocation, values,
+                         live[position]);
+      Transfer(instruction, accesses[position], allocation, plan, program, values);
     }
   }
 }
@@ -517,7 +531,6 @@ std::size_t IndexAllocations(EscapePlan& plan,
     }
     const auto field_slots = can_replace ? field_count : 0;
     plan.allocations.push_back({
-        .instruction = index,
         .type = instruction.index,
         .can_scalar_replace = can_replace,
         .fields = std::vector<ir::RegisterId>(field_slots),
@@ -581,13 +594,14 @@ EscapePlan PlanEscapes(const ir::Program& program,
     preserve();
     return plan;
   }
-  const auto live = LiveBefore(function, program, graph);
+  const auto accesses = RegisterAccesses(function, program);
+  const auto live = LiveBefore(function, program, graph, accesses);
   std::vector<BlockState> states;
   auto eligible = EligibleCount(plan);
   while (eligible != 0) {
     const auto previous_count = eligible;
-    states = Solve(function, program, graph, allocations, plan, state_size);
-    Inspect(plan, program, graph, states, allocations, live);
+    states = Solve(function, program, graph, accesses, allocations, plan, state_size);
+    Inspect(plan, program, graph, accesses, states, allocations, live);
     eligible = EligibleCount(plan);
     if (eligible == previous_count) {
       RewriteEscapes(plan, program, live, graph, states, allocations);

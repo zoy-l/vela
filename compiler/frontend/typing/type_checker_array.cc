@@ -1,5 +1,6 @@
 #include "base/array_algorithm.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
@@ -50,17 +51,14 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
                                                    ArrayAlgorithm algorithm,
                                                    const Type* expected) {
   const auto element = array_elements_.at(receiver.name);
-  if (algorithm == ArrayAlgorithm::Sort) {
-    static_cast<void>(ArrayType({.kind = Type::Kind::Int, .name = kIntTypeName}));
-  }
-  auto method = ArrayAlgorithmSignature(algorithm, element, element);
+  auto callback = ArrayCallbackSignature(algorithm, element, element);
+  auto method = ArrayAlgorithmSignature(algorithm, callback);
+  facts_.call_targets.insert_or_assign(&expression, CallDescriptor{.signature = method});
   const auto& callback_parameter = method.parameters.front();
   if (expression.arguments.empty() &&
       !method.optional_parameters.contains(callback_parameter.name)) {
     return CheckFunctionCall(method, expression);
   }
-  auto callback = ArrayCallbackSignature(algorithm, element, element);
-  static_cast<void>(ArrayType(element));
   InferenceSignature source;
   source.optional_parameters = method.optional_parameters;
   auto callback_type = DescribeType(FunctionType(callback));

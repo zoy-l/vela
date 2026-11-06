@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -40,9 +41,9 @@ class Lowerer final {
  public:
   Lowerer(const frontend::Program& source,
           const frontend::SemanticModel& model,
-          PersistentIds* persistent = nullptr,
-          const DeclarationBindings* declarations = nullptr,
-          NativeProgramMode native_mode = NativeProgramMode::Closed) noexcept
+          PersistentIds* persistent,
+          const DeclarationBindings* declarations,
+          NativeProgramMode native_mode) noexcept
       : source_(source),
         model_(model),
         persistent_(persistent),
@@ -73,7 +74,7 @@ class Lowerer final {
   struct FunctionValuePlan final {
     std::uint32_t target = 0;
     CallableMode mode = CallableMode::Plain;
-    std::vector<frontend::Capture> captures;
+    std::span<const frontend::Capture> captures;
     std::optional<LoweredValue> receiver;
   };
 
@@ -104,8 +105,8 @@ class Lowerer final {
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name,
                               frontend::Function::Role role = frontend::Function::Role::Ordinary);
-  enum class GlobalKind : std::uint8_t { Module, StaticField };
-  void AddGlobalId(const std::string& name, GlobalKind kind);
+  void AddGlobalId(const std::string& name, InitializerKind kind);
+  std::uint32_t ConstructorTarget(const frontend::ClassDescriptor& owner);
   void StoreFunction(Function function);
   void RecordParameterValueTypes(Function& function);
   void BeginFunctionBody(Function& function, const frontend::Class* owner = nullptr);
@@ -130,7 +131,7 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
-  [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner) const;
+  [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
   CallSignature& RegisterFunctionSignature(Function& function,
@@ -235,9 +236,10 @@ class Lowerer final {
                              const frontend::FunctionDescriptor& signature,
                              MemberKind kind);
   LoweredValue ReadLocal(const Local& local, frontend::SourceLocation location);
+  static frontend::Capture MakeReceiverCapture(const frontend::TypeDescriptor& type);
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,
-                        const std::vector<frontend::Capture>& captures,
+                        std::span<const frontend::Capture> captures,
                         const frontend::FunctionDescriptor* interface_signature = nullptr);
 
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
@@ -245,14 +247,18 @@ class Lowerer final {
   [[nodiscard]] RegisterId AllocateRegister(frontend::SourceLocation location);
   [[nodiscard]] RegisterId AllocateRegisterWindow(std::size_t count,
                                                   frontend::SourceLocation location);
-  [[nodiscard]] RegisterId AllocateTemporary(frontend::SourceLocation location);
   [[nodiscard]] static bool IsInteger(const frontend::TypeDescriptor& type);
-  [[nodiscard]] static bool IsBoolean(const frontend::TypeDescriptor& type);
-  [[nodiscard]] static std::optional<FieldId> FindField(const frontend::ClassDescriptor& class_info,
-                                                        std::string_view name);
   void Emit(Instruction instruction);
+  [[nodiscard]] std::optional<DeclarationId> ReceiverDeclaration(
+      const frontend::TypeDescriptor& type) const;
+  [[nodiscard]] std::optional<DeclarationId> FieldDeclaration(const frontend::TypeDescriptor& type,
+                                                              FieldId index) const;
   void BindJump(std::size_t jump);
-  void RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type);
+  enum class ValueTypeRecording : std::uint8_t { Infer, Declare };
+  void RecordValueType(RegisterId reg,
+                       const frontend::TypeDescriptor& type,
+                       ValueTypeRecording recording = ValueTypeRecording::Infer);
+  static constexpr auto kConstructorMaskBits = std::numeric_limits<std::uint64_t>::digits;
   void RecordInstructionValueType(const Instruction& instruction);
   void ResolveCallValueTypes();
   void PushScope();
@@ -271,6 +277,7 @@ class Lowerer final {
   void BindContinues(std::uint32_t target);
   void FinishControl(std::optional<std::size_t> exit_jump);
   std::optional<std::size_t> LowerLoopCondition(const frontend::Statement& statement);
+  std::size_t BeginNullSafe(RegisterId receiver, frontend::SourceLocation location);
   void FinishNullSafe(std::optional<std::size_t> null_jump,
                       RegisterId result,
                       frontend::SourceLocation location);
@@ -280,9 +287,9 @@ class Lowerer final {
   void LowerForEach(const frontend::Statement& statement);
 
   LoweredValue LowerIntegerLiteral(const frontend::Expression& expression);
-  LoweredValue LowerDoubleLiteral(const frontend::Expression& expression);
+  LoweredValue EmitDoubleConstant(double value, frontend::SourceLocation location);
 
-  LoweredValue LowerStringLiteral(const frontend::Expression& expression);
+  LoweredValue EmitStringConstant(std::string_view value, frontend::SourceLocation location);
   LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
   LoweredValue LowerBuiltin(const frontend::Expression& expression);
   void EmitBuiltinCall(Builtin builtin,
@@ -301,9 +308,7 @@ class Lowerer final {
                       RegisterId index,
                       RegisterId value,
                       frontend::SourceLocation location);
-  void LowerBuiltinDefaults(Builtin builtin,
-                            const frontend::Expression& expression,
-                            RegisterId base);
+  void LowerBuiltinDefaults(Builtin builtin, RegisterId base, frontend::SourceLocation location);
   LoweredValue LowerAsyncCall(const frontend::Expression& expression);
   void LowerAsyncArguments(const frontend::Expression& expression,
                            AsyncOperation operation,
@@ -368,17 +373,15 @@ class Lowerer final {
   LoweredValue LowerUnary(const frontend::Expression& expression);
   LoweredValue LowerIncrement(const frontend::Expression& expression);
   struct MutationTarget final {
+    enum class Kind : std::uint8_t { Local, Global, Setter, Field, Member, Index };
+    Kind kind = Kind::Local;
     LoweredValue value;
-    std::optional<std::uint32_t> global;
-    std::optional<std::uint32_t> setter;
-    std::optional<RegisterId> object;
-    std::optional<RegisterId> index;
-    std::optional<FieldId> field;
-    std::optional<RegisterId> member;
+    LoweredValue receiver;
+    std::uint32_t slot = 0;
+    RegisterId index = 0;
   };
   [[nodiscard]] MutationTarget LowerMutationTarget(const frontend::Expression& target);
-  void StoreMutationTarget(const frontend::Expression& target,
-                           const MutationTarget& destination,
+  void StoreMutationTarget(const MutationTarget& destination,
                            RegisterId value,
                            frontend::SourceLocation location);
 
@@ -396,7 +399,7 @@ class Lowerer final {
                                 First first,
                                 Second second) {
     const auto location = expression.location;
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     const auto alternate_jump = current_function_->instructions.size();
     Emit({.opcode = jump_opcode, .lhs = condition, .location = location});
     const auto initial = first();
@@ -431,6 +434,7 @@ class Lowerer final {
   Program program_;
   frontend::Diagnostics diagnostics_;
   ClassMap class_ids_;
+  absl::flat_hash_map<std::string_view, bool> instance_initialization_;
   FunctionMap function_ids_;
   absl::flat_hash_map<std::uint64_t, ClassId> callable_classes_;
   absl::flat_hash_map<std::string, std::uint32_t> interface_method_ids_;

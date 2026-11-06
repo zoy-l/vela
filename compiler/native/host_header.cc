@@ -127,9 +127,6 @@ std::optional<layout::Type> MemberType(const ir::Program& program, const MemberD
   }
   if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
     const auto& getter = program.functions.at(member.target);
-    if (!getter.signature) {
-      std::unreachable();
-    }
     const auto& signature = *getter.signature;
     if (signature.result) {
       return program.layouts.types.at(*signature.result);
@@ -143,9 +140,6 @@ std::expected<void, std::string> EmitConstructor(std::ostringstream& output,
                                                  std::string_view name_space,
                                                  const ir::Function& constructor,
                                                  std::string_view logical) {
-  if (!constructor.signature) {
-    std::unreachable();
-  }
   const auto& signature = *constructor.signature;
   const auto count = signature.parameters.size() / 2;
   std::vector<std::string> parameters;
@@ -218,9 +212,6 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
     write_type = member_type;
   } else if (member.setter) {
     const auto& setter = program.functions.at(*member.setter);
-    if (!setter.signature) {
-      std::unreachable();
-    }
     const auto& signature = *setter.signature;
     write_type = program.layouts.types.at(signature.parameters.back().type);
   }
@@ -284,9 +275,6 @@ std::expected<void, std::string> EmitEntries(std::ostringstream& output,
     declarations.emplace(declaration.identity, &declaration);
   }
   for (const auto& function : program.functions | std::views::filter(&ir::Function::is_exported)) {
-    if (!function.signature) {
-      std::unreachable();
-    }
     const auto& signature = *function.signature;
     auto result = signature.result
                       ? HostLogicalType(program.layouts,

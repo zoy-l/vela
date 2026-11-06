@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string_view>
+#include <variant>
 
 #include "base/async_operation.h"
 #include "base/member.h"
@@ -12,11 +14,13 @@
 
 namespace vela::frontend {
 
+enum class AsyncIntrinsic : std::uint8_t { Sleep, Value, Error, Sync };
+
 struct AsyncMember final {
   TypeDescriptor::Kind receiver;
   MemberStorage storage;
   std::string_view name;
-  AsyncOperation operation;
+  std::variant<AsyncOperation, AsyncIntrinsic> operation;
   MemberKind kind;
   std::array<std::string_view, 3> parameters;
   std::size_t required;

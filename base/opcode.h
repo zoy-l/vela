@@ -45,8 +45,6 @@ enum class Opcode : std::uint8_t {
   LessEqualInt,
   GreaterInt,
   GreaterEqualInt,
-  AndBool,
-  OrBool,
   StringConcat,
   StringInterpolate,
   BuiltinCall,
@@ -82,5 +80,9 @@ enum class Opcode : std::uint8_t {
   GetField,
   Return,
 };
+
+[[nodiscard]] constexpr bool IsJumpOpcode(Opcode opcode) noexcept {
+  return opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull;
+}
 
 }  // namespace vela

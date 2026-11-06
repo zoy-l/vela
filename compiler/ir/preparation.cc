@@ -1,5 +1,6 @@
 #include "compiler/ir/preparation.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -28,9 +29,6 @@
 namespace vela::ir {
 namespace {
 
-using ClassIndex = absl::flat_hash_map<std::string, const Class*>;
-using DeclarationKinds = absl::flat_hash_map<DeclarationId, DeclarationKind>;
-
 void BindTypeDependencies(Program& program,
                           const frontend::SemanticModel& model,
                           const DeclarationBindings& bindings) {
@@ -39,11 +37,7 @@ void BindTypeDependencies(Program& program,
   const auto collect =
       [&](const auto& self,
           const frontend::TypeDescriptor& type) -> const std::vector<DeclarationId>& {
-    auto key = type.name;
-    if (type.nullable) {
-      key = type.kind == Kind::Function ? key.substr(1, key.size() - 3)
-                                        : key.substr(0, key.size() - 1);
-    }
+    const auto key = frontend::NonNullableTypeName(type);
     if (const auto found = cache.find(key); found != cache.end()) {
       return found->second;
     }
@@ -98,67 +92,7 @@ void BindTypeDependencies(Program& program,
       append(type);
     }
     function.type_dependencies.assign(dependencies.begin(), dependencies.end());
-  }
-}
-
-void BindFieldIdentity(Instruction& instruction,
-                       const Function& function,
-                       const ClassIndex& classes) {
-  const auto receiver = instruction.opcode == Opcode::GetField ? instruction.lhs : instruction.dst;
-  const auto& type = function.value_types.at(receiver);
-  const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
-  const auto owner = classes.find(name);
-  if (owner != classes.end() && owner->second->kind == Class::Kind::Instance &&
-      !owner->second->callable) {
-    instruction.field_declaration = owner->second->fields.at(instruction.index).declaration;
-  }
-}
-
-void BindCallReceiver(Instruction& instruction,
-                      const Function& function,
-                      const Program& program,
-                      const ClassIndex& classes,
-                      const DeclarationKinds& kinds) {
-  if (instruction.binding_receiver) {
-    return;
-  }
-  const auto& target = program.functions.at(instruction.index);
-  const auto declaration = kinds.find(target.identity.declaration);
-  if (declaration == kinds.end()) {
-    return;
-  }
-  const auto kind = declaration->second;
-  if (kind != DeclarationKind::Method && kind != DeclarationKind::Getter &&
-      kind != DeclarationKind::Setter) {
-    return;
-  }
-  const auto& type = function.value_types.at(instruction.lhs);
-  const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
-  const auto owner = classes.find(name);
-  if (owner != classes.end()) {
-    instruction.binding_receiver = owner->second->declaration;
-  }
-}
-
-void BindReloadableAccesses(Program& program) {
-  ClassIndex classes;
-  for (const auto& owner : program.classes) {
-    if (owner.declaration != DeclarationId{}) {
-      classes.emplace(owner.name, &owner);
-    }
-  }
-  DeclarationKinds kinds;
-  for (const auto& declaration : program.declarations) {
-    kinds.emplace(declaration.identity, declaration.kind);
-  }
-  for (auto& function : program.functions) {
-    for (auto& instruction : function.instructions) {
-      if (instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField) {
-        BindFieldIdentity(instruction, function, classes);
-      } else if (instruction.opcode == Opcode::Call) {
-        BindCallReceiver(instruction, function, program, classes, kinds);
-      }
-    }
+    std::ranges::sort(function.type_dependencies, {}, &DeclarationId::value);
   }
 }
 
@@ -203,7 +137,7 @@ void DescribeDeclarations(Program& program,
     }
   }
   for (std::size_t index = 0; index < records.size(); ++index) {
-    const auto& record = records.subspan(index).front();
+    const auto& record = records[index];
     if (record.retired) {
       continue;
     }
@@ -242,8 +176,7 @@ void BindGlobalIdentities(Program& program,
   for (std::size_t index = 0; index < program.global_initializers.size(); ++index) {
     const auto function = program.global_initializers.at(index);
     const auto initializer = program.functions.at(function).identity.declaration;
-    const auto declaration =
-        records.subspan(static_cast<std::size_t>(initializer.value)).front().key.owner;
+    const auto declaration = records[static_cast<std::size_t>(initializer.value)].key.owner;
     program.global_declarations.at(index) = declaration;
     global_slots.emplace(declaration, index);
   }
@@ -304,7 +237,6 @@ LoweringResult PrepareProgram(const frontend::Program& source,
       std::unreachable();
     }
     BindTypeDependencies(program, model, *declarations);
-    BindReloadableAccesses(program);
   }
   for (auto& function : program.functions) {
     if (function.native_symbol.empty()) {

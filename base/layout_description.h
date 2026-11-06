@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/callable.h"
@@ -99,6 +100,7 @@ struct Program final {
   std::map<std::string, Nominal, std::less<>> nominals;
 };
 
+[[nodiscard]] std::string_view ScalarTypeName(Type::Kind kind) noexcept;
 [[nodiscard]] std::string NominalKey(const Program& program, const Nominal& nominal);
 
 // 规范键保留完整结构与名义声明名，不依赖描述表的局部编号或容器调试名称。

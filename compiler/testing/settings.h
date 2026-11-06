@@ -44,6 +44,7 @@ class TagSelector final {
 };
 
 enum class Reporter : std::uint8_t { Compact, Expanded, Json };
+enum class TerminalMode : std::uint8_t { Plain, Interactive };
 [[nodiscard]] std::expected<Reporter, std::string> ParseReporter(std::string_view text);
 
 struct Skip final {
@@ -52,7 +53,6 @@ struct Skip final {
 };
 
 struct TagConfiguration final {
-  std::string selector_text;
   TagSelector selector;
   std::optional<Timeout> timeout;
   std::optional<Skip> skip;

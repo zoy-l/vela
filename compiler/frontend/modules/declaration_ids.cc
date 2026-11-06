@@ -83,15 +83,14 @@ void DeclarationIds::BeginUpdate() noexcept {
 }
 
 DeclarationId DeclarationIds::Get(DeclarationKey key, DeclarationId definition) {
-  const auto found = active_.find(key);
-  if (found != active_.end()) {
-    const auto identity = found->second;
-    records_.at(static_cast<std::size_t>(identity.value)).seen = update_;
-    return identity;
+  const auto [found, inserted] =
+      active_.try_emplace(key, DeclarationId{static_cast<std::uint64_t>(records_.size())});
+  const auto identity = found->second;
+  if (inserted) {
+    records_.push_back({.key = std::move(key), .definition = definition, .seen = update_});
+  } else {
+    records_[static_cast<std::size_t>(identity.value)].seen = update_;
   }
-  const DeclarationId identity{static_cast<std::uint64_t>(records_.size())};
-  active_.emplace(key, identity);
-  records_.push_back({.key = std::move(key), .definition = definition, .seen = update_});
   return identity;
 }
 

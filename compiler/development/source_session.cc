@@ -73,8 +73,7 @@ std::expected<void, SourceCandidateError> CheckMemberContracts(
     const MemberContracts& contracts) {
   const auto records = previous.identities.records();
   for (const auto& declaration : previous.program.declarations) {
-    const auto& key =
-        records.subspan(static_cast<std::size_t>(declaration.identity.value)).front().key;
+    const auto& key = records[static_cast<std::size_t>(declaration.identity.value)].key;
     const auto found = contracts.find({key.owner, key.kind, key.name});
     if (!key.arguments.empty() || found == contracts.end()) {
       continue;
@@ -109,12 +108,11 @@ std::expected<void, SourceCandidateError> CheckDeclarationContracts(
   MemberContracts members;
   const auto records = previous.identities.records();
   for (const auto& declaration : previous.program.declarations) {
-    const auto& key =
-        records.subspan(static_cast<std::size_t>(declaration.identity.value)).front().key;
+    const auto& key = records[static_cast<std::size_t>(declaration.identity.value)].key;
     if (key.owner == DeclarationId{} || !key.arguments.empty()) {
       continue;
     }
-    const auto& owner = records.subspan(static_cast<std::size_t>(key.owner.value)).front().key;
+    const auto& owner = records[static_cast<std::size_t>(key.owner.value)].key;
     if (owner.kind != DeclarationKind::Module) {
       continue;
     }
@@ -222,7 +220,7 @@ std::expected<std::vector<std::string>, frontend::Diagnostics> RetainedRoots(
           },
       });
     }
-    const auto& record = records.subspan(static_cast<std::size_t>(identity.value)).front();
+    const auto& record = records[static_cast<std::size_t>(identity.value)];
     if (record.key.kind == DeclarationKind::Module && candidate.sources.contains(record.key.name) &&
         loaded.insert(record.key.name).second) {
       roots.push_back(record.key.name);

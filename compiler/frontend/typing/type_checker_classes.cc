@@ -17,7 +17,6 @@
 
 #include <absl/container/flat_hash_set.h>
 
-#include "base/regexp.h"
 #include "compiler/frontend/syntax/ast.h"
 
 #include "compiler/frontend/builtins/async_builtins.h"
@@ -431,10 +430,7 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
   }
   if (const auto builtin = FindBuiltinProperty(object.kind, expression.text)) {
     facts_.builtin_calls.insert_or_assign(&expression, *builtin);
-    if (IsRegExpBuiltin(*builtin)) {
-      return BuiltinSignature(*builtin).return_type;
-    }
-    return {.kind = Type::Kind::Int, .name = kIntTypeName};
+    return BuiltinSignature(*builtin).return_type;
   }
   if (object.kind == Type::Kind::Interface) {
     const auto& owner = interfaces_.at(object.name);
@@ -469,12 +465,11 @@ TypeChecker::Type TypeChecker::CheckClassMember(const Expression& expression,
   if (field == owner.fields.end()) {
     const auto method = owner.methods.find(expression.text);
     if (method != owner.methods.end()) {
+      CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
       if (method->second.is_getter) {
-        CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
         InvalidateCapturedRefinements();
         return method->second.return_type;
       }
-      CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
       }

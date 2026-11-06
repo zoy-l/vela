@@ -17,7 +17,6 @@ namespace vela::compiler::native {
 enum class EscapeOptimization : std::uint8_t { Disabled, ScalarReplacement, Enabled };
 
 struct AllocationSite final {
-  std::size_t instruction = 0;
   ir::ClassId type = 0;
   bool can_scalar_replace = true;
   std::vector<ir::RegisterId> fields;

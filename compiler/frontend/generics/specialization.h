@@ -93,8 +93,8 @@ class Specializer final : public AstCloneTransform {
   [[nodiscard]] bool IsAbstractClass(std::size_t index) const;
   [[nodiscard]] bool IsAbstractInterface(std::size_t index) const;
   // 具体特化来源的模板，用于关联定义诊断与具体执行声明。
-  [[nodiscard]] const void* FunctionSource(std::size_t index) const;
-  [[nodiscard]] const void* ClassSource(std::size_t index) const;
+  [[nodiscard]] const Function* FunctionSource(std::size_t index) const;
+  [[nodiscard]] const Class* ClassSource(std::size_t index) const;
   void SetExpansionOwner(std::string_view name);
   void Publish();
 

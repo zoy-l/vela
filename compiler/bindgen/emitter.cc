@@ -5,10 +5,10 @@
 #include <expected>
 #include <filesystem>
 #include <map>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -25,6 +25,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/tooling/format/formatter.h"
 
@@ -34,7 +35,7 @@ namespace {
 std::string Quote(std::string_view text, char delimiter) {
   std::string result(1, delimiter);
   for (const char character : text) {
-    if (character == '\\' || character == delimiter || (delimiter == '\'' && character == '$')) {
+    if (character == '\\' || character == delimiter) {
       result += '\\';
     }
     result += character;
@@ -90,40 +91,18 @@ frontend::TypeName ScriptType(const layout::Program& program,
   using Kind = layout::Type::Kind;
   switch (type->kind) {
     case Kind::Dynamic:
-      result.name = "dynamic";
-      break;
     case Kind::Boolean:
-      result.name = "bool";
-      break;
     case Kind::Integer:
-      result.name = "int";
-      break;
     case Kind::Double:
-      result.name = "double";
-      break;
     case Kind::String:
-      result.name = "string";
-      break;
     case Kind::MutableString:
-      result.name = "MutableString";
-      break;
     case Kind::ByteArray:
-      result.name = "ByteArray";
-      break;
     case Kind::ByteData:
-      result.name = "ByteData";
-      break;
     case Kind::RegExp:
-      result.name = "RegExp";
-      break;
     case Kind::RegExpMatch:
-      result.name = "RegExpMatch";
-      break;
     case Kind::Timer:
-      result.name = "Timer";
-      break;
     case Kind::CancellationToken:
-      result.name = "CancellationToken";
+      result.name = layout::ScalarTypeName(type->kind);
       break;
     case Kind::Instance:
     case Kind::Enum: {
@@ -186,69 +165,34 @@ frontend::TypeName ScriptType(const Type& type, const TypeNames& names) {
   return ScriptType(type.layouts, type.value, names);
 }
 
-frontend::Function ScriptMember(const Member& member, const TypeNames& names) {
-  frontend::Function result;
-  result.name = member.name;
-  result.native_symbol = member.key;
-  result.return_type = ScriptType(member.result, names);
-  result.storage = member.kind == MemberKind::Static ? frontend::MemberStorage::Static
-                                                     : frontend::MemberStorage::Instance;
-  result.is_getter = member.kind == MemberKind::Getter;
-  result.is_setter = member.kind == MemberKind::Setter;
-  for (const auto& parameter : member.parameters) {
-    result.parameters.push_back(
-        {.type = ScriptType(parameter.type, names), .name = parameter.name, .location = {}});
-  }
-  return result;
-}
-
-frontend::Class ScriptClass(const Class& type, const TypeNames& names) {
-  frontend::Class result;
-  result.name = type.name;
-  result.native_key = type.key;
-  result.export_kind = frontend::ExportKind::Exported;
-  result.constructor_kind = frontend::ConstructorKind::Unavailable;
-  for (const auto& member : type.members) {
-    auto method = ScriptMember(member, names);
-    if (member.kind == MemberKind::Constructor) {
-      method.storage = frontend::MemberStorage::Static;
-      method.return_type = ScriptType(Type{}, names);
-      result.constructor = std::make_unique<frontend::Function>(std::move(method));
-      result.constructor_kind = frontend::ConstructorKind::Explicit;
-    } else {
-      result.methods.push_back(std::move(method));
-    }
-  }
-  return result;
-}
-
-void RenderMember(std::ostream& output, const frontend::Function& method, bool constructor) {
-  if (!constructor && method.storage == frontend::MemberStorage::Static) {
+void RenderMember(std::ostream& output, const Member& member, const TypeNames& names) {
+  const auto constructor = member.kind == MemberKind::Constructor;
+  if (member.kind == MemberKind::Static) {
     output << "static ";
   }
-  if (method.is_getter) {
+  if (member.kind == MemberKind::Getter) {
     output << "get ";
-  } else if (method.is_setter) {
+  } else if (member.kind == MemberKind::Setter) {
     output << "set ";
   }
-  output << (constructor ? "constructor" : method.name) << '(';
-  for (std::size_t index = 0; index < method.parameters.size(); ++index) {
-    const auto& parameter = method.parameters[index];
+  output << (constructor ? "constructor" : member.name) << '(';
+  for (std::size_t index = 0; index < member.parameters.size(); ++index) {
+    const auto& parameter = member.parameters[index];
     if (index != 0) {
       output << ", ";
     }
-    output << parameter.name << ": " << parameter.type.ToString();
+    output << parameter.name << ": " << ScriptType(parameter.type, names).ToString();
   }
   output << ')';
   if (!constructor) {
-    output << ": " << method.return_type.ToString();
+    output << ": " << ScriptType(member.result, names).ToString();
   }
   output << ";\n";
 }
 
 void ImportNativeDependencies(const Module& module,
                               const std::string& output_directory,
-                              frontend::Program& program,
+                              std::vector<frontend::Program::Import>& imports,
                               TypeNames& names,
                               std::set<std::string>& identifiers) {
   for (const auto& type : module.classes) {
@@ -263,7 +207,7 @@ void ImportNativeDependencies(const Module& module,
     }
     const auto relative =
         Utf8Path(dependency.source).lexically_relative(Utf8Path(output_directory));
-    program.imports.push_back({.path = PathText(relative), .location = {}, .alias = alias});
+    imports.push_back({.path = PathText(relative), .location = {}, .alias = alias});
     for (const auto& type : dependency.classes) {
       names.emplace(type.key, alias + "." + type.name);
     }
@@ -296,11 +240,12 @@ std::expected<void, std::string> CollectScriptType(
   return {};
 }
 
-std::expected<void, std::string> ImportScriptDependencies(const Module& module,
-                                                          const std::string& output_directory,
-                                                          frontend::Program& program,
-                                                          TypeNames& names,
-                                                          std::set<std::string>& identifiers) {
+std::expected<void, std::string> ImportScriptDependencies(
+    const Module& module,
+    const std::string& output_directory,
+    std::vector<frontend::Program::Import>& imports,
+    TypeNames& names,
+    std::set<std::string>& identifiers) {
   std::map<std::string, std::string> script_imports;
   for (const auto& type : module.classes) {
     for (const auto& member : type.members) {
@@ -321,34 +266,33 @@ std::expected<void, std::string> ImportScriptDependencies(const Module& module,
   }
   for (const auto& [source, alias] : script_imports) {
     const auto relative = Utf8Path(source).lexically_relative(Utf8Path(output_directory));
-    program.imports.push_back(
+    imports.push_back(
         {.path = relative.empty() ? source : PathText(relative), .location = {}, .alias = alias});
-  }
-  for (const auto& type : module.classes) {
-    program.classes.push_back(ScriptClass(type, names));
   }
   return {};
 }
 
-std::string RenderScript(const Module& module, const frontend::Program& program) {
+std::string RenderScript(const Module& module,
+                         std::span<const frontend::Program::Import> imports,
+                         const TypeNames& names) {
   std::ostringstream output;
-  for (const auto& import : program.imports) {
-    output << "import " << Quote(import.path, '\'') << " as " << import.alias << ";\n";
+  for (const auto& import : imports) {
+    output << "import " << frontend::QuoteStringLiteral(import.path) << " as " << import.alias
+           << ";\n";
   }
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    const auto& type = program.classes[index];
-    const auto& description = module.classes[index];
-    Documentation(output, description.documentation);
-    output << "export external class " << type.name << " = " << Quote(type.native_key, '\'')
-           << " {\n";
-    if (type.constructor != nullptr) {
-      RenderMember(output, *type.constructor, true);
+  for (const auto& type : module.classes) {
+    Documentation(output, type.documentation);
+    output << "export external class " << type.name << " = "
+           << frontend::QuoteStringLiteral(type.key) << " {\n";
+    const auto constructor =
+        std::ranges::find(type.members, MemberKind::Constructor, &Member::kind);
+    if (constructor != type.members.end()) {
+      RenderMember(output, *constructor, names);
     }
-    std::size_t method_index = 0;
-    for (const auto& member : description.members) {
+    for (const auto& member : type.members) {
       if (member.kind != MemberKind::Constructor) {
         Documentation(output, member.documentation);
-        RenderMember(output, type.methods[method_index++], false);
+        RenderMember(output, member, names);
       }
     }
     output << "}\n";
@@ -358,16 +302,16 @@ std::string RenderScript(const Module& module, const frontend::Program& program)
 
 std::expected<std::string, std::string> EmitScript(Module& module,
                                                    const std::string& output_directory) {
-  frontend::Program program;
+  std::vector<frontend::Program::Import> imports;
   TypeNames names;
   std::set<std::string> identifiers;
-  ImportNativeDependencies(module, output_directory, program, names, identifiers);
+  ImportNativeDependencies(module, output_directory, imports, names, identifiers);
   const auto imported =
-      ImportScriptDependencies(module, output_directory, program, names, identifiers);
+      ImportScriptDependencies(module, output_directory, imports, names, identifiers);
   if (!imported) {
     return std::unexpected(imported.error());
   }
-  auto formatted = tooling::FormatSource(RenderScript(module, program));
+  auto formatted = tooling::FormatSource(RenderScript(module, imports, names));
   if (!formatted) {
     return std::unexpected(frontend::DiagnosticsText(formatted.error()));
   }
@@ -386,16 +330,12 @@ std::expected<std::string, std::string> EmitScript(Module& module,
         source.path.starts_with("sdk:")) {
       continue;
     }
-    if (module.input_fingerprints.emplace(source.path, ContentFingerprint(source.text).Hex())
-            .second) {
-      module.inputs.push_back(source.path);
-    }
+    module.input_fingerprints.emplace(source.path, ContentFingerprint(source.text).Hex());
   }
-  std::ranges::sort(module.inputs);
   return std::move(*formatted);
 }
 
-std::string EmitHeader(const Module& module, const std::vector<std::string>& headers) {
+std::string EmitHeader(const Module& module, const std::set<std::string>& headers) {
   std::ostringstream output;
   output << "#pragma once\n#include <expected>\n#include <string_view>\n"
             "#include \"runtime/isolate/isolate.h\"\n"
@@ -513,7 +453,7 @@ std::string EmitCpp(const Module& module) {
 }  // namespace
 
 std::expected<llvm::json::Object, std::string> Emit(Module& module,
-                                                    const std::vector<std::string>& headers,
+                                                    const std::set<std::string>& headers,
                                                     const std::string& output_directory) {
   auto script = EmitScript(module, output_directory);
   if (!script) {

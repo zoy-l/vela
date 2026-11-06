@@ -39,6 +39,19 @@ clang::QualType IntegerType(const clang::ASTContext& context) {
   }
 }
 
+std::optional<layout::Type::Kind> ScalarKind(clang::QualType type,
+                                             const clang::ASTContext& context) {
+  using Kind = layout::Type::Kind;
+  if (type->isBooleanType()) {
+    return Kind::Boolean;
+  }
+  const auto integer = IntegerType(context);
+  if (!integer.isNull() && context.hasSameType(type, integer)) {
+    return Kind::Integer;
+  }
+  return context.hasSameType(type, context.DoubleTy) ? std::optional(Kind::Double) : std::nullopt;
+}
+
 const clang::ClassTemplateSpecializationDecl* StandardTemplate(clang::QualType type,
                                                                std::string_view name) {
   const auto* record = type->getAsCXXRecordDecl();
@@ -131,8 +144,15 @@ const clang::ClassTemplateSpecializationDecl* VelaTemplate(clang::QualType type,
   const auto* record = type->getAsCXXRecordDecl();
   const auto* specialization =
       llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(record);
-  return specialization != nullptr &&
-                 specialization->getSpecializedTemplate()->getQualifiedNameAsString() == name
+  if (specialization == nullptr) {
+    return nullptr;
+  }
+  const auto* declaration = specialization->getSpecializedTemplate();
+  const auto* owner = llvm::dyn_cast<clang::NamespaceDecl>(declaration->getDeclContext());
+  constexpr std::string_view kNamespacePrefix = "vela::";
+  return declaration->getName() == llvm::StringRef(name).drop_front(kNamespacePrefix.size()) &&
+                 owner != nullptr && owner->getName() == "vela" &&
+                 owner->getParent()->isTranslationUnit()
              ? specialization
              : nullptr;
 }
@@ -494,21 +514,14 @@ MappedType LogicalType(clang::QualType type, clang::ASTContext& context, const H
   if (type.isNull() || type.hasQualifiers()) {
     return Unsupported(type, context);
   }
-  if (type->isBooleanType()) {
-    return Leaf(Kind::Boolean);
-  }
-  const auto integer = IntegerType(context);
-  if (!integer.isNull() && context.hasSameType(type, integer)) {
-    return Leaf(Kind::Integer);
-  }
-  if (context.hasSameType(type, context.DoubleTy)) {
-    return Leaf(Kind::Double);
+  if (const auto kind = ScalarKind(type, context)) {
+    return Leaf(*kind);
   }
   if (type->isVoidType()) {
     return Type{.layouts = {}, .cpp = {}};
   }
   const auto* record = type->getAsCXXRecordDecl();
-  if (record == nullptr || type.hasQualifiers()) {
+  if (record == nullptr) {
     return Unsupported(type, context);
   }
   constexpr auto kLeaves = std::to_array<std::pair<std::string_view, Kind>>({
@@ -609,9 +622,7 @@ MappedType MapCanonical(clang::QualType type,
   if (const auto* optional = StandardTemplate(type, "optional")) {
     const auto payload = Argument(*optional, 0);
     if (!payload.isNull() &&
-        (VelaTemplate(payload, "vela::Local") != nullptr || payload->isBooleanType() ||
-         context.hasSameType(payload, IntegerType(context)) ||
-         context.hasSameType(payload, context.DoubleTy))) {
+        (VelaTemplate(payload, "vela::Local") != nullptr || ScalarKind(payload, context))) {
       auto result = MapCanonical(payload, position, context, hosts);
       if (result && result->value) {
         result->value->nullable = result->value->kind != Kind::Dynamic;
@@ -619,9 +630,8 @@ MappedType MapCanonical(clang::QualType type,
       return At(std::move(result), "optional.value");
     }
   }
-  if (type->isBooleanType() || context.hasSameType(type, IntegerType(context)) ||
-      context.hasSameType(type, context.DoubleTy)) {
-    return LogicalType(type, context, hosts);
+  if (const auto kind = ScalarKind(type, context)) {
+    return Leaf(*kind);
   }
   const auto* record = type->getAsCXXRecordDecl();
   if (record != nullptr &&

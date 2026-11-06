@@ -15,6 +15,6 @@ struct DevelopmentStreams final {
 
 [[nodiscard]] int RunDevelopmentConsole(std::string entry,
                                         DevelopmentStreams streams,
-                                        compiler::jit::CompileOptions compilation = {});
+                                        compiler::jit::CompileOptions compilation);
 
 }  // namespace vela::tooling

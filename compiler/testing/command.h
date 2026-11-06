@@ -5,6 +5,8 @@
 #include <span>
 #include <string_view>
 
+#include "compiler/testing/settings.h"
+
 namespace vela::runtime {
 class NativeInstance;
 }
@@ -14,6 +16,7 @@ namespace vela::testing {
 struct CommandStreams final {
   std::reference_wrapper<std::ostream> output;
   std::reference_wrapper<std::ostream> errors;
+  TerminalMode terminal = TerminalMode::Plain;
 };
 [[nodiscard]] int TestCommand(std::span<const std::string_view> arguments, CommandStreams streams);
 [[nodiscard]] bool HasTestModule(const runtime::NativeInstance& instance);

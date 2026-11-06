@@ -213,7 +213,10 @@ void Documentation::Initializer(const frontend::Expression& expression) {
     return;
   }
   const auto& tokens = source_->tokens;
-  const auto start = std::ranges::find(tokens, expression.location, &frontend::Token::location);
+  const auto location = expression.location;
+  const auto start = std::ranges::lower_bound(
+      tokens, std::pair(location.line, location.column), {},
+      [](const auto& token) { return std::pair(token.location.line, token.location.column); });
   auto end = start + 1;
   std::size_t depth = 1;
   while (depth != 0) {

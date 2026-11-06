@@ -28,15 +28,9 @@
 namespace vela::compiler::aot {
 namespace {
 
-std::string_view ReadText(const yyjson_val* object, std::string_view key) {
-  const auto* field = GetJsonField(object, key);
-  return yyjson_is_str(field) ? std::string_view(yyjson_get_str(field), yyjson_get_len(field))
-                              : std::string_view();
-}
-
 std::expected<void, std::string> VerifyLibraryIdentity(const yyjson_val* root) {
-  const auto kind = ReadText(root, "kind");
-  const auto optimization = ReadText(root, "optimization");
+  const auto kind = GetJsonString(root, "kind");
+  const auto optimization = GetJsonString(root, "optimization");
   const auto release = NativeOptimizationName(NativeOptimization::Release);
   if (optimization != release && optimization != NativeOptimizationName(NativeOptimization::None)) {
     return std::unexpected("unsupported native library optimization settings");
@@ -45,9 +39,9 @@ std::expected<void, std::string> VerifyLibraryIdentity(const yyjson_val* root) {
       optimization == release ? NativeOptimization::Release : NativeOptimization::None);
   if (yyjson_get_uint(GetJsonField(root, "format_version")) != 1 ||
       (kind != "obj" && kind != "staticlib") ||
-      ReadText(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
-      ReadText(root, "toolchain_build") != toolchain_identity ||
-      ReadText(root, "target") != runtime::NativeTargetIdentity()) {
+      GetJsonString(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
+      GetJsonString(root, "toolchain_build") != toolchain_identity ||
+      GetJsonString(root, "target") != runtime::NativeTargetIdentity()) {
     return std::unexpected("native library format, target, or ABI identity mismatch");
   }
   return {};
@@ -316,8 +310,8 @@ std::expected<void, std::string> VerifyNativeLibrary(const std::filesystem::path
   std::string header_hash;
   for (std::size_t index = 0; index < yyjson_arr_size(files); ++index) {
     const auto* file = yyjson_arr_get(files, index);
-    const auto name = Utf8Path(ReadText(file, "path"));
-    const auto expected = ReadText(file, "xxh3_128");
+    const auto name = Utf8Path(GetJsonString(file, "path"));
+    const auto expected = GetJsonString(file, "xxh3_128");
     if (name.empty() || name != name.filename() || expected.empty()) {
       return std::unexpected("invalid native library file identity");
     }
@@ -330,7 +324,7 @@ std::expected<void, std::string> VerifyNativeLibrary(const std::filesystem::path
       return std::unexpected("native library files belong to a different generation: " +
                              PathText(name));
     }
-    const auto role = ReadText(file, "role");
+    const auto role = GetJsonString(file, "role");
     if (role == "binary" && binary_hash.empty()) {
       binary_hash = hash;
     } else if (role == "header" && header_hash.empty()) {
@@ -340,7 +334,7 @@ std::expected<void, std::string> VerifyNativeLibrary(const std::filesystem::path
     }
   }
   if (binary_hash.empty() || header_hash.empty() ||
-      ContentFingerprint(binary_hash + header_hash).Hex() != ReadText(root, "generation")) {
+      ContentFingerprint(binary_hash + header_hash).Hex() != GetJsonString(root, "generation")) {
     return std::unexpected("native library generation identity mismatch");
   }
   return {};

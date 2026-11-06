@@ -27,7 +27,7 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   if (member == nullptr) {
     return;
   }
-  const auto operation = member->operation;
+  const auto operation = std::get<AsyncOperation>(member->operation);
   const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
   const std::array parameters{dynamic, dynamic};
   const auto count = static_cast<std::size_t>(std::ranges::count_if(
@@ -63,7 +63,7 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
       selector,
       metadata,
   };
-  const auto result = AllocateTemporary({});
+  const auto result = AllocateRegister({});
   EmitBuiltinCall(Builtin::DynamicAsync, result, arguments, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
   function.register_count = next_register_;
@@ -114,8 +114,7 @@ Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expres
   }
   std::optional<std::size_t> null_jump;
   if (receiver && member.null_safe) {
-    null_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver->reg, .location = expression.location});
+    null_jump = BeginNullSafe(receiver->reg, expression.location);
   }
   const auto base = next_register_;
   for (std::size_t index = 0; index < count; ++index) {
@@ -156,7 +155,7 @@ Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expres
         .location = expression.location,
     });
   }
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::AsyncCall,
       .dst = result,

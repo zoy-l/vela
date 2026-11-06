@@ -34,14 +34,13 @@ TypeChecker::Type TypeChecker::InvalidType() {
   return {};
 }
 
-TypeCheckResult TypeChecker::Check(Program& program,
-                                   std::span<const GenericSpecialization> retained) && {
+TypeCheckResult TypeChecker::Check(Program& program) && {
   Specializer specializer(program);
   auto specialization_errors = specializer.Initialize();
   if (!specialization_errors.empty()) {
     return {.diagnostics = std::move(specialization_errors), .model = {}};
   }
-  return std::move(*this).CheckPrepared(program, specializer, retained);
+  return std::move(*this).CheckPrepared(program, specializer, {});
 }
 
 TypeCheckResult TypeChecker::CheckPrepared(Program& program,
@@ -52,7 +51,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
     return {.diagnostics = std::move(specialization_errors), .model = {}};
   }
   specializer_ = &specializer;
-  captured_declarations_ = FindCapturedMutableDeclarations(program);
+  CollectCapturedMutableDeclarations(program, captured_declarations_);
   sources_ = program.sources;
 
   CollectTypes(program);
@@ -99,14 +98,6 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
       found->second.declaration = &source;
     }
   }
-  for (const auto& source : program.interfaces) {
-    auto& interface = interfaces_.at(source.name);
-    for (const auto& method : source.methods) {
-      if (method.application) {
-        interface.method_applications.insert_or_assign(method.name, &method);
-      }
-    }
-  }
   SemanticModel model;
   for (const auto& [identity, parameter] : type_parameters_) {
     if (parameter.bound) {
@@ -150,9 +141,8 @@ void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
   diagnostics_.push_back({
       .location = location,
       .message = std::move(message),
-      .source_path = location.source_id < sources_.size()
-                         ? sources_.subspan(location.source_id).front().path
-                         : std::string(),
+      .source_path =
+          location.source_id < sources_.size() ? sources_[location.source_id].path : std::string(),
   });
 }
 
@@ -267,9 +257,7 @@ bool TypeChecker::CanFallThrough(const Function& function, const Type& return_ty
   if (!function.is_async || return_type.kind != Type::Kind::Future) {
     return false;
   }
-  const auto arguments = generic_arguments_.find(return_type.name);
-  return arguments != generic_arguments_.end() && arguments->second.size() == 1 &&
-         arguments->second.front().kind == Type::Kind::Void;
+  return generic_arguments_.at(return_type.name).front().kind == Type::Kind::Void;
 }
 
 TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, const Type* expected) {
@@ -355,11 +343,7 @@ TypeChecker::Type TypeChecker::CheckAwait(const Expression& expression, const Ty
   if (operand.kind != Type::Kind::Future) {
     return operand;
   }
-  const auto arguments = generic_arguments_.find(NonNullable(operand).name);
-  if (arguments == generic_arguments_.end() || arguments->second.size() != 1) {
-    return InvalidType();
-  }
-  const auto& element = arguments->second.front();
+  const auto& element = generic_arguments_.at(NonNullableTypeName(operand)).front();
   return operand.nullable && element.kind != Type::Kind::Void ? NullableType(element) : element;
 }
 
@@ -428,7 +412,7 @@ TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, c
     }
   }
   const auto& signature = function_types_.at(type.name);
-  return CheckFunctionCall(signature, expression);
+  return CheckFunctionCall(signature, expression, {}, CallArgumentNames::Positional);
 }
 
 TypeChecker::Type TypeChecker::CheckDynamicCall(const Expression& expression) {
@@ -437,8 +421,6 @@ TypeChecker::Type TypeChecker::CheckDynamicCall(const Expression& expression) {
     AddDiagnostic(expression.callee->location,
                   "dynamic calls require generic callables to be instantiated before erasure");
   }
-  static_cast<void>(ArrayType(dynamic));
-  static_cast<void>(ArrayType({.kind = Type::Kind::String, .name = kStringTypeName}));
   for (const auto& argument : expression.arguments) {
     const auto actual = CheckExpression(*argument.value, &dynamic);
     RecordConversion(*argument.value, dynamic, actual);
@@ -705,7 +687,10 @@ std::optional<std::size_t> TypeChecker::CallParameterIndex(const FunctionInfo& f
 TypeChecker::Type TypeChecker::CheckFunctionCall(
     const FunctionInfo& function,
     const Expression& expression,
-    std::span<const std::optional<Type>> checked_arguments) {
+    std::span<const std::optional<Type>> checked_arguments,
+    CallArgumentNames argument_names) {
+  facts_.call_targets.insert_or_assign(
+      &expression, CallDescriptor{.signature = function, .argument_names = argument_names});
   const auto& arguments = expression.arguments;
   const auto location = expression.location;
   std::vector<bool> assigned(function.parameters.size(), false);
@@ -735,8 +720,7 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
     assigned.at(index) = true;
     order.push_back(static_cast<std::uint32_t>(index));
     const auto expected = parameter.type;
-    const auto checked =
-        checked_arguments.empty() ? std::nullopt : checked_arguments.subspan(source_index).front();
+    const auto checked = checked_arguments.empty() ? std::nullopt : checked_arguments[source_index];
     const Type actual = checked ? *checked : CheckExpression(*argument.value, &expected);
     RecordConversion(*argument.value, expected, actual);
     if (IsValid(actual) && !CanAssign(expected, actual)) {
@@ -1089,15 +1073,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   if (CheckAssignmentTarget(*expression.left) == CheckStatus::Failed) {
     return InvalidType();
   }
-  if (expression.left->kind == Expression::Kind::Name) {
-    const auto* local = LookupLocal(expression.left->text);
-    if ((local != nullptr && local->kind == BindingKind::Constant) ||
-        (local == nullptr && globals_.contains(expression.left->text) &&
-         globals_.at(expression.left->text).declaration->binding == BindingKind::Constant)) {
-      AddDiagnostic(expression.left->location,
-                    "cannot assign to const binding '" + expression.left->text + "'");
-    }
-  }
+  static_cast<void>(CheckAssignedBinding(*expression.left));
   const auto left = CheckExpression(*expression.left, nullptr);
   const auto right = CheckExpression(*expression.right, &left);
   if (expression.left->kind == Expression::Kind::Member) {
@@ -1344,25 +1320,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   if (CheckAssignmentTarget(*expression.left) == CheckStatus::Failed) {
     return InvalidType();
   }
-  std::optional<LocalBinding> binding;
-  if (expression.left->kind == Expression::Kind::Name) {
-    const auto* local = LookupLocal(expression.left->text);
-    if (local != nullptr) {
-      // 表达式检查可扩展 lambda 作用域表，跨检查持有绑定值。
-      binding = *local;
-    }
-    if (local != nullptr && local->kind == BindingKind::Constant) {
-      AddDiagnostic(expression.left->location,
-                    "cannot assign to const binding '" + expression.left->text + "'");
-    }
-    if (local == nullptr) {
-      const auto global = globals_.find(expression.left->text);
-      if (global == globals_.end() ||
-          global->second.declaration->binding == BindingKind::Constant) {
-        AddDiagnostic(expression.left->location, "cannot assign to an immutable global binding");
-      }
-    }
-  }
+  const auto binding = CheckAssignedBinding(*expression.left);
   Type left = CheckExpression(*expression.left, nullptr);
   if (expression.left->kind == Expression::Kind::Member) {
     CheckMemberAssignment(*expression.left);
@@ -1384,6 +1342,28 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
     return InvalidType();
   }
   return left;
+}
+
+std::optional<TypeChecker::LocalBinding> TypeChecker::CheckAssignedBinding(
+    const Expression& target) {
+  if (target.kind != Expression::Kind::Name) {
+    return std::nullopt;
+  }
+  const auto* local = LookupLocal(target.text);
+  if (local == nullptr) {
+    const auto global = globals_.find(target.text);
+    if (global == globals_.end()) {
+      AddDiagnostic(target.location, "cannot assign to an immutable global binding");
+    } else if (global->second.declaration->binding == BindingKind::Constant) {
+      AddDiagnostic(target.location, "cannot assign to const binding '" + target.text + "'");
+    }
+    return std::nullopt;
+  }
+  if (local->kind == BindingKind::Constant) {
+    AddDiagnostic(target.location, "cannot assign to const binding '" + target.text + "'");
+  }
+  // 后续表达式检查可扩展 lambda 作用域表，调用方跨检查持有绑定值。
+  return *local;
 }
 
 TypeChecker::CheckStatus TypeChecker::CheckAssignmentTarget(const Expression& target) {

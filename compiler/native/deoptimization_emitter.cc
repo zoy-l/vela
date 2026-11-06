@@ -49,7 +49,7 @@ bool FunctionEmitter::IsResuming() const noexcept {
 }
 
 bool FunctionEmitter::HasRecovery() const {
-  return generated_.subspan(function_index_).front().HasRecovery(tier_);
+  return generated_[function_index_].HasRecovery(tier_);
 }
 
 llvm::Value* FunctionEmitter::ResumeState() {
@@ -72,7 +72,7 @@ void FunctionEmitter::GuardResume() {
   auto* baseline = llvm::BasicBlock::Create(module_.getContext(), "baseline", body_);
   builder_.CreateCondBr(builder_.CreateICmpNE(current, builder_.getInt8(0)), optimized, baseline);
   builder_.SetInsertPoint(baseline);
-  auto* resume = generated_.subspan(function_index_).front().baseline_resume;
+  auto* resume = generated_[function_index_].baseline_resume;
   builder_.CreateRet(builder_.CreateCall(resume, {body_->getArg(0), body_->getArg(1)}));
   builder_.SetInsertPoint(optimized);
 }
@@ -81,7 +81,7 @@ void FunctionEmitter::InitializeCheckpoint() {
   if (checkpoint_ == nullptr) {
     return;
   }
-  const auto& function = generated_.subspan(function_index_).front();
+  const auto& function = generated_[function_index_];
   auto* entry = IsResuming() ? function.resume_recovery : function.recovery;
   auto* word = builder_.getInt64Ty();
   auto* type = llvm::StructType::get(module_.getContext(), {builder_.getPtrTy(), word, word, word});
@@ -172,7 +172,7 @@ void FunctionEmitter::StoreCheckpoint() {
     StoreRecoveryDescription();
   }
   using runtime::NativeCheckpoint;
-  const auto origin = origins_.subspan(instruction_index_).front();
+  const auto origin = origins_[instruction_index_];
   const auto& values = escape_.checkpoints.empty() ? roots_.checkpoints.at(instruction_index_)
                                                    : escape_.checkpoints.at(origin).required;
   for (const auto reg : values) {

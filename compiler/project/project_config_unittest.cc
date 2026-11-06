@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
@@ -71,8 +72,9 @@ TEST(ProjectConfigurationTest, PreservesTagSourceOrderAndExplicitFalseSkip) {
   ASSERT_EQ(settings.tags.size(), 2U);
   const auto& first = settings.tags.at(0);
   const auto& second = settings.tags.at(1);
-  EXPECT_EQ(first.selector_text, "unit");
-  EXPECT_EQ(second.selector_text, "unit && !slow");
+  const std::vector<std::string> tags{"unit", "slow"};
+  EXPECT_TRUE(first.selector.Matches(tags));
+  EXPECT_FALSE(second.selector.Matches(tags));
   const auto& first_skip = first.skip;
   const auto& second_skip = second.skip;
   if (!first_skip.has_value()) {

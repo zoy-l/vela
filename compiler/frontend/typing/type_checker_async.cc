@@ -339,7 +339,7 @@ TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
   checked.at(*callback) = type;
   return RegisterAsyncCall(expression,
                            {
-                               .operation = contract->operation,
+                               .operation = std::get<AsyncOperation>(contract->operation),
                                .signature = std::move(signature),
                            },
                            checked);
@@ -547,7 +547,8 @@ TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
     AddDiagnostic(expression.location, "unknown async method '" + method + "'");
     return InvalidType();
   }
-  switch (contract->operation) {
+  const auto operation = std::get<AsyncOperation>(contract->operation);
+  switch (operation) {
     case AsyncOperation::CompleterComplete:
     case AsyncOperation::CompleterError:
       return CheckCompleterMethod(expression, receiver);
@@ -561,7 +562,7 @@ TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
     case AsyncOperation::CancellationCancel:
       return RegisterAsyncCall(expression,
                                {
-                                   .operation = contract->operation,
+                                   .operation = operation,
                                    .signature = MakeAsyncSignature(*contract, kVoid, {}),
                                    .receiver = true,
                                });

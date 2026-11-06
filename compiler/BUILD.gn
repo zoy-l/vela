@@ -263,13 +263,6 @@ source_set("standard_streams") {
   }
 }
 
-source_set("console_input") {
-  sources = [
-    "cli/console_input.cc",
-    "cli/console_input.h",
-  ]
-}
-
 source_set("interactive") {
   sources = [
     "cli/debug_console.cc",
@@ -279,7 +272,6 @@ source_set("interactive") {
   ]
   public_deps = [ ":development" ]
   deps = [
-    ":console_input",
     ":project_configuration",
     "//base:json",
   ]
@@ -306,7 +298,6 @@ source_set("testing") {
     ":jit",
     ":tooling",
   ]
-  deps = [ ":standard_streams" ]
 }
 
 source_set("source_session") {
@@ -446,10 +437,7 @@ source_set("development_tools") {
     "cli/development_debugger.h",
   ]
   public_deps = [ ":development" ]
-  deps = [
-    ":console_input",
-    ":project_configuration",
-  ]
+  deps = [ ":project_configuration" ]
 }
 
 source_set("checkpoint_publication") {

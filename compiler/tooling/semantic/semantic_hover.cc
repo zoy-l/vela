@@ -67,18 +67,18 @@ std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncodi
   const auto symbol = references_.find(Key{0, token->offset});
   if (symbol != references_.end()) {
     const auto& reference = symbol->second;
-    const auto& declaration = symbols_.at(reference.symbol);
+    const auto& declaration = symbols_[reference.symbol];
     completion = declaration.completion;
     owner = declaration.owner;
     role = declaration.role;
     const auto kind = completion.kind;
     if (kind == CompletionKind::Method && calls_.contains(Key{0, token->offset})) {
-      if (const auto signature = FindCallParameters(token->offset)) {
+      if (const auto* const signature = FindCallParameters(token->offset)) {
         completion.detail = DisplaySignature(*signature);
       }
     }
     if (kind == CompletionKind::Method && reference.expression != nullptr) {
-      if (const auto signature = FindMemberValueParameters(*reference.expression)) {
+      if (const auto* const signature = FindMemberValueParameters(*reference.expression)) {
         completion.detail = DisplaySignature(*signature);
       }
     }

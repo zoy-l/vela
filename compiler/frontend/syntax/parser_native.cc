@@ -18,12 +18,13 @@ Parser::MemberParseResult Parser::ParseNativeConstructor(Class& declaration) {
     AddDiagnostic(location, "external class may declare only one constructor");
     return MemberParseResult::Failed;
   }
-  if (!Expect(TokenKind::LeftParen, "expected '(' after constructor")) {
+  if (Expect(TokenKind::LeftParen, "expected '(' after constructor") == nullptr) {
     return MemberParseResult::Failed;
   }
   auto parameters = ParseParameters();
-  if (!parameters || !Expect(TokenKind::RightParen, "expected ')' after constructor parameters") ||
-      !Expect(TokenKind::Semicolon, "expected ';' after external constructor")) {
+  if (!parameters ||
+      (Expect(TokenKind::RightParen, "expected ')' after constructor parameters") == nullptr) ||
+      (Expect(TokenKind::Semicolon, "expected ';' after external constructor") == nullptr)) {
     return MemberParseResult::Failed;
   }
   auto constructor = std::make_unique<Function>();

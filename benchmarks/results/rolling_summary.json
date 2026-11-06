@@ -52,1185 +52,6 @@
       "all_expected_cases_passed": true,
       "all_internal_correctness_checks_passed": true
     },
-    "run_date": "2026-11-05T23:27:04+08:00",
-    "source": {
-      "revision": "81ee407ca403bec1c150d7918f600ee8fdd4863b",
-      "working_tree": "HEAD plus class Completer forward declaration in runtime/async/future.h required for the baseline build",
-      "native_abi_version": 17
-    },
-    "benchmark_contexts": {
-      "interop": {
-        "date": "2026-11-05T22:55:09+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "9fc0547d360fbfe1521b11873328002a5bdd82342de347f5b17d416034b3008f/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "0",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      },
-      "runtime": {
-        "date": "2026-11-05T23:27:04+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "luajit_arch": "x64",
-        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
-        "luajit_dualnum": "0",
-        "luajit_gc64": "1",
-        "luajit_maximum_warmup": "1024",
-        "luajit_minimum_warmup": "128",
-        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
-        "luajit_trace_limit": "1000",
-        "luajit_version": "LuaJIT 2.1.1792588164"
-      }
-    },
-    "results": {
-      "interop/aot/runtime/callback": {
-        "wall_ns_median": 99.07266375791458,
-        "wall_ns_stddev": 2.6561402877215423,
-        "wall_cv": 0.02647306869895139,
-        "counters_median": {
-          "allocated_bytes": 472.0,
-          "baseline_bytes": 472.0,
-          "committed_bytes": 472.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 472.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/aot/runtime/local": {
-        "wall_ns_median": 159.76093750071283,
-        "wall_ns_stddev": 11.579731844889773,
-        "wall_cv": 0.06968873282057987,
-        "counters_median": {
-          "allocated_bytes": 536.0,
-          "baseline_bytes": 536.0,
-          "committed_bytes": 536.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 536.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/aot/runtime/object": {
-        "wall_ns_median": 119.2135999990569,
-        "wall_ns_stddev": 0.43899708725326564,
-        "wall_cv": 0.003684751244794855,
-        "counters_median": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "committed_bytes": 752.0,
-          "external_roots": 4.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 752.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 4.0
-        }
-      },
-      "interop/aot/runtime/reentry": {
-        "wall_ns_median": 275.6955357118126,
-        "wall_ns_stddev": 1.6079778568230276,
-        "wall_cv": 0.00582477878564955,
-        "counters_median": {
-          "allocated_bytes": 17048.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 64.0,
-          "peak_extra_bytes": 65088.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/aot/runtime/scalar": {
-        "wall_ns_median": 76.2860730231943,
-        "wall_ns_stddev": 2.50471142844669,
-        "wall_cv": 0.03250354014587233,
-        "counters_median": {
-          "allocated_bytes": 408.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 408.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/aot/typed/callback": {
-        "wall_ns_median": 107.22437381812408,
-        "wall_ns_stddev": 0.3646431790077655,
-        "wall_cv": 0.0034002070331299967,
-        "counters_median": {
-          "allocated_bytes": 472.0,
-          "baseline_bytes": 472.0,
-          "committed_bytes": 472.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 472.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/aot/typed/local": {
-        "wall_ns_median": 179.76116071086577,
-        "wall_ns_stddev": 0.29557182084239814,
-        "wall_cv": 0.0016441487218829256,
-        "counters_median": {
-          "allocated_bytes": 536.0,
-          "baseline_bytes": 536.0,
-          "committed_bytes": 536.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 536.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/aot/typed/object": {
-        "wall_ns_median": 122.7058368086319,
-        "wall_ns_stddev": 0.6250265639916948,
-        "wall_cv": 0.005080179102677614,
-        "counters_median": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "committed_bytes": 752.0,
-          "external_roots": 4.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 752.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 4.0
-        }
-      },
-      "interop/aot/typed/reentry": {
-        "wall_ns_median": 279.02053571438046,
-        "wall_ns_stddev": 1.1496765046529076,
-        "wall_cv": 0.0041118189307312964,
-        "counters_median": {
-          "allocated_bytes": 33688.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 64.0,
-          "peak_extra_bytes": 65088.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/aot/typed/scalar": {
-        "wall_ns_median": 88.75398596925332,
-        "wall_ns_stddev": 0.06712796924606686,
-        "wall_cv": 0.0007560511660022669,
-        "counters_median": {
-          "allocated_bytes": 408.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 408.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/aot/wrapper/local": {
-        "wall_ns_median": 210.84700768399185,
-        "wall_ns_stddev": 1.1759024059112355,
-        "wall_cv": 0.005564979430533251,
-        "counters_median": {
-          "allocated_bytes": 536.0,
-          "baseline_bytes": 536.0,
-          "committed_bytes": 536.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 536.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/aot/wrapper/reentry": {
-        "wall_ns_median": 295.7647321417361,
-        "wall_ns_stddev": 5.969132968458496,
-        "wall_cv": 0.019992246610024682,
-        "counters_median": {
-          "allocated_bytes": 33688.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 64.0,
-          "peak_extra_bytes": 65088.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/aot/wrapper/scalar": {
-        "wall_ns_median": 103.0539017925869,
-        "wall_ns_stddev": 0.30320479189314276,
-        "wall_cv": 0.0029392630314039785,
-        "counters_median": {
-          "allocated_bytes": 408.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 408.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/async/runtime/completion": {
-        "wall_ns_median": 533.4620000030554,
-        "wall_ns_stddev": 1.352586539152174,
-        "wall_cv": 0.0025347294227867773,
-        "counters_median": {
-          "allocated_bytes": 10456.0,
-          "baseline_bytes": 216.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 2.0,
-          "heap_bytes_per_operation": 256.0,
-          "peak_extra_bytes": 65280.0,
-          "retained_bytes": 216.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/async/typed/completion": {
-        "wall_ns_median": 541.9199999960256,
-        "wall_ns_stddev": 2.875883690245676,
-        "wall_cv": 0.005317812600980167,
-        "counters_median": {
-          "allocated_bytes": 10456.0,
-          "baseline_bytes": 216.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 2.0,
-          "heap_bytes_per_operation": 256.0,
-          "peak_extra_bytes": 65280.0,
-          "retained_bytes": 216.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/jit/runtime/callback": {
-        "wall_ns_median": 100.64299999976356,
-        "wall_ns_stddev": 2.8375030182701475,
-        "wall_cv": 0.027941691798511768,
-        "counters_median": {
-          "allocated_bytes": 472.0,
-          "baseline_bytes": 472.0,
-          "committed_bytes": 472.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 472.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/jit/runtime/local": {
-        "wall_ns_median": 153.9647321432572,
-        "wall_ns_stddev": 1.1686109097067159,
-        "wall_cv": 0.007622954982631102,
-        "counters_median": {
-          "allocated_bytes": 536.0,
-          "baseline_bytes": 536.0,
-          "committed_bytes": 536.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 536.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/jit/runtime/object": {
-        "wall_ns_median": 119.52857142562478,
-        "wall_ns_stddev": 0.10344972866199907,
-        "wall_cv": 0.0008652528074315479,
-        "counters_median": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "committed_bytes": 752.0,
-          "external_roots": 4.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 752.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 4.0
-        }
-      },
-      "interop/jit/runtime/reentry": {
-        "wall_ns_median": 333.5552085632128,
-        "wall_ns_stddev": 30.28870012045479,
-        "wall_cv": 0.093702711585279,
-        "counters_median": {
-          "allocated_bytes": 46488.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 64.0,
-          "peak_extra_bytes": 65088.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/jit/runtime/scalar": {
-        "wall_ns_median": 74.01187818983573,
-        "wall_ns_stddev": 0.25440132071277827,
-        "wall_cv": 0.0034330037749536924,
-        "counters_median": {
-          "allocated_bytes": 408.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 408.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/jit/typed/callback": {
-        "wall_ns_median": 106.24397433228405,
-        "wall_ns_stddev": 0.26110722074240117,
-        "wall_cv": 0.002456532740614278,
-        "counters_median": {
-          "allocated_bytes": 472.0,
-          "baseline_bytes": 472.0,
-          "committed_bytes": 472.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 472.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/jit/typed/local": {
-        "wall_ns_median": 179.12268813961765,
-        "wall_ns_stddev": 1.0617403405959196,
-        "wall_cv": 0.005914980526831062,
-        "counters_median": {
-          "allocated_bytes": 536.0,
-          "baseline_bytes": 536.0,
-          "committed_bytes": 536.0,
-          "external_roots": 3.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 536.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 3.0
-        }
-      },
-      "interop/jit/typed/object": {
-        "wall_ns_median": 122.68816964170324,
-        "wall_ns_stddev": 0.5857775727798419,
-        "wall_cv": 0.004772196821052969,
-        "counters_median": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "committed_bytes": 752.0,
-          "external_roots": 4.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 752.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 4.0
-        }
-      },
-      "interop/jit/typed/reentry": {
-        "wall_ns_median": 277.60982143019777,
-        "wall_ns_stddev": 0.2843983897071602,
-        "wall_cv": 0.0010243564418083591,
-        "counters_median": {
-          "allocated_bytes": 33688.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 64.0,
-          "peak_extra_bytes": 65088.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/jit/typed/scalar": {
-        "wall_ns_median": 88.25095663224793,
-        "wall_ns_stddev": 0.22376302399715103,
-        "wall_cv": 0.002535512728067191,
-        "counters_median": {
-          "allocated_bytes": 408.0,
-          "baseline_bytes": 408.0,
-          "committed_bytes": 408.0,
-          "external_roots": 2.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 408.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 2.0
-        }
-      },
-      "interop/type/bound": {
-        "wall_ns_median": 48.5892295968676,
-        "wall_ns_stddev": 0.029975058875333093,
-        "wall_cv": 0.0006168969879430722,
-        "counters_median": {
-          "allocated_bytes": 7000.0,
-          "baseline_bytes": 216.0,
-          "committed_bytes": 65496.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 128.0,
-          "peak_extra_bytes": 65280.0,
-          "retained_bytes": 216.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/type/cold": {
-        "wall_ns_median": 1364.037948771316,
-        "wall_ns_stddev": 283.4292111548694,
-        "wall_cv": 0.23574095583662533,
-        "counters_median": {
-          "external_roots": 0.0,
-          "heap_allocations_per_operation": 2.0,
-          "heap_bytes_per_operation": 344.0,
-          "peak_extra_bytes": 344.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 0.0
-        }
-      },
-      "interop/values/runtime/array_reference": {
-        "wall_ns_median": 20.9635044642807,
-        "wall_ns_stddev": 0.08628197138621592,
-        "wall_cv": 0.004108093280068703,
-        "counters_median": {
-          "allocated_bytes": 256.0,
-          "baseline_bytes": 256.0,
-          "committed_bytes": 256.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 256.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/runtime/array_scalar": {
-        "wall_ns_median": 11.335275397558215,
-        "wall_ns_stddev": 0.038301033586525826,
-        "wall_cv": 0.0033803905027255674,
-        "counters_median": {
-          "allocated_bytes": 256.0,
-          "baseline_bytes": 256.0,
-          "committed_bytes": 256.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 256.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/runtime/persistent": {
-        "wall_ns_median": 26.373571428653772,
-        "wall_ns_stddev": 0.02215706211777969,
-        "wall_cv": 0.0008398088146040005,
-        "counters_median": {
-          "allocated_bytes": 64.0,
-          "baseline_bytes": 64.0,
-          "committed_bytes": 64.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 96.0,
-          "peak_extra_bytes": 96.0,
-          "retained_bytes": 64.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/runtime/string_borrow": {
-        "wall_ns_median": 7.6027682558614,
-        "wall_ns_stddev": 0.0032168238739241815,
-        "wall_cv": 0.00042321165963589,
-        "counters_median": {
-          "allocated_bytes": 128.0,
-          "baseline_bytes": 128.0,
-          "committed_bytes": 128.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 128.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/runtime/string_copy": {
-        "wall_ns_median": 15.46774553560226,
-        "wall_ns_stddev": 0.11236554898927179,
-        "wall_cv": 0.007242450965811108,
-        "counters_median": {
-          "allocated_bytes": 128.0,
-          "baseline_bytes": 128.0,
-          "committed_bytes": 128.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 128.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/typed/array_reference": {
-        "wall_ns_median": 38.14124282530922,
-        "wall_ns_stddev": 0.13218686998193313,
-        "wall_cv": 0.0034724562092874446,
-        "counters_median": {
-          "allocated_bytes": 256.0,
-          "baseline_bytes": 256.0,
-          "committed_bytes": 256.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 256.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/typed/array_scalar": {
-        "wall_ns_median": 29.971071428544093,
-        "wall_ns_stddev": 0.11022144534473222,
-        "wall_cv": 0.003678924212641667,
-        "counters_median": {
-          "allocated_bytes": 256.0,
-          "baseline_bytes": 256.0,
-          "committed_bytes": 256.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 256.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/typed/persistent": {
-        "wall_ns_median": 32.89645448018586,
-        "wall_ns_stddev": 0.11821917463687515,
-        "wall_cv": 0.003587938500922354,
-        "counters_median": {
-          "allocated_bytes": 64.0,
-          "baseline_bytes": 64.0,
-          "committed_bytes": 64.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 1.0,
-          "heap_bytes_per_operation": 96.0,
-          "peak_extra_bytes": 96.0,
-          "retained_bytes": 64.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/typed/string_borrow": {
-        "wall_ns_median": 9.027413504435227,
-        "wall_ns_stddev": 0.03418083361645791,
-        "wall_cv": 0.003786023985879116,
-        "counters_median": {
-          "allocated_bytes": 128.0,
-          "baseline_bytes": 128.0,
-          "committed_bytes": 128.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 128.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "interop/values/typed/string_copy": {
-        "wall_ns_median": 16.707031250007276,
-        "wall_ns_stddev": 0.09905805458882838,
-        "wall_cv": 0.005911332487961901,
-        "counters_median": {
-          "allocated_bytes": 128.0,
-          "baseline_bytes": 128.0,
-          "committed_bytes": 128.0,
-          "external_roots": 1.0,
-          "heap_allocations_per_operation": 0.0,
-          "heap_bytes_per_operation": 0.0,
-          "peak_extra_bytes": 0.0,
-          "retained_bytes": 128.0,
-          "retained_extra_bytes": 0.0,
-          "scope_storage_bytes": 336.0,
-          "shutdown_blockers": 1.0
-        }
-      },
-      "array/default_sort/4096": {
-        "wall_ns_median": 703995.0495088152,
-        "wall_ns_stddev": 66040.05138763912,
-        "wall_cv": 0.09010956533113691,
-        "counters_median": {
-          "first_call_allocated_bytes": 327752.0,
-          "first_call_allocation_count": 12.0,
-          "first_call_gc_bytes": 32896.0,
-          "first_call_peak_heap_bytes": 295048.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "array/default_sort/64": {
-        "wall_ns_median": 9269.257598510696,
-        "wall_ns_stddev": 1602.7501961020075,
-        "wall_cv": 0.1816846603196338,
-        "counters_median": {
-          "first_call_allocated_bytes": 5192.0,
-          "first_call_allocation_count": 6.0,
-          "first_call_gc_bytes": 640.0,
-          "first_call_peak_heap_bytes": 4744.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "array/dynamic_sort/4096": {
-        "wall_ns_median": 754587.0000103605,
-        "wall_ns_stddev": 33571.09236060611,
-        "wall_cv": 0.04461699656091046,
-        "counters_median": {
-          "first_call_allocated_bytes": 328232.0,
-          "first_call_allocation_count": 16.0,
-          "first_call_gc_bytes": 33376.0,
-          "first_call_peak_heap_bytes": 295528.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "array/dynamic_sort/64": {
-        "wall_ns_median": 7817.508719489872,
-        "wall_ns_stddev": 694.9733082395811,
-        "wall_cv": 0.08853846895471602,
-        "counters_median": {
-          "first_call_allocated_bytes": 5672.0,
-          "first_call_allocation_count": 10.0,
-          "first_call_gc_bytes": 1120.0,
-          "first_call_peak_heap_bytes": 5224.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "async/completed_await": {
-        "wall_ns_median": 696.0613640030246,
-        "wall_ns_stddev": 178.06871812599005,
-        "wall_cv": 0.22429362995528473,
-        "counters_median": {
-          "first_async_bytes": 128.0,
-          "retained_bytes": 192.0,
-          "saved_bytes_per_frame": 224.0,
-          "saved_state_bytes": 224.0,
-          "suspended_frames": 1.0
-        }
-      },
-      "async/no_await": {
-        "wall_ns_median": 355.8732142851438,
-        "wall_ns_stddev": 36.28052818577919,
-        "wall_cv": 0.10007010481445891,
-        "counters_median": {
-          "first_async_bytes": 128.0,
-          "retained_bytes": 192.0,
-          "saved_bytes_per_frame": 0.0,
-          "saved_state_bytes": 0.0,
-          "suspended_frames": 0.0
-        }
-      },
-      "async/suspend_resume": {
-        "wall_ns_median": 1455.2031250251014,
-        "wall_ns_stddev": 156.60042190139072,
-        "wall_cv": 0.10248868428844442,
-        "counters_median": {
-          "first_async_bytes": 320.0,
-          "retained_bytes": 192.0,
-          "saved_bytes_per_frame": 224.0,
-          "saved_state_bytes": 224.0,
-          "suspended_frames": 1.0
-        }
-      },
-      "json/decode/1": {
-        "wall_ns_median": 1092.0942885634804,
-        "wall_ns_stddev": 16.775897683131078,
-        "wall_cv": 0.015301105136243725,
-        "counters_median": {
-          "bytes_per_second": 56732048.0,
-          "first_call_gc_bytes": 1408.0,
-          "first_call_objects": 7.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/decode/4096": {
-        "wall_ns_median": 4248059.090969036,
-        "wall_ns_stddev": 448429.3335206632,
-        "wall_cv": 0.10041908447218345,
-        "counters_median": {
-          "bytes_per_second": 49982357.333333336,
-          "first_call_gc_bytes": 4784256.0,
-          "first_call_objects": 24577.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/decode/64": {
-        "wall_ns_median": 46796.04822504298,
-        "wall_ns_stddev": 1380.8158453539877,
-        "wall_cv": 0.029933543410189823,
-        "counters_median": {
-          "bytes_per_second": 63618521.6,
-          "first_call_gc_bytes": 74880.0,
-          "first_call_objects": 385.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/encode/1": {
-        "wall_ns_median": 1227.0324808211346,
-        "wall_ns_stddev": 57.80884463200739,
-        "wall_cv": 0.04824210072436086,
-        "counters_median": {
-          "bytes_per_second": 45385638.4,
-          "first_call_gc_bytes": 1520.0,
-          "input_heap_bytes": 1504.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/encode/4096": {
-        "wall_ns_median": 3700919.9999981015,
-        "wall_ns_stddev": 97388.9093350846,
-        "wall_cv": 0.026672717878521955,
-        "counters_median": {
-          "bytes_per_second": 51118320.0,
-          "first_call_gc_bytes": 476521.0,
-          "input_heap_bytes": 4784352.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/encode/64": {
-        "wall_ns_median": 50363.094441396046,
-        "wall_ns_stddev": 968.1967366551976,
-        "wall_cv": 0.019115261357682642,
-        "counters_median": {
-          "bytes_per_second": 63618521.6,
-          "first_call_gc_bytes": 9520.0,
-          "input_heap_bytes": 74976.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "json/to_json": {
-        "wall_ns_median": 923.6174365519677,
-        "wall_ns_stddev": 39.37327208953899,
-        "wall_cv": 0.04161580312749528,
-        "counters_median": {
-          "first_call_allocated_bytes": 1440.0,
-          "first_call_allocation_count": 9.0,
-          "first_call_gc_bytes": 1024.0,
-          "first_call_peak_heap_bytes": 1440.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/constructor": {
-        "wall_ns_median": 1238484.1584117557,
-        "wall_ns_stddev": 41959.363975137174,
-        "wall_cv": 0.03369072585106924,
-        "counters_median": {
-          "first_call_allocated_bytes": 1458413.0,
-          "first_call_allocation_count": 8227.0,
-          "first_call_gc_bytes": 1221248.0,
-          "first_call_peak_heap_bytes": 1221248.0,
-          "input_bytes": 27649.0,
-          "process_peak_resident_bytes": 59486208.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/early_failure": {
-        "wall_ns_median": 8377155.555636919,
-        "wall_ns_stddev": 160511.58648025923,
-        "wall_cv": 0.01932373303448494,
-        "counters_median": {
-          "first_call_allocated_bytes": 5495152.0,
-          "first_call_allocation_count": 71701.0,
-          "first_call_gc_bytes": 25408.0,
-          "first_call_peak_heap_bytes": 1430976.0,
-          "input_bytes": 27652.0,
-          "process_peak_resident_bytes": 59461632.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/large_array": {
-        "wall_ns_median": 1223682.2221893817,
-        "wall_ns_stddev": 46081.0291136472,
-        "wall_cv": 0.03753624947844274,
-        "counters_median": {
-          "first_call_allocated_bytes": 1458413.0,
-          "first_call_allocation_count": 8227.0,
-          "first_call_gc_bytes": 1221248.0,
-          "first_call_peak_heap_bytes": 1221248.0,
-          "input_bytes": 27649.0,
-          "process_peak_resident_bytes": 57634816.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/late_failure": {
-        "wall_ns_median": 9280179.999950632,
-        "wall_ns_stddev": 780393.265999254,
-        "wall_cv": 0.08252840412307981,
-        "counters_median": {
-          "first_call_allocated_bytes": 5751767.0,
-          "first_call_allocation_count": 73763.0,
-          "first_call_gc_bytes": 134887.0,
-          "first_call_peak_heap_bytes": 1430976.0,
-          "input_bytes": 27652.0,
-          "process_peak_resident_bytes": 59461632.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/nested_generic": {
-        "wall_ns_median": 1365414.8514802675,
-        "wall_ns_stddev": 84643.84280928028,
-        "wall_cv": 0.06329745503276457,
-        "counters_median": {
-          "first_call_allocated_bytes": 1527425.0,
-          "first_call_allocation_count": 8247.0,
-          "first_call_gc_bytes": 1289664.0,
-          "first_call_peak_heap_bytes": 1289664.0,
-          "input_bytes": 27669.0,
-          "process_peak_resident_bytes": 59428864.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/object": {
-        "wall_ns_median": 1563.2000000005064,
-        "wall_ns_stddev": 57.67113405009476,
-        "wall_cv": 0.036679153322049726,
-        "counters_median": {
-          "first_call_allocated_bytes": 1942.0,
-          "first_call_allocation_count": 13.0,
-          "first_call_gc_bytes": 1472.0,
-          "first_call_peak_heap_bytes": 1472.0,
-          "input_bytes": 26.0,
-          "process_peak_resident_bytes": 57413632.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/handwritten/scalar": {
-        "wall_ns_median": 396.85848214178674,
-        "wall_ns_stddev": 14.212825439570901,
-        "wall_cv": 0.036252280975604095,
-        "counters_median": {
-          "first_call_allocated_bytes": 230.0,
-          "first_call_allocation_count": 3.0,
-          "first_call_gc_bytes": 128.0,
-          "first_call_peak_heap_bytes": 128.0,
-          "input_bytes": 2.0,
-          "process_peak_resident_bytes": 57262080.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/constructor": {
-        "wall_ns_median": 609683.9999918302,
-        "wall_ns_stddev": 41087.15590535031,
-        "wall_cv": 0.0693910468923011,
-        "counters_median": {
-          "first_call_allocated_bytes": 1515373.0,
-          "first_call_allocation_count": 3084.0,
-          "first_call_gc_bytes": 205056.0,
-          "first_call_peak_heap_bytes": 1367781.0,
-          "input_bytes": 27649.0,
-          "process_peak_resident_bytes": 59461632.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/early_failure": {
-        "wall_ns_median": 139322.57100177745,
-        "wall_ns_stddev": 3043.431190025367,
-        "wall_cv": 0.021615546060446345,
-        "counters_median": {
-          "first_call_allocated_bytes": 1237360.0,
-          "first_call_allocation_count": 16.0,
-          "first_call_gc_bytes": 768.0,
-          "first_call_peak_heap_bytes": 1163496.0,
-          "input_bytes": 27652.0,
-          "process_peak_resident_bytes": 59428864.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/large_array": {
-        "wall_ns_median": 544635.6435731113,
-        "wall_ns_stddev": 38786.21836851858,
-        "wall_cv": 0.0711624174025162,
-        "counters_median": {
-          "first_call_allocated_bytes": 1515373.0,
-          "first_call_allocation_count": 3084.0,
-          "first_call_gc_bytes": 205056.0,
-          "first_call_peak_heap_bytes": 1367781.0,
-          "input_bytes": 27649.0,
-          "process_peak_resident_bytes": 57421824.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/late_failure": {
-        "wall_ns_median": 324517.41070969676,
-        "wall_ns_stddev": 53014.476897677996,
-        "wall_cv": 0.15243822783916858,
-        "counters_median": {
-          "first_call_allocated_bytes": 1237360.0,
-          "first_call_allocation_count": 16.0,
-          "first_call_gc_bytes": 768.0,
-          "first_call_peak_heap_bytes": 1163496.0,
-          "input_bytes": 27652.0,
-          "process_peak_resident_bytes": 59461632.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/nested_generic": {
-        "wall_ns_median": 537044.9664481586,
-        "wall_ns_stddev": 33375.64857026807,
-        "wall_cv": 0.061263059017928105,
-        "counters_median": {
-          "first_call_allocated_bytes": 1516641.0,
-          "first_call_allocation_count": 3088.0,
-          "first_call_gc_bytes": 205312.0,
-          "first_call_peak_heap_bytes": 1368921.0,
-          "input_bytes": 27669.0,
-          "process_peak_resident_bytes": 57634816.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/object": {
-        "wall_ns_median": 1294.7803470749095,
-        "wall_ns_stddev": 148.06038170886825,
-        "wall_cv": 0.12146407963641705,
-        "counters_median": {
-          "first_call_allocated_bytes": 1702.0,
-          "first_call_allocation_count": 12.0,
-          "first_call_gc_bytes": 320.0,
-          "first_call_peak_heap_bytes": 1630.0,
-          "input_bytes": 26.0,
-          "process_peak_resident_bytes": 57262080.0,
-          "retained_bytes": 0.0
-        }
-      },
-      "typed_json/typed/scalar": {
-        "wall_ns_median": 539.4157565335897,
-        "wall_ns_stddev": 17.499081823932098,
-        "wall_cv": 0.032384868205545043,
-        "counters_median": {
-          "first_call_allocated_bytes": 502.0,
-          "first_call_allocation_count": 9.0,
-          "first_call_gc_bytes": 128.0,
-          "first_call_peak_heap_bytes": 502.0,
-          "input_bytes": 2.0,
-          "process_peak_resident_bytes": 55091200.0,
-          "retained_bytes": 0.0
-        }
-      }
-    }
-  },
-  "latest": {
-    "machine": {
-      "os": "Windows",
-      "release": "11",
-      "version": "10.0.26300",
-      "architecture": "AMD64",
-      "logical_cpus": 24,
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
-      "host": "DESKTOP-E7S678P"
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
-      "llvm_sdk": "21.1.8",
-      "clang_tooling_sdk": "21.1.8",
-      "runtime_configuration": "GN release; clang-cl /O2 /MT; checked arithmetic",
-      "generated_configuration": "LLVM O3; host CPU for JIT; generic CPU PIC for offline AOT"
-    },
-    "build": "release",
-    "measurement": {
-      "repetitions": 3,
-      "minimum_time_seconds": 0.05,
-      "random_interleaving": false,
-      "clock": "Google Benchmark real_time converted to wall nanoseconds; after/before ratios below 1 mean less time",
-      "affinity": "not pinned",
-      "summary": "per-case median, sample standard deviation, coefficient of variation and counter medians",
-      "limitation": "short Windows runs; timing shifts alone do not establish a stable improvement or identify a particular edit",
-      "memory_scope": "reported Vela Heap counters, not process malloc counts; NativeBuffer external storage is now accounted"
-    },
-    "suite": {
-      "identity": "runtime-review/interop-json-array-async-v1",
-      "plans": [
-        {
-          "group": "interop",
-          "binary": "vela_aot_benchmarks.exe",
-          "filter": "^interop/",
-          "expected_cases": 37,
-          "command_before": "out/release/vela_aot_benchmarks.exe --benchmark_filter='^interop/' --benchmark_repetitions=3 --benchmark_min_time=0.05s --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-before.json --benchmark_out_format=json",
-          "command_after": "out/release/vela_aot_benchmarks.exe --benchmark_filter='^interop/' --benchmark_repetitions=3 --benchmark_min_time=0.05s --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-after.json --benchmark_out_format=json"
-        },
-        {
-          "group": "runtime",
-          "binary": "vela_benchmarks.exe",
-          "filter": "^(json/|typed_json/|array/|async/(no_await$|completed_await$|suspend_resume$))",
-          "expected_cases": 28,
-          "command_before": "out/release/vela_benchmarks.exe --benchmark_filter='^(json/|typed_json/|array/|async/(no_await$|completed_await$|suspend_resume$))' --benchmark_repetitions=3 --benchmark_min_time=0.05s --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-runtime-before.json --benchmark_out_format=json",
-          "command_after": "out/release/vela_benchmarks.exe --benchmark_filter='^(json/|typed_json/|array/|async/(no_await$|completed_await$|suspend_resume$))' --benchmark_repetitions=3 --benchmark_min_time=0.05s --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-runtime-after.json --benchmark_out_format=json"
-        }
-      ],
-      "passed_cases": 65,
-      "observed_iteration_samples": 195,
-      "all_expected_cases_passed": true,
-      "all_internal_correctness_checks_passed": true
-    },
     "run_date": "2026-11-06T00:38:16+08:00",
     "source": {
       "revision": "81ee407ca403bec1c150d7918f600ee8fdd4863b",
@@ -2512,6 +1333,1683 @@
           "retained_bytes": 0.0
         },
         "after_to_before_wall_ratio": 0.49491377008131904
+      }
+    }
+  },
+  "latest": {
+    "machine": {
+      "os": "Windows",
+      "release": "11",
+      "version": "10.0.26300",
+      "architecture": "AMD64",
+      "logical_cpus": 24,
+      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+      "host": "DESKTOP-E7S678P"
+    },
+    "toolchain": {
+      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
+      "llvm_sdk": "21.1.8",
+      "runtime_configuration": "GN release; clang-cl /O2 /MT; checked arithmetic",
+      "generated_configuration": "LLVM O3; host CPU for JIT; generic CPU PIC for AOT"
+    },
+    "build": "release",
+    "measurement": {
+      "repetitions": 3,
+      "minimum_time_seconds": 0.1,
+      "random_interleaving": false,
+      "affinity": "not pinned",
+      "summary": "per-case median, sample standard deviation, CV and counter medians",
+      "limitation": "short Windows validation run; no matching pre-change baseline"
+    },
+    "suite": {
+      "identity": "compiler-review/frontend-generics-native-v1",
+      "plans": [
+        {
+          "group": "frontend",
+          "binary": "vela_benchmarks.exe",
+          "filter": "^(specialize/|tooling/completion/|cache/|testing/(small_startup|cache_batch|concurrent_suites))",
+          "expected_cases": 24,
+          "command": "python -m tools.vl bench -- --benchmark_filter='^(specialize/|tooling/completion/|cache/|testing/(small_startup|cache_batch|concurrent_suites))' --benchmark_repetitions=3 --benchmark_min_time=0.1s --benchmark_enable_random_interleaving=false --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-benchmark-frontend.json --benchmark_out_format=json"
+        },
+        {
+          "group": "generics",
+          "binary": "vela_aot_benchmarks.exe",
+          "filter": "^generics/check/",
+          "expected_cases": 36,
+          "command": "out/release/vela_aot_benchmarks.exe --benchmark_filter='^generics/check/' --benchmark_repetitions=3 --benchmark_min_time=0.1s --benchmark_enable_random_interleaving=false --benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-benchmark-generics.json --benchmark_out_format=json"
+        },
+        {
+          "group": "escape",
+          "binary": "vela_aot_benchmarks.exe",
+          "filter": "^(escape/|hot/(baseline|optimized)/virtual/)",
+          "expected_cases": 23,
+          "command": "python -m tools.vl bench --escape-compare --report C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-benchmark-escape.json -- --benchmark_filter='^(escape/|hot/(baseline|optimized)/virtual/)' --benchmark_repetitions=3 --benchmark_min_time=0.1s --benchmark_enable_random_interleaving=false"
+        }
+      ],
+      "passed_cases": 83,
+      "observed_iteration_samples": 249,
+      "all_expected_cases_passed": true,
+      "all_internal_correctness_checks_passed": true
+    },
+    "run_date": "2026-11-06T04:25:10+08:00",
+    "source": {
+      "revision": "cbd9fbad3b2a366121c6dcbe856648e1930643d1",
+      "working_tree": "compiler review fixes and cleanup; uncommitted",
+      "working_tree_changed_files": 206,
+      "working_tree_diff_sha256": "a085fae52d6818b3ed651e23589dfc7e4bfa8837723d90fedb0b35e4209536ce",
+      "working_tree_diff_scope": "HEAD diff and untracked files, excluding rolling_summary.json",
+      "compiler_build_identity": "f8607701c3fff1f9e8fdde2925513a7c2fc3ac4174dce0fdaddd34cd2372f409"
+    },
+    "comparison": {
+      "comparable": false,
+      "reason": "Previous entry measures a different suite and settings; no speedup claim."
+    },
+    "benchmark_contexts": {
+      "frontend": {
+        "date": "2026-11-06T04:20:34+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "generics": {
+        "date": "2026-11-06T04:22:58+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "f8607701c3fff1f9e8fdde2925513a7c2fc3ac4174dce0fdaddd34cd2372f409/release",
+        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      },
+      "escape": {
+        "date": "2026-11-06T04:23:42+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "f8607701c3fff1f9e8fdde2925513a7c2fc3ac4174dce0fdaddd34cd2372f409/release",
+        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      }
+    },
+    "results": {
+      "frontend": {
+        "cache/native_instantiate": {
+          "median_wall_ns": 954.0483349432556,
+          "median_cpu_ns": 941.6873698378791,
+          "stdev_wall_ns": 11.857106321175007,
+          "variation_cv": 0.012390710124771012,
+          "counters": {}
+        },
+        "cache/content_hit": {
+          "median_wall_ns": 1195734.4444251957,
+          "median_cpu_ns": 1215277.7777777778,
+          "stdev_wall_ns": 4705.537377140649,
+          "variation_cv": 0.00393203477731943,
+          "counters": {}
+        },
+        "cache/uncached_file_compile": {
+          "median_wall_ns": 14711455.55559714,
+          "median_cpu_ns": 15625000.0,
+          "stdev_wall_ns": 20865.17868898382,
+          "variation_cv": 0.0014186600200993375,
+          "counters": {}
+        },
+        "cache/unicode_content_hit": {
+          "median_wall_ns": 1123875.3731280423,
+          "median_cpu_ns": 1166044.7761194033,
+          "stdev_wall_ns": 4310.405839916381,
+          "variation_cv": 0.003838359261851989,
+          "counters": {}
+        },
+        "cache/unicode_file_compile": {
+          "median_wall_ns": 9625092.307732511,
+          "median_cpu_ns": 9615384.615384618,
+          "stdev_wall_ns": 166673.0108903704,
+          "variation_cv": 0.017210486094980923,
+          "counters": {}
+        },
+        "cache/library_content_hit": {
+          "median_wall_ns": 4007923.3333623656,
+          "median_cpu_ns": 4166666.666666667,
+          "stdev_wall_ns": 4377.315692168052,
+          "variation_cv": 0.0010920622870940133,
+          "counters": {}
+        },
+        "cache/library_file_compile": {
+          "median_wall_ns": 92376600.00144388,
+          "median_cpu_ns": 93750000.0,
+          "stdev_wall_ns": 518919.290727515,
+          "variation_cv": 0.00560233626111621,
+          "counters": {}
+        },
+        "tooling/completion/fresh/8": {
+          "median_wall_ns": 1543582.2221964675,
+          "median_cpu_ns": 1562500.0,
+          "stdev_wall_ns": 32438.846850774386,
+          "variation_cv": 0.02077346763255743,
+          "counters": {}
+        },
+        "tooling/completion/fresh/32": {
+          "median_wall_ns": 5664013.636388435,
+          "median_cpu_ns": 5681818.181818182,
+          "stdev_wall_ns": 46250.234458599196,
+          "variation_cv": 0.008188398671932813,
+          "counters": {}
+        },
+        "tooling/completion/shared_parse/8": {
+          "median_wall_ns": 301283.92856860434,
+          "median_cpu_ns": 279017.85714285716,
+          "stdev_wall_ns": 1774.3784849992883,
+          "variation_cv": 0.005893682026268911,
+          "counters": {}
+        },
+        "tooling/completion/shared_parse/32": {
+          "median_wall_ns": 1166972.222199547,
+          "median_cpu_ns": 1215277.7777777778,
+          "stdev_wall_ns": 15740.031764883039,
+          "variation_cv": 0.013589746335214065,
+          "counters": {}
+        },
+        "tooling/completion/reuse_index/8": {
+          "median_wall_ns": 253.93705357146246,
+          "median_cpu_ns": 244.140625,
+          "stdev_wall_ns": 6.912601811557444,
+          "variation_cv": 0.027262708807806037,
+          "counters": {}
+        },
+        "tooling/completion/reuse_index/32": {
+          "median_wall_ns": 255.1104910659368,
+          "median_cpu_ns": 244.140625,
+          "stdev_wall_ns": 8.504324455076507,
+          "variation_cv": 0.03331239368993886,
+          "counters": {}
+        },
+        "specialize/function/32/4": {
+          "median_wall_ns": 23717.544632160883,
+          "median_cpu_ns": 27901.785714285714,
+          "stdev_wall_ns": 461.82914423878583,
+          "variation_cv": 0.019262964520376014,
+          "counters": {}
+        },
+        "specialize/function/256/16": {
+          "median_wall_ns": 613450.4951075029,
+          "median_cpu_ns": 618811.8811881188,
+          "stdev_wall_ns": 19689.5976803153,
+          "variation_cv": 0.03177408406842303,
+          "counters": {}
+        },
+        "specialize/function/1024/32": {
+          "median_wall_ns": 5055793.33306135,
+          "median_cpu_ns": 5208333.333333333,
+          "stdev_wall_ns": 70820.36434913977,
+          "variation_cv": 0.014012485798750932,
+          "counters": {}
+        },
+        "specialize/class/32/4": {
+          "median_wall_ns": 31139.620525826624,
+          "median_cpu_ns": 27901.785714285714,
+          "stdev_wall_ns": 325.15629788228966,
+          "variation_cv": 0.010389472978682144,
+          "counters": {}
+        },
+        "specialize/class/256/16": {
+          "median_wall_ns": 816530.4348520249,
+          "median_cpu_ns": 873447.2049689441,
+          "stdev_wall_ns": 5093.69015595104,
+          "variation_cv": 0.006249539195554169,
+          "counters": {}
+        },
+        "specialize/class/1024/32": {
+          "median_wall_ns": 8252835.0001666695,
+          "median_cpu_ns": 7812500.0,
+          "stdev_wall_ns": 82856.05787559376,
+          "variation_cv": 0.010075158863083277,
+          "counters": {}
+        },
+        "testing/small_startup/real_time": {
+          "median_wall_ns": 777295100.0006287,
+          "median_cpu_ns": 765625000.0,
+          "stdev_wall_ns": 33885873.94456117,
+          "variation_cv": 0.04281167599070031,
+          "counters": {}
+        },
+        "testing/cache_batch/1/real_time": {
+          "median_wall_ns": 44725466.66632601,
+          "median_cpu_ns": 46875000.0,
+          "stdev_wall_ns": 290339.40742182964,
+          "variation_cv": 0.006483396888478596,
+          "counters": {
+            "items_per_second": 22.358626405409968
+          }
+        },
+        "testing/cache_batch/16/real_time": {
+          "median_wall_ns": 733765099.9979814,
+          "median_cpu_ns": 734375000.0,
+          "stdev_wall_ns": 10208442.460390298,
+          "variation_cv": 0.013802440038536803,
+          "counters": {
+            "items_per_second": 21.80534342672337
+          }
+        },
+        "testing/concurrent_suites/1/real_time": {
+          "median_wall_ns": 2686188.4615964997,
+          "median_cpu_ns": 0.0,
+          "stdev_wall_ns": 29092.444999854448,
+          "variation_cv": 0.010806799650640544,
+          "counters": {
+            "combined_allocated_bytes": 2621056.0,
+            "combined_committed_bytes": 3524096.0,
+            "process_peak_bytes": 144379904.0
+          }
+        },
+        "testing/concurrent_suites/4/real_time": {
+          "median_wall_ns": 5051955.172505054,
+          "median_cpu_ns": 0.0,
+          "stdev_wall_ns": 357018.34335873905,
+          "variation_cv": 0.07113228673367401,
+          "counters": {
+            "combined_allocated_bytes": 10484224.0,
+            "combined_committed_bytes": 14096384.0,
+            "process_peak_bytes": 144379904.0
+          }
+        }
+      },
+      "generics": {
+        "generics/check/definitions/scalar/concrete/4/real_time": {
+          "median_wall_ns": 5910.530833208468,
+          "median_cpu_ns": 6721.586509507012,
+          "stdev_wall_ns": 95.9386484123787,
+          "variation_cv": 0.016223227812705833,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 14041088.0,
+            "source_bytes": 290.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/concrete/16/real_time": {
+          "median_wall_ns": 13042.897891859571,
+          "median_cpu_ns": 13369.937250427838,
+          "stdev_wall_ns": 27.51277261192294,
+          "variation_cv": 0.002110609028667391,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 14348288.0,
+            "source_bytes": 896.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/concrete/32/real_time": {
+          "median_wall_ns": 22997.07325318849,
+          "median_cpu_ns": 22992.969260954873,
+          "stdev_wall_ns": 28.670524794664654,
+          "variation_cv": 0.0012469254261722887,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 14680064.0,
+            "source_bytes": 1712.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/concrete/4/real_time": {
+          "median_wall_ns": 10576.224417991089,
+          "median_cpu_ns": 9476.876421531464,
+          "stdev_wall_ns": 148.83957129461672,
+          "variation_cv": 0.013970726365897065,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 14790656.0,
+            "source_bytes": 492.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/concrete/16/real_time": {
+          "median_wall_ns": 28965.952981262028,
+          "median_cpu_ns": 22958.648194794292,
+          "stdev_wall_ns": 240.59487831567907,
+          "variation_cv": 0.008276282863696123,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 15060992.0,
+            "source_bytes": 1542.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/concrete/32/real_time": {
+          "median_wall_ns": 54847.175593777625,
+          "median_cpu_ns": 53673.6641221374,
+          "stdev_wall_ns": 683.8652109279443,
+          "variation_cv": 0.012441326489853102,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 15659008.0,
+            "source_bytes": 2966.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/projection/concrete/4/real_time": {
+          "median_wall_ns": 31643.599010450936,
+          "median_cpu_ns": 31750.959584556334,
+          "stdev_wall_ns": 152.73873899617888,
+          "variation_cv": 0.00481574710731189,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 15941632.0,
+            "source_bytes": 779.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/definitions/projection/concrete/16/real_time": {
+          "median_wall_ns": 101315.17791598188,
+          "median_cpu_ns": 113471.31445170662,
+          "stdev_wall_ns": 147.97737420945583,
+          "variation_cv": 0.0014605026028905535,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 16384000.0,
+            "source_bytes": 2501.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/definitions/projection/concrete/32/real_time": {
+          "median_wall_ns": 196405.51623007376,
+          "median_cpu_ns": 198903.8189533239,
+          "stdev_wall_ns": 520.6246879187405,
+          "variation_cv": 0.002646829191211321,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 17997824.0,
+            "source_bytes": 4837.0,
+            "type_specializations": 64.0
+          }
+        },
+        "generics/check/applications/projection/concrete/4/real_time": {
+          "median_wall_ns": 42092.403512799494,
+          "median_cpu_ns": 43781.13325031133,
+          "stdev_wall_ns": 4026.4268352730214,
+          "variation_cv": 0.0907307138923151,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 18071552.0,
+            "source_bytes": 1149.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/applications/projection/concrete/16/real_time": {
+          "median_wall_ns": 140139.74612581136,
+          "median_cpu_ns": 152587.890625,
+          "stdev_wall_ns": 1703.676453500784,
+          "variation_cv": 0.01224154839056744,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 18161664.0,
+            "source_bytes": 3837.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/applications/projection/concrete/32/real_time": {
+          "median_wall_ns": 265876.77536122926,
+          "median_cpu_ns": 299904.0307101727,
+          "stdev_wall_ns": 1184.0612829683585,
+          "variation_cv": 0.0044515584298341635,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19771392.0,
+            "source_bytes": 7501.0,
+            "type_specializations": 64.0
+          }
+        },
+        "generics/check/definitions/scalar/unbounded/4/real_time": {
+          "median_wall_ns": 6808.517761579459,
+          "median_cpu_ns": 7451.831362075543,
+          "stdev_wall_ns": 72.54615750452851,
+          "variation_cv": 0.010624205061552486,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19791872.0,
+            "source_bytes": 286.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/unbounded/16/real_time": {
+          "median_wall_ns": 16319.59802254579,
+          "median_cpu_ns": 18581.281959804972,
+          "stdev_wall_ns": 155.61296547183625,
+          "variation_cv": 0.009581409819252385,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19795968.0,
+            "source_bytes": 880.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/unbounded/32/real_time": {
+          "median_wall_ns": 29249.197084005587,
+          "median_cpu_ns": 26068.821689259647,
+          "stdev_wall_ns": 133.6675729011362,
+          "variation_cv": 0.00458149049328218,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19795968.0,
+            "source_bytes": 1680.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/unbounded/4/real_time": {
+          "median_wall_ns": 23775.733058933678,
+          "median_cpu_ns": 23698.179979777553,
+          "stdev_wall_ns": 88.80957924883154,
+          "variation_cv": 0.0037276976129800863,
+          "counters": {
+            "function_specializations": 4.0,
+            "process_peak_resident_bytes": 19927040.0,
+            "source_bytes": 488.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/unbounded/16/real_time": {
+          "median_wall_ns": 83202.2397199177,
+          "median_cpu_ns": 75665.85956416465,
+          "stdev_wall_ns": 851.2687741997627,
+          "variation_cv": 0.010247294606652706,
+          "counters": {
+            "function_specializations": 16.0,
+            "process_peak_resident_bytes": 19959808.0,
+            "source_bytes": 1526.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/unbounded/32/real_time": {
+          "median_wall_ns": 160247.21287509036,
+          "median_cpu_ns": 159982.93515358362,
+          "stdev_wall_ns": 2129.0299561458487,
+          "variation_cv": 0.013255951375678662,
+          "counters": {
+            "function_specializations": 32.0,
+            "process_peak_resident_bytes": 19968000.0,
+            "source_bytes": 2934.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/projection/unbounded/4/real_time": {
+          "median_wall_ns": 33496.26167889391,
+          "median_cpu_ns": 33698.777857656365,
+          "stdev_wall_ns": 71.99037143829551,
+          "variation_cv": 0.0021517214663363165,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19968000.0,
+            "source_bytes": 759.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/definitions/projection/unbounded/16/real_time": {
+          "median_wall_ns": 109042.7026916502,
+          "median_cpu_ns": 96525.09652509652,
+          "stdev_wall_ns": 938.9510542791251,
+          "variation_cv": 0.008605436750154955,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19968000.0,
+            "source_bytes": 2409.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/definitions/projection/unbounded/32/real_time": {
+          "median_wall_ns": 207896.84691277082,
+          "median_cpu_ns": 234609.60960960962,
+          "stdev_wall_ns": 10775.08561321165,
+          "variation_cv": 0.05042429162268109,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 19976192.0,
+            "source_bytes": 4633.0,
+            "type_specializations": 64.0
+          }
+        },
+        "generics/check/applications/projection/unbounded/4/real_time": {
+          "median_wall_ns": 57942.100962836346,
+          "median_cpu_ns": 64115.71604431678,
+          "stdev_wall_ns": 320.4096773403846,
+          "variation_cv": 0.005540383519787022,
+          "counters": {
+            "function_specializations": 4.0,
+            "process_peak_resident_bytes": 19976192.0,
+            "source_bytes": 1129.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/applications/projection/unbounded/16/real_time": {
+          "median_wall_ns": 191977.5372803106,
+          "median_cpu_ns": 169147.49661705006,
+          "stdev_wall_ns": 957.6688130780565,
+          "variation_cv": 0.0049893024556885955,
+          "counters": {
+            "function_specializations": 16.0,
+            "process_peak_resident_bytes": 19988480.0,
+            "source_bytes": 3745.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/applications/projection/unbounded/32/real_time": {
+          "median_wall_ns": 374690.76514537423,
+          "median_cpu_ns": 371042.21635883907,
+          "stdev_wall_ns": 2826.3393802510327,
+          "variation_cv": 0.007560807005920524,
+          "counters": {
+            "function_specializations": 32.0,
+            "process_peak_resident_bytes": 20480000.0,
+            "source_bytes": 7297.0,
+            "type_specializations": 64.0
+          }
+        },
+        "generics/check/definitions/scalar/bounded/4/real_time": {
+          "median_wall_ns": 7064.210238133557,
+          "median_cpu_ns": 7176.575657055371,
+          "stdev_wall_ns": 26.91879180013076,
+          "variation_cv": 0.0038140538097164033,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20492288.0,
+            "source_bytes": 334.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/bounded/16/real_time": {
+          "median_wall_ns": 17436.32528814487,
+          "median_cpu_ns": 17458.10055865922,
+          "stdev_wall_ns": 40.2614048038852,
+          "variation_cv": 0.0023104219791339883,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20492288.0,
+            "source_bytes": 1072.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/scalar/bounded/32/real_time": {
+          "median_wall_ns": 31288.406442671672,
+          "median_cpu_ns": 27976.72336615936,
+          "stdev_wall_ns": 30.91067595401958,
+          "variation_cv": 0.0009883000272643537,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20492288.0,
+            "source_bytes": 2064.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/bounded/4/real_time": {
+          "median_wall_ns": 25870.73761068535,
+          "median_cpu_ns": 28956.63454410675,
+          "stdev_wall_ns": 487.32288777530346,
+          "variation_cv": 0.018691468559722747,
+          "counters": {
+            "function_specializations": 4.0,
+            "process_peak_resident_bytes": 20492288.0,
+            "source_bytes": 536.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/bounded/16/real_time": {
+          "median_wall_ns": 92913.00183031359,
+          "median_cpu_ns": 79668.57871255577,
+          "stdev_wall_ns": 1480.5610335793087,
+          "variation_cv": 0.016039079256939003,
+          "counters": {
+            "function_specializations": 16.0,
+            "process_peak_resident_bytes": 20496384.0,
+            "source_bytes": 1718.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/applications/scalar/bounded/32/real_time": {
+          "median_wall_ns": 173902.3573508919,
+          "median_cpu_ns": 193858.56079404466,
+          "stdev_wall_ns": 2234.2979010111717,
+          "variation_cv": 0.01278258409556723,
+          "counters": {
+            "function_specializations": 32.0,
+            "process_peak_resident_bytes": 20496384.0,
+            "source_bytes": 3318.0,
+            "type_specializations": 0.0
+          }
+        },
+        "generics/check/definitions/projection/bounded/4/real_time": {
+          "median_wall_ns": 38447.82725619834,
+          "median_cpu_ns": 38675.74257425743,
+          "stdev_wall_ns": 257.15374914378697,
+          "variation_cv": 0.00671051559035878,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20496384.0,
+            "source_bytes": 831.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/definitions/projection/bounded/16/real_time": {
+          "median_wall_ns": 126821.33453032786,
+          "median_cpu_ns": 117481.2030075188,
+          "stdev_wall_ns": 1391.1394664032332,
+          "variation_cv": 0.010920697370617466,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20500480.0,
+            "source_bytes": 2697.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/definitions/projection/bounded/32/real_time": {
+          "median_wall_ns": 247605.77611435862,
+          "median_cpu_ns": 225631.7689530686,
+          "stdev_wall_ns": 738.2783391330565,
+          "variation_cv": 0.0029817249993118354,
+          "counters": {
+            "function_specializations": 0.0,
+            "process_peak_resident_bytes": 20516864.0,
+            "source_bytes": 5209.0,
+            "type_specializations": 64.0
+          }
+        },
+        "generics/check/applications/projection/bounded/4/real_time": {
+          "median_wall_ns": 71494.37341377285,
+          "median_cpu_ns": 71930.9462915601,
+          "stdev_wall_ns": 444.36686143477954,
+          "variation_cv": 0.006228914929476894,
+          "counters": {
+            "function_specializations": 4.0,
+            "process_peak_resident_bytes": 20520960.0,
+            "source_bytes": 1201.0,
+            "type_specializations": 8.0
+          }
+        },
+        "generics/check/applications/projection/bounded/16/real_time": {
+          "median_wall_ns": 246979.54152397419,
+          "median_cpu_ns": 248015.87301587302,
+          "stdev_wall_ns": 3389.9738203057696,
+          "variation_cv": 0.013674338479123326,
+          "counters": {
+            "function_specializations": 16.0,
+            "process_peak_resident_bytes": 20520960.0,
+            "source_bytes": 4033.0,
+            "type_specializations": 32.0
+          }
+        },
+        "generics/check/applications/projection/bounded/32/real_time": {
+          "median_wall_ns": 483600.69193782617,
+          "median_cpu_ns": 378460.20761245675,
+          "stdev_wall_ns": 2071.698404256341,
+          "variation_cv": 0.0042824443692167525,
+          "counters": {
+            "function_specializations": 32.0,
+            "process_peak_resident_bytes": 20930560.0,
+            "source_bytes": 7873.0,
+            "type_specializations": 64.0
+          }
+        }
+      },
+      "escape": {
+        "escape/heap/numeric/real_time": {
+          "median_wall_ns": 4061.5360036857596,
+          "median_cpu_ns": 4084.7300084236213,
+          "stdev_wall_ns": 65.18378667252539,
+          "variation_cv": 0.015947375285168326,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 334300.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 8911900.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 3455400.0,
+            "entry_frame_bytes": 48.0,
+            "entry_shadow_slots": 1.0,
+            "executable_bytes": 925.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 113600.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 4899.0,
+            "optimization_ns": 4936600.0,
+            "preparation_ns": 5200.0,
+            "read_only_bytes": 2468.0,
+            "result": 33152.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/numeric/real_time": {
+          "median_wall_ns": 80.60161167176085,
+          "median_cpu_ns": 80.66671867578663,
+          "stdev_wall_ns": 0.7147015143859765,
+          "variation_cv": 0.008878796082168747,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 318500.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 6791200.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 2875200.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 605.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 117200.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 4473.0,
+            "optimization_ns": 3507500.0,
+            "preparation_ns": 5500.0,
+            "read_only_bytes": 2452.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 700.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/numeric/real_time": {
+          "median_wall_ns": 79.70238925995663,
+          "median_cpu_ns": 80.43417581638187,
+          "stdev_wall_ns": 0.4481239338402179,
+          "variation_cv": 0.005606253052820698,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 262100.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 6250800.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 2724300.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 605.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 104600.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 4473.0,
+            "optimization_ns": 3218500.0,
+            "preparation_ns": 4700.0,
+            "read_only_bytes": 2452.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 700.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/references/real_time": {
+          "median_wall_ns": 13437.159647571629,
+          "median_cpu_ns": 13773.261508325171,
+          "stdev_wall_ns": 26.45817546132563,
+          "variation_cv": 0.001967998031965606,
+          "counters": {
+            "allocated_objects": 512.0,
+            "allocation_bytes": 49152.0,
+            "analysis_lowering_ns": 306200.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 13804500.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 5319000.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 5.0,
+            "executable_bytes": 1869.0,
+            "expected_result": 768.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 115000.0,
+            "maximum_frame_bytes": 128.0,
+            "maximum_shadow_slots": 5.0,
+            "object_file_bytes": 6302.0,
+            "optimization_ns": 8095100.0,
+            "preparation_ns": 4700.0,
+            "read_only_bytes": 2628.0,
+            "result": 768.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 512.0,
+            "sample_collection_ns": 2200.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/references/real_time": {
+          "median_wall_ns": 8591.405770312904,
+          "median_cpu_ns": 8632.596685082874,
+          "stdev_wall_ns": 42.06273758249284,
+          "variation_cv": 0.0048824263698944975,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 16384.0,
+            "analysis_lowering_ns": 332300.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 10506600.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 4222300.0,
+            "entry_frame_bytes": 96.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1229.0,
+            "expected_result": 768.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 111700.0,
+            "maximum_frame_bytes": 96.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5470.0,
+            "optimization_ns": 5869800.0,
+            "preparation_ns": 5100.0,
+            "read_only_bytes": 2628.0,
+            "result": 768.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1400.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/references/real_time": {
+          "median_wall_ns": 8772.635507157216,
+          "median_cpu_ns": 8603.022146090787,
+          "stdev_wall_ns": 528.0506526337678,
+          "variation_cv": 0.058459909288944574,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 16384.0,
+            "analysis_lowering_ns": 332000.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 10575300.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 4212800.0,
+            "entry_frame_bytes": 96.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1229.0,
+            "expected_result": 768.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 122400.0,
+            "maximum_frame_bytes": 96.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5470.0,
+            "optimization_ns": 5939700.0,
+            "preparation_ns": 5200.0,
+            "read_only_bytes": 2628.0,
+            "result": 768.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1300.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/rare_escape/real_time": {
+          "median_wall_ns": 4180.776066372587,
+          "median_cpu_ns": 4165.432464454976,
+          "stdev_wall_ns": 22.441398422455244,
+          "variation_cv": 0.00536960921010375,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 359600.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 11525600.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4543900.0,
+            "entry_frame_bytes": 64.0,
+            "entry_shadow_slots": 2.0,
+            "executable_bytes": 1229.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 115000.0,
+            "maximum_frame_bytes": 64.0,
+            "maximum_shadow_slots": 2.0,
+            "object_file_bytes": 5414.0,
+            "optimization_ns": 6540600.0,
+            "preparation_ns": 4900.0,
+            "read_only_bytes": 2612.0,
+            "result": 33152.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/rare_escape/real_time": {
+          "median_wall_ns": 196.21419672811817,
+          "median_cpu_ns": 198.18284825218586,
+          "stdev_wall_ns": 0.5172509283349478,
+          "variation_cv": 0.0026343392947801073,
+          "counters": {
+            "allocated_objects": 4.0,
+            "allocation_bytes": 512.0,
+            "analysis_lowering_ns": 364300.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 11933300.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4742600.0,
+            "entry_frame_bytes": 80.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1293.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 119300.0,
+            "maximum_frame_bytes": 80.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5468.0,
+            "optimization_ns": 6746600.0,
+            "preparation_ns": 5000.0,
+            "read_only_bytes": 2612.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 4.0,
+            "sample_collection_ns": 800.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/rare_escape/real_time": {
+          "median_wall_ns": 193.58530101054401,
+          "median_cpu_ns": 196.96647122923886,
+          "stdev_wall_ns": 3.7165626101770264,
+          "variation_cv": 0.019070198417768535,
+          "counters": {
+            "allocated_objects": 4.0,
+            "allocation_bytes": 512.0,
+            "analysis_lowering_ns": 377100.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 12222800.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4837800.0,
+            "entry_frame_bytes": 80.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1293.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 125600.0,
+            "maximum_frame_bytes": 80.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5468.0,
+            "optimization_ns": 6911500.0,
+            "preparation_ns": 5100.0,
+            "read_only_bytes": 2612.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 4.0,
+            "sample_collection_ns": 800.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/all_escape/real_time": {
+          "median_wall_ns": 4186.583873181296,
+          "median_cpu_ns": 4198.137146610145,
+          "stdev_wall_ns": 14.4112139924599,
+          "variation_cv": 0.0034375739382961875,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 299400.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 10711900.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4371400.0,
+            "entry_frame_bytes": 48.0,
+            "entry_shadow_slots": 1.0,
+            "executable_bytes": 1245.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 114900.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 5328.0,
+            "optimization_ns": 6079400.0,
+            "preparation_ns": 5000.0,
+            "read_only_bytes": 2500.0,
+            "result": 33152.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1500.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/all_escape/real_time": {
+          "median_wall_ns": 4263.559245572153,
+          "median_cpu_ns": 4230.213879613753,
+          "stdev_wall_ns": 25.74338017798292,
+          "variation_cv": 0.006039561819997456,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 363400.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 11139200.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4315900.0,
+            "entry_frame_bytes": 80.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1293.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 109500.0,
+            "maximum_frame_bytes": 80.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5376.0,
+            "optimization_ns": 6365400.0,
+            "preparation_ns": 4600.0,
+            "read_only_bytes": 2500.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/all_escape/real_time": {
+          "median_wall_ns": 4250.660553762553,
+          "median_cpu_ns": 4241.569644688424,
+          "stdev_wall_ns": 26.160069976997026,
+          "variation_cv": 0.006147399349237538,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 342800.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 11313900.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 4446100.0,
+            "entry_frame_bytes": 80.0,
+            "entry_shadow_slots": 3.0,
+            "executable_bytes": 1293.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 112400.0,
+            "maximum_frame_bytes": 80.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 5376.0,
+            "optimization_ns": 6358400.0,
+            "preparation_ns": 4400.0,
+            "read_only_bytes": 2500.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1700.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/graph/real_time": {
+          "median_wall_ns": 10624.67845644144,
+          "median_cpu_ns": 10276.600409237066,
+          "stdev_wall_ns": 306.37901218984746,
+          "variation_cv": 0.028941397553275804,
+          "counters": {
+            "allocated_objects": 512.0,
+            "allocation_bytes": 65536.0,
+            "analysis_lowering_ns": 388400.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 14562800.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 5436400.0,
+            "entry_frame_bytes": 96.0,
+            "entry_shadow_slots": 4.0,
+            "executable_bytes": 1725.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 126900.0,
+            "maximum_frame_bytes": 96.0,
+            "maximum_shadow_slots": 4.0,
+            "object_file_bytes": 6133.0,
+            "optimization_ns": 8414900.0,
+            "preparation_ns": 5400.0,
+            "read_only_bytes": 2692.0,
+            "result": 33152.0,
+            "retained_sites": 2.0,
+            "sample_collected_objects": 512.0,
+            "sample_collection_ns": 2300.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/graph/real_time": {
+          "median_wall_ns": 81.38060461235106,
+          "median_cpu_ns": 82.03578247698186,
+          "stdev_wall_ns": 0.2835017490373724,
+          "variation_cv": 0.003483404490298511,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 303800.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 6712500.0,
+            "eliminated_sites": 2.0,
+            "emission_ns": 2886000.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 605.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 109300.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 4717.0,
+            "optimization_ns": 3484600.0,
+            "preparation_ns": 5300.0,
+            "read_only_bytes": 2676.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 700.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/graph/real_time": {
+          "median_wall_ns": 81.39105269562644,
+          "median_cpu_ns": 82.54917729655482,
+          "stdev_wall_ns": 0.0560995743641263,
+          "variation_cv": 0.0006892492828730956,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 319900.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 6919700.0,
+            "eliminated_sites": 2.0,
+            "emission_ns": 2918200.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 605.0,
+            "expected_result": 33152.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 116000.0,
+            "maximum_frame_bytes": 48.0,
+            "maximum_shadow_slots": 1.0,
+            "object_file_bytes": 4717.0,
+            "optimization_ns": 3497800.0,
+            "preparation_ns": 5600.0,
+            "read_only_bytes": 2676.0,
+            "result": 33152.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 700.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/calls/real_time": {
+          "median_wall_ns": 4239.473763319702,
+          "median_cpu_ns": 4228.687415426251,
+          "stdev_wall_ns": 369.0478796760297,
+          "variation_cv": 0.08302903173415387,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 361200.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 12339600.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 5056700.0,
+            "entry_frame_bytes": 64.0,
+            "entry_shadow_slots": 2.0,
+            "executable_bytes": 1453.0,
+            "expected_result": 33664.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 124700.0,
+            "maximum_frame_bytes": 64.0,
+            "maximum_shadow_slots": 2.0,
+            "object_file_bytes": 5998.0,
+            "optimization_ns": 6833100.0,
+            "preparation_ns": 5400.0,
+            "read_only_bytes": 2828.0,
+            "result": 33664.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/calls/real_time": {
+          "median_wall_ns": 4303.193997845634,
+          "median_cpu_ns": 4306.38493339458,
+          "stdev_wall_ns": 3.9442483898982887,
+          "variation_cv": 0.0009170478464655761,
+          "counters": {
+            "allocated_objects": 256.0,
+            "allocation_bytes": 32768.0,
+            "analysis_lowering_ns": 357300.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 12629500.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 5038300.0,
+            "entry_frame_bytes": 96.0,
+            "entry_shadow_slots": 4.0,
+            "executable_bytes": 1501.0,
+            "expected_result": 33664.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 117900.0,
+            "maximum_frame_bytes": 96.0,
+            "maximum_shadow_slots": 4.0,
+            "object_file_bytes": 6046.0,
+            "optimization_ns": 7153600.0,
+            "preparation_ns": 5100.0,
+            "read_only_bytes": 2828.0,
+            "result": 33664.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 256.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/calls/real_time": {
+          "median_wall_ns": 255.45492136317048,
+          "median_cpu_ns": 255.03634437931632,
+          "stdev_wall_ns": 0.5301932650116843,
+          "variation_cv": 0.002074921422918835,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 354700.0,
+            "borrowed_frame_bytes": 48.0,
+            "borrowed_root_stores": 2.0,
+            "borrowed_shadow_slots": 1.0,
+            "compile_ns": 11618100.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 4678600.0,
+            "entry_frame_bytes": 112.0,
+            "entry_shadow_slots": 2.0,
+            "executable_bytes": 1293.0,
+            "expected_result": 33664.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 117800.0,
+            "maximum_frame_bytes": 112.0,
+            "maximum_shadow_slots": 2.0,
+            "object_file_bytes": 5773.0,
+            "optimization_ns": 6491700.0,
+            "preparation_ns": 6100.0,
+            "read_only_bytes": 2828.0,
+            "result": 33664.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 800.0,
+            "stack_records": 1.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/heap/recursion/real_time": {
+          "median_wall_ns": 2043.8506077320992,
+          "median_cpu_ns": 1940.3610623864888,
+          "stdev_wall_ns": 624.68622359853,
+          "variation_cv": 0.26029995638478204,
+          "counters": {
+            "allocated_objects": 65.0,
+            "allocation_bytes": 8320.0,
+            "analysis_lowering_ns": 353000.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 11650800.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 5859500.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 1709.0,
+            "expected_result": 2210.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 207200.0,
+            "maximum_frame_bytes": 80.0,
+            "maximum_shadow_slots": 3.0,
+            "object_file_bytes": 6675.0,
+            "optimization_ns": 5261100.0,
+            "preparation_ns": 4800.0,
+            "read_only_bytes": 2972.0,
+            "result": 2210.0,
+            "retained_sites": 1.0,
+            "sample_collected_objects": 65.0,
+            "sample_collection_ns": 1000.0,
+            "stack_records": 0.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/scalar/recursion/real_time": {
+          "median_wall_ns": 3757.6982723196484,
+          "median_cpu_ns": 3400.8978370289756,
+          "stdev_wall_ns": 43.50622530944627,
+          "variation_cv": 0.011595979789440273,
+          "counters": {
+            "allocated_objects": 65.0,
+            "allocation_bytes": 8320.0,
+            "analysis_lowering_ns": 673900.0,
+            "borrowed_frame_bytes": 0.0,
+            "borrowed_root_stores": 0.0,
+            "borrowed_shadow_slots": 0.0,
+            "compile_ns": 16762600.0,
+            "eliminated_sites": 0.0,
+            "emission_ns": 8237500.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 1741.0,
+            "expected_result": 2210.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 274600.0,
+            "maximum_frame_bytes": 96.0,
+            "maximum_shadow_slots": 4.0,
+            "object_file_bytes": 6707.0,
+            "optimization_ns": 7528500.0,
+            "preparation_ns": 7900.0,
+            "read_only_bytes": 2972.0,
+            "result": 2210.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 65.0,
+            "sample_collection_ns": 1600.0,
+            "stack_records": 0.0,
+            "sunk_sites": 1.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "escape/borrow/recursion/real_time": {
+          "median_wall_ns": 1285.7243033654538,
+          "median_cpu_ns": 1297.5179922494926,
+          "stdev_wall_ns": 8.881856097087656,
+          "variation_cv": 0.006891087573938897,
+          "counters": {
+            "allocated_objects": 0.0,
+            "allocation_bytes": 0.0,
+            "analysis_lowering_ns": 585300.0,
+            "borrowed_frame_bytes": 48.0,
+            "borrowed_root_stores": 2.0,
+            "borrowed_shadow_slots": 1.0,
+            "compile_ns": 16190000.0,
+            "eliminated_sites": 1.0,
+            "emission_ns": 7839700.0,
+            "entry_frame_bytes": 16.0,
+            "entry_shadow_slots": 0.0,
+            "executable_bytes": 1629.0,
+            "expected_result": 2210.0,
+            "field_allocation_bytes": 0.0,
+            "link_ns": 290400.0,
+            "maximum_frame_bytes": 112.0,
+            "maximum_shadow_slots": 2.0,
+            "object_file_bytes": 6530.0,
+            "optimization_ns": 7635600.0,
+            "preparation_ns": 7700.0,
+            "read_only_bytes": 2972.0,
+            "result": 2210.0,
+            "retained_sites": 0.0,
+            "sample_collected_objects": 0.0,
+            "sample_collection_ns": 1100.0,
+            "stack_records": 1.0,
+            "sunk_sites": 0.0,
+            "writable_bytes": 0.0
+          }
+        },
+        "hot/baseline/virtual/manual_time": {
+          "median_wall_ns": 14069854.545454549,
+          "median_cpu_ns": 12784090.909090908,
+          "stdev_wall_ns": 1039295.5688585596,
+          "variation_cv": 0.07687183551082576,
+          "counters": {
+            "commit_ns": 327.27272727272725,
+            "deoptimization_ns": 63.63636363636363,
+            "entry_ns": 0.0,
+            "instantiation_ns": 12800.0,
+            "linking_ns": 729381.8181818182,
+            "llvm_lowering_ns": 378181.8181818182,
+            "llvm_optimization_ns": 5710645.454545454,
+            "machine_compilation_ns": 6952563.636363637,
+            "materialization_ns": 136.36363636363637,
+            "materialized_objects": 0.0,
+            "new_isolate_preparation_ns": 0.0,
+            "pause_max_ns": 79400.0,
+            "pause_ns": 56554.545454545456,
+            "refresh_ns": 0.0,
+            "released_code_batches": 3.0,
+            "released_code_images": 1.0,
+            "released_constant_payload_bytes": 34.0,
+            "released_debug_payload_bytes": 711.0,
+            "released_executable_bytes": 11607.0,
+            "released_external_field_bytes": 0.0,
+            "released_heap_bytes": 288.0,
+            "released_image_data_bytes": 3985.0,
+            "released_read_only_bytes": 440.0,
+            "released_saved_state_bytes": 0.0,
+            "released_suspended_frames": 0.0,
+            "released_writable_bytes": 0.0,
+            "safepoint_waiting_ns": 554.5454545454545,
+            "source_loading_ns": 40890.90909090909,
+            "source_ns": 126054.54545454546,
+            "state_preparation_max_ns": 1300.0,
+            "state_preparation_ns": 927.2727272727273,
+            "stopping_ns": 0.0,
+            "type_checking_ns": 35754.545454545456,
+            "typed_ir_ns": 45727.27272727273,
+            "validation_ns": 33845.454545454544
+          }
+        },
+        "hot/optimized/virtual/manual_time": {
+          "median_wall_ns": 35912200.00000001,
+          "median_cpu_ns": 35156250.0,
+          "stdev_wall_ns": 305201.92530246975,
+          "variation_cv": 0.008530163416044395,
+          "counters": {
+            "commit_ns": 350.0,
+            "deoptimization_ns": 100.0,
+            "entry_ns": 0.0,
+            "instantiation_ns": 19500.0,
+            "linking_ns": 1055875.0,
+            "llvm_lowering_ns": 615500.0,
+            "llvm_optimization_ns": 15582775.0,
+            "machine_compilation_ns": 18249600.0,
+            "materialization_ns": 1250.0,
+            "materialized_objects": 1.0,
+            "new_isolate_preparation_ns": 0.0,
+            "pause_max_ns": 81100.0,
+            "pause_ns": 62150.0,
+            "refresh_ns": 0.0,
+            "released_code_batches": 2.0,
+            "released_code_images": 1.0,
+            "released_constant_payload_bytes": 34.0,
+            "released_debug_payload_bytes": 710.0,
+            "released_executable_bytes": 23128.0,
+            "released_external_field_bytes": 0.0,
+            "released_heap_bytes": 288.0,
+            "released_image_data_bytes": 3984.0,
+            "released_read_only_bytes": 1292.0,
+            "released_saved_state_bytes": 0.0,
+            "released_suspended_frames": 0.0,
+            "released_writable_bytes": 0.0,
+            "safepoint_waiting_ns": 975.0,
+            "source_loading_ns": 57775.0,
+            "source_ns": 173900.0,
+            "state_preparation_max_ns": 1300.0,
+            "state_preparation_ns": 1175.0,
+            "stopping_ns": 0.0,
+            "type_checking_ns": 52500.0,
+            "typed_ir_ns": 61125.0,
+            "validation_ns": 30250.0
+          }
+        }
       }
     }
   }

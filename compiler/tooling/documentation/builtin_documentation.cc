@@ -125,9 +125,7 @@ std::string_view AsyncDocumentation(Kind receiver, std::string_view name) {
   return {};
 }
 
-}  // namespace
-
-std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
+std::string BuiltinParameters(const frontend::FunctionDescriptor& signature) {
   std::string text = "(";
   for (const auto& parameter : signature.parameters) {
     if (text.back() != '(') {
@@ -143,9 +141,14 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
     text += ": ";
     text += type_name;
   }
-  text += "): ";
-  text += signature.return_type.name;
+  text += ')';
   return text;
+}
+
+}  // namespace
+
+std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
+  return BuiltinParameters(signature) + ": " + std::string(signature.return_type.name);
 }
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
@@ -545,31 +548,31 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
 }
 
 std::string_view BuiltinTypeDetail(std::string_view name) {
-  static const absl::flat_hash_map<std::string_view, std::string_view> kTypes = {
-      {"int", "int"},
-      {"double", "double"},
-      {"bool", "bool"},
-      {"string", "string"},
-      {"void", "void"},
-      {"dynamic", "dynamic"},
-      {"String", "class String {\n  constructor();\n}"},
-      {"ByteArray", "class ByteArray {\n  constructor(length: int);\n}"},
-      {"ByteData", "type ByteData"},
-      {
-          "RegExp",
-          "class RegExp {\n  constructor(source: string, multiLine?: bool, caseSensitive?: bool, "
-          "dotAll?: bool);\n}",
-      },
-      {"RegExpMatch", "type RegExpMatch"},
-      {"Set", "class Set<T> {\n  constructor();\n}"},
-      {"Map", "class Map<K, V> {\n  constructor();\n}"},
-      {"Future", "type Future<T>"},
-      {"Completer", "class Completer<T> {\n  constructor();\n}"},
-      {"Timer", "type Timer"},
-      {"CancellationToken", "class CancellationToken {\n  constructor();\n}"},
-  };
+  static const auto kTypes = [] {
+    absl::flat_hash_map<std::string_view, std::string> types = {
+        {"int", "int"},
+        {"double", "double"},
+        {"bool", "bool"},
+        {"string", "string"},
+        {"void", "void"},
+        {"dynamic", "dynamic"},
+        {"ByteData", "type ByteData"},
+        {"RegExpMatch", "type RegExpMatch"},
+        {"Set", "class Set<T> {\n  constructor();\n}"},
+        {"Map", "class Map<K, V> {\n  constructor();\n}"},
+        {"Future", "type Future<T>"},
+        {"Completer", "class Completer<T> {\n  constructor();\n}"},
+        {"Timer", "type Timer"},
+        {"CancellationToken", "class CancellationToken {\n  constructor();\n}"},
+    };
+    for (const auto& [type, builtin] : frontend::BuiltinMethods(Kind::Invalid)) {
+      types.emplace(type, "class " + std::string(type) + " {\n  constructor" +
+                              BuiltinParameters(frontend::BuiltinSignature(builtin)) + ";\n}");
+    }
+    return types;
+  }();
   const auto found = kTypes.find(name);
-  return found == kTypes.end() ? std::string_view{} : found->second;
+  return found == kTypes.end() ? std::string_view{} : std::string_view(found->second);
 }
 
 }  // namespace vela::tooling

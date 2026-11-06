@@ -2,12 +2,12 @@
 #include "base/declaration.h"
 #include "compiler/frontend/modules/source_file.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -55,12 +55,16 @@ class ModuleBinding final {
   void BindFunction(Function& function, const std::string& owner);
   // 先登记整个参数列表再绑定上界，允许上界引用列表中后出现的参数。
   void BeginTypeParameters(std::vector<TypeParameter>& parameters, const std::string& owner);
+  void EndTypeParameters();
+  void BeginScope();
+  void EndScope();
+  void DeclareLocal(std::string_view name);
   void BindType(TypeName& type);
   void BindExpression(Expression* expression);
   void BindStatement(Statement* statement);
   void BindScoped(Statement* statement);
   [[nodiscard]] bool IsLocal(const std::string& name) const;
-  [[nodiscard]] const TypeParameter* FindTypeParameter(const std::string& name) const;
+  [[nodiscard]] const TypeParameter* FindTypeParameter(std::string_view name) const;
   std::string Resolve(const std::string& name, SourceLocation location);
   std::string ExportedName(std::uint32_t dependency,
                            const std::string& name,
@@ -71,9 +75,11 @@ class ModuleBinding final {
   std::vector<ModuleScope> scopes_;
   Diagnostics diagnostics_;
   std::uint32_t current_ = 0;
-  std::vector<absl::flat_hash_set<std::string>> locals_;
+  std::vector<std::vector<std::string_view>> locals_;
+  absl::flat_hash_map<std::string_view, std::uint32_t> local_bindings_;
   // 参数节点由正在绑定的声明拥有；作用域只在绑定该声明期间借用。
-  std::vector<absl::flat_hash_map<std::string, const TypeParameter*>> type_parameters_;
+  std::vector<absl::flat_hash_map<std::string_view, const TypeParameter*>> type_parameters_;
+  absl::flat_hash_map<std::string_view, const TypeParameter*> type_parameter_bindings_;
 };
 
 void ModuleBinding::Error(SourceLocation location, std::string message) {
@@ -174,17 +180,31 @@ void ModuleBinding::BindImports() {
 }
 
 bool ModuleBinding::IsLocal(const std::string& name) const {
-  return std::ranges::any_of(locals_,
-                             [&name](const auto& scope) -> bool { return scope.contains(name); });
+  return local_bindings_.contains(name);
 }
 
-const TypeParameter* ModuleBinding::FindTypeParameter(const std::string& name) const {
-  for (const auto& scope : std::views::reverse(type_parameters_)) {
-    if (const auto found = scope.find(name); found != scope.end()) {
-      return found->second;
+const TypeParameter* ModuleBinding::FindTypeParameter(std::string_view name) const {
+  const auto found = type_parameter_bindings_.find(name);
+  return found == type_parameter_bindings_.end() ? nullptr : found->second;
+}
+
+void ModuleBinding::BeginScope() {
+  locals_.emplace_back();
+}
+
+void ModuleBinding::EndScope() {
+  for (const auto name : locals_.back()) {
+    const auto found = local_bindings_.find(name);
+    if (--found->second == 0) {
+      local_bindings_.erase(found);
     }
   }
-  return nullptr;
+  locals_.pop_back();
+}
+
+void ModuleBinding::DeclareLocal(std::string_view name) {
+  locals_.back().push_back(name);
+  ++local_bindings_[name];
 }
 
 void ModuleBinding::BeginTypeParameters(std::vector<TypeParameter>& parameters,
@@ -193,15 +213,31 @@ void ModuleBinding::BeginTypeParameters(std::vector<TypeParameter>& parameters,
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     auto& parameter = parameters.at(index);
     parameter.identity = {.owner = owner, .index = static_cast<std::uint32_t>(index)};
-    if (!scope.try_emplace(parameter.name, &parameter).second) {
+    const auto [previous, inserted] = scope.try_emplace(parameter.name, nullptr);
+    if (!inserted) {
       Error(parameter.location, "duplicate generic parameter '" + parameter.name + "'");
+      continue;
     }
+    auto& current = type_parameter_bindings_[parameter.name];
+    previous->second = current;
+    current = &parameter;
   }
   for (auto& parameter : parameters) {
     if (parameter.bound) {
       BindType(*parameter.bound);
     }
   }
+}
+
+void ModuleBinding::EndTypeParameters() {
+  for (const auto& [name, previous] : type_parameters_.back()) {
+    if (previous == nullptr) {
+      type_parameter_bindings_.erase(name);
+    } else {
+      type_parameter_bindings_.at(name) = previous;
+    }
+  }
+  type_parameters_.pop_back();
 }
 
 std::string ModuleBinding::ExportedName(std::uint32_t dependency,
@@ -220,7 +256,7 @@ std::string ModuleBinding::Resolve(const std::string& name, SourceLocation locat
   const auto& scope = scopes_.at(current_);
   const auto separator = name.find('.');
   if (separator != std::string::npos) {
-    const auto prefix = scope.prefixes.find(name.substr(0, separator));
+    const auto prefix = scope.prefixes.find(std::string_view(name).substr(0, separator));
     if (prefix != scope.prefixes.end()) {
       return ExportedName(prefix->second, name.substr(separator + 1), location);
     }
@@ -259,7 +295,7 @@ void ModuleBinding::BindType(TypeName& type) {
   // 类型参数在其作用域内遮蔽同名导入前缀；参数没有可限定访问的成员类型。
   if (const auto separator = type.name.find('.');
       separator != std::string::npos &&
-      (FindTypeParameter(type.name.substr(0, separator)) != nullptr)) {
+      (FindTypeParameter(std::string_view(type.name).substr(0, separator)) != nullptr)) {
     Error(type.location, "generic parameter '" + type.name.substr(0, separator) +
                              "' does not declare member types");
     return;
@@ -311,12 +347,12 @@ void ModuleBinding::BindExpression(Expression* expression) {
   }
   for (auto& arm : expression->arms) {
     BindExpression(arm.pattern.get());
-    locals_.emplace_back();
+    BeginScope();
     if (arm.kind == MatchArm::Kind::Binding) {
-      locals_.back().insert(arm.binding);
+      DeclareLocal(arm.binding);
     }
     BindExpression(arm.value.get());
-    locals_.pop_back();
+    EndScope();
   }
   if (expression->function) {
     BindFunction(*expression->function, {});
@@ -324,9 +360,9 @@ void ModuleBinding::BindExpression(Expression* expression) {
 }
 
 void ModuleBinding::BindScoped(Statement* statement) {
-  locals_.emplace_back();
+  BeginScope();
   BindStatement(statement);
-  locals_.pop_back();
+  EndScope();
 }
 
 void ModuleBinding::BindStatement(Statement* statement) {
@@ -335,7 +371,7 @@ void ModuleBinding::BindStatement(Statement* statement) {
   }
   const bool scope = statement->IntroducesScope();
   if (scope) {
-    locals_.emplace_back();
+    BeginScope();
   }
   BindType(statement->type);
   BindStatement(statement->initializer.get());
@@ -343,19 +379,19 @@ void ModuleBinding::BindStatement(Statement* statement) {
   BindExpression(statement->condition.get());
   BindExpression(statement->iterable.get());
   if (statement->kind == Statement::Kind::ForEach) {
-    locals_.back().insert(statement->name);
+    DeclareLocal(statement->name);
   }
   BindScoped(statement->then_branch.get());
   BindScoped(statement->else_branch.get());
   BindScoped(statement->finally_branch.get());
   for (auto& clause : statement->catches) {
-    locals_.emplace_back();
+    BeginScope();
     if (!clause.name.empty()) {
       BindType(clause.type);
-      locals_.back().insert(clause.name);
+      DeclareLocal(clause.name);
     }
     BindStatement(clause.body.get());
-    locals_.pop_back();
+    EndScope();
   }
   BindExpression(statement->increment.get());
   for (auto& child : statement->statements) {
@@ -366,24 +402,24 @@ void ModuleBinding::BindStatement(Statement* statement) {
     BindScoped(branch.body.get());
   }
   if (statement->kind == Statement::Kind::VariableDeclaration) {
-    locals_.back().insert(statement->name);
+    DeclareLocal(statement->name);
   }
   if (scope) {
-    locals_.pop_back();
+    EndScope();
   }
 }
 
 void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
   BeginTypeParameters(function.type_parameters, owner);
-  locals_.emplace_back();
+  BeginScope();
   BindType(function.return_type);
   for (auto& parameter : function.parameters) {
     BindType(parameter.type);
-    locals_.back().insert(parameter.name);
+    DeclareLocal(parameter.name);
   }
   BindStatement(function.body.get());
-  locals_.pop_back();
-  type_parameters_.pop_back();
+  EndScope();
+  EndTypeParameters();
 }
 
 void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
@@ -404,7 +440,7 @@ void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
   if (declaration.constructor) {
     BindFunction(*declaration.constructor, {});
   }
-  type_parameters_.pop_back();
+  EndTypeParameters();
 }
 
 void ModuleBinding::BindInterface(Interface& declaration, const std::string& owner) {
@@ -412,7 +448,7 @@ void ModuleBinding::BindInterface(Interface& declaration, const std::string& own
   for (auto& method : declaration.methods) {
     BindFunction(method, owner + '.' + method.name);
   }
-  type_parameters_.pop_back();
+  EndTypeParameters();
 }
 
 void ModuleBinding::BindProgram(Program& program) {
@@ -443,7 +479,7 @@ void ModuleBinding::BindProgram(Program& program) {
   for (auto& alias : program.aliases) {
     BeginTypeParameters(alias.type_parameters, target(alias));
     BindType(alias.target);
-    type_parameters_.pop_back();
+    EndTypeParameters();
     rename(alias);
   }
   for (auto& global : program.globals) {
@@ -461,6 +497,7 @@ ParseResult ModuleBinding::Run() {
   Program combined;
   const auto can_bind = diagnostics_.empty();
   for (auto& module : modules_) {
+    combined.import_sources.push_back(std::move(module.dependencies));
     // 声明与导入表已经建立；函数体中的未知名字不能阻止后续依赖绑定其声明身份。
     if (can_bind) {
       BindProgram(module.program);

@@ -19,7 +19,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchDirectories(
       return parent;
     }
   }
-  return WatchDirectory(path, directories.subspan(directories.size() > 1 ? 1 : 0).front(),
+  return WatchDirectory(path, directories[directories.size() > 1 ? 1 : 0],
                         DirectoryWatchScope::Descendants);
 }
 

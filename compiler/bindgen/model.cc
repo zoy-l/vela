@@ -27,29 +27,18 @@ std::string_view TypeName(const layout::Program& program, const layout::Type& ty
   using Kind = layout::Type::Kind;
   switch (type.kind) {
     case Kind::Dynamic:
-      return "dynamic";
     case Kind::Boolean:
-      return "bool";
     case Kind::Integer:
-      return "int";
     case Kind::Double:
-      return "double";
     case Kind::String:
-      return "string";
     case Kind::CancellationToken:
-      return "CancellationToken";
     case Kind::MutableString:
-      return "MutableString";
     case Kind::ByteArray:
-      return "ByteArray";
     case Kind::ByteData:
-      return "ByteData";
     case Kind::RegExp:
-      return "RegExp";
     case Kind::RegExpMatch:
-      return "RegExpMatch";
     case Kind::Timer:
-      return "Timer";
+      return layout::ScalarTypeName(type.kind);
     case Kind::Instance:
       return program.classes.at(type.index).kind == layout::Class::Kind::Host ? "host" : "object";
     case Kind::Enum:
@@ -100,6 +89,16 @@ llvm::json::Object SerializeShape(const layout::Program& program,
       {.K = "key", .V = ""},
       {.K = "nullable", .V = type->nullable},
   };
+  const auto describe_origin = [&](const std::string& key) {
+    const auto& origin = program.nominals.at(key);
+    result["module"] = origin.module;
+    result["declaration"] = origin.name;
+    llvm::json::Array arguments;
+    for (const auto& argument : origin.arguments) {
+      arguments.push_back(SerializeShape(program, argument));
+    }
+    result["arguments"] = std::move(arguments);
+  };
   using Kind = layout::Type::Kind;
   switch (type->kind) {
     case Kind::Instance:
@@ -107,28 +106,14 @@ llvm::json::Object SerializeShape(const layout::Program& program,
       const auto& nominal = program.classes.at(type->index);
       result["key"] = nominal.native_key.empty() ? nominal.name : nominal.native_key;
       if (nominal.kind != layout::Class::Kind::Host) {
-        const auto& origin = program.nominals.at(nominal.name);
-        result["module"] = origin.module;
-        result["declaration"] = origin.name;
-        llvm::json::Array arguments;
-        for (const auto& argument : origin.arguments) {
-          arguments.push_back(SerializeShape(program, argument));
-        }
-        result["arguments"] = std::move(arguments);
+        describe_origin(nominal.name);
       }
       break;
     }
     case Kind::Interface: {
       const auto& key = program.interfaces.at(type->index);
-      const auto& origin = program.nominals.at(key);
       result["key"] = key;
-      result["module"] = origin.module;
-      result["declaration"] = origin.name;
-      llvm::json::Array arguments;
-      for (const auto& argument : origin.arguments) {
-        arguments.push_back(SerializeShape(program, argument));
-      }
-      result["arguments"] = std::move(arguments);
+      describe_origin(key);
       break;
     }
     case Kind::Array:
@@ -257,8 +242,10 @@ std::string RegistrationNamespace(std::string_view module) {
 
 llvm::json::Object Serialize(const Module& module) {
   llvm::json::Object inputs;
+  llvm::json::Array paths;
   for (const auto& [path, fingerprint] : module.input_fingerprints) {
     inputs[path] = fingerprint;
+    paths.push_back(path);
   }
   llvm::json::Array classes;
   for (const auto& type : module.classes) {
@@ -284,7 +271,7 @@ llvm::json::Object Serialize(const Module& module) {
       {.K = "clang_version", .V = module.clang_version},
       {.K = "directory", .V = module.directory},
       {.K = "arguments", .V = llvm::json::Array(module.arguments)},
-      {.K = "inputs", .V = llvm::json::Array(module.inputs)},
+      {.K = "inputs", .V = std::move(paths)},
       {.K = "input_fingerprints", .V = std::move(inputs)},
       {.K = "classes", .V = std::move(classes)},
   };

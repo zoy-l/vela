@@ -137,10 +137,10 @@ class SemanticIndex final {
     std::string path;
     std::string_view text;
     SourceLineIndex lines;
-    std::vector<frontend::Token> tokens;
-    std::vector<frontend::SourceComment> comments;
+    std::span<const frontend::Token> tokens;
+    std::span<const frontend::SourceComment> comments;
     std::vector<std::size_t> closing;
-    std::vector<frontend::Program::Import> imports;
+    std::span<const frontend::Program::Import> imports;
   };
   struct Scope final {
     std::uint32_t source = 0;
@@ -196,16 +196,15 @@ class SemanticIndex final {
                                                   Symbol::Role role);
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
+  [[nodiscard]] Scope ComputeExtent(const frontend::Statement& statement) const;
   std::size_t AddSymbol(SourceLocation location, CompletionKind kind, std::string detail);
-  template <class Declaration>
-  std::size_t DeclareSymbol(const Declaration& declaration,
-                            CompletionKind kind,
-                            const std::string& detail);
-  template <class Declaration>
+  template <class Declaration, class Detail>
+  std::size_t DeclareSymbol(const Declaration& declaration, CompletionKind kind, Detail detail);
+  template <class Declaration, class Detail>
   std::size_t DeclareMember(std::string_view owner,
                             const Declaration& declaration,
                             CompletionKind kind,
-                            const std::string& detail);
+                            Detail detail);
   void AddReference(SourceLocation location,
                     std::string_view name,
                     const frontend::Expression* expression = nullptr);
@@ -238,30 +237,36 @@ class SemanticIndex final {
   [[nodiscard]] Completion SpecializedCompletion(std::string_view owner,
                                                  const Symbol& symbol,
                                                  std::string_view name) const;
-  void DeclareLocal(const void* node,
-                    SourceLocation location,
-                    std::string detail,
-                    Scope scope,
-                    std::size_t available);
+  std::optional<std::size_t> DeclareLocal(const void* node,
+                                          SourceLocation location,
+                                          std::string detail,
+                                          Scope scope,
+                                          std::size_t available);
   [[nodiscard]] Receiver ReceiverFor(const frontend::Expression& expression) const;
-  [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver) const;
+  [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver,
+                                                          std::string_view prefix = {}) const;
   void AddAsyncCompletions(std::vector<Completion>& result,
                            const frontend::TypeDescriptor& type,
-                           frontend::MemberStorage storage) const;
+                           frontend::MemberStorage storage,
+                           std::string_view prefix) const;
   void AddContainerCompletions(std::vector<Completion>& result,
-                               const frontend::TypeDescriptor& type) const;
+                               const frontend::TypeDescriptor& type,
+                               std::string_view prefix) const;
   [[nodiscard]] absl::flat_hash_map<std::string, Completion> VisibleLocals(
-      std::size_t offset) const;
+      std::size_t offset,
+      std::string_view prefix) const;
   [[nodiscard]] std::vector<Completion> QualifiedCompletions(
       std::size_t token,
       const absl::flat_hash_map<std::string, Completion>& locals) const;
   void IndexExpression(const frontend::Expression& expression);
-  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindCallParameters(
+  void IndexMemberExpression(const frontend::Expression& expression);
+  void VisitCallArguments(const frontend::Expression& expression, const Scope& scope);
+  [[nodiscard]] std::vector<Completion> ScopeCompletions(std::size_t offset,
+                                                         std::string_view prefix) const;
+  [[nodiscard]] const frontend::FunctionDescriptor* FindCallParameters(
       std::size_t callee_offset) const;
-  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindMemberValueParameters(
+  [[nodiscard]] const frontend::FunctionDescriptor* FindMemberValueParameters(
       const frontend::Expression& expression) const;
-  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindMemberCallParameters(
-      const frontend::Expression& call) const;
   [[nodiscard]] std::optional<std::uint32_t> ImportSource(
       const frontend::Program::Import& imported) const;
 
@@ -281,13 +286,13 @@ class SemanticIndex final {
   absl::flat_hash_map<std::uint32_t, std::size_t> bindings_;
   absl::flat_hash_map<Key, Receiver> receivers_;
   absl::flat_hash_map<Key, const frontend::Expression*> calls_;
-  absl::flat_hash_map<Key, std::uint32_t> type_parameters_;
   absl::flat_hash_map<frontend::TypeParameterId, std::size_t> type_parameter_symbols_;
   absl::flat_hash_map<std::size_t, std::uint32_t> import_targets_;
   absl::flat_hash_map<std::string, std::uint32_t> prefixes_;
   std::vector<std::vector<std::size_t>> exports_;
   std::vector<std::size_t> visible_;
   std::vector<Local> locals_;
+  mutable absl::flat_hash_map<const frontend::Statement*, Scope> extents_;
   enum class IndexPhase : std::uint8_t { SourceTypes, Checked, Definitions };
   IndexPhase phase_ = IndexPhase::SourceTypes;
   std::string context_class_;

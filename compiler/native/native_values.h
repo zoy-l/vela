@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include "base/execution_status.h"
+#include "base/layout_description.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
@@ -17,6 +18,7 @@ class Value;
 class ConstantInt;
 class Module;
 class Function;
+class LoadInst;
 }  // namespace llvm
 
 namespace vela::compiler::native {
@@ -32,6 +34,7 @@ inline constexpr std::uint64_t kMaximumNativeStackBytes = 4096;
 bool IsScalar(const SourceType& type);
 bool IsReferenceKind(Kind kind);
 bool HasValidity(const SourceType& type);
+bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts);
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind);
 llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type);
 llvm::StructType* NativeRecordType(llvm::LLVMContext& context);
@@ -47,6 +50,12 @@ llvm::Value* LoadImport(Builder& builder,
                         std::uint32_t function);
 llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
+llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
+llvm::Value* MakeOptional(Builder& builder,
+                          llvm::Value* present,
+                          llvm::Value* payload,
+                          const SourceType& type);
+void MarkInvariant(llvm::LoadInst& load);
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType& type);
 llvm::ConstantInt* Status(Builder& builder, ExecutionStatus status);

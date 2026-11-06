@@ -5,7 +5,9 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include "base/utf8.h"
@@ -71,25 +73,56 @@ constexpr auto kKeywords = std::to_array<std::pair<std::string_view, TokenKind>>
 const absl::flat_hash_map<std::string_view, TokenKind> kKeywordKinds(kKeywords.begin(),
                                                                      kKeywords.end());
 
-bool IsIdentifierStart(char character) {
-  const auto value = static_cast<unsigned char>(character);
-  return std::isalpha(value) != 0 || character == '_';
-}
-
-bool IsIdentifierPart(char character) {
-  const auto value = static_cast<unsigned char>(character);
-  return std::isalnum(value) != 0 || character == '_';
-}
-
 bool IsDigit(char character) {
   const auto value = static_cast<unsigned char>(character);
   return std::isdigit(value) != 0;
+}
+
+std::optional<std::uint32_t> HexDigit(char character) {
+  if (character >= '0' && character <= '9') {
+    return static_cast<std::uint32_t>(character - '0');
+  }
+  if (character >= 'a' && character <= 'f') {
+    return static_cast<std::uint32_t>(character - 'a') + kHexLetterOffset;
+  }
+  if (character >= 'A' && character <= 'F') {
+    return static_cast<std::uint32_t>(character - 'A') + kHexLetterOffset;
+  }
+  return std::nullopt;
 }
 
 }  // namespace
 
 std::span<const std::pair<std::string_view, TokenKind>> Keywords() noexcept {
   return kKeywords;
+}
+
+TokenKind IdentifierKind(std::string_view name) {
+  const auto keyword = kKeywordKinds.find(name);
+  return keyword == kKeywordKinds.end() ? TokenKind::Identifier : keyword->second;
+}
+
+std::string QuoteStringLiteral(std::string_view text) {
+  constexpr std::string_view kHex = "0123456789abcdef";
+  constexpr unsigned char kHexDigitMask = 0x0f;
+  std::string result = "'";
+  for (const char character : text) {
+    const auto byte = static_cast<unsigned char>(character);
+    constexpr unsigned char kFirstPrintable = 0x20;
+    constexpr unsigned char kDelete = 0x7f;
+    if (byte < kFirstPrintable || byte == kDelete) {
+      result += "\\x";
+      result += kHex[byte >> 4U];
+      result += kHex[byte & kHexDigitMask];
+    } else {
+      if (character == '\\' || character == '\'' || character == '$') {
+        result += '\\';
+      }
+      result += character;
+    }
+  }
+  result += '\'';
+  return result;
 }
 
 LexResult Lexer::Tokenize() {
@@ -385,8 +418,7 @@ void Lexer::ScanIdentifier() {
     Advance();
   }
   const std::string_view text = source_.substr(start, current_ - start);
-  const auto keyword = kKeywordKinds.find(text);
-  AddToken(keyword == kKeywordKinds.end() ? TokenKind::Identifier : keyword->second, start);
+  AddToken(IdentifierKind(text), start);
 }
 
 void Lexer::ScanNumber() {
@@ -428,19 +460,12 @@ void Lexer::ScanNumber() {
 
 void Lexer::ScanRadixInteger(std::size_t start, IntegerRadix radix) {
   const auto digits_start = current_;
-  const auto base = static_cast<int>(radix);
+  const auto base = static_cast<std::uint32_t>(radix);
   bool valid = true;
   while (IsIdentifierPart(Peek())) {
     const char character = Advance();
-    int digit = base;
-    if (character >= '0' && character <= '9') {
-      digit = character - '0';
-    } else if (character >= 'a' && character <= 'f') {
-      digit = character - 'a' + static_cast<int>(kHexLetterOffset);
-    } else if (character >= 'A' && character <= 'F') {
-      digit = character - 'A' + static_cast<int>(kHexLetterOffset);
-    }
-    valid = valid && digit < base;
+    const auto digit = HexDigit(character);
+    valid = valid && digit && *digit < base;
   }
   if (current_ == digits_start) {
     AddDiagnostic(token_location_, "integer radix prefix requires digits");
@@ -608,18 +633,12 @@ std::pair<std::uint32_t, std::size_t> Lexer::ReadHexDigits(std::size_t limit) {
   std::size_t digits = 0;
   while (!IsAtEnd() && digits < limit) {
     const char character = Peek();
-    std::uint32_t digit = 0;
-    if (character >= '0' && character <= '9') {
-      digit = static_cast<std::uint32_t>(character - '0');
-    } else if (character >= 'a' && character <= 'f') {
-      digit = static_cast<std::uint32_t>(character - 'a') + kHexLetterOffset;
-    } else if (character >= 'A' && character <= 'F') {
-      digit = static_cast<std::uint32_t>(character - 'A') + kHexLetterOffset;
-    } else {
+    const auto digit = HexDigit(character);
+    if (!digit) {
       break;
     }
     Advance();
-    point = (point << 4) | digit;
+    point = (point << 4) | *digit;
     ++digits;
   }
   return {point, digits};

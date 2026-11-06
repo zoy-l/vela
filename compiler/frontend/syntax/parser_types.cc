@@ -15,21 +15,22 @@
 namespace vela::frontend {
 
 std::optional<Program::TypeAlias> Parser::ParseTypeAlias() {
-  const auto name = Expect(TokenKind::Identifier, "expected type alias name");
-  if (!name) {
+  const auto* const name = Expect(TokenKind::Identifier, "expected type alias name");
+  if (name == nullptr) {
     return std::nullopt;
   }
   auto type_parameters = ParseTypeParameters();
-  if (!type_parameters || !Expect(TokenKind::Equal, "expected '=' after type alias name")) {
+  if (!type_parameters ||
+      (Expect(TokenKind::Equal, "expected '=' after type alias name") == nullptr)) {
     return std::nullopt;
   }
-  const auto target = ParseType();
-  if (!target || !Expect(TokenKind::Semicolon, "expected ';' after type alias")) {
+  auto target = ParseType();
+  if (!target || (Expect(TokenKind::Semicolon, "expected ';' after type alias") == nullptr)) {
     return std::nullopt;
   }
   return Program::TypeAlias{
       .name = name->lexeme,
-      .target = *target,
+      .target = std::move(*target),
       .location = name->location,
       .type_parameters = std::move(*type_parameters),
   };
@@ -42,8 +43,8 @@ std::optional<std::vector<TypeParameter>> Parser::ParseTypeParameters() {
   }
   AnnotatePrevious(TokenRole::TypeDelimiter);
   while (true) {
-    const auto name = Expect(TokenKind::Identifier, "expected generic parameter name");
-    if (!name) {
+    const auto* const name = Expect(TokenKind::Identifier, "expected generic parameter name");
+    if (name == nullptr) {
       return std::nullopt;
     }
     TypeParameter parameter{
@@ -75,7 +76,7 @@ std::optional<std::vector<TypeParameter>> Parser::ParseTypeParameters() {
 std::vector<TypeName> Parser::ParseTypeArguments() {
   std::vector<TypeName> arguments;
   std::size_t depth = 1;
-  if (!Expect(TokenKind::Less, "expected '<' before type arguments")) {
+  if (Expect(TokenKind::Less, "expected '<' before type arguments") == nullptr) {
     return arguments;
   }
   AnnotatePrevious(TokenRole::TypeDelimiter);
@@ -163,8 +164,8 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
     }
     const auto kind = Match(TokenKind::Question) ? TypeName::Kind::Nullable : TypeName::Kind::Array;
     if (kind == TypeName::Kind::Array &&
-        (!Expect(TokenKind::LeftBracket, "expected '[' in array type") ||
-         !Expect(TokenKind::RightBracket, "expected ']' in array type"))) {
+        ((Expect(TokenKind::LeftBracket, "expected '[' in array type") == nullptr) ||
+         (Expect(TokenKind::RightBracket, "expected ']' in array type") == nullptr))) {
       return std::nullopt;
     }
     TypeName wrapper{
@@ -188,8 +189,9 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
 std::optional<std::string> Parser::ParseQualifiedTypeName() {
   auto name = Advance().lexeme;
   while (Match(TokenKind::Dot)) {
-    const auto member = Expect(TokenKind::Identifier, "expected qualified type name after '.'");
-    if (!member) {
+    const auto* const member =
+        Expect(TokenKind::Identifier, "expected qualified type name after '.'");
+    if (member == nullptr) {
       return std::nullopt;
     }
     name += '.' + member->lexeme;
@@ -213,7 +215,7 @@ std::optional<TypeName> Parser::ParseParenthesizedType() {
       break;
     }
   }
-  if (!Expect(TokenKind::RightParen, "expected ')' after parameter types")) {
+  if (Expect(TokenKind::RightParen, "expected ')' after parameter types") == nullptr) {
     return std::nullopt;
   }
   if (Match(TokenKind::Arrow)) {
@@ -239,7 +241,7 @@ void Parser::IndexTypeApplications() {
   type_application_ends_.assign(tokens_.size(), tokens_.size());
   std::vector<std::size_t> opening;
   for (std::size_t index = 0; index < tokens_.size(); ++index) {
-    const auto kind = tokens_.subspan(index).front().kind;
+    const auto kind = tokens_[index].kind;
     if (kind == TokenKind::Less) {
       opening.push_back(index);
       continue;
@@ -275,7 +277,7 @@ bool Parser::IsTypeApplication() {
   if (end == tokens_.size()) {
     return false;
   }
-  const auto next = tokens_.subspan(end + 1).front().kind;
+  const auto next = tokens_[end + 1].kind;
   return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
          next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
          next == TokenKind::RightParen || next == TokenKind::RightBracket;
@@ -284,7 +286,7 @@ bool Parser::IsTypeApplication() {
 bool Parser::MatchTypeGreater() {
   const auto kind = Peek().kind;
   if (kind == TokenKind::Greater) {
-    auto& token = tokens_.subspan(current_).front();
+    auto& token = tokens_[current_];
     token.type_closing_length = Peek().offset - token.offset + 1;
     Advance();
     return true;
@@ -310,7 +312,7 @@ bool Parser::MatchTypeGreater() {
       return false;
   }
   auto remainder = Peek();
-  auto& token = tokens_.subspan(current_).front();
+  auto& token = tokens_[current_];
   token.type_closing_length = remainder.offset - token.offset + 1;
   previous_split_ = remainder;
   previous_split_->kind = TokenKind::Greater;

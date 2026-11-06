@@ -34,8 +34,7 @@ llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth) {
   auto* word = builder_.getInt64Ty();
   auto* stack_limit = builder_.CreateLoad(
       word, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionStackLimit));
-  stack_limit->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                           llvm::MDNode::get(module_.getContext(), {}));
+  MarkInvariant(*stack_limit);
   auto* stack_position = builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress,
                                                   {builder_.getPtrTy()}, {builder_.getInt32(0)});
   auto* stack_available =
@@ -133,6 +132,11 @@ void FunctionEmitter::EmitFrameEntry() {
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
     trace_frame_ = frame;
+    InitializeTraceFrame(frame);
+    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                         ByteAddress(frame, offsetof(NativeTraceFrame, position) +
+                                                offsetof(runtime::TracePosition, function)));
+    InitializeDebugValues();
     Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
     trace_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
     builder_.CreateStore(builder_.getFalse(), trace_initialized_);
@@ -165,6 +169,16 @@ void FunctionEmitter::EmitFrameEntry() {
   cleanup.CreateRet(status_);
 }
 
+void FunctionEmitter::InitializeTraceFrame(llvm::Value* frame) {
+  using runtime::NativeTraceFrame;
+  builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
+  auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
+  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
+  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
+  builder_.CreateStore(builder_.getInt64(0),
+                       ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
+}
+
 void FunctionEmitter::PrepareTraceFrame() {
   using runtime::NativeMemoryLayout;
   using runtime::NativeTraceFrame;
@@ -182,19 +196,9 @@ void FunctionEmitter::PrepareTraceFrame() {
   auto* previous = builder_.CreateLoad(pointer, frame_address);
   auto* frame = trace_frame_;
   builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
-  builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
-  auto* null_pointer = llvm::ConstantPointerNull::get(pointer);
-  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
-  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
-  builder_.CreateStore(builder_.getInt64(0),
-                       ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
-  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                       ByteAddress(frame, offsetof(NativeTraceFrame, position) +
-                                              offsetof(runtime::TracePosition, function)));
   builder_.CreateStore(frame, frame_address);
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
   builder_.CreateStore(builder_.CreateAdd(entry_depth_, builder_.getInt64(1)), depth_address);
-  InitializeDebugValues();
   builder_.CreateStore(builder_.getTrue(), trace_initialized_);
   builder_.CreateBr(ready);
   builder_.SetInsertPoint(ready);
@@ -226,14 +230,8 @@ void FunctionEmitter::CacheImports() {
     import_frame_ = frame;
     // 封闭调用没有宿主检查点和调试槽；同一调用者内的宿主调用顺序借用此帧。
     // 重入会构造新的调用者帧，不能覆盖仍在执行的外层宿主帧。
+    InitializeTraceFrame(frame);
     builder_.CreateStore(trace_frame_, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
-    builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
-    auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
-    builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
-    builder_.CreateStore(null_pointer,
-                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
-    builder_.CreateStore(builder_.getInt64(0),
-                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
   }
 }
 
@@ -252,7 +250,6 @@ void FunctionEmitter::CacheFields() {
         caches, {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(function_index_))});
     return;
   }
-  const auto fields = FindFieldTargets(program_);
   absl::flat_hash_map<ir::ClassId, llvm::Value*> classes;
   auto layouts = module_.getOrInsertFunction(runtime::kNativeDirectFieldLayoutsSymbol,
                                              builder_.getPtrTy(), builder_.getPtrTy());
@@ -266,14 +263,13 @@ void FunctionEmitter::CacheFields() {
     if (field_layouts_.contains(declaration)) {
       continue;
     }
-    const auto target = fields.at(declaration);
+    const auto target = field_targets_.at(declaration);
     const auto [owner, inserted] = classes.try_emplace(target.owner, nullptr);
     if (inserted) {
       auto* address = builder_.CreateConstGEP1_64(builder_.getPtrTy(), table, target.owner);
       auto* layout = builder_.CreateLoad(builder_.getPtrTy(), address);
       // 具体函数版本的布局表不可变；对象迁移只改变对象的 layout 和字段块。
-      layout->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                          llvm::MDNode::get(module_.getContext(), {}));
+      MarkInvariant(*layout);
       owner->second = layout;
     }
     field_layouts_.emplace(declaration,

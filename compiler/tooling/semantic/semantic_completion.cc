@@ -18,14 +18,13 @@
 #include "base/member.h"
 #include "compiler/frontend/builtins/async_builtins.h"
 #include "compiler/frontend/builtins/builtins.h"
-#include "compiler/frontend/builtins/byte_builtins.h"
-#include "compiler/frontend/builtins/regexp_builtins.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/tooling/documentation/builtin_documentation.h"
+#include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
 namespace {
@@ -34,7 +33,7 @@ using Kind = frontend::TypeDescriptor::Kind;
 
 void AddPropertyCompletion(std::vector<Completion>& result,
                            std::string_view name,
-                           std::string detail = std::string(frontend::kIntTypeName)) {
+                           std::string detail) {
   result.push_back({
       .label = std::string(name),
       .detail = std::move(detail),
@@ -54,64 +53,66 @@ void AddMethodCompletion(std::vector<Completion>& result,
   });
 }
 
-void AddBuiltins(std::vector<Completion>& result, Kind kind) {
+void AddBuiltins(std::vector<Completion>& result, Kind kind, std::string_view prefix = {}) {
   if (kind == Kind::Invalid) {
-    result.push_back({
-        .label = std::string(frontend::kSleepFunctionName),
-        .detail = BuiltinDetail(frontend::DescribeAsyncMember(
-            *frontend::FindAsyncMember(Kind::Invalid, frontend::MemberStorage::Static,
-                                       frontend::kSleepFunctionName),
-            {})),
-        .kind = CompletionKind::Function,
-        .documentation = std::string(BuiltinDocumentation(kind, frontend::kSleepFunctionName)),
-    });
-    result.push_back({
-        .label = "print",
-        .detail = "(value): void",
-        .kind = CompletionKind::Function,
-        .documentation = std::string(BuiltinDocumentation(kind, "print")),
-    });
-  }
-  constexpr auto kNames = std::to_array<std::string_view>({
-      frontend::kMutableStringTypeName,
-      frontend::kRegExpTypeName,
-      "toString",
-      "toInt",
-      "toDouble",
-      "append",
-      "slice",
-      "indexOf",
-      "includes",
-      "startsWith",
-      "endsWith",
-      "codePoints",
-      "graphemes",
-      "graphemeSlice",
-      "toLowerCase",
-      "toUpperCase",
-  });
-  for (const auto name : kNames) {
-    if (const auto builtin = frontend::FindBuiltin(kind, name)) {
-      auto completion_kind =
-          kind == Kind::Invalid ? CompletionKind::Function : CompletionKind::Method;
-      if (*builtin == Builtin::NewMutableString || *builtin == Builtin::NewRegExp) {
-        completion_kind = CompletionKind::Class;
-      }
+    if (frontend::kSleepFunctionName.starts_with(prefix)) {
       result.push_back({
-          .label = std::string(name),
-          .detail = completion_kind == CompletionKind::Class
-                        ? std::string(BuiltinTypeDetail(name))
-                        : BuiltinDetail(frontend::BuiltinSignature(*builtin)),
-          .kind = completion_kind,
-          .documentation = std::string(BuiltinDocumentation(kind, name)),
+          .label = std::string(frontend::kSleepFunctionName),
+          .detail = BuiltinDetail(frontend::DescribeAsyncMember(
+              *frontend::FindAsyncMember(Kind::Invalid, frontend::MemberStorage::Static,
+                                         frontend::kSleepFunctionName),
+              {})),
+          .kind = CompletionKind::Function,
+          .documentation = std::string(BuiltinDocumentation(kind, frontend::kSleepFunctionName)),
       });
     }
+    if (std::string_view("print").starts_with(prefix)) {
+      result.push_back({
+          .label = "print",
+          .detail = "(value): void",
+          .kind = CompletionKind::Function,
+          .documentation = std::string(BuiltinDocumentation(kind, "print")),
+      });
+    }
+  }
+  if (kind == Kind::Invalid) {
+    for (const auto type : frontend::kBuiltinTypeNames) {
+      if (!type.starts_with(prefix)) {
+        continue;
+      }
+      const auto detail = BuiltinTypeDetail(type);
+      if (detail.empty()) {
+        continue;
+      }
+      result.push_back({
+          .label = std::string(type),
+          .detail = std::string(detail),
+          .kind = detail.starts_with("class ") ? CompletionKind::Class : CompletionKind::Type,
+          .documentation = std::string(BuiltinDocumentation(kind, type)),
+      });
+    }
+    return;
+  }
+  for (const auto& [name, builtin] : frontend::BuiltinMethods(kind)) {
+    if (!name.starts_with(prefix)) {
+      continue;
+    }
+    result.push_back({
+        .label = std::string(name),
+        .detail = BuiltinDetail(frontend::BuiltinSignature(builtin)),
+        .kind = CompletionKind::Method,
+        .documentation = std::string(BuiltinDocumentation(kind, name)),
+    });
   }
 }
 
 void AddArrayElementMethods(std::vector<Completion>& result,
-                            const frontend::TypeDescriptor& element) {
+                            const frontend::TypeDescriptor& element,
+                            std::string_view prefix) {
   for (const auto& [name, builtin] : frontend::ArrayMethods()) {
+    if (!name.starts_with(prefix)) {
+      continue;
+    }
     result.push_back({
         .label = std::string(name),
         .detail = BuiltinDetail(frontend::ArrayMethodSignature(builtin, element)),
@@ -119,7 +120,7 @@ void AddArrayElementMethods(std::vector<Completion>& result,
         .documentation = {},
     });
   }
-  if (frontend::CanFormatString(element)) {
+  if (std::string_view("join").starts_with(prefix) && frontend::CanFormatString(element)) {
     result.push_back({
         .label = "join",
         .detail = BuiltinDetail(frontend::BuiltinSignature(Builtin::ArrayJoin)),
@@ -128,46 +129,28 @@ void AddArrayElementMethods(std::vector<Completion>& result,
     });
   }
   for (const auto& [name, algorithm] : frontend::ArrayAlgorithms()) {
+    if (!name.starts_with(prefix)) {
+      continue;
+    }
     auto accumulator = element;
     if (algorithm == ArrayAlgorithm::Reduce || algorithm == ArrayAlgorithm::Map) {
       accumulator.name = "R";
     }
     result.push_back({
         .label = std::string(name),
-        .detail = BuiltinDetail(frontend::ArrayAlgorithmSignature(algorithm, element, accumulator)),
+        .detail = BuiltinDetail(frontend::ArrayAlgorithmSignature(
+            algorithm, frontend::ArrayCallbackSignature(algorithm, element, accumulator))),
         .kind = CompletionKind::Method,
         .documentation = {},
     });
   }
 }
 
-void AddByteCompletions(std::vector<Completion>& result, Kind kind) {
-  for (const auto& [name, builtin] : frontend::ByteMethods(kind)) {
-    result.push_back({
-        .label = std::string(name),
-        .detail = BuiltinDetail(frontend::BuiltinSignature(builtin)),
-        .kind = CompletionKind::Method,
-        .documentation = {},
-    });
-  }
-  result.push_back({
-      .label = kind == Kind::ByteArray ? "length" : "byteLength",
-      .detail = std::string(frontend::kIntTypeName),
-      .kind = CompletionKind::Property,
-      .documentation = {},
-  });
-}
-
-void AddRegExpCompletions(std::vector<Completion>& result, Kind kind) {
-  for (const auto& [name, builtin] : frontend::RegExpMethods(kind)) {
-    result.push_back({
-        .label = std::string(name),
-        .detail = BuiltinDetail(frontend::BuiltinSignature(builtin)),
-        .kind = CompletionKind::Method,
-        .documentation = std::string(BuiltinDocumentation(kind, name)),
-    });
-  }
-  for (const auto& [name, builtin] : frontend::RegExpProperties(kind)) {
+void AddBuiltinProperties(std::vector<Completion>& result, Kind kind, std::string_view prefix) {
+  for (const auto& [name, builtin] : frontend::BuiltinProperties(kind)) {
+    if (!name.starts_with(prefix)) {
+      continue;
+    }
     result.push_back({
         .label = std::string(name),
         .detail = std::string(frontend::BuiltinSignature(builtin).return_type.name),
@@ -197,11 +180,11 @@ std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token
   }
   std::vector<Completion> candidates;
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
-    candidates = MemberCompletions(receiver->second);
+    candidates = MemberCompletions(receiver->second, token.lexeme);
   } else {
     const auto& tokens = sources_.front().tokens;
     const auto index = static_cast<std::size_t>(&token - tokens.data());
-    if (index > 0 && tokens.at(index - 1).kind == frontend::TokenKind::Dot) {
+    if (index > 0 && tokens[index - 1].kind == frontend::TokenKind::Dot) {
       return std::nullopt;
     }
     if (const auto detail = BuiltinTypeDetail(token.lexeme); !detail.empty()) {
@@ -212,7 +195,7 @@ std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token
           .documentation = std::string(BuiltinDocumentation(Kind::Invalid, token.lexeme)),
       };
     }
-    AddBuiltins(candidates, Kind::Invalid);
+    AddBuiltins(candidates, Kind::Invalid, token.lexeme);
   }
   const auto found = std::ranges::find(candidates, token.lexeme, &Completion::label);
   return found == candidates.end() ? std::nullopt : std::optional(*found);
@@ -246,7 +229,8 @@ Completion SemanticIndex::SpecializedCompletion(std::string_view owner,
   return completion;
 }
 
-std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver) const {
+std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver,
+                                                         std::string_view prefix) const {
   std::vector<Completion> result;
   if (receiver.type.nullable || receiver.type.kind == Kind::Invalid) {
     return result;
@@ -258,7 +242,10 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
       continue;
     }
     for (const auto& [name, symbol_id] : members->second) {
-      const auto& symbol = symbols_.at(symbol_id);
+      if (!name.starts_with(prefix)) {
+        continue;
+      }
+      const auto& symbol = symbols_[symbol_id];
       if (symbol.storage == receiver.storage &&
           (symbol.visibility == frontend::Visibility::Public || receiver.context_class == owner) &&
           visible.insert(symbol.completion.label).second) {
@@ -267,15 +254,10 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
     }
   }
   if (receiver.storage == frontend::MemberStorage::Static) {
-    AddAsyncCompletions(result, receiver.type, frontend::MemberStorage::Static);
-    for (auto& completion : result) {
-      if (completion.documentation.empty()) {
-        completion.documentation = BuiltinDocumentation(receiver.type.kind, completion.label);
-      }
-    }
-    return result;
+    AddAsyncCompletions(result, receiver.type, frontend::MemberStorage::Static, prefix);
+  } else {
+    AddContainerCompletions(result, receiver.type, prefix);
   }
-  AddContainerCompletions(result, receiver.type);
   for (auto& completion : result) {
     if (completion.documentation.empty()) {
       completion.documentation = BuiltinDocumentation(receiver.type.kind, completion.label);
@@ -286,7 +268,8 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
 
 void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
                                         const frontend::TypeDescriptor& type,
-                                        frontend::MemberStorage storage) const {
+                                        frontend::MemberStorage storage,
+                                        std::string_view prefix) const {
   frontend::TypeDescriptor element{.kind = Kind::Parameter, .name = "T", .is_abstract = true};
   if (storage == frontend::MemberStorage::Instance &&
       (type.kind == Kind::Future || type.kind == Kind::Completer)) {
@@ -297,7 +280,8 @@ void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
     element = found->second.front();
   }
   for (const auto& member : frontend::AsyncMembers()) {
-    if (member.receiver != type.kind || member.storage != storage) {
+    if (member.receiver != type.kind || member.storage != storage ||
+        !member.name.starts_with(prefix)) {
       continue;
     }
     const auto signature = frontend::DescribeAsyncMember(member, element);
@@ -310,47 +294,26 @@ void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
 }
 
 void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
-                                            const frontend::TypeDescriptor& type) const {
+                                            const frontend::TypeDescriptor& type,
+                                            std::string_view prefix) const {
   const auto kind = type.kind;
-  AddRegExpCompletions(result, kind);
-  if (!frontend::ByteMethods(kind).empty()) {
-    AddByteCompletions(result, kind);
-    return;
-  }
-  AddBuiltins(result, kind);
-  AddAsyncCompletions(result, type, frontend::MemberStorage::Instance);
-  if (kind == Kind::Array || kind == Kind::String) {
-    AddPropertyCompletion(result, "length");
-  }
-  if (kind == Kind::String) {
-    AddPropertyCompletion(result, "byteLength");
-    AddPropertyCompletion(result, "graphemeLength");
-  } else if (kind == Kind::Array) {
-    AddPropertyCompletion(result, "capacity");
+  AddBuiltinProperties(result, kind, prefix);
+  AddBuiltins(result, kind, prefix);
+  AddAsyncCompletions(result, type, frontend::MemberStorage::Instance, prefix);
+  if (kind == Kind::Array) {
     const auto element = model_.array_elements.find(type.name);
     if (element != model_.array_elements.end()) {
-      AddArrayElementMethods(result, element->second);
+      AddArrayElementMethods(result, element->second, prefix);
     }
   } else if (kind == Kind::Set || kind == Kind::Map) {
     const auto arguments = model_.generic_arguments.find(type.name);
     if (arguments == model_.generic_arguments.end()) {
       return;
     }
-    AddPropertyCompletion(result, "size");
-    constexpr auto kMethods = std::to_array<std::string_view>({
-        "has",
-        "delete",
-        "clear",
-        "values",
-        "add",
-        "union",
-        "intersection",
-        "difference",
-        "keys",
-        "get",
-        "set",
-    });
-    for (const auto name : kMethods) {
+    for (const auto& [name, builtin] : frontend::CollectionMethods(kind)) {
+      if (!name.starts_with(prefix)) {
+        continue;
+      }
       if (const auto method = frontend::ResolveCollectionBuiltin(type, arguments->second, name)) {
         AddMethodCompletion(result, name, BuiltinDetail(method->signature));
       }
@@ -359,7 +322,8 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
 }
 
 absl::flat_hash_map<std::string, Completion> SemanticIndex::VisibleLocals(
-    std::size_t offset) const {
+    std::size_t offset,
+    std::string_view prefix) const {
   std::vector<const Local*> locals;
   for (const auto& local : locals_) {
     const auto& scope = local.scope;
@@ -373,8 +337,10 @@ absl::flat_hash_map<std::string, Completion> SemanticIndex::VisibleLocals(
   });
   absl::flat_hash_map<std::string, Completion> selected;
   for (const auto* local : locals) {
-    const auto& completion = symbols_.at(local->symbol).completion;
-    selected.insert_or_assign(completion.label, completion);
+    const auto& completion = symbols_[local->symbol].completion;
+    if (completion.label.starts_with(prefix)) {
+      selected.insert_or_assign(completion.label, completion);
+    }
   }
   return selected;
 }
@@ -383,58 +349,36 @@ std::vector<Completion> SemanticIndex::QualifiedCompletions(
     std::size_t token_index,
     const absl::flat_hash_map<std::string, Completion>& locals) const {
   const auto& tokens = sources_.front().tokens;
-  const auto& token = tokens.at(token_index);
+  const auto& token = tokens[token_index];
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
     return MemberCompletions(receiver->second);
   }
-  if (token_index < 2 || tokens.at(token_index - 2).kind != frontend::TokenKind::Identifier) {
+  if (token_index < 2 || tokens[token_index - 2].kind != frontend::TokenKind::Identifier) {
     return {};
   }
-  const auto& name = tokens.at(token_index - 2).lexeme;
+  const auto& name = tokens[token_index - 2].lexeme;
   const auto imported = prefixes_.find(name);
   if (imported == prefixes_.end() || locals.contains(name)) {
     return {};
   }
   std::vector<Completion> result;
   for (const auto symbol_id : exports_.at(imported->second)) {
-    result.push_back(symbols_.at(symbol_id).completion);
+    result.push_back(symbols_[symbol_id].completion);
   }
   return result;
 }
 
-std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
-  if (sources_.empty()) {
-    return {};
-  }
-  const auto& source = sources_.front();
-  if (std::ranges::any_of(source.comments, [offset](const auto& comment) {
-        return offset >= comment.offset && offset <= comment.offset + comment.length;
-      })) {
-    return {};
-  }
-  const auto& tokens = source.tokens;
-  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
-  const auto current =
-      after == tokens.begin() ? 0 : static_cast<std::size_t>(std::prev(after) - tokens.begin());
-  const auto& token = tokens.at(current);
-  const auto prefix = frontend::IsMemberName(token.kind) && offset >= token.offset
-                          ? source.text.substr(token.offset, offset - token.offset)
-                          : std::string_view();
-  if (frontend::IsStringToken(token.kind)) {
-    return {};
-  }
-  std::vector<Completion> result;
-  const auto dot = current > 0 && (tokens.at(current - 1).kind == frontend::TokenKind::Dot ||
-                                   tokens.at(current - 1).kind == frontend::TokenKind::QuestionDot);
-  auto selected = VisibleLocals(offset);
-  if (dot) {
-    result = QualifiedCompletions(current, selected);
-  } else {
-    for (const auto symbol_id : visible_) {
-      const auto& completion = symbols_.at(symbol_id).completion;
+std::vector<Completion> SemanticIndex::ScopeCompletions(std::size_t offset,
+                                                        std::string_view prefix) const {
+  auto selected = VisibleLocals(offset, prefix);
+  for (const auto symbol_id : visible_) {
+    const auto& completion = symbols_[symbol_id].completion;
+    if (completion.label.starts_with(prefix)) {
       selected.try_emplace(completion.label, completion);
     }
-    for (const auto& [name, source_id] : prefixes_) {
+  }
+  for (const auto& [name, source_id] : prefixes_) {
+    if (name.starts_with(prefix)) {
       selected.try_emplace(name, Completion{
                                      .label = name,
                                      .detail = "module",
@@ -442,19 +386,26 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
                                      .documentation = {},
                                  });
     }
-    AddBuiltins(result, Kind::Invalid);
-    for (const auto& [keyword, kind] : frontend::Keywords()) {
-      if (kind == frontend::TokenKind::Void) {
-        continue;
-      }
-      result.push_back({
-          .label = std::string(keyword),
-          .detail = "keyword",
-          .kind = CompletionKind::Keyword,
-          .documentation = {},
-      });
+  }
+  std::vector<Completion> result;
+  AddBuiltins(result, Kind::Invalid, prefix);
+  for (auto& completion : result) {
+    selected.try_emplace(completion.label, std::move(completion));
+  }
+  result.clear();
+  for (const auto& [keyword, kind] : frontend::Keywords()) {
+    if (kind == frontend::TokenKind::Void || !keyword.starts_with(prefix)) {
+      continue;
     }
-    for (const auto type : frontend::kBuiltinTypeNames) {
+    result.push_back({
+        .label = std::string(keyword),
+        .detail = "keyword",
+        .kind = CompletionKind::Keyword,
+        .documentation = {},
+    });
+  }
+  for (const auto type : frontend::kBuiltinTypeNames) {
+    if (type.starts_with(prefix)) {
       selected.try_emplace(
           std::string(type),
           Completion{
@@ -464,9 +415,39 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
               .documentation = std::string(BuiltinDocumentation(Kind::Invalid, type)),
           });
     }
-    for (auto& [name, completion] : selected) {
-      result.push_back(std::move(completion));
-    }
+  }
+  for (auto& [name, completion] : selected) {
+    result.push_back(std::move(completion));
+  }
+  return result;
+}
+
+std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
+  if (sources_.empty()) {
+    return {};
+  }
+  const auto& source = sources_.front();
+  if (IsInComment(source.comments, offset)) {
+    return {};
+  }
+  const auto& tokens = source.tokens;
+  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
+  const auto current =
+      after == tokens.begin() ? 0 : static_cast<std::size_t>(std::prev(after) - tokens.begin());
+  const auto& token = tokens[current];
+  const auto prefix = frontend::IsMemberName(token.kind) && offset >= token.offset
+                          ? source.text.substr(token.offset, offset - token.offset)
+                          : std::string_view();
+  if (frontend::IsStringToken(token.kind)) {
+    return {};
+  }
+  std::vector<Completion> result;
+  const auto dot = current > 0 && (tokens[current - 1].kind == frontend::TokenKind::Dot ||
+                                   tokens[current - 1].kind == frontend::TokenKind::QuestionDot);
+  if (dot) {
+    result = QualifiedCompletions(current, VisibleLocals(offset, {}));
+  } else {
+    result = ScopeCompletions(offset, prefix);
   }
   std::erase_if(result, [prefix](const Completion& completion) -> bool {
     return !completion.label.starts_with(prefix);

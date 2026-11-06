@@ -30,7 +30,7 @@ Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expressi
         .location = expression.location,
     });
   }
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::StringInterpolate,
       .dst = result,
@@ -56,7 +56,7 @@ Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& ex
   } else if (builtin == Builtin::StringGraphemes) {
     count_builtin = Builtin::StringGraphemeLength;
   }
-  const auto count = AllocateTemporary(expression.location);
+  const auto count = AllocateRegister(expression.location);
   EmitBuiltinCall(count_builtin, count, base, expression.location);
   const auto& type = model_.expression_types.at(&expression);
   Emit({
@@ -66,7 +66,7 @@ Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& ex
       .index = RegisterArrayType(type),
       .location = expression.location,
   });
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   return {.reg = result, .type = type};
 }

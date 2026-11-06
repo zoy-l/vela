@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
@@ -34,8 +33,6 @@ class NativeImageData final {
   runtime::NativeImage image_;
 };
 
-[[nodiscard]] std::shared_ptr<NativeImageData> DescribeNativeImage(
-    const ir::Program& program,
-    std::span<const std::uint8_t> exports);
+[[nodiscard]] std::shared_ptr<NativeImageData> DescribeNativeImage(const ir::Program& program);
 
 }  // namespace vela::compiler::native

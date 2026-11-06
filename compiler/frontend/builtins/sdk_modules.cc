@@ -70,10 +70,7 @@ std::optional<std::string_view> SdkModuleSource(std::string_view identity) noexc
   return std::nullopt;
 }
 
-void BindSdkDeclarations(std::string_view identity, Program& program) {
-  if (identity != kTestModuleName && identity != kMockModuleName) {
-    return;
-  }
+void BindSdkDeclarations(Program& program) {
   for (auto& function : program.functions) {
     const auto binding = std::ranges::find(kBindings, function.name, &SDKBinding::name);
     if (binding != kBindings.end()) {

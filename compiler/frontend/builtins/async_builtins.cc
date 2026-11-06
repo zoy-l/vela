@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/async_operation.h"
@@ -28,7 +29,7 @@ constexpr auto kMembers = std::to_array<AsyncMember>({
         .receiver = Kind::Invalid,
         .storage = Storage::Static,
         .name = kSleepFunctionName,
-        .operation = Operation::Count,
+        .operation = AsyncIntrinsic::Sleep,
         .kind = MemberKind::Method,
         .parameters = {"milliseconds", {}, {}},
         .required = 1,
@@ -37,7 +38,7 @@ constexpr auto kMembers = std::to_array<AsyncMember>({
         .receiver = Kind::Future,
         .storage = Storage::Static,
         .name = "value",
-        .operation = Operation::Count,
+        .operation = AsyncIntrinsic::Value,
         .kind = MemberKind::Method,
         .parameters = {"value", {}, {}},
         .required = 1,
@@ -46,7 +47,7 @@ constexpr auto kMembers = std::to_array<AsyncMember>({
         .receiver = Kind::Future,
         .storage = Storage::Static,
         .name = "error",
-        .operation = Operation::Count,
+        .operation = AsyncIntrinsic::Error,
         .kind = MemberKind::Method,
         .parameters = {"error", {}, {}},
         .required = 1,
@@ -55,7 +56,7 @@ constexpr auto kMembers = std::to_array<AsyncMember>({
         .receiver = Kind::Future,
         .storage = Storage::Static,
         .name = "sync",
-        .operation = Operation::Count,
+        .operation = AsyncIntrinsic::Sync,
         .kind = MemberKind::Method,
         .parameters = {"computation", {}, {}},
         .required = 1,
@@ -273,11 +274,15 @@ namespace {
 FunctionDescriptor DescribeFutureFactory(const AsyncMember& member, const TypeDescriptor& element) {
   auto result = FutureType(element);
   std::vector<TypeDescriptor> parameters;
-  if (member.name == "value" || member.name == "error") {
-    parameters = {member.name == "value" ? element : kError};
-  } else if (member.name == "wait" || member.name == "race") {
+  const auto* intrinsic = std::get_if<AsyncIntrinsic>(&member.operation);
+  const auto* operation = std::get_if<Operation>(&member.operation);
+  if (intrinsic != nullptr &&
+      (*intrinsic == AsyncIntrinsic::Value || *intrinsic == AsyncIntrinsic::Error)) {
+    parameters = {*intrinsic == AsyncIntrinsic::Value ? element : kError};
+  } else if (operation != nullptr &&
+             (*operation == Operation::Wait || *operation == Operation::Race)) {
     parameters = {MakeArrayType(result)};
-    if (member.name == "wait") {
+    if (*operation == Operation::Wait) {
       result = FutureType(element.kind == Kind::Void ? element : MakeArrayType(element));
       const std::array input{element};
       parameters.push_back(kBool);
@@ -286,7 +291,7 @@ FunctionDescriptor DescribeFutureFactory(const AsyncMember& member, const TypeDe
                                                          : std::span(input))));
     }
   } else {
-    if (member.name == "delayed") {
+    if (operation != nullptr && *operation == Operation::Delayed) {
       parameters.push_back(kInt);
     }
     parameters.push_back(CallbackType(element, {}));
@@ -300,7 +305,7 @@ FunctionDescriptor DescribeFutureMethod(const AsyncMember& member, const TypeDes
   const std::array error{kError};
   auto result = FutureType(element);
   std::vector<TypeDescriptor> parameters;
-  switch (member.operation) {
+  switch (std::get<Operation>(member.operation)) {
     case Operation::Then:
       result = FutureType(output);
       parameters = {
@@ -340,7 +345,7 @@ FunctionDescriptor DescribeAsyncMember(const AsyncMember& member, const TypeDesc
   if (member.receiver == Kind::Future) {
     return DescribeFutureMethod(member, element);
   }
-  switch (member.operation) {
+  switch (std::get<Operation>(member.operation)) {
     case Operation::CompleterFuture:
       return MakeAsyncSignature(member, FutureType(element), {});
     case Operation::CompleterIsCompleted:

@@ -46,9 +46,9 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
   BuildArguments result;
   std::string_view emit = kExecutableFormat;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const std::string_view argument = arguments.subspan(index).front();
+    const std::string_view argument = arguments[index];
     if (argument == "-o" && index + 1 < arguments.size()) {
-      result.output = arguments.subspan(++index).front();
+      result.output = arguments[++index];
     } else if (argument.starts_with(kEmitOption)) {
       emit = argument.substr(kEmitOption.size());
     } else if (argument.starts_with(kExportOption)) {

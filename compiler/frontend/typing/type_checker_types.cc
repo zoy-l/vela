@@ -68,12 +68,7 @@ TypeChecker::Type TypeChecker::ResolveNamedType(const TypeName& type_name) {
     return found->second;
   }
   if (const auto alias = aliases_.find(type_name.name); alias != aliases_.end()) {
-    if (!resolving_aliases_.insert(type_name.name).second) {
-      AddDiagnostic(type_name.location, "cyclic type alias '" + type_name.name + "'");
-      return InvalidType();
-    }
     const auto result = ResolveType(alias->second->target, VoidTypePolicy::Allowed);
-    resolving_aliases_.erase(type_name.name);
     types_.try_emplace(type_name.name, result);
     return result;
   }
@@ -107,11 +102,8 @@ TypeChecker::Type TypeChecker::NonNullable(Type type) {
     type.known_non_null = true;
   }
   if (type.nullable) {
+    type.name = NonNullableTypeName(type);
     type.nullable = false;
-    type.name = type.name.substr(0, type.name.size() - 1);
-    if (type.kind == Type::Kind::Function) {
-      type.name = type.name.substr(1, type.name.size() - 2);
-    }
   }
   return type;
 }
@@ -132,7 +124,17 @@ bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
   if (IsSameType(subtype, supertype)) {
     return true;
   }
-  std::vector<Type> pending{subtype};
+  if (subtype.kind != Type::Kind::Class && subtype.kind != Type::Kind::Parameter &&
+      subtype.kind != Type::Kind::Future) {
+    return subtype.kind == Type::Kind::Null
+               ? supertype.nullable
+               : (!subtype.nullable || supertype.nullable) &&
+                     IsSameType(NonNullable(subtype), NonNullable(supertype));
+  }
+  return IsSubtypeThroughParents({subtype}, supertype);
+}
+
+bool TypeChecker::IsSubtypeThroughParents(std::vector<Type> pending, const Type& supertype) const {
   absl::flat_hash_set<std::string_view> visited;
   while (!pending.empty()) {
     const auto current = pending.back();

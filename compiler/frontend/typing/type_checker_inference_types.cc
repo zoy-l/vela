@@ -10,7 +10,6 @@
 
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_inference.h"
-#include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 
@@ -22,7 +21,7 @@ TypeInference TypeChecker::MakeInference(std::span<const TypeParameter> paramete
           specializer_->DescribeType(specializer_->ExpandAlias(std::move(*parameter.bound)));
     }
   }
-  return {normalized, *this};
+  return {std::move(normalized), *this};
 }
 
 bool TypeChecker::IsStaticSubtype(const TypeName& subtype, const TypeName& supertype) {
@@ -35,10 +34,6 @@ bool TypeChecker::CanBindType(const TypeName& destination, const TypeName& sourc
   const auto expected = ResolveType(destination, VoidTypePolicy::Allowed);
   const auto actual = ResolveType(source, VoidTypePolicy::Allowed);
   return CanAssign(expected, actual);
-}
-
-bool TypeChecker::IsInvariantType(const TypeName& type) const {
-  return type.kind != TypeName::Kind::Generic || type.name != kFutureTypeName;
 }
 
 std::vector<TypeName> TypeChecker::ProjectSupertypes(const Projection& projection) {

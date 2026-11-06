@@ -17,6 +17,8 @@ namespace vela::frontend {
 enum class CommentRetention : std::uint8_t { Discard, Preserve };
 
 [[nodiscard]] std::span<const std::pair<std::string_view, TokenKind>> Keywords() noexcept;
+[[nodiscard]] TokenKind IdentifierKind(std::string_view name);
+[[nodiscard]] std::string QuoteStringLiteral(std::string_view text);
 
 struct LexResult final {
   std::vector<Token> tokens;

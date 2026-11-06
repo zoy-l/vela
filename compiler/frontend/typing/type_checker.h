@@ -10,6 +10,7 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -39,8 +40,7 @@ class TypeChecker final : private InferenceTypeRelations {
  public:
   explicit TypeChecker(DiagnosticOptions options = {}) : options_(options) {}
   // 每次检查消费独立上下文，结果转移后不再复用内部状态。
-  [[nodiscard]] TypeCheckResult Check(Program& program,
-                                      std::span<const GenericSpecialization> retained = {}) &&;
+  [[nodiscard]] TypeCheckResult Check(Program& program) &&;
   // 声明准备后允许开发会话先比较契约；specializer 在本次检查期间持续拥有全部特化。
   [[nodiscard]] TypeCheckResult CheckPrepared(Program& program,
                                               Specializer& specializer,
@@ -137,7 +137,7 @@ class TypeChecker final : private InferenceTypeRelations {
     SourceLocation location;
   };
   void QueueBoundCheck(std::string owner,
-                       std::span<const TypeParameter> parameters,
+                       std::vector<TypeParameter> parameters,
                        std::vector<Type> arguments,
                        SourceLocation location);
   bool CheckTypeArguments(const BoundCheck& check);
@@ -172,8 +172,8 @@ class TypeChecker final : private InferenceTypeRelations {
   FunctionInfo ResolveAppliedSignature(const InferenceSignature& source,
                                        std::span<const TypeName> arguments,
                                        const Expression& callee);
-  std::optional<InferenceSignature> GenericSignature(const Expression& callee);
-  InferenceSignature FunctionInferenceSignature(const Function& function);
+  const InferenceSignature* GenericSignature(const Expression& callee);
+  const InferenceSignature& FunctionInferenceSignature(const Function& function);
   void NormalizeInferenceSignature(InferenceSignature& source);
   enum class MethodAccess : std::uint8_t { Instance, Static, Super };
   std::optional<Type> CheckMethodApplication(
@@ -201,7 +201,6 @@ class TypeChecker final : private InferenceTypeRelations {
   std::vector<TypeName> ProjectSupertypes(const Projection& projection) override;
   [[nodiscard]] bool IsStaticSubtype(const TypeName& subtype, const TypeName& supertype) override;
   [[nodiscard]] bool CanBindType(const TypeName& destination, const TypeName& source) override;
-  [[nodiscard]] bool IsInvariantType(const TypeName& type) const override;
   static void SetConstructorParameters(const Class& owner, InferenceSignature& source);
   std::optional<std::vector<TypeName>> InferFunctionValue(const InferenceSignature& source,
                                                           const Expression& callee,
@@ -280,9 +279,7 @@ class TypeChecker final : private InferenceTypeRelations {
   static void MergeInheritedMembers(ClassInfo& info, const ClassInfo& base);
   void CheckOverrides(const ClassInfo& info);
   void CheckGenericOverrides(const ClassInfo& info, const ClassInfo* base);
-  void MergeBaseClass(std::string_view name,
-                      absl::flat_hash_set<std::string>& merged,
-                      absl::flat_hash_set<std::string>& visiting);
+  void MergeBaseClass(std::string_view name);
   void CheckFunction(const Function& function, const ClassInfo* owner);
   void CheckFunctionBody(const Function& function,
                          const FunctionInfo& function_info,
@@ -385,7 +382,8 @@ class TypeChecker final : private InferenceTypeRelations {
   void CheckMemberAssignment(const Expression& member);
   Type CheckFunctionCall(const FunctionInfo& function,
                          const Expression& expression,
-                         std::span<const std::optional<Type>> checked_arguments = {});
+                         std::span<const std::optional<Type>> checked_arguments = {},
+                         CallArgumentNames argument_names = CallArgumentNames::Declared);
   std::optional<std::size_t> CallParameterIndex(const FunctionInfo& function,
                                                 const CallArgument& argument,
                                                 std::size_t positional);
@@ -425,6 +423,8 @@ class TypeChecker final : private InferenceTypeRelations {
   // 静态可证明的类型关系：身份、可空提升、class 继承、显式 implements、参数上界与 Future 载荷契约。
   // 不含 dynamic 边界；约束证明只使用此关系，普通赋值另外接受受检查的 dynamic 转换。
   [[nodiscard]] bool IsSubtype(const Type& subtype, const Type& supertype) const;
+  [[nodiscard]] bool IsSubtypeThroughParents(std::vector<Type> pending,
+                                             const Type& supertype) const;
   [[nodiscard]] std::vector<Type> DirectSupertypes(const Type& type) const;
   [[nodiscard]] bool CanAssign(const Type& target, const Type& value) const;
   void RecordConversion(const Expression& expression, const Type& target, const Type& actual);
@@ -517,6 +517,7 @@ class TypeChecker final : private InferenceTypeRelations {
   Type CheckBuiltinCall(const Expression& expression, Builtin builtin);
   Type CheckAssignment(const Expression& expression);
   CheckStatus CheckAssignmentTarget(const Expression& target);
+  std::optional<LocalBinding> CheckAssignedBinding(const Expression& target);
   Type CheckCompoundAssignment(const Expression& expression);
   Type CheckCompoundAssignmentTypes(const Expression& expression,
                                     const Type& left,
@@ -530,11 +531,11 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::flat_hash_map<std::string, Type> array_elements_;
   absl::node_hash_map<std::string, FunctionInfo> function_types_;
   absl::flat_hash_map<std::string, const Program::TypeAlias*> aliases_;
-  absl::flat_hash_set<std::string> resolving_aliases_;
   struct LambdaScope final {
     std::size_t index = 0;
     std::size_t scope = 0;
     std::optional<Type> inferred_return = std::nullopt;
+    absl::flat_hash_set<std::uint32_t> captures;
   };
   std::vector<LambdaScope> lambda_scopes_;
   absl::flat_hash_set<std::uint32_t> captured_mutables_;
@@ -564,20 +565,27 @@ class TypeChecker final : private InferenceTypeRelations {
   bool in_constructor_ = false;
   bool in_async_function_ = false;
   bool checking_definitions_ = false;
+  // 名称借用规范类型名和已由 method applications 保活的 AST，覆盖整个检查过程。
   struct InterfaceBinding final {
-    std::string owner;
-    std::string interface;
-    std::string method;
+    std::string_view owner;
+    std::string_view interface;
+    std::string_view method;
     SourceLocation location;
   };
   std::vector<InterfaceBinding> interface_bindings_;
-  absl::flat_hash_set<std::tuple<std::string, std::string, std::string>> queued_interface_bindings_;
+  absl::flat_hash_set<std::tuple<std::string_view, std::string_view, std::string_view>>
+      queued_interface_bindings_;
   absl::flat_hash_map<std::string, std::vector<std::string>> interface_implementers_;
   absl::flat_hash_set<std::pair<std::string, std::string>> registered_implementers_;
   absl::flat_hash_map<std::string, GlobalDescriptor> globals_;
   absl::flat_hash_set<std::string> checking_globals_;
   absl::flat_hash_set<std::string> checked_globals_;
   absl::node_hash_map<std::string, InterfaceDescriptor> interfaces_;
+  absl::flat_hash_map<std::tuple<std::string_view, std::string_view, std::string_view>,
+                      MethodTemplate>
+      interface_method_templates_;
+  absl::node_hash_map<std::string, absl::flat_hash_map<std::string, const Function*>>
+      interface_method_applications_;
   absl::flat_hash_set<std::string> explicit_super_constructors_;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments_;
   absl::flat_hash_map<std::string, std::size_t> enum_sizes_;
@@ -587,7 +595,11 @@ class TypeChecker final : private InferenceTypeRelations {
   std::vector<PendingApplication> pending_applications_;
   absl::flat_hash_set<std::string> checked_applications_;
   // 定义检查失败的模板不再检查其具体特化的函数体，避免同一错误以不同形式重复报告。
-  absl::flat_hash_set<const void*> failed_templates_;
+  absl::flat_hash_set<std::variant<const Function*, const Class*>> failed_templates_;
+  // 模板声明在检查期间地址稳定；构造签名保留调用位置，按表达式缓存。
+  // 推断可递归登记其它签名，节点容器保持正在使用的签名引用有效。
+  absl::node_hash_map<const Function*, InferenceSignature> function_inference_signatures_;
+  absl::node_hash_map<const Expression*, InferenceSignature> constructor_inference_signatures_;
   NodeFacts facts_;
   NodeFacts definitions_;
   absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests_;

@@ -18,15 +18,6 @@ namespace {
 
 using SourceType = frontend::TypeDescriptor;
 
-std::string TypeKey(const SourceType& type) {
-  if (!type.nullable) {
-    return std::string(type.name);
-  }
-  return type.kind == SourceType::Kind::Function
-             ? std::string(type.name.substr(1, type.name.size() - 3))
-             : std::string(type.name.substr(0, type.name.size() - 1));
-}
-
 bool HasReference(SourceType::Kind kind) {
   using Kind = SourceType::Kind;
   return kind != Kind::Invalid && kind != Kind::Null && kind != Kind::Void && kind != Kind::Bool &&
@@ -174,11 +165,11 @@ layout::Type LayoutDescription::Type(const SourceType& type) {
     case Source::Class:
     case Source::Enum:
       result.kind = type.kind == Source::Enum ? Kind::Enum : Kind::Instance;
-      result.index = classes_.at(TypeKey(type));
+      result.index = classes_.at(frontend::NonNullableTypeName(type));
       break;
     case Source::Interface:
       result.kind = Kind::Interface;
-      result.index = model_->interfaces.at(TypeKey(type)).index;
+      result.index = model_->interfaces.at(frontend::NonNullableTypeName(type)).index;
       break;
     case Source::Array:
       result.kind = Kind::Array;
@@ -217,24 +208,24 @@ layout::Type LayoutDescription::Type(const SourceType& type) {
 }
 
 std::uint32_t LayoutDescription::Array(const SourceType& type) {
-  const auto key = TypeKey(type);
+  const auto key = frontend::NonNullableTypeName(type);
   if (const auto found = arrays_.find(key); found != arrays_.end()) {
     return found->second;
   }
   const auto element = Type(model_->array_elements.at(key));
   const auto index = static_cast<std::uint32_t>(result_.arrays.size());
-  result_.arrays.push_back({.name = key, .element = element});
+  result_.arrays.push_back({.name = std::string(key), .element = element});
   arrays_.emplace(key, index);
   return index;
 }
 
 std::uint32_t LayoutDescription::Collection(const SourceType& type) {
-  const auto key = TypeKey(type);
+  const auto key = frontend::NonNullableTypeName(type);
   if (const auto found = collections_.find(key); found != collections_.end()) {
     return found->second;
   }
   const auto& arguments = model_->generic_arguments.at(key);
-  layout::Collection descriptor{.name = key, .key = Type(arguments.front())};
+  layout::Collection descriptor{.name = std::string(key), .key = Type(arguments.front())};
   if (type.kind == SourceType::Kind::Map) {
     descriptor.value = Type(arguments.back());
   }
@@ -245,11 +236,11 @@ std::uint32_t LayoutDescription::Collection(const SourceType& type) {
 }
 
 std::uint32_t LayoutDescription::Signature(const SourceType& type) {
-  const auto key = TypeKey(type);
+  const auto key = frontend::NonNullableTypeName(type);
   if (const auto found = signatures_.find(key); found != signatures_.end()) {
     return found->second;
   }
-  layout::Signature descriptor{.name = key, .parameters = {}};
+  layout::Signature descriptor{.name = std::string(key), .parameters = {}};
   if (type.kind == SourceType::Kind::Function) {
     const auto& function = model_->function_types.at(key);
     for (const auto& parameter : function.parameters) {

@@ -262,7 +262,12 @@ std::vector<llvm::BranchInst*> BoundedPolls(const llvm::Loop& loop) {
   return polls;
 }
 
-bool CanCopyPollCondition(llvm::Value* value, const llvm::Loop& loop) {
+bool CanCopyPollCondition(llvm::Value* value,
+                          const llvm::Loop& loop,
+                          llvm::SmallPtrSetImpl<llvm::Value*>& copied) {
+  if (copied.contains(value)) {
+    return true;
+  }
   const auto* instruction = llvm::dyn_cast<llvm::Instruction>(value);
   if (instruction == nullptr || !loop.contains(instruction)) {
     return true;
@@ -271,9 +276,13 @@ bool CanCopyPollCondition(llvm::Value* value, const llvm::Loop& loop) {
                  llvm::ICmpInst>(instruction)) {
     return false;
   }
-  return std::ranges::all_of(instruction->operands(), [&](const auto& operand) {
-    return CanCopyPollCondition(operand.get(), loop);
-  });
+  if (!std::ranges::all_of(instruction->operands(), [&](const auto& operand) {
+        return CanCopyPollCondition(operand.get(), loop, copied);
+      })) {
+    return false;
+  }
+  copied.insert(value);
+  return true;
 }
 
 llvm::Value* CopyPollCondition(llvm::Value* value,
@@ -323,12 +332,12 @@ std::uint64_t PollBudget(const llvm::Loop& loop) {
 
 llvm::Value* BoundedTripCount(llvm::Loop& loop,
                               llvm::ScalarEvolution& evolution,
-                              llvm::DominatorTree& dominators) {
+                              llvm::DominatorTree& dominators,
+                              std::uint64_t limit) {
   auto* preheader = loop.getLoopPreheader();
   if (preheader == nullptr) {
     return nullptr;
   }
-  const auto limit = PollBudget(loop);
   llvm::IRBuilder<> guard(preheader->getTerminator());
   const auto maximum = evolution.getSmallConstantMaxTripCount(&loop);
   if (maximum != 0 && maximum <= limit) {
@@ -417,13 +426,15 @@ void VersionBoundedLoop(llvm::Loop& loop,
 bool CanStripMine(const CountedLoop& counted) {
   const auto* header = counted.loop->getHeader();
   // 分块边界会重新执行循环条件；条件前不得存在可观察的写入或调用。
-  return PollBudget(*counted.loop) != 0 && counted.condition->getParent() == header &&
+  return counted.condition->getParent() == header &&
          std::ranges::none_of(*header, [](const auto& instruction) {
            return !instruction.isTerminator() && instruction.mayHaveSideEffects();
          });
 }
 
-void StripMineBoundedLoop(const CountedLoop& counted, std::span<llvm::BranchInst* const> polls) {
+void StripMineBoundedLoop(const CountedLoop& counted,
+                          std::span<llvm::BranchInst* const> polls,
+                          std::uint64_t limit) {
   auto& loop = *counted.loop;
   auto* header = loop.getHeader();
   auto* preheader = loop.getLoopPreheader();
@@ -456,7 +467,6 @@ void StripMineBoundedLoop(const CountedLoop& counted, std::span<llvm::BranchInst
   }
   preheader->getTerminator()->replaceSuccessorWith(header, outer);
   latch->getTerminator()->replaceSuccessorWith(header, outer);
-  const auto limit = PollBudget(loop);
   auto* distance = counted.direction == 1 ? guard.CreateSub(counted.bound, start)
                                           : guard.CreateSub(start, counted.bound);
   auto* clipped = counted.direction == 1 ? guard.CreateAdd(start, guard.getInt64(limit))
@@ -490,29 +500,38 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
       llvm::Value* bounded;
       std::vector<llvm::BranchInst*> polls;
       std::optional<CountedLoop> counted;
+      std::uint64_t limit;
     };
     std::vector<Plan> plans;
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto polls = BoundedPolls(*loop);
+      llvm::SmallPtrSet<llvm::Value*, 32> copied;
       if (polls.empty() || !std::ranges::all_of(polls, [&](const auto* poll) {
-            return CanCopyPollCondition(poll->getCondition(), *loop);
+            return CanCopyPollCondition(poll->getCondition(), *loop, copied);
           })) {
         continue;
       }
       const auto counted = MatchCountedLoop(*loop, dominators);
-      if (counted && CanStripMine(*counted)) {
-        plans.push_back({.loop = loop, .bounded = nullptr, .polls = polls, .counted = counted});
+      const auto limit = PollBudget(*loop);
+      if (counted && limit != 0 && CanStripMine(*counted)) {
+        plans.push_back(
+            {.loop = loop, .bounded = nullptr, .polls = polls, .counted = counted, .limit = limit});
         continue;
       }
-      auto* bounded = BoundedTripCount(*loop, evolution, dominators);
+      auto* bounded = BoundedTripCount(*loop, evolution, dominators, limit);
       if (bounded != nullptr) {
-        plans.push_back(
-            {.loop = loop, .bounded = bounded, .polls = polls, .counted = std::nullopt});
+        plans.push_back({
+            .loop = loop,
+            .bounded = bounded,
+            .polls = polls,
+            .counted = std::nullopt,
+            .limit = limit,
+        });
       }
     }
     for (const auto& plan : plans) {
       if (plan.counted) {
-        StripMineBoundedLoop(*plan.counted, plan.polls);
+        StripMineBoundedLoop(*plan.counted, plan.polls, plan.limit);
       } else {
         VersionBoundedLoop(*plan.loop, plan.bounded, plan.polls);
       }
@@ -947,13 +966,13 @@ class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
                                      llvm::FunctionAnalysisManager& analyses) {
     auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
-    auto& aliases = analyses.getResult<llvm::AAManager>(function);
     bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto counted = MatchCountedLoop(*loop, dominators);
       if (!counted) {
         continue;
       }
+      auto& aliases = analyses.getResult<llvm::AAManager>(function);
       const auto field = MatchFieldReduction(*counted, dominators, aliases);
       if (field) {
         FoldFieldReduction(*counted, *field);

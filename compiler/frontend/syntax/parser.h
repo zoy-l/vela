@@ -27,6 +27,7 @@ struct SourceSnapshot final {
   std::vector<Token> tokens;
   std::vector<SourceComment> comments;
   std::vector<Program::Import> imports;
+  std::vector<std::string> standard_names;
 };
 
 struct ParsedSource final {
@@ -59,8 +60,8 @@ class Parser final {
   [[nodiscard]] bool IsAtEnd() const;
   [[nodiscard]] bool Check(TokenKind kind) const;
   bool Match(TokenKind kind);
-  std::optional<Token> TakeName();
-  std::optional<Token> Expect(TokenKind kind, std::string message);
+  const Token* TakeName();
+  const Token* Expect(TokenKind kind, std::string message);
   void AnnotatePrevious(TokenRole role);
   void AddDiagnostic(SourceLocation location, std::string message);
   void Synchronize();

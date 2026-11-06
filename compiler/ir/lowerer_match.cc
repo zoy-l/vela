@@ -13,21 +13,21 @@ namespace vela::ir {
 
 Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression) {
   const auto original = LowerExpression(*expression.operand);
-  const auto selector = AllocateTemporary(expression.location);
+  const auto selector = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::Move,
       .dst = selector,
       .lhs = original.reg,
       .location = expression.location,
   });
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   std::vector<std::size_t> exits;
   for (const auto& arm : expression.arms) {
     std::optional<std::size_t> mismatch;
     if (arm.kind == frontend::MatchArm::Kind::Constant) {
       RegisterId label = 0;
       if (arm.pattern->kind == frontend::Expression::Kind::NullLiteral) {
-        label = AllocateTemporary(arm.location);
+        label = AllocateRegister(arm.location);
         Emit({.opcode = Opcode::LoadNull, .dst = label, .location = arm.location});
       } else {
         label = LowerConstantLabel(*arm.pattern);
@@ -43,7 +43,7 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
           opcode = Opcode::EqualString;
         }
       }
-      const auto matches = AllocateTemporary(arm.location);
+      const auto matches = AllocateRegister(arm.location);
       Emit({
           .opcode = opcode,
           .dst = matches,
@@ -56,7 +56,7 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
     }
     PushScope();
     if (arm.kind == frontend::MatchArm::Kind::Binding) {
-      const auto bound = AllocateTemporary(arm.location);
+      const auto bound = AllocateRegister(arm.location);
       Emit({.opcode = Opcode::Move, .dst = bound, .lhs = selector, .location = arm.location});
       DeclareLocal(arm.binding, bound, model_.match_bindings.at(&arm), arm.location, &arm);
     }

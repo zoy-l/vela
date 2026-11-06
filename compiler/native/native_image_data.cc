@@ -58,7 +58,7 @@ std::optional<DeclarationId> BindingTarget(const ir::Program& program,
   return function && function->local == 0 ? std::optional(function->declaration) : std::nullopt;
 }
 
-std::uint32_t FunctionFlags(const ir::Function& function, std::uint8_t exported) {
+std::uint32_t FunctionFlags(const ir::Function& function) {
   std::uint32_t flags = function.is_async ? runtime::kNativeAsyncFunction : 0;
   if (function.is_generated_constructor) {
     flags |= runtime::kNativeGeneratedConstructor;
@@ -66,7 +66,7 @@ std::uint32_t FunctionFlags(const ir::Function& function, std::uint8_t exported)
   if (function.visibility == frontend::Visibility::Private) {
     flags |= runtime::kNativePrivateFunction;
   }
-  if (exported != 0) {
+  if (function.is_exported) {
     flags |= runtime::kNativeExportedFunction;
   }
   if (function.return_type.kind == frontend::TypeDescriptor::Kind::Enum) {
@@ -86,7 +86,7 @@ class NativeImageBuilder final {
     }
   }
 
-  std::shared_ptr<NativeImageData> Build(std::span<const std::uint8_t> exports);
+  std::shared_ptr<NativeImageData> Build();
 
  private:
   template <class T>
@@ -126,7 +126,7 @@ class NativeImageBuilder final {
 
   runtime::NativeClassDescription Class(std::size_t index);
   runtime::NativeSignatureDescription Signature(const layout::Signature& source);
-  runtime::NativeFunctionDescription Function(const ir::Function& function, std::uint8_t exported);
+  runtime::NativeFunctionDescription Function(const ir::Function& function);
   const runtime::NativeFunctionDependencies* Dependencies(const ir::Function& function);
   runtime::NativeTable<runtime::NativeDependencyBlock> Blocks(const ir::Function& function);
   [[nodiscard]] DeclarationId LexicalClass(DeclarationId owner) const;
@@ -292,15 +292,14 @@ const runtime::NativeFunctionDependencies* NativeImageBuilder::Dependencies(
   });
 }
 
-runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Function& function,
-                                                                std::uint8_t exported) {
+runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Function& function) {
   runtime::NativeFunctionDescription result{
       .name = Text(function.name),
       .native_symbol = Text(function.native_symbol),
       .parameters = {},
       .locations = {},
       .parameter_count = function.parameter_count,
-      .flags = FunctionFlags(function, exported),
+      .flags = FunctionFlags(function),
       .identity = function.identity,
       .dependencies = Dependencies(function),
   };
@@ -334,7 +333,7 @@ runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Functi
   return result;
 }
 
-std::shared_ptr<NativeImageData> NativeImageBuilder::Build(std::span<const std::uint8_t> exports) {
+std::shared_ptr<NativeImageData> NativeImageBuilder::Build() {
   auto& image = data_->image_;
   const auto& layouts = program_->layouts;
   image.abi_identity = Text(runtime::kNativeBuildIdentity);
@@ -381,8 +380,8 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build(std::span<const std::
   image.source_paths = Texts(program_->source_paths);
   auto& functions = data_->functions_;
   functions.reserve(program_->functions.size());
-  for (std::size_t index = 0; index < program_->functions.size(); ++index) {
-    functions.push_back(Function(program_->functions.at(index), exports.subspan(index).front()));
+  for (const auto& function : program_->functions) {
+    functions.push_back(Function(function));
   }
   image.functions = {.data = functions.data(), .size = functions.size()};
   std::vector<runtime::NativeMemberDescription> members;
@@ -449,14 +448,13 @@ void NativeImageData::BindEntries(std::span<const runtime::NativeEntry> entries,
                                   std::span<const runtime::NativeTypedEntry> typed_entries) {
   for (std::size_t index = 0; index < functions_.size(); ++index) {
     auto& function = functions_.at(index);
-    function.entry = entries.subspan(index).front();
-    function.typed_entry = typed_entries.subspan(index).front();
+    function.entry = entries[index];
+    function.typed_entry = typed_entries[index];
   }
 }
 
-std::shared_ptr<NativeImageData> DescribeNativeImage(const ir::Program& program,
-                                                     std::span<const std::uint8_t> exports) {
-  return NativeImageBuilder(program).Build(exports);
+std::shared_ptr<NativeImageData> DescribeNativeImage(const ir::Program& program) {
+  return NativeImageBuilder(program).Build();
 }
 
 }  // namespace vela::compiler::native

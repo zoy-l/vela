@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <ranges>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -16,9 +15,10 @@ namespace {
 
 class CaptureAnalysis final {
  public:
-  absl::flat_hash_set<const void*> Run(const Program& program) &&;
-  absl::flat_hash_set<const void*> Run(const Function& function) &&;
-  absl::flat_hash_set<const void*> Run(const Class& owner) &&;
+  explicit CaptureAnalysis(absl::flat_hash_set<const void*>& captured) : captured_(&captured) {}
+  void Run(const Program& program);
+  void Run(const Function& function);
+  void Run(const Class& owner);
 
  private:
   struct Declaration final {
@@ -34,7 +34,7 @@ class CaptureAnalysis final {
   void Declare(const std::string& name, const void* node, BindingKind kind);
 
   std::vector<absl::flat_hash_map<std::string, Declaration>> scopes_;
-  absl::flat_hash_set<const void*> captured_;
+  absl::flat_hash_set<const void*>* captured_;
   std::size_t lambda_depth_ = 0;
 };
 
@@ -62,7 +62,7 @@ void CaptureAnalysis::Walk(const Expression* expression) {
       if (found != scope.end()) {
         const auto& declaration = found->second;
         if (declaration.kind == BindingKind::Mutable && declaration.lambda_depth < lambda_depth_) {
-          captured_.insert(declaration.node);
+          captured_->insert(declaration.node);
         }
         break;
       }
@@ -147,7 +147,7 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   }
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) && {
+void CaptureAnalysis::Run(const Program& program) {
   for (const auto& global : program.globals) {
     Walk(global.initializer.get());
   }
@@ -157,12 +157,10 @@ absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) &&
   for (const auto& owner : program.classes) {
     Walk(owner);
   }
-  return std::move(captured_);
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Function& function) && {
+void CaptureAnalysis::Run(const Function& function) {
   Walk(function);
-  return std::move(captured_);
 }
 
 void CaptureAnalysis::Walk(const Class& owner) {
@@ -177,23 +175,25 @@ void CaptureAnalysis::Walk(const Class& owner) {
   }
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Class& owner) && {
+void CaptureAnalysis::Run(const Class& owner) {
   Walk(owner);
-  return std::move(captured_);
 }
 
 }  // namespace
 
-absl::flat_hash_set<const void*> FindCapturedMutableDeclarations(const Program& program) {
-  return CaptureAnalysis().Run(program);
+void CollectCapturedMutableDeclarations(const Program& program,
+                                        absl::flat_hash_set<const void*>& declarations) {
+  CaptureAnalysis(declarations).Run(program);
 }
 
-absl::flat_hash_set<const void*> FindCapturedMutableDeclarations(const Function& function) {
-  return CaptureAnalysis().Run(function);
+void CollectCapturedMutableDeclarations(const Function& function,
+                                        absl::flat_hash_set<const void*>& declarations) {
+  CaptureAnalysis(declarations).Run(function);
 }
 
-absl::flat_hash_set<const void*> FindCapturedMutableDeclarations(const Class& owner) {
-  return CaptureAnalysis().Run(owner);
+void CollectCapturedMutableDeclarations(const Class& owner,
+                                        absl::flat_hash_set<const void*>& declarations) {
+  CaptureAnalysis(declarations).Run(owner);
 }
 
 }  // namespace vela::frontend

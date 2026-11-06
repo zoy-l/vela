@@ -76,7 +76,7 @@ class Reachability final {
   void RemapClass(T& type, std::uint32_t index, std::span<const std::uint32_t> mapping) const;
 
   const ir::Program& program_;
-  absl::flat_hash_map<std::string, Node> names_;
+  absl::flat_hash_map<std::string_view, Node> names_;
   std::vector<std::vector<std::size_t>> members_;
   std::vector<std::vector<std::uint32_t>> implementations_;
   absl::flat_hash_set<Node> reached_;
@@ -148,9 +148,7 @@ void Reachability::VisitSource(const frontend::TypeDescriptor& type, TypeExposur
     return;
   }
   if (type.nullable) {
-    const auto name = type.kind == frontend::TypeDescriptor::Kind::Function
-                          ? std::string_view(type.name).substr(1, type.name.size() - 3)
-                          : std::string_view(type.name).substr(0, type.name.size() - 1);
+    const auto name = frontend::NonNullableTypeName(type);
     if (const auto found = names_.find(name); found != names_.end()) {
       Mark(found->second.kind, found->second.index, exposure);
     }
@@ -370,11 +368,11 @@ void Reachability::RemapClass(T& type,
   }
   if (type.callable && type.callable->mode != CallableMode::InterfaceMethod) {
     const auto target = type.callable->function;
-    type.callable->function = mapping.subspan(target).front();
+    type.callable->function = mapping[target];
   }
   for (auto& target : type.dispatch_targets) {
     if (target != kInvalidFunctionTarget) {
-      target = mapping.subspan(target).front();
+      target = mapping[target];
     }
   }
 }
@@ -460,13 +458,10 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
 
 }  // namespace
 
-void PruneNativeProgram(ir::Program& program,
-                        std::span<const std::string> exports,
-                        std::optional<std::uint32_t>& main) {
+void PruneNativeProgram(ir::Program& program, std::optional<std::uint32_t>& main) {
   Reachability reachability(program);
-  const absl::flat_hash_set<std::string_view> selected(exports.begin(), exports.end());
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    if (selected.contains(program.functions.at(index).name)) {
+    if (program.functions[index].is_exported) {
       reachability.Mark(NodeKind::Function, static_cast<std::uint32_t>(index), TypeExposure::Host);
     }
   }

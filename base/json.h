@@ -31,6 +31,9 @@ struct JsonError final {
 
 [[nodiscard]] const yyjson_val* GetJsonField(const yyjson_val* object,
                                              std::string_view key) noexcept;
+[[nodiscard]] std::string_view GetJsonString(const yyjson_val* value) noexcept;
+[[nodiscard]] std::string_view GetJsonString(const yyjson_val* object,
+                                             std::string_view key) noexcept;
 [[nodiscard]] yyjson_mut_val* GetMutableJsonField(yyjson_mut_val* object,
                                                   std::string_view key) noexcept;
 // key 复制到 arena，调用方可传临时文本；读取接口始终按长度查找。

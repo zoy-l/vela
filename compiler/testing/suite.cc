@@ -18,7 +18,6 @@
 #include <vector>
 
 #include "base/execution_status.h"
-#include "base/member.h"
 #include "base/process_exit.h"
 #include "base/test_protocol.h"
 #include "compiler/testing/report.h"
@@ -46,7 +45,7 @@ namespace {
 constexpr std::size_t kDifferenceNodeBudget = 256;
 
 bool IsSuiteMain(const runtime::NativeInstance& instance, std::uint32_t index) {
-  const auto& function = instance.image().functions.values().subspan(index).front();
+  const auto& function = instance.image().functions.values()[index];
   if ((function.flags & runtime::kNativeTypedFunction) == 0 || function.parameter_count != 0) {
     return false;
   }
@@ -368,7 +367,6 @@ std::expected<void, std::string> Suite::Select(Node& node,
     }
   }
   TestResult result{
-      .id = node.id,
       .name = name,
       .tags = tags,
       .skip_reason = {},
@@ -433,7 +431,7 @@ TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phas
       .trace = result.stack_trace,
       .difference = std::nullopt,
   };
-  if (result.value.IsNull() && result.message.starts_with("TestTimeout:")) {
+  if (result.status == ExecutionStatus::ExecutionTimedOut) {
     error.category = "TestTimeout";
   }
   if (error.message.empty()) {
@@ -447,12 +445,9 @@ TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phas
   if (error.difference) {
     error.category = test_fields::kFailureType;
   }
-  const auto* message = layouts.Find(result.value, test_fields::kMessage);
-  if (message != nullptr && message->kind == MemberKind::Field) {
-    const auto value = runtime::Heap::GetField(*result.value.AsObject(), message->target);
-    if (value && value->IsString()) {
-      error.message = value->AsString()->value();
-    }
+  const auto message = layouts.ReadPublicField(result.value, test_fields::kMessage);
+  if (message.IsString()) {
+    error.message = message.AsString()->value();
   }
   DescribeMockFailure(result.value, error);
   return error;
@@ -600,28 +595,31 @@ void Suite::RunTest(Node& test,
 void Suite::RunGroup(Node& group,
                      std::vector<Node*>& ancestry,
                      const std::vector<TestError>& blocked) {
-  if (group.runnable == 0) {
+  const auto run_children = [&](const std::vector<TestError>& failures) {
     for (auto& child : group.children) {
       if (child->kind == NodeKind::Group) {
-        RunGroup(*child, ancestry, blocked);
+        RunGroup(*child, ancestry, failures);
       } else {
-        RunTest(*child, ancestry, blocked);
+        RunTest(*child, ancestry, failures);
       }
     }
+  };
+  if (group.runnable == 0) {
+    run_children(blocked);
     return;
   }
   ancestry.push_back(&group);
   if (blocked.empty()) {
     RunHooks(group, kSetUpAll, TestPhase::SetUpAll, group, group.errors);
   }
-  auto failures = blocked;
-  failures.insert(failures.end(), group.errors.begin(), group.errors.end());
-  for (auto& child : group.children) {
-    if (child->kind == NodeKind::Group) {
-      RunGroup(*child, ancestry, failures);
-    } else {
-      RunTest(*child, ancestry, failures);
-    }
+  if (group.errors.empty()) {
+    run_children(blocked);
+  } else if (blocked.empty()) {
+    run_children(group.errors);
+  } else {
+    auto failures = blocked;
+    failures.insert(failures.end(), group.errors.begin(), group.errors.end());
+    run_children(failures);
   }
   if (blocked.empty()) {
     RunCleanup(group, group.errors);

@@ -76,7 +76,7 @@ void TypeChecker::ResolveInterfaces(const Program& program) {
 
 void TypeChecker::CheckImplementations(const Program& program) {
   for (const auto& source : program.classes) {
-    MergeBaseClass(source.name, merged_classes_, visiting_classes_);
+    MergeBaseClass(source.name);
   }
   for (const auto& source : program.classes) {
     CheckClassImplementation(source);
@@ -104,9 +104,10 @@ void TypeChecker::CheckClassImplementation(const Class& source) {
 void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::string& name) {
   const auto& source = *owner.declaration;
   const auto& interface = interfaces_.at(name);
+  const auto& applications = interface_method_applications_.at(name);
   bool valid = true;
   for (const auto& [method_name, signature] : interface.methods) {
-    if (interface.method_applications.contains(method_name)) {
+    if (applications.contains(method_name)) {
       continue;
     }
     auto qualified_name = name;
@@ -143,8 +144,8 @@ void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::stri
           "generic interface method implementation does not match '" + qualified_name + "'");
       valid = false;
     } else {
-      owner.interface_method_templates.insert_or_assign({name, method_name},
-                                                        implementation->second);
+      interface_method_templates_.insert_or_assign(
+          {owner.type.name, interface.type.name, method_name}, implementation->second);
     }
   }
   if (!valid || owner.type.is_abstract) {
@@ -153,19 +154,17 @@ void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::stri
   if (registered_implementers_.emplace(name, source.name).second) {
     interface_implementers_.try_emplace(name).first->second.push_back(source.name);
   }
-  for (const auto& [method_name, method] : interface.method_applications) {
+  for (const auto& [method_name, method] : applications) {
     static_cast<void>(method_name);
     QueueInterfaceBinding(owner, name, *method);
   }
 }
 
-void TypeChecker::MergeBaseClass(std::string_view name,
-                                 absl::flat_hash_set<std::string>& merged,
-                                 absl::flat_hash_set<std::string>& visiting) {
-  if (merged.contains(name)) {
+void TypeChecker::MergeBaseClass(std::string_view name) {
+  if (merged_classes_.contains(name)) {
     return;
   }
-  if (!visiting.insert(std::string(name)).second) {
+  if (!visiting_classes_.insert(std::string(name)).second) {
     const auto found = classes_.find(name);
     if (found != classes_.end()) {
       AddDiagnostic(found->second.declaration->location, "class inheritance cycle");
@@ -174,20 +173,20 @@ void TypeChecker::MergeBaseClass(std::string_view name,
   }
   auto found = classes_.find(name);
   if (found == classes_.end()) {
-    visiting.erase(name);
+    visiting_classes_.erase(name);
     return;
   }
   auto& info = found->second;
   if (info.base_class) {
-    MergeBaseClass(*info.base_class, merged, visiting);
+    MergeBaseClass(*info.base_class);
     const auto base = classes_.find(*info.base_class);
-    if (base != classes_.end() && !visiting.contains(*info.base_class)) {
+    if (base != classes_.end() && !visiting_classes_.contains(*info.base_class)) {
       MergeInheritedMembers(info, base->second);
     }
   }
   CheckOverrides(info);
-  visiting.erase(name);
-  merged.insert(std::string(name));
+  visiting_classes_.erase(name);
+  merged_classes_.insert(std::string(name));
 }
 
 void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) {

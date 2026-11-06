@@ -2,9 +2,11 @@
 #include "compiler/frontend/syntax/names.h"
 #include "compiler/ir/lowerer.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,15 +22,24 @@ Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLoc
   if (!local.cell) {
     return {.reg = local.reg, .type = local.type};
   }
-  const auto value = AllocateTemporary(location);
+  const auto value = AllocateRegister(location);
   RecordValueType(value, local.type);
   Emit({.opcode = Opcode::GetField, .dst = value, .lhs = local.reg, .location = location});
   return {.reg = value, .type = local.type};
 }
 
+frontend::Capture Lowerer::MakeReceiverCapture(const frontend::TypeDescriptor& type) {
+  return {
+      .name = std::string(frontend::kReceiverName),
+      .type = type,
+      .binding = 0,
+      .kind = frontend::BindingKind::Constant,
+  };
+}
+
 ClassId Lowerer::CallableClass(std::uint32_t function_id,
                                CallableMode mode,
-                               const std::vector<frontend::Capture>& captures,
+                               std::span<const frontend::Capture> captures,
                                const frontend::FunctionDescriptor* interface_signature) {
   const auto key = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
   const auto existing = callable_classes_.find(key);
@@ -97,12 +108,6 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
         target = function_ids_.at(instance->second.owner + "." + instance->second.member);
       }
     }
-    captures.push_back({
-        .name = std::string(frontend::kReceiverName),
-        .type = receiver->type,
-        .binding = 0,
-        .kind = frontend::BindingKind::Constant,
-    });
   } else if (static_member != model_.static_members.end()) {
     target = function_ids_.at(static_member->second.owner + "." + static_member->second.member);
   } else {
@@ -123,7 +128,11 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
 Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& expression) {
   const auto plan = ResolveFunctionValue(expression);
   const auto& receiver = plan.receiver;
-  const auto& captures = plan.captures;
+  const std::array receiver_captures{
+      receiver ? MakeReceiverCapture(receiver->type) : frontend::Capture{},
+  };
+  const auto captures =
+      receiver ? std::span<const frontend::Capture>(receiver_captures) : plan.captures;
   const auto mode = plan.mode;
   const auto interface = model_.interface_members.find(&expression);
   const auto* signature =
@@ -131,11 +140,10 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
           ? nullptr
           : &model_.interfaces.at(interface->second.owner).methods.at(interface->second.member);
   const auto layout = CallableClass(plan.target, mode, captures, signature);
-  const auto object = AllocateTemporary(expression.location);
+  const auto object = AllocateRegister(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {
-    null_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver->reg, .location = expression.location});
+    null_jump = BeginNullSafe(receiver->reg, expression.location);
   }
   Emit({
       .opcode = Opcode::NewInstance,
@@ -145,15 +153,13 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   });
   if (declarations_ != nullptr && receiver && mode == CallableMode::BoundMethod) {
     const auto& type = receiver->type;
-    auto name = std::string(type.name);
+    auto name = frontend::NonNullableTypeName(type);
     if (model_.super_members.contains(&expression)) {
       const auto& parent = model_.classes.at(name).base_class;
       if (!parent) {
         std::unreachable();
       }
       name = *parent;
-    } else if (type.nullable) {
-      name.resize(name.size() - 1);
     }
     const auto owner = declarations_->classes.find(name);
     if (owner != declarations_->classes.end()) {
@@ -161,7 +167,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
     }
   }
   for (std::size_t index = 0; index < captures.size(); ++index) {
-    const auto reg = receiver ? receiver->reg : binding_registers_.at(captures.at(index).binding);
+    const auto reg = receiver ? receiver->reg : binding_registers_.at(captures[index].binding);
     Emit({
         .opcode = Opcode::SetField,
         .dst = object,
@@ -177,7 +183,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
 Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& expression) {
   const auto callee = LowerExpression(*expression.callee);
   // callee 也可能是可重写的局部变量，必须在求值实参前保存。
-  const auto callable = AllocateTemporary(expression.location);
+  const auto callable = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::Move,
       .dst = callable,
@@ -187,7 +193,7 @@ Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& exp
   const auto count = expression.arguments.size();
   const auto base = AllocateRegisterWindow(count, expression.location);
   LowerArguments(expression, base);
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::CallIndirect,
       .dst = result,

@@ -113,7 +113,6 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
                                            const ir::Function& source,
                                            ir::ClassId type) {
   EscapePlan plan(source);
-  auto& rewritten = plan.function.Rewrite();
   const auto& fields = program.classes.at(type).field_types;
   const auto state_size = source.register_count + fields.size() + 2;
   const auto graph = ir::BuildFlowGraph(source);
@@ -130,14 +129,14 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
   entry.front() = {.objects = 1, .other = false, .initialized = true};
   for (std::size_t field = 0; field < fields.size(); ++field) {
     entry.at(source.register_count + field).initialized = true;
-    plan.borrowed_fields.push_back(rewritten.register_count++);
-    rewritten.value_types.push_back(fields.at(field));
+    plan.borrowed_fields.push_back(static_cast<ir::RegisterId>(source.register_count + field));
   }
-  const auto marker = rewritten.register_count++;
-  rewritten.value_types.push_back({.kind = Kind::Null, .name = frontend::kNullTypeName});
+  const auto marker = static_cast<ir::RegisterId>(source.register_count + fields.size());
+  std::vector<std::pair<std::size_t, ir::Instruction>> changes;
   const std::vector<std::optional<std::size_t>> allocations(source.instructions.size());
+  const auto accesses = RegisterAccesses(source, program);
   const auto states =
-      Solve(source, program, graph, allocations, plan, state_size, std::move(entry));
+      Solve(source, program, graph, accesses, allocations, plan, state_size, std::move(entry));
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
     auto values = states.at(index).reached ? states.at(index).values : State(state_size);
     const auto& block = graph.blocks.at(index);
@@ -146,11 +145,21 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
       if (!IsBorrowedUse(plan, program, original, values)) {
         return std::nullopt;
       }
-      rewritten.instructions.at(position) =
-          BorrowedInstruction(plan, program, original, values, marker);
+      const auto replacement = BorrowedInstruction(plan, program, original, values, marker);
+      if (replacement.opcode != original.opcode || replacement.dst != original.dst ||
+          replacement.lhs != original.lhs) {
+        changes.emplace_back(position, replacement);
+      }
       Transfer(original, ir::AnalyzeRegisters(original, program.functions), std::nullopt, plan,
                program, values);
     }
+  }
+  auto& rewritten = plan.function.Rewrite();
+  rewritten.register_count = marker + 1;
+  rewritten.value_types.insert(rewritten.value_types.end(), fields.begin(), fields.end());
+  rewritten.value_types.push_back({.kind = Kind::Null, .name = frontend::kNullTypeName});
+  for (const auto& [position, instruction] : changes) {
+    rewritten.instructions[position] = instruction;
   }
   for (std::size_t index = 0; index < source.instructions.size(); ++index) {
     plan.origins.push_back(index);

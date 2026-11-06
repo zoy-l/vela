@@ -72,23 +72,29 @@ std::string GenericName(std::string_view source_name,
 
 }  // namespace
 
-template <class Declaration>
+template <class Declaration, class Detail>
 std::size_t SemanticIndex::DeclareSymbol(const Declaration& declaration,
                                          CompletionKind kind,
-                                         const std::string& detail) {
-  const auto symbol_id = AddSymbol(declaration.location, kind, detail);
-  symbols_.at(symbol_id).export_kind = declaration.export_kind;
+                                         Detail detail) {
+  const auto existing = declarations_.find(KeyAt(declaration.location));
+  const auto symbol_id = existing == declarations_.end()
+                             ? AddSymbol(declaration.location, kind, detail())
+                             : existing->second;
+  symbols_[symbol_id].export_kind = declaration.export_kind;
   names_.insert_or_assign(declaration.name, symbol_id);
   return symbol_id;
 }
 
-template <class Declaration>
+template <class Declaration, class Detail>
 std::size_t SemanticIndex::DeclareMember(std::string_view owner,
                                          const Declaration& declaration,
                                          CompletionKind kind,
-                                         const std::string& detail) {
-  const auto symbol_id = AddSymbol(declaration.location, kind, detail);
-  auto& symbol = symbols_.at(symbol_id);
+                                         Detail detail) {
+  const auto existing = declarations_.find(KeyAt(declaration.location));
+  const auto symbol_id = existing == declarations_.end()
+                             ? AddSymbol(declaration.location, kind, detail())
+                             : existing->second;
+  auto& symbol = symbols_[symbol_id];
   if (symbol.owner.empty()) {
     symbol.owner = DisplaySymbolName(owner);
   }
@@ -102,8 +108,8 @@ void SemanticIndex::CollectDeclarations() {
   for (const auto declarations :
        {std::span(program_.functions), std::span(program_.templates.functions)}) {
     for (const auto& declaration : declarations) {
-      const auto symbol =
-          DeclareSymbol(declaration, CompletionKind::Function, Signature(declaration));
+      const auto symbol = DeclareSymbol(declaration, CompletionKind::Function,
+                                        [&] { return Signature(declaration); });
       CollectParameters(symbol, declaration);
     }
   }
@@ -112,18 +118,19 @@ void SemanticIndex::CollectDeclarations() {
     DeclareSymbol(declaration,
                   declaration.binding == frontend::BindingKind::Constant ? CompletionKind::Constant
                                                                          : CompletionKind::Variable,
-                  TypeText(declaration.type));
+                  [&] { return TypeText(declaration.type); });
     if (checked != model_.globals.end()) {
-      symbols_.at(names_.at(declaration.name)).completion.detail =
+      symbols_[names_.at(declaration.name)].completion.detail =
           DisplaySymbolName(checked->second.type.name);
     }
   }
   for (const auto declarations :
        {std::span(program_.aliases), std::span(program_.templates.aliases)}) {
     for (const auto& declaration : declarations) {
-      DeclareSymbol(declaration, CompletionKind::Type,
-                    "type " + GenericName(declaration.name, declaration.type_parameters) + " = " +
-                        TypeText(declaration.target));
+      DeclareSymbol(declaration, CompletionKind::Type, [&] {
+        return "type " + GenericName(declaration.name, declaration.type_parameters) + " = " +
+               TypeText(declaration.target);
+      });
     }
   }
   for (const auto& declaration : program_.classes) {
@@ -145,17 +152,20 @@ void SemanticIndex::CollectDeclarations() {
     CollectInterface(*declaration);
   }
   for (const auto& declaration : program_.enums) {
-    DeclareSymbol(declaration, CompletionKind::Enum, "enum");
+    DeclareSymbol(declaration, CompletionKind::Enum, [] { return "enum"; });
     CollectEnumMembers(declaration);
   }
 }
 
 void SemanticIndex::CollectClass(const frontend::Class& declaration) {
-  const auto completion = ClassCompletion(declaration);
-  const auto class_symbol = DeclareSymbol(declaration, completion.kind, completion.detail);
+  const auto kind = frontend::IsStandardTypeNamespace(program_, declaration)
+                        ? CompletionKind::Type
+                        : CompletionKind::Class;
+  const auto class_symbol =
+      DeclareSymbol(declaration, kind, [&] { return ClassCompletion(declaration).detail; });
   for (const auto& field : declaration.fields) {
-    const auto field_symbol =
-        DeclareMember(declaration.name, field, CompletionKind::Field, TypeText(field.type));
+    const auto field_symbol = DeclareMember(declaration.name, field, CompletionKind::Field,
+                                            [&] { return TypeText(field.type); });
     if (declaration.IsConstructorField(field)) {
       parameters_.try_emplace(class_symbol)
           .first->second.insert_or_assign(field.name, field_symbol);
@@ -164,14 +174,13 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
   for (const auto methods :
        {std::span(declaration.methods), std::span(declaration.method_templates)}) {
     for (const auto& method : methods) {
-      const auto method_symbol =
-          DeclareMember(declaration.name, method, MethodKind(method), MethodDetail(method));
+      const auto method_symbol = DeclareMember(declaration.name, method, MethodKind(method),
+                                               [&] { return MethodDetail(method); });
       BindIntrinsicSignature(method_symbol, declaration, method);
       if (method.intrinsic == Builtin::JsonTypedParse && !method.type_parameters.empty()) {
         const auto plain =
             std::ranges::find(declaration.methods, "parse", &frontend::Function::name);
-        symbols_.at(method_symbol).completion.detail =
-            Signature(*plain) + " | " + Signature(method);
+        symbols_[method_symbol].completion.detail = Signature(*plain) + " | " + Signature(method);
       }
       CollectParameters(method_symbol, method);
     }
@@ -183,13 +192,14 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
 }
 
 void SemanticIndex::CollectInterface(const frontend::Interface& declaration) {
-  DeclareSymbol(declaration, CompletionKind::Interface,
-                "interface " + GenericName(declaration.name, declaration.type_parameters));
+  DeclareSymbol(declaration, CompletionKind::Interface, [&] {
+    return "interface " + GenericName(declaration.name, declaration.type_parameters);
+  });
   for (const auto methods :
        {std::span(declaration.methods), std::span(declaration.method_templates)}) {
     for (const auto& method : methods) {
-      const auto method_symbol =
-          DeclareMember(declaration.name, method, MethodKind(method), MethodDetail(method));
+      const auto method_symbol = DeclareMember(declaration.name, method, MethodKind(method),
+                                               [&] { return MethodDetail(method); });
       CollectParameters(method_symbol, method);
     }
   }
@@ -202,7 +212,7 @@ void SemanticIndex::BindIntrinsicSignature(std::size_t symbol,
     return;
   }
   if (const auto checked = model_.classes.find(owner.name); checked != model_.classes.end()) {
-    symbols_.at(symbol).completion.detail = BuiltinDetail(checked->second.methods.at(method.name));
+    symbols_[symbol].completion.detail = BuiltinDetail(checked->second.methods.at(method.name));
   }
 }
 
@@ -213,7 +223,7 @@ void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
   for (const auto& value : declaration.members) {
     const auto symbol_id = AddSymbol(value.location, CompletionKind::EnumMember,
                                      owner + '.' + value.name + " = " + std::to_string(ordinal++));
-    symbols_.at(symbol_id).storage = frontend::MemberStorage::Static;
+    symbols_[symbol_id].storage = frontend::MemberStorage::Static;
     members.insert_or_assign(value.name, symbol_id);
   }
 }
@@ -224,13 +234,13 @@ void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Functi
     const auto parameter_id =
         AddSymbol(parameter.location, CompletionKind::Variable, TypeText(parameter.type));
     declared.insert_or_assign(parameter.name, parameter_id);
-    symbols_.at(parameter_id).role = Symbol::Role::Parameter;
+    symbols_[parameter_id].role = Symbol::Role::Parameter;
   }
 }
 
 std::string SemanticIndex::DefaultValue(const Expression& expression) const {
-  const auto& source = sources_.at(expression.location.source_id);
-  const auto& token = source.tokens.at(TokenAt(expression.location));
+  const auto& source = sources_[expression.location.source_id];
+  const auto& token = source.tokens[TokenAt(expression.location)];
   switch (expression.kind) {
     case Expression::Kind::IntegerLiteral:
       return expression.text;

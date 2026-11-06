@@ -10,6 +10,7 @@
 
 #include "base/async_operation.h"
 #include "base/builtin.h"
+#include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
 
@@ -62,7 +63,7 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::Call:
       return {
           .defines_value = true,
-          .argument_count = functions.subspan(instruction.index).front().parameter_count,
+          .argument_count = functions[instruction.index].parameter_count,
       };
     case Opcode::CallIndirect:
       return {
@@ -121,8 +122,6 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::LessEqualInt:
     case Opcode::GreaterInt:
     case Opcode::GreaterEqualInt:
-    case Opcode::AndBool:
-    case Opcode::OrBool:
     case Opcode::StringConcat:
     case Opcode::EqualString:
     case Opcode::NotEqualString:
@@ -171,7 +170,7 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
     }
   }
   for (std::size_t index = 0; index < code.size(); ++index) {
-    const auto& instruction = code.subspan(index).front();
+    const auto& instruction = code[index];
     const auto opcode = instruction.opcode;
     const auto effects = AnalyzeEffects(instruction);
     if (opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull) {
@@ -185,7 +184,7 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;
     }
-    if (index != 0 && instruction.handler != code.subspan(index - 1).front().handler) {
+    if (index != 0 && instruction.handler != code[index - 1].handler) {
       starts.at(index) = 1;
     }
   }
@@ -257,7 +256,7 @@ void TransferInstruction(const Instruction& instruction,
     live.Erase(instruction.dst);
   }
   if (exceptional) {
-    live.UnionWith(blocks.subspan(*exceptional).front().live_in);
+    live.UnionWith(blocks[*exceptional].live_in);
   }
   ForEachUse(instruction, access, [&](RegisterId reg) { live.Insert(reg); });
 }
@@ -305,7 +304,7 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
       };
       ForEachUse(instruction, access, record_use);
       if (!required.empty()) {
-        for (const auto reg : required.subspan(position).front()) {
+        for (const auto reg : required[position]) {
           record_use(reg);
         }
       }
@@ -448,19 +447,15 @@ void CompactInstructions(Function& function,
   std::uint32_t next = 0;
   for (std::size_t index = 0; index < code.size(); ++index) {
     remap.at(index) = next;
-    next += keep.subspan(index).front() != 0 ? 1 : 0;
+    next += keep[index] != 0 ? 1 : 0;
   }
   remap.back() = next;
   std::size_t destination = 0;
   for (std::size_t index = 0; index < code.size(); ++index) {
-    if (keep.subspan(index).front() == 0) {
+    if (keep[index] == 0) {
       continue;
     }
     auto& instruction = code.at(index);
-    if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
-        instruction.opcode == Opcode::JumpIfNull) {
-      instruction.index = remap.at(instruction.index);
-    }
     if (origins != nullptr) {
       origins->at(destination) = origins->at(index);
     }
@@ -473,8 +468,17 @@ void CompactInstructions(Function& function,
   if (origins != nullptr) {
     origins->resize(destination);
   }
+  RemapJumpTargets(function, remap);
+}
+
+void RemapJumpTargets(Function& function, std::span<const std::uint32_t> targets) {
+  for (auto& instruction : function.instructions) {
+    if (IsJumpOpcode(instruction.opcode)) {
+      instruction.index = targets[instruction.index];
+    }
+  }
   for (auto& handler : function.handlers) {
-    handler.target = remap.at(handler.target);
+    handler.target = targets[handler.target];
   }
 }
 
@@ -506,8 +510,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::LessEqualDouble:
     case Opcode::GreaterDouble:
     case Opcode::GreaterEqualDouble:
-    case Opcode::AndBool:
-    case Opcode::OrBool:
       return {};
     case Opcode::IsType:
     case Opcode::ExceptionValue:
@@ -538,7 +540,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
         return {
             .may_fail = true,
             .may_allocate = true,
-            .may_call = true,
             .reads_state = true,
             .writes_state = true,
         };
@@ -582,7 +583,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {
           .may_fail = true,
           .may_allocate = true,
-          .may_call = true,
           .reads_state = true,
           .writes_state = true,
       };

@@ -82,6 +82,9 @@ INSTANTIATE_TEST_SUITE_P(
     GenericContractErrorTest,
     testing::Values(
         InvalidContract{"func bad<T>(value:T):int{return value.length;}", "needs an 'extends'"},
+        InvalidContract{"type A = B; type B = A;", "cyclic or expanding type alias"},
+        InvalidContract{"type A<T> = A<T[]>; func main(value: A<int>): void {}",
+                        "type nesting exceeds"},
         InvalidContract{"func bad<T>(a:T,b:T):bool{return a==b;}", "needs an 'extends'"},
         InvalidContract{"func bad<T extends int,U extends int>(value:T):U{return value;}",
                         "cannot return"},

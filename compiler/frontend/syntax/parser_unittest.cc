@@ -17,6 +17,18 @@
 namespace vela::frontend {
 namespace {
 
+TEST(LexerTest, QuotesSourceTextWithoutInterpolationOrControlByteLoss) {
+  std::string value = "quote'\\$\n\r\t";
+  value.push_back('\0');
+  value.push_back('\x1b');
+  const auto quoted = QuoteStringLiteral(value);
+  const auto lexed = Lexer(quoted).Tokenize();
+  ASSERT_TRUE(lexed.diagnostics.empty());
+  ASSERT_EQ(lexed.tokens.size(), 2U);
+  EXPECT_EQ(lexed.tokens.front().kind, TokenKind::StringLiteral);
+  EXPECT_EQ(lexed.tokens.front().lexeme, value);
+}
+
 TEST(ParserTest, RejectsDestructuredCollectionBindings) {
   for (const std::string_view binding : {"[key, value]", "[key]", "[key,", "["}) {
     SCOPED_TRACE(binding);

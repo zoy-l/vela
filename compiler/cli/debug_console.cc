@@ -22,10 +22,10 @@
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "base/integer_parse.h"
 #include "base/json.h"
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "compiler/cli/console_input.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
@@ -44,7 +44,7 @@ namespace vela::tooling {
 
 namespace {
 
-enum class Mode : std::uint8_t { Entry, Continue, Step, Next, Finish, Instruction };
+enum class Mode : std::uint8_t { Continue, Step, Next, Finish, Instruction };
 enum class Command : std::uint8_t {
   Help,
   Continue,
@@ -194,8 +194,8 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
     for (const auto& function : image.functions.values()) {
       functions_.emplace(function.name.text());
       for (const auto& location : function.locations.values()) {
-        const auto path = paths.subspan(location.source_id).front().text();
-        source_lines_.try_emplace(std::string(path)).first->second.insert(location.line);
+        const auto path = paths[location.source_id].text();
+        source_lines_.try_emplace(path).first->second.insert(location.line);
       }
     }
     // source_lines_ 此后不再变化，文件名索引可安全借用其字符串键。
@@ -230,7 +230,7 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
 
   std::istream* input_;
   std::ostream* output_;
-  Mode mode_ = Mode::Entry;
+  Mode mode_ = Mode::Instruction;
   Point last_stop_;
   std::array<std::optional<Point>, kMaxCallFrames> previous_;
   std::size_t next_breakpoint_ = 1;
@@ -244,7 +244,6 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
 
 bool ConsoleDebugger::ShouldStop(const Point& point) const {
   switch (mode_) {
-    case Mode::Entry:
     case Mode::Instruction:
       return true;
     case Mode::Continue:
@@ -428,13 +427,13 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
 
 void ConsoleDebugger::AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame) {
   text = Unquote(text);
-  if (const auto line = ParseConsoleIndex(text)) {
+  if (const auto line = ParseUint32(text)) {
     AddSourceBreakpoint(frame.source_path(), *line);
     return;
   }
   const auto colon = text.find_last_of(':');
   if (colon != std::string_view::npos) {
-    const auto line = ParseConsoleIndex(text.substr(colon + 1));
+    const auto line = ParseUint32(text.substr(colon + 1));
     if (!line) {
       *output_ << "expected a positive line number after ':'\n";
       return;
@@ -468,7 +467,7 @@ void ConsoleDebugger::DeleteBreakpoint(std::string_view text) {
     *output_ << "all breakpoints deleted\n";
     return;
   }
-  const auto identity = ParseConsoleIndex(text);
+  const auto identity = ParseUint32(text);
   if (!identity) {
     *output_ << "delete requires a breakpoint ID or all\n";
     return;
@@ -517,7 +516,7 @@ void ConsoleDebugger::Stack(const runtime::NativeDebugContext& context) const {
 void ConsoleDebugger::SelectFrame(std::string_view text,
                                   const runtime::NativeDebugContext& context,
                                   runtime::NativeDebugFrame& selected) const {
-  const auto depth = ParseConsoleIndex(text);
+  const auto depth = ParseUint32(text);
   if (!depth) {
     *output_ << "frame requires a nonnegative depth\n";
     return;
@@ -527,7 +526,7 @@ void ConsoleDebugger::SelectFrame(std::string_view text,
     *output_ << "frame depth is out of range\n";
     return;
   }
-  selected = frames.subspan(*depth).front();
+  selected = frames[*depth];
   WriteFrame(*output_, selected);
 }
 
@@ -552,7 +551,7 @@ void ConsoleDebugger::Inspect(Command command,
     return;
   }
   name.remove_prefix(1);
-  const auto index = ParseConsoleIndex(name);
+  const auto index = ParseUint32(name);
   if (!index) {
     *output_ << "invalid register name\n";
     return;
@@ -571,7 +570,7 @@ void ConsoleDebugger::Inspect(Command command,
     *output_ << '\n';
     return;
   }
-  const auto element = ParseConsoleIndex(rest);
+  const auto element = ParseUint32(rest);
   if (!element || !value->IsObject()) {
     *output_ << "expected an object register and a nonnegative index\n";
     return;

@@ -23,9 +23,11 @@ namespace vela::compiler::aot {
 namespace {
 
 void PruneMain(ir::Program& program) {
-  const std::array<std::string, 1> exports{"main"};
+  for (auto& function : program.functions) {
+    function.is_exported = function.name == "main";
+  }
   std::optional<std::uint32_t> main;
-  PruneNativeProgram(program, exports, main);
+  PruneNativeProgram(program, main);
 }
 
 TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDescriptions) {
@@ -39,7 +41,7 @@ TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDesc
       "return value.read() + value.value; }");
   ASSERT_TRUE(prepared.Succeeded());
   std::optional<std::uint32_t> main;
-  PruneNativeProgram(prepared.program, {}, main);
+  PruneNativeProgram(prepared.program, main);
   runtime::Isolate isolate;
   runtime::LayoutCache cache;
   const auto layouts = runtime::InstantiateLayouts(prepared.program.layouts, isolate, cache);

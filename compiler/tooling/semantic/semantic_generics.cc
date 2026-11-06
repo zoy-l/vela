@@ -41,10 +41,8 @@ frontend::TypeDescriptor SemanticIndex::Capability(frontend::TypeDescriptor type
     if (nullable && !type.nullable) {
       type = frontend::MakeNullableType(type);
     } else if (!nullable && type.nullable) {
+      type.name = frontend::NonNullableTypeName(type);
       type.nullable = false;
-      type.name = type.kind == frontend::TypeDescriptor::Kind::Function
-                      ? type.name.substr(1, type.name.size() - 3)
-                      : type.name.substr(0, type.name.size() - 1);
     }
   }
   return type;
@@ -75,9 +73,8 @@ std::string SemanticIndex::DisplayType(frontend::TypeDescriptor type) const {
     return type.parameter->name + (type.nullable ? "?" : "");
   }
   if (type.nullable) {
+    type.name = frontend::NonNullableTypeName(type);
     type.nullable = false;
-    type.name = type.kind == Kind::Function ? type.name.substr(1, type.name.size() - 3)
-                                            : type.name.substr(0, type.name.size() - 1);
     return (type.kind == Kind::Function ? "(" + DisplayType(type) + ")" : DisplayType(type)) + '?';
   }
   if (const auto application = model_.type_applications.find(type.name);
@@ -121,11 +118,10 @@ void SemanticIndex::MarkTypeParameters(std::span<const frontend::TypeParameter> 
         "type parameter " + parameter.name +
         (parameter.bound ? " extends " + DisplaySymbolName(parameter.bound->ToString()) : "");
     const auto symbol = AddSymbol(parameter.location, CompletionKind::Type, detail);
-    symbols_.at(symbol).role = Symbol::Role::TypeParameter;
+    symbols_[symbol].role = Symbol::Role::TypeParameter;
     type_parameter_symbols_.insert_or_assign(parameter.identity, symbol);
     const auto key = KeyAt(parameter.location);
     references_.insert_or_assign(key, Reference{.symbol = symbol});
-    type_parameters_.insert_or_assign(key, kSemanticDeclaration);
   }
   for (const auto& parameter : parameters) {
     if (parameter.bound) {

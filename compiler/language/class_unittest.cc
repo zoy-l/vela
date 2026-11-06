@@ -355,7 +355,7 @@ func main(): int {
   return 0;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto results = test::ExecuteRepeated(*compiled.instance);
   ASSERT_TRUE(results) << results.error();
@@ -369,7 +369,7 @@ TEST(StaticFieldTest, DiagnosesInitializationCyclesAndRetriesAfterFailure) {
 class Cycle { static value: int = Cycle.other; static other: int = Cycle.value; }
 func main(): int { return Cycle.value; }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::CyclicInitialization);
   EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::CyclicInitialization);
@@ -430,6 +430,32 @@ class Explicit { value: int = seed; constructor(seed: int) { this.value += seed;
 func main(): int {
   let seed = 999;
   return Generated().value + Explicit(seed: 2).value - 40;
+}
+)",
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(ClassMutationTest, PropertyUpdatesEvaluateReceiverAndAccessorsOnce) {
+  runtime::Isolate isolate(1);
+  const auto result = test::RunInteger(R"(
+let reads = 0;
+let writes = 0;
+let receivers = 0;
+class Counter {
+  private stored: int = 39;
+  get value(): int { reads++; return this.stored; }
+  set value(next: int): void { writes++; this.stored = next; }
+}
+let counter = Counter();
+func target(): Counter { receivers++; return counter; }
+func main(): int {
+  const previous = target().value++;
+  const current = ++target().value;
+  target().value += 1;
+  return previous == 39 && current == 41 && counter.value == 42 &&
+         reads == 4 && writes == 3 && receivers == 3 ? 42 : 0;
 }
 )",
                                        isolate);

@@ -21,10 +21,19 @@ std::size_t Utf8Width(std::string_view text, std::size_t offset) {
   return point ? point->width : 1;
 }
 
-std::size_t PositionWidth(std::size_t bytes, PositionEncoding encoding) {
-  if (encoding == PositionEncoding::Utf8) {
-    return bytes;
+std::size_t Utf8Boundary(std::string_view text, std::size_t byte_limit, std::size_t line_begin) {
+  constexpr std::size_t kMaximumPrefix = 3;
+  const auto prefix = std::min(kMaximumPrefix, byte_limit - line_begin);
+  for (std::size_t distance = 1; distance <= prefix; ++distance) {
+    const auto point = ReadUtf8Prefix(text.substr(byte_limit - distance));
+    if (point && point->width > distance) {
+      return byte_limit - distance;
+    }
   }
+  return byte_limit;
+}
+
+std::size_t Utf16Width(std::size_t bytes) {
   return bytes == 4 ? 2 : 1;
 }
 
@@ -38,10 +47,6 @@ std::expected<SourceText, std::string> SourceText::Create(std::string text) {
   result.text_ = std::move(text);
   result.index_.Reset(result.text_);
   return result;
-}
-
-SourceLineIndex::SourceLineIndex(std::string_view text) {
-  Reset(text);
 }
 
 void SourceLineIndex::Reset(std::string_view text) {
@@ -67,10 +72,17 @@ std::expected<std::size_t, std::string> SourceLineIndex::OffsetAt(std::string_vi
   }
   auto offset = lines_->at(position.line);
   const auto end = LineEnd(text, position.line);
+  if (encoding == PositionEncoding::Utf8) {
+    const auto target = offset + std::min(position.character, end - offset);
+    if (Utf8Boundary(text, target, offset) != target) {
+      return std::unexpected("position splits a Unicode character");
+    }
+    return target;
+  }
   std::size_t character = 0;
   while (offset < end && character < position.character) {
     const auto bytes = Utf8Width(text, offset);
-    const auto width = PositionWidth(bytes, encoding);
+    const auto width = Utf16Width(bytes);
     if (position.character - character < width) {
       return std::unexpected("position splits a Unicode character");
     }
@@ -89,13 +101,17 @@ TextPosition SourceLineIndex::PositionAt(std::string_view text,
   const auto next = std::ranges::upper_bound(lines, offset);
   const auto line = static_cast<std::size_t>(std::distance(lines.begin(), next) - 1);
   const auto end = std::min(offset, LineEnd(text, line));
+  const auto begin = lines[line];
+  if (encoding == PositionEncoding::Utf8) {
+    return {.line = line, .character = Utf8Boundary(text, end, begin) - begin};
+  }
   std::size_t character = 0;
-  for (auto cursor = lines.at(line); cursor < end;) {
+  for (auto cursor = begin; cursor < end;) {
     const auto bytes = Utf8Width(text, cursor);
     if (bytes > end - cursor) {
       break;
     }
-    character += PositionWidth(bytes, encoding);
+    character += Utf16Width(bytes);
     cursor += bytes;
   }
   return {.line = line, .character = character};

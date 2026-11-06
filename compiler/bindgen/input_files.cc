@@ -71,7 +71,6 @@ llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>> InputFileSystem::openFileForRead
     return error;
   }
   auto canonical = std::string(real);
-  inputs_.insert(canonical);
   return std::make_unique<InputFile>(std::move(*file), *this, std::move(canonical));
 }
 

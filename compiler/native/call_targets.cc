@@ -243,6 +243,11 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program, NativeCodeTier tier) 
 
 std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& function,
                                                            const ir::Program& program) {
+  if (std::ranges::none_of(function.instructions, [](const auto& instruction) {
+        return instruction.opcode == Opcode::CallIndirect;
+      })) {
+    return {};
+  }
   CallableDefinitions definitions(function, program);
   std::vector<std::optional<CallableTarget>> targets(function.instructions.size());
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {

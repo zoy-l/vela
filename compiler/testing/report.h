@@ -56,7 +56,6 @@ struct ReportEvent final {
 };
 
 using ReportSink = std::function<void(const ReportEvent&)>;
-enum class TerminalMode : std::uint8_t { Plain, Interactive };
 
 // 一个会话只使用一个 reporter；互斥边界统一分配事件序号和单调相对时间。
 class SessionReporter final {

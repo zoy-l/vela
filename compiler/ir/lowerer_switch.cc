@@ -15,7 +15,7 @@ namespace vela::ir {
 
 RegisterId Lowerer::LowerConstantLabel(const frontend::Expression& source) {
   const auto& constant = model_.case_values.at(&source);
-  const auto label = AllocateTemporary(source.location);
+  const auto label = AllocateRegister(source.location);
   if (const auto* integer = std::get_if<std::int64_t>(&constant)) {
     Emit({
         .opcode = Opcode::LoadInt,
@@ -31,11 +31,7 @@ RegisterId Lowerer::LowerConstantLabel(const frontend::Expression& source) {
         .location = source.location,
     });
   } else {
-    frontend::Expression literal;
-    literal.kind = frontend::Expression::Kind::StringLiteral;
-    literal.location = source.location;
-    literal.text = std::get<std::string>(constant);
-    return LowerStringLiteral(literal).reg;
+    return EmitStringConstant(std::get<std::string>(constant), source.location).reg;
   }
   return label;
 }
@@ -51,7 +47,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
       continue;
     }
     const auto label = LowerConstantLabel(*branch.label);
-    const auto equal = AllocateTemporary(branch.location);
+    const auto equal = AllocateRegister(branch.location);
     const auto kind = value.type.kind;
     auto opcode = Opcode::EqualInt;
     if (kind == frontend::TypeDescriptor::Kind::String) {

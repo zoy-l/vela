@@ -126,8 +126,8 @@ bool TypeChecker::CanInferInvocation(const Expression& expression, const Type* e
        callee.text == kCompleterTypeName)) {
     return expected != nullptr;
   }
-  const auto source = GenericSignature(callee);
-  if (!source) {
+  const auto* source = GenericSignature(callee);
+  if (source == nullptr) {
     return true;
   }
   auto inference = MakeInference(source->type_parameters);
@@ -274,8 +274,7 @@ std::optional<TypeInference> TypeChecker::CreateInference(
     return std::nullopt;
   }
   for (std::size_t index = 0; index < explicit_arguments.size(); ++index) {
-    const auto type =
-        ResolveType(explicit_arguments.subspan(index).front(), VoidTypePolicy::Allowed);
+    const auto type = ResolveType(explicit_arguments[index], VoidTypePolicy::Allowed);
     if (!IsValid(type)) {
       return std::nullopt;
     }
@@ -396,8 +395,8 @@ std::vector<std::optional<TypeChecker::Type>> TypeChecker::CheckInferenceArgumen
   std::vector<std::optional<Type>> result(expressions.size());
   std::vector<Refinements> snapshots(expressions.size());
   for (std::size_t index = 0; index < expressions.size(); ++index) {
-    const auto& expression = *expressions.subspan(index).front();
-    const auto& pattern = patterns.subspan(index).front();
+    const auto& expression = *expressions[index];
+    const auto& pattern = patterns[index];
     const auto preparation = refinements_.BeginBranch();
     PrepareInferenceReceiver(expression);
     const bool ready = CanCheckExpression(expression, nullptr);
@@ -421,8 +420,8 @@ std::vector<std::optional<TypeChecker::Type>> TypeChecker::CheckInferenceArgumen
       if (result.at(index)) {
         continue;
       }
-      const auto& expression = *expressions.subspan(index).front();
-      const auto& pattern = patterns.subspan(index).front();
+      const auto& expression = *expressions[index];
+      const auto& pattern = patterns[index];
       const auto context = ResolveInferenceContext(pattern, inference);
       if (!CanCheckExpression(expression, IsValid(context) ? &context : nullptr)) {
         continue;
@@ -515,26 +514,28 @@ TypeChecker::Type TypeChecker::InferConstruction(const Expression& expression,
                   : InvalidType();
 }
 
-std::optional<TypeChecker::InferenceSignature> TypeChecker::GenericSignature(
-    const Expression& callee) {
+const TypeChecker::InferenceSignature* TypeChecker::GenericSignature(const Expression& callee) {
   if (callee.kind == Expression::Kind::Member) {
     const auto* method = InferenceMethod(callee);
-    return method == nullptr ? std::nullopt
-                             : std::optional(FunctionInferenceSignature(*method->declaration));
+    return method == nullptr ? nullptr : &FunctionInferenceSignature(*method->declaration);
   }
   if (callee.kind != Expression::Kind::Name || LookupLocal(callee.text) != nullptr) {
-    return std::nullopt;
+    return nullptr;
   }
-  InferenceSignature source;
   const auto* function = specializer_->FunctionTemplate(callee.text);
+  if (function != nullptr) {
+    return &FunctionInferenceSignature(*function);
+  }
+  const auto found = constructor_inference_signatures_.find(&callee);
+  if (found != constructor_inference_signatures_.end()) {
+    return &found->second;
+  }
   const auto* owner = specializer_->ClassTemplate(callee.text);
   const auto* alias = specializer_->AliasTemplate(callee.text);
-  if (function != nullptr) {
-    return FunctionInferenceSignature(*function);
-  }
   if (owner == nullptr && alias == nullptr) {
-    return std::nullopt;
+    return nullptr;
   }
+  InferenceSignature source;
   source.type_parameters = alias != nullptr ? alias->type_parameters : owner->type_parameters;
   source.return_type = {
       .name = callee.text,
@@ -553,15 +554,15 @@ std::optional<TypeChecker::InferenceSignature> TypeChecker::GenericSignature(
   if (owner == nullptr) {
     if (source.return_type.kind == TypeName::Kind::Generic &&
         (source.return_type.name == kMapTypeName || source.return_type.name == kSetTypeName)) {
-      return source;
+      return &constructor_inference_signatures_.emplace(&callee, std::move(source)).first->second;
     }
     AddDiagnostic(callee.location, "type alias does not name a constructible type");
-    return std::nullopt;
+    return nullptr;
   }
   if (source.return_type.kind != TypeName::Kind::Generic ||
       source.return_type.arguments.size() != owner->type_parameters.size()) {
     AddDiagnostic(callee.location, "generic argument count does not match type parameter count");
-    return std::nullopt;
+    return nullptr;
   }
   SetConstructorParameters(*owner, source);
   TypeSubstitutions substitution;
@@ -573,7 +574,7 @@ std::optional<TypeChecker::InferenceSignature> TypeChecker::GenericSignature(
     parameter.type = SubstituteTypeName(std::move(parameter.type), substitution);
   }
   NormalizeInferenceSignature(source);
-  return source;
+  return &constructor_inference_signatures_.emplace(&callee, std::move(source)).first->second;
 }
 
 std::optional<std::vector<TypeName>> TypeChecker::InferFunctionValue(
@@ -625,7 +626,7 @@ TypeChecker::FunctionInfo TypeChecker::ResolveAppliedSignature(const InferenceSi
   TypeSubstitutions substitutions;
   std::vector<Type> types;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const auto& argument = arguments.subspan(index).front();
+    const auto& argument = arguments[index];
     substitutions.emplace(source.type_parameters.at(index).identity, argument);
     types.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
   }
@@ -645,8 +646,8 @@ TypeChecker::FunctionInfo TypeChecker::ResolveAppliedSignature(const InferenceSi
 TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
                                                   const Expression* call,
                                                   const Type* expected) {
-  const auto source_signature = GenericSignature(callee);
-  if (!source_signature) {
+  const auto* source_signature = GenericSignature(callee);
+  if (source_signature == nullptr) {
     return InvalidType();
   }
   const auto& source = *source_signature;

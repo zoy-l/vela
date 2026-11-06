@@ -8,9 +8,9 @@
 #include <string_view>
 #include <utility>
 
+#include "base/integer_parse.h"
 #include "base/native_program_mode.h"
 #include "base/path.h"
-#include "compiler/cli/console_input.h"
 #include "compiler/development/development_session.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_debugger.h"
@@ -82,7 +82,7 @@ void DevelopmentDebugger::Break(std::string_view arguments) {
     return;
   }
   const auto separator = arguments.find_last_of(' ');
-  const auto line = ParseConsoleIndex(
+  const auto line = ParseUint32(
       separator == std::string_view::npos ? arguments : arguments.substr(separator + 1));
   if (!line || *line == 0) {
     *errors_ << "usage: .break [MODULE] LINE | .break clear\n";
@@ -125,14 +125,13 @@ void DevelopmentDebugger::Source(std::string_view argument) const {
     *errors_ << "no paused script frame\n";
     return;
   }
-  const auto index =
-      argument.empty() ? std::optional<std::uint32_t>(0) : ParseConsoleIndex(argument);
+  const auto index = argument.empty() ? std::optional<std::uint32_t>(0) : ParseUint32(argument);
   const auto frames = paused_->frames();
   if (!index || *index >= frames.size()) {
     *errors_ << "usage: .source [FRAME_INDEX]\n";
     return;
   }
-  const auto& frame = frames.subspan(*index).front();
+  const auto& frame = frames[*index];
   PrintFrame(*index, frame);
   auto source = frame.source_text();
   std::uint32_t line = 1;

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <ios>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -23,7 +24,6 @@
 #include "base/diagnostic.h"
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
@@ -125,9 +125,14 @@ class ScriptOutput final : public std::streambuf {
     return character;
   }
   std::streamsize xsputn(const char* text, std::streamsize size) override {
-    for (const char value : std::string_view(text, static_cast<std::size_t>(size))) {
-      overflow(value);
+    std::string_view remaining(text, static_cast<std::size_t>(size));
+    for (auto newline = remaining.find('\n'); newline != std::string_view::npos;
+         newline = remaining.find('\n')) {
+      line_.append(remaining.substr(0, newline));
+      Publish();
+      remaining.remove_prefix(newline + 1);
     }
+    line_.append(remaining);
     return size;
   }
 
@@ -184,18 +189,15 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
                          const compiler::ProjectConfiguration& configuration,
                          const TestCommandOptions& command,
                          std::uint64_t identity,
-                         SessionReporter& reporter) {
+                         SessionReporter& reporter,
+                         std::unique_ptr<compiler::jit::Compiler>& compiler) {
   SuiteResult result;
   const auto file = PathText(path.lexically_proximate(configuration.root));
   ReportEvent event(ReportEventType::Suite, identity);
   event.file = file;
   reporter.Emit(event);
   SuiteOptions options;
-  const auto& settings = configuration.test;
-  if (!settings) {
-    std::unreachable();
-  }
-  options.settings = *settings;
+  options.settings = *configuration.test;
   options.list = command.list;
   options.suite = identity;
   options.file = file;
@@ -206,23 +208,26 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
     options.load_deadline = runtime::FutureScheduler::Clock::now() + **timeout;
   }
   runtime::Isolate isolate;
-  auto compiler = compiler::jit::Compiler::Create();
-  if (!compiler) {
-    PublishFailure(reporter, result, identity, file,
-                   {
-                       .phase = TestPhase::Registration,
-                       .category = "CodeError",
-                       .message = frontend::DiagnosticsText(compiler.error()),
-                       .trace = {},
-                       .difference = std::nullopt,
-                   },
-                   kRuntimeErrorExitCode);
-    return result;
+  if (compiler == nullptr) {
+    auto created = compiler::jit::Compiler::Create();
+    if (!created) {
+      PublishFailure(reporter, result, identity, file,
+                     {
+                         .phase = TestPhase::Registration,
+                         .category = "CodeError",
+                         .message = frontend::DiagnosticsText(created.error()),
+                         .trace = {},
+                         .difference = std::nullopt,
+                     },
+                     kRuntimeErrorExitCode);
+      return result;
+    }
+    compiler = std::move(*created);
   }
   compiler::jit::SourceOptions compilation;
   compilation.diagnostics = configuration.diagnostics;
   compilation.compilation.code_cache = configuration.root / ".cache/vela/native/test";
-  const auto compiled = compiler::jit::CompileFile(**compiler, PathText(path), compilation);
+  const auto compiled = compiler::jit::CompileFile(*compiler, PathText(path), compilation);
   for (const auto& diagnostic : compiled.diagnostics) {
     if (diagnostic.severity == frontend::DiagnosticSeverity::Warning) {
       ReportEvent warning(ReportEventType::Warning, identity);
@@ -350,9 +355,7 @@ int RunDirectSuite(runtime::NativeInstance& instance,
     return kRuntimeErrorExitCode;
   }
   Settings settings;
-  SessionReporter reporter(
-      settings.reporter, output,
-      tooling::IsInteractiveStandardOutput() ? TerminalMode::Interactive : TerminalMode::Plain);
+  SessionReporter reporter(settings.reporter, output, streams.terminal);
   reporter.Emit(ReportEvent(ReportEventType::Start));
   ReportEvent event(ReportEventType::Suite, 1);
   event.file = file;
@@ -389,27 +392,26 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
     PrintConfigurationError(errors, configuration.error());
     return configuration.error().exit_code;
   }
-  if (configuration->test) {
-    command->Apply(*configuration->test);
+  auto& configured_settings = configuration->test;
+  if (!configured_settings) {
+    PrintConfigurationError(
+        errors, compiler::ConfigurationError::FileError(
+                    configuration->file, "test configuration is required", kUsageExitCode));
+    return kUsageExitCode;
   }
+  auto& settings = *configured_settings;
+  command->Apply(settings);
   const auto paths = DiscoverSuites(*configuration, directory, command->paths);
   if (!paths) {
     PrintConfigurationError(errors, paths.error());
     return paths.error().exit_code;
   }
-  const auto& configured_settings = configuration->test;
-  if (!configured_settings) {
-    std::unreachable();
-  }
-  const auto& settings = *configured_settings;
   const CancellationScope cancellation;
   if (!cancellation.IsInstalled()) {
     errors << "vela test: cannot install cancellation handler\n";
     return kRuntimeErrorExitCode;
   }
-  SessionReporter reporter(
-      settings.reporter, output,
-      tooling::IsInteractiveStandardOutput() ? TerminalMode::Interactive : TerminalMode::Plain);
+  SessionReporter reporter(settings.reporter, output, streams.terminal);
   reporter.Emit(ReportEvent(ReportEventType::Start));
   std::vector<SuiteResult> results(paths->size());
   std::atomic_size_t next{0};
@@ -418,13 +420,14 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
   workers.reserve(count);
   for (std::size_t worker = 0; worker < count; ++worker) {
     workers.emplace_back([&] {
+      std::unique_ptr<compiler::jit::Compiler> compiler;
       while (!IsCancelled()) {
         const auto index = next.fetch_add(1, std::memory_order_relaxed);
         if (index >= paths->size()) {
           return;
         }
         results.at(index) =
-            CompileSuite(paths->at(index), *configuration, *command, index + 1, reporter);
+            CompileSuite(paths->at(index), *configuration, *command, index + 1, reporter, compiler);
       }
     });
   }

@@ -96,8 +96,8 @@ runtime::ExecutionResult Suite::WaitFailure(WaitStatus status) const {
     failure_status = ExecutionStatus::ExecutionStopped;
     message = "test session cancelled";
   } else if (status == WaitStatus::TimedOut) {
-    failure_status = ExecutionStatus::Thrown;
-    message = "TestTimeout: no test activity before the deadline";
+    failure_status = ExecutionStatus::ExecutionTimedOut;
+    message = "no test activity before the deadline";
   }
   return {
       .status = failure_status,
@@ -256,8 +256,8 @@ std::expected<runtime::Value, std::string> Suite::RegisterCallback(
   if (!executing) {
     return std::unexpected(executing.error());
   }
-  const auto minimum = arguments.subspan(1).front();
-  const auto maximum = arguments.subspan(2).front();
+  const auto minimum = arguments[1];
+  const auto maximum = arguments[2];
   if (!minimum.IsInteger() || !maximum.IsInteger() || minimum.AsInteger() < 0 ||
       maximum.AsInteger() < minimum.AsInteger()) {
     return std::unexpected("expectAsync requires 0 <= count <= max");
@@ -353,7 +353,7 @@ std::expected<runtime::Value, std::string> Suite::Control(
     case TestControl::CheckCallback:
       return CheckCallback(arguments.front());
     case TestControl::CurrentTestScope:
-      return CurrentTestScope();
+      return runtime::Value::Integer(static_cast<std::int64_t>(CurrentTestScope().value_or(0)));
     case TestControl::RegisterFinalizer:
       return RegisterFinalizer(arguments.front(), std::move(trace));
     case TestControl::ReleaseFinalizer:
@@ -365,25 +365,25 @@ std::expected<runtime::Value, std::string> Suite::Control(
   std::unreachable();
 }
 
-runtime::Value Suite::CurrentTestScope() const {
+std::optional<std::uint64_t> Suite::CurrentTestScope() const {
   if (state_ != State::Running) {
-    return runtime::Value::Integer(0);
+    return std::nullopt;
   }
   const auto identity = CurrentTestId();
   if (!identity || scopes_.at(*identity)->closed) {
-    return runtime::Value::Integer(0);
+    return std::nullopt;
   }
-  return runtime::Value::Integer(static_cast<std::int64_t>(*identity));
+  return identity;
 }
 
 std::expected<runtime::Value, std::string> Suite::RegisterFinalizer(
     runtime::Value callback,
     std::vector<runtime::FutureTraceFrame> trace) {
-  const auto identity = CurrentTestScope().AsInteger();
-  if (identity == 0) {
+  const auto identity = CurrentTestScope();
+  if (!identity) {
     return std::unexpected("SDK finalizers require an executing test scope");
   }
-  auto& scope = *scopes_.at(static_cast<std::uint64_t>(identity));
+  auto& scope = *scopes_.at(*identity);
   auto captured = Capture(callback, std::move(trace));
   if (!captured) {
     return std::unexpected(std::move(captured.error()));
@@ -394,11 +394,11 @@ std::expected<runtime::Value, std::string> Suite::RegisterFinalizer(
 }
 
 std::expected<runtime::Value, std::string> Suite::ReleaseFinalizer(runtime::Value identity) {
-  const auto scope_id = CurrentTestScope().AsInteger();
-  if (scope_id == 0 || !identity.IsInteger()) {
+  const auto scope_id = CurrentTestScope();
+  if (!scope_id || !identity.IsInteger()) {
     return std::unexpected("SDK finalizer release requires its executing test scope");
   }
-  auto& scope = *scopes_.at(static_cast<std::uint64_t>(scope_id));
+  auto& scope = *scopes_.at(*scope_id);
   std::erase_if(scope.finalizers, [identity](const Callback& callback) {
     return std::cmp_equal(callback.id, identity.AsInteger());
   });

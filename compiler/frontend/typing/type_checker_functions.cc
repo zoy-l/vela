@@ -1,7 +1,6 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -68,14 +67,12 @@ TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
 
 void TypeChecker::CaptureLocal(const Expression& expression, const LocalBinding& binding) {
   facts_.bindings.insert_or_assign(&expression, binding.id);
-  for (const auto& context : lambda_scopes_) {
+  for (auto& context : lambda_scopes_) {
     if (binding.scope >= context.scope) {
       continue;
     }
     auto& captures = facts_.lambdas.at(context.index).captures;
-    if (std::ranges::none_of(captures, [&](const Capture& capture) -> bool {
-          return capture.binding == binding.id;
-        })) {
+    if (context.captures.insert(binding.id).second) {
       captures.push_back({
           .name = expression.text,
           .type = binding.type,
@@ -109,7 +106,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   const auto index = facts_.lambdas.size();
   facts_.lambda_indices.emplace(&expression, index);
   facts_.lambdas.push_back({.expression = &expression, .signature = signature, .captures = {}});
-  lambda_scopes_.push_back({.index = index, .scope = scopes_.size()});
+  lambda_scopes_.push_back({.index = index, .scope = scopes_.size(), .captures = {}});
   auto previous_facts = std::move(refinements_);
   refinements_.Clear();
   const auto previous_loop = std::exchange(loop_depth_, 0);

@@ -145,7 +145,7 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
     Emit(
         {.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
     const auto keys_array = base + 1;
-    const auto length = AllocateTemporary(statement.location);
+    const auto length = AllocateRegister(statement.location);
     EmitBuiltinCall(Builtin::CollectionSize, length, base, statement.location);
     Emit({
         .opcode = Opcode::NewDynamicArray,
@@ -154,13 +154,13 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
         .index = RegisterArrayType(frontend::MakeArrayType(element_type)),
         .location = statement.location,
     });
-    EmitBuiltinCall(Builtin::CollectionKeys, AllocateTemporary(statement.location), base,
+    EmitBuiltinCall(Builtin::CollectionKeys, AllocateRegister(statement.location), base,
                     statement.location);
     values_array = keys_array;
   }
-  const auto index = AllocateTemporary(statement.location);
+  const auto index = AllocateRegister(statement.location);
   Emit({.opcode = Opcode::LoadInt, .dst = index, .immediate = 0, .location = statement.location});
-  const auto length = AllocateTemporary(statement.location);
+  const auto length = AllocateRegister(statement.location);
   EmitBuiltinCall(Builtin::ArrayLength, length, values_array, statement.location);
   const auto loop_start = current_function_->instructions.size();
   const auto condition = EmitTemporary({

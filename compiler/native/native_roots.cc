@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -98,6 +99,9 @@ void RecordSuspension(NativeRootPlan& plan,
 void PlanRematerialization(NativeRootPlan& plan,
                            const ir::Function& function,
                            std::span<const ir::Function> functions) {
+  if (std::ranges::none_of(plan.suspended, [](const auto& values) { return !values.empty(); })) {
+    return;
+  }
   std::vector<std::size_t> definitions(function.register_count);
   std::vector<std::size_t> positions(function.register_count);
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
@@ -147,6 +151,41 @@ NativeRootPlan InitializeRoots(const ir::Function& function,
   return plan;
 }
 
+struct InstructionLiveness final {
+  std::reference_wrapper<const ir::RegisterSet> before;
+  std::reference_wrapper<const ir::RegisterSet> after;
+};
+
+void RecordLiveRoots(NativeRootPlan& plan,
+                     const ir::Function& function,
+                     std::size_t index,
+                     const ir::RegisterAccess& access,
+                     InstructionLiveness liveness) {
+  const auto& instruction = function.instructions[index];
+  auto& stores = plan.stores[index];
+  auto& clears = plan.clears[index];
+  const auto safepoint =
+      plan.safepoints[index] != 0 || ir::AnalyzeEffects(instruction).MayCollect();
+  const auto& after = liveness.after.get();
+  liveness.before.get().ForEach([&](ir::RegisterId reg) {
+    if (!HasManagedValue(function, reg)) {
+      return;
+    }
+    if (safepoint) {
+      stores.push_back(reg);
+    }
+    if (!after.Has(reg)) {
+      clears.push_back(reg);
+    }
+  });
+  if (access.defines_value && HasManagedValue(function, instruction.dst)) {
+    clears.push_back(instruction.dst);
+  }
+  std::ranges::sort(clears);
+  const auto duplicate = std::ranges::unique(clears);
+  clears.erase(duplicate.begin(), duplicate.end());
+}
+
 }  // namespace
 
 NativeRootPlan PlanNativeRoots(const ir::Function& function,
@@ -172,31 +211,12 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       const auto access = ir::AnalyzeRegisters(instruction, functions);
       after = live;
       RecordSuspension(plan, function, graph, blocks, index, after);
-      ir::TransferLiveness(
-          function, graph, blocks, instruction, access, live,
-          required.empty() ? std::span<const ir::RegisterId>{} : required.subspan(index).front());
-      live.ForEach([&](ir::RegisterId reg) { plan.checkpoints.at(index).push_back(reg); });
-      auto& stores = plan.stores.at(index);
-      auto& clears = plan.clears.at(index);
-      const auto safepoint =
-          plan.safepoints.at(index) != 0 || ir::AnalyzeEffects(instruction).MayCollect();
-      live.ForEach([&](ir::RegisterId reg) {
-        if (!HasManagedValue(function, reg)) {
-          return;
-        }
-        if (safepoint) {
-          stores.push_back(reg);
-        }
-        if (!after.Has(reg)) {
-          clears.push_back(reg);
-        }
-      });
-      if (access.defines_value && HasManagedValue(function, instruction.dst)) {
-        clears.push_back(instruction.dst);
+      ir::TransferLiveness(function, graph, blocks, instruction, access, live,
+                           required.empty() ? std::span<const ir::RegisterId>{} : required[index]);
+      if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
+        live.ForEach([&](ir::RegisterId reg) { plan.checkpoints[index].push_back(reg); });
       }
-      std::ranges::sort(clears);
-      const auto duplicate = std::ranges::unique(clears);
-      clears.erase(duplicate.begin(), duplicate.end());
+      RecordLiveRoots(plan, function, index, access, {.before = live, .after = after});
     }
   }
   AssignRootSlots(plan);

@@ -1,3 +1,4 @@
+#include "base/layout_description.h"
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
@@ -24,12 +25,12 @@ constexpr unsigned kIntegerShiftMask = 63;
 constexpr double kIntegerMagnitudeLimit = 0x1p63;
 }  // namespace
 
-bool FunctionEmitter::CanInlineSquareRoot(const ir::Function& function) const {
+bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts) {
   using Intrinsic = runtime::NativeFunction::Intrinsic;
   const auto standard = runtime::FindStandardNative(function.native_symbol);
   const auto& signature = function.signature;
   return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
-         signature && standard->IsSignatureCompatible(*signature, program_.layouts);
+         signature && standard->IsSignatureCompatible(*signature, layouts);
 }
 
 llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {
@@ -44,7 +45,7 @@ llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Va
 }
 
 void FunctionEmitter::EmitIntrinsicImport() {
-  if (!CanInlineSquareRoot(source_)) {
+  if (!generated_[function_index_].square_root) {
     return;
   }
   auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
@@ -251,14 +252,12 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   }
   auto* left = Load(instruction.lhs);
   auto* right = Load(instruction.rhs);
-  auto* left_present = left_type.nullable ? builder_.CreateExtractValue(left, 0)
-                                          : builder_.getInt1(left_type.kind != Kind::Null);
-  auto* right_present = right_type.nullable ? builder_.CreateExtractValue(right, 0)
-                                            : builder_.getInt1(right_type.kind != Kind::Null);
+  auto* left_present = IsPresent(builder_, left, left_type);
+  auto* right_present = IsPresent(builder_, right, right_type);
   llvm::Value* payload_equal = builder_.getFalse();
   if (left_type.kind == right_type.kind && left_type.kind != Kind::Null) {
-    auto* left_payload = left_type.nullable ? builder_.CreateExtractValue(left, 1) : left;
-    auto* right_payload = right_type.nullable ? builder_.CreateExtractValue(right, 1) : right;
+    auto* left_payload = PayloadOf(builder_, left, left_type);
+    auto* right_payload = PayloadOf(builder_, right, right_type);
     payload_equal = left_type.kind == Kind::Double
                         ? builder_.CreateFCmpOEQ(left_payload, right_payload)
                         : builder_.CreateICmpEQ(left_payload, right_payload);

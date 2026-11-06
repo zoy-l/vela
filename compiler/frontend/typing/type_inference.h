@@ -39,7 +39,6 @@ class InferenceTypeRelations {
   [[nodiscard]] virtual bool IsStaticSubtype(const TypeName& subtype,
                                              const TypeName& supertype) = 0;
   [[nodiscard]] virtual bool CanBindType(const TypeName& destination, const TypeName& source) = 0;
-  [[nodiscard]] virtual bool IsInvariantType(const TypeName& type) const = 0;
 
  protected:
   InferenceTypeRelations() = default;
@@ -68,7 +67,7 @@ class TypeInference final {
     TypeSubstitutions variables_;
   };
 
-  TypeInference(std::span<const TypeParameter> parameters, InferenceTypeRelations& relations);
+  TypeInference(std::vector<TypeParameter> parameters, InferenceTypeRelations& relations);
   [[nodiscard]] static std::optional<TypeName> CommonType(const TypeName& left,
                                                           const TypeName& right);
   void Constrain(const TypeName& pattern, const TypeName& actual, Evidence evidence);
@@ -95,6 +94,8 @@ class TypeInference final {
     absl::flat_hash_set<std::tuple<std::string, Evidence, Relation>> binding_keys;
     absl::flat_hash_map<std::string, Candidate> candidates;
     bool fixed = false;
+    bool has_null_input = false;
+    bool changed = false;
   };
   struct Constraint final {
     TypeName pattern;
@@ -109,13 +110,17 @@ class TypeInference final {
             const TypeName& type,
             Evidence evidence,
             Relation relation);
-  void AddCandidate(const TypeParameterId& parameter, const TypeName& type, Evidence evidence);
+  void AddCandidate(const TypeParameterId& parameter,
+                    const TypeName& type,
+                    const std::string& key,
+                    Evidence evidence);
   void Match(const TypeName& pattern, const TypeName& actual, Evidence evidence, Relation relation);
   [[nodiscard]] static Relation EvidenceRelation(Evidence evidence);
-  [[nodiscard]] Relation ArgumentRelation(const TypeName& pattern,
-                                          Relation relation,
-                                          std::size_t index) const;
+  [[nodiscard]] static Relation ArgumentRelation(const TypeName& pattern,
+                                                 Relation relation,
+                                                 std::size_t index);
   void Propagate();
+  [[nodiscard]] static TypeName Nullable(TypeName type);
   void SelectCandidates();
   [[nodiscard]] bool IsValidCandidate(const Variable& variable, Candidate& candidate) const;
   [[nodiscard]] bool IsValidBinding(const Candidate& candidate, const Binding& binding) const;

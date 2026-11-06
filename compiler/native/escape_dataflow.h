@@ -15,6 +15,8 @@ struct Provenance final {
   bool operator==(const Provenance&) const = default;
 };
 using State = std::vector<Provenance>;
+std::vector<ir::RegisterAccess> RegisterAccesses(const ir::Function& function,
+                                                 const ir::Program& program);
 struct BlockState final {
   State values;
   bool reached = false;
@@ -48,6 +50,7 @@ void Transfer(const ir::Instruction& instruction,
 std::vector<BlockState> Solve(const ir::Function& function,
                               const ir::Program& program,
                               const ir::FlowGraph& graph,
+                              std::span<const ir::RegisterAccess> accesses,
                               std::span<const std::optional<std::size_t>> allocations,
                               const EscapePlan& plan,
                               std::size_t state_size,

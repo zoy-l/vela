@@ -73,7 +73,6 @@ struct Module final {
   std::string clang_version;
   std::string directory;
   std::vector<std::string> arguments;
-  std::vector<std::string> inputs;
   std::map<std::string, std::string> input_fingerprints;
   std::vector<Class> classes;
   struct Dependency final {

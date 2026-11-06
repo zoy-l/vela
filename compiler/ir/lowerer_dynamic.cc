@@ -61,14 +61,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
     if (signature.visibility != frontend::Visibility::Public || target == function_ids_.end()) {
       continue;
     }
-    const std::vector<frontend::Capture> captures{
-        {
-            .name = std::string(frontend::kReceiverName),
-            .type = descriptor.type,
-            .binding = 0,
-            .kind = frontend::BindingKind::Constant,
-        },
-    };
+    const std::array captures{MakeReceiverCapture(descriptor.type)};
     const auto wrapper = CallableClass(target->second, CallableMode::BoundMethod, captures);
     program_.members.push_back(
         {.receiver_type = receiver, .name = name, .kind = MemberKind::Method, .target = wrapper});
@@ -106,7 +99,7 @@ Lowerer::LoweredValue Lowerer::LowerDynamicCall(const frontend::Expression& expr
   const auto callable =
       EmitTemporary({.opcode = Opcode::Move, .lhs = value.reg, .location = location});
   const auto [arguments, names] = LowerDynamicArguments(expression);
-  const auto result = AllocateTemporary(location);
+  const auto result = AllocateRegister(location);
   const std::array values{callable, arguments, names};
   EmitBuiltinCall(Builtin::DynamicCall, result, values, location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
@@ -151,10 +144,7 @@ std::pair<RegisterId, RegisterId> Lowerer::LowerDynamicArguments(
         .rhs = actual.reg,
         .location = argument.location,
     });
-    frontend::Expression name;
-    name.location = argument.location;
-    name.text = argument.name;
-    const auto text = LowerStringLiteral(name);
+    const auto text = EmitStringConstant(argument.name, argument.location);
     Emit({
         .opcode = Opcode::SetIndex,
         .dst = names,
@@ -170,16 +160,12 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMember(const frontend::Expression& ex
                                                   Builtin operation) {
   const auto receiver = LowerExpression(*expression.object);
   const auto location = expression.location;
-  const auto result = AllocateTemporary(location);
+  const auto result = AllocateRegister(location);
   std::optional<std::size_t> null_jump;
   if (expression.null_safe) {
-    null_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver.reg, .location = location});
+    null_jump = BeginNullSafe(receiver.reg, location);
   }
-  frontend::Expression name;
-  name.location = location;
-  name.text = expression.text;
-  const auto text = LowerStringLiteral(name);
+  const auto text = EmitStringConstant(expression.text, location);
   const std::array values{receiver.reg, text.reg};
   EmitBuiltinCall(operation, result, values, location);
   FinishNullSafe(null_jump, result, location);
@@ -190,11 +176,10 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMethodCall(const frontend::Expression
   const auto& callee = *expression.callee;
   const auto plan = LowerDynamicMember(callee, Builtin::DynamicResolveCall);
   const auto location = expression.location;
-  const auto result = AllocateTemporary(location);
+  const auto result = AllocateRegister(location);
   std::optional<std::size_t> null_jump;
   if (callee.null_safe) {
-    null_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfNull, .lhs = plan.reg, .location = location});
+    null_jump = BeginNullSafe(plan.reg, location);
   }
   const auto [arguments, names] = LowerDynamicArguments(expression);
   const std::array values{plan.reg, arguments, names};
@@ -206,12 +191,9 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMethodCall(const frontend::Expression
 Lowerer::LoweredValue Lowerer::LowerDynamicAssignment(const frontend::Expression& expression) {
   const auto& member = *expression.left;
   const auto receiver = SnapshotBefore(LowerExpression(*member.object), *expression.right);
-  frontend::Expression name;
-  name.location = member.location;
-  name.text = member.text;
-  const auto text = LowerStringLiteral(name);
+  const auto text = EmitStringConstant(member.text, member.location);
   const auto value = LowerExpression(*expression.right);
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   const std::array values{receiver.reg, text.reg, value.reg};
   EmitBuiltinCall(Builtin::DynamicMemberSet, result, values, expression.location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
@@ -228,10 +210,10 @@ Lowerer::LoweredValue Lowerer::LowerDynamicCompoundAssignment(
       .immediate = static_cast<std::int64_t>(operation),
       .location = expression.location,
   });
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   const std::array values{selector, target.value.reg, right.reg};
   EmitBuiltinCall(Builtin::DynamicBinary, result, values, expression.location);
-  StoreMutationTarget(*expression.left, target, result, expression.location);
+  StoreMutationTarget(target, result, expression.location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
@@ -252,7 +234,7 @@ RegisterId Lowerer::LowerFuturePayload(const LoweredValue& value,
       .immediate = RegisterRuntimeType(future),
       .location = location,
   });
-  const auto result = AllocateTemporary(location);
+  const auto result = AllocateRegister(location);
   const std::array arguments{value.reg, identity};
   EmitBuiltinCall(Builtin::CheckFuturePayload, result, arguments, location);
   return result;

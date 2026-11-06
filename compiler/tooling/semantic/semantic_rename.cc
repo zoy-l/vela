@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/lexer.h"
@@ -26,11 +27,11 @@ std::optional<std::size_t> SemanticIndex::RenameTarget(std::size_t offset) const
   if (reference == references_.end()) {
     return std::nullopt;
   }
-  const auto& symbol = symbols_.at(reference->second.symbol);
+  const auto& symbol = symbols_[reference->second.symbol];
   if ((symbol.role != Symbol::Role::TypeParameter &&
        symbol.completion.kind != CompletionKind::Variable &&
        symbol.completion.kind != CompletionKind::Constant) ||
-      sources_.at(symbol.key.first).path.starts_with(frontend::kStandardSourcePrefix)) {
+      sources_[symbol.key.first].path.starts_with(frontend::kStandardSourcePrefix)) {
     return std::nullopt;
   }
   return reference->second.symbol;
@@ -56,12 +57,12 @@ std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
 SemanticIndex::Key SemanticIndex::RenamedKey(Key key,
                                              const SemanticIndex& renamed,
                                              const SymbolRename& request) const {
-  const auto& symbol = symbols_.at(request.symbol);
+  const auto& symbol = symbols_[request.symbol];
   const auto first = std::ranges::lower_bound(request.offsets, Key{key.first, 0});
   const auto last = std::ranges::lower_bound(request.offsets, key);
   const auto before = static_cast<std::size_t>(last - first);
   key.second = key.second + (before * request.name.size()) - (before * symbol.length);
-  key.first = renamed.source_ids_.at(sources_.at(key.first).path);
+  key.first = renamed.source_ids_.at(sources_[key.first].path);
   return key;
 }
 
@@ -74,8 +75,8 @@ bool SemanticIndex::CanPreserveReferences(const SemanticIndex& renamed,
     const auto& [key, reference] = entry;
     const auto found = renamed.references_.find(RenamedKey(key, renamed, request));
     return found != renamed.references_.end() &&
-           renamed.symbols_.at(found->second.symbol).key ==
-               RenamedKey(symbols_.at(reference.symbol).key, renamed, request);
+           renamed.symbols_[found->second.symbol].key ==
+               RenamedKey(symbols_[reference.symbol].key, renamed, request);
   });
 }
 
@@ -93,12 +94,12 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
   if (!selected) {
     return std::unexpected("rename requires a variable or type parameter declaration or reference");
   }
-  const auto& symbol = symbols_.at(*selected);
+  const auto& symbol = symbols_[*selected];
   if (symbol.role == Symbol::Role::TypeParameter) {
     const auto selected_identity = std::ranges::find_if(
         type_parameter_symbols_, [&](const auto& entry) { return entry.second == *selected; });
     for (const auto& [identity, parameter] : type_parameter_symbols_) {
-      if (parameter != *selected && symbols_.at(parameter).completion.label == name &&
+      if (parameter != *selected && symbols_[parameter].completion.label == name &&
           identity.owner == selected_identity->first.owner) {
         return std::unexpected("new name duplicates another type parameter");
       }
@@ -122,7 +123,11 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
   std::vector<frontend::SourceInput> overlays;
   overlays.reserve(sources_.size());
   for (std::size_t index = 0; index < sources_.size(); ++index) {
-    overlays.push_back({.path = sources_.at(index).path, .text = texts.at(index)});
+    const auto& source = sources_[index];
+    if (!source.path.starts_with(frontend::kStandardSourcePrefix) &&
+        !source.path.starts_with(frontend::kSdkSourcePrefix)) {
+      overlays.push_back({.path = source.path, .text = texts[index]});
+    }
   }
   // 由生产绑定器重新解析改名后的身份；引用集合必须保持，避免遮蔽或捕获其它符号。
   const SemanticIndex renamed(sources_.front().path, overlays);
@@ -132,7 +137,7 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
   std::vector<Definition> edits;
   edits.reserve(request.offsets.size());
   for (const auto& [source_id, position] : request.offsets) {
-    const auto& source = sources_.at(source_id);
+    const auto& source = sources_[source_id];
     edits.push_back({
         .path = source.path,
         .range =

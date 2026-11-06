@@ -25,12 +25,13 @@ std::unique_ptr<Statement> Parser::ParseTry() {
       return nullptr;
     }
     if (Match(TokenKind::LeftParen)) {
-      const auto parameter = ParseParameter();
-      if (!parameter || !Expect(TokenKind::RightParen, "expected ')' after catch parameter")) {
+      auto parameter = ParseParameter();
+      if (!parameter ||
+          (Expect(TokenKind::RightParen, "expected ')' after catch parameter") == nullptr)) {
         return nullptr;
       }
-      clause.name = parameter->name;
-      clause.type = parameter->type;
+      clause.name = std::move(parameter->name);
+      clause.type = std::move(parameter->type);
     } else {
       catch_all = true;
     }
@@ -58,7 +59,8 @@ std::unique_ptr<Statement> Parser::ParseThrow() {
   statement->kind = Statement::Kind::Throw;
   statement->location = Previous().location;
   statement->expression = ParseExpression();
-  if (!statement->expression || !Expect(TokenKind::Semicolon, "expected ';' after throw")) {
+  if (!statement->expression ||
+      (Expect(TokenKind::Semicolon, "expected ';' after throw") == nullptr)) {
     return nullptr;
   }
   return statement;

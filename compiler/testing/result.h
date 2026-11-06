@@ -53,7 +53,6 @@ struct TestError final {
 };
 
 struct TestResult final {
-  std::uint64_t id = 0;
   std::string name;
   std::vector<std::string> tags;
   std::string skip_reason;

@@ -23,9 +23,9 @@ void InvalidateCallers(const std::vector<std::vector<std::size_t>>& callers,
   while (!changed.empty()) {
     const auto index = changed.back();
     changed.pop_back();
-    for (const auto caller : callers.at(index)) {
-      if (plan.reused.at(caller) != 0) {
-        plan.reused.at(caller) = 0;
+    for (const auto caller : callers[index]) {
+      if (plan.reused[caller] != 0) {
+        plan.reused[caller] = 0;
         changed.push_back(caller);
       }
     }
@@ -37,11 +37,11 @@ void RetainCallDependencies(const CodeReuseCache& cache,
                             std::size_t index,
                             absl::flat_hash_set<const void*>& retained,
                             CodeReusePlan& plan) {
-  for (const auto callee : plan.inputs.at(index).dependencies) {
-    if (plan.reused.at(callee) == 0) {
+  for (const auto callee : plan.inputs[index].dependencies) {
+    if (plan.reused[callee] == 0) {
       continue;
     }
-    for (const auto& symbol : symbols.at(callee)) {
+    for (const auto& symbol : symbols[callee]) {
       const auto& cached = cache.functions.at(symbol);
       auto resource = cached.resource.lock();
       if (retained.insert(resource.get()).second) {
@@ -61,8 +61,8 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
   std::vector<std::vector<std::size_t>> callers(count);
   std::vector<std::size_t> changed;
   for (std::size_t index = 0; index < count; ++index) {
-    const auto& input = plan.inputs.at(index);
-    const auto* source = index < cache.sources.size() ? &cache.sources.at(index) : nullptr;
+    const auto& input = plan.inputs[index];
+    const auto* source = index < cache.sources.size() ? &cache.sources[index] : nullptr;
     auto reusable = source != nullptr && source->fingerprint == input.fingerprint;
     if (reusable) {
       for (const auto& name : source->symbols) {
@@ -79,13 +79,13 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
         plan.retained.push_back(std::move(resource));
       }
     }
-    plan.reused.at(index) = reusable ? 1 : 0;
+    plan.reused[index] = reusable ? 1 : 0;
     if (!reusable) {
       changed.push_back(index);
     }
     const auto& dependencies = reusable ? source->body_dependencies : input.dependencies;
     for (const auto dependency : dependencies) {
-      callers.at(dependency).push_back(index);
+      callers[dependency].push_back(index);
     }
   }
   InvalidateCallers(callers, changed, plan);
@@ -99,12 +99,12 @@ void BindReusableCode(llvm::Module& module,
                       CodeReusePlan& plan) {
   absl::flat_hash_set<const void*> retained;
   for (std::size_t index = 0; index < symbols.size(); ++index) {
-    const auto reused = plan.reused.at(index) != 0;
+    const auto reused = plan.reused[index] != 0;
     if (!reused) {
       ++plan.compiled_functions;
       RetainCallDependencies(cache, symbols, index, retained, plan);
     }
-    for (const auto& name : symbols.at(index)) {
+    for (const auto& name : symbols[index]) {
       ReuseFunction entry{.name = name, .symbol = {}, .resource = {}};
       if (reused) {
         const auto& cached = cache.functions.at(name);

@@ -8,14 +8,12 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <utility>
 
 #include <absl/container/flat_hash_map.h>
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constant.h>
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
@@ -166,9 +164,7 @@ llvm::Value* FunctionEmitter::ReadStoredValue(StoredValueAddress address, const 
   }
   auto* tag = LoadMemory(builder_.getInt8Ty(), address.kind, address.kind_region);
   auto* present = builder_.CreateICmpNE(tag, builder_.getInt8(NativeKind(Kind::Null)));
-  auto* result = builder_.CreateInsertValue(
-      llvm::PoisonValue::get(ValueType(module_.getContext(), type)), present, 0);
-  return builder_.CreateInsertValue(result, value, 1);
+  return MakeOptional(builder_, present, value, type);
 }
 
 void FunctionEmitter::WriteHeapValue(llvm::Value* address,
@@ -215,8 +211,7 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) 
   auto* state = builder_.CreateLoad(
       builder_.getPtrTy(),
       ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionBarrierState));
-  state->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                     llvm::MDNode::get(module_.getContext(), {}));
+  MarkInvariant(*state);
   auto* phase =
       LoadMemory(builder_.getInt8Ty(), ByteAddress(state, offsetof(runtime::GcBarrierState, phase)),
                  MemoryRegion::GcState);
@@ -255,6 +250,18 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) 
   builder_.SetInsertPoint(written);
 }
 
+void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
+                                      llvm::Value* object,
+                                      const StoredValueAddress& address) {
+  if (instruction.opcode == Opcode::GetField) {
+    const auto& type = source_.value_types.at(instruction.dst);
+    Store(instruction.dst, ReadStoredValue(address, type), type);
+  } else {
+    WriteStoredValue(address, instruction.lhs);
+    EmitWriteBarrier(object, instruction.lhs);
+  }
+}
+
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
@@ -268,27 +275,20 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   auto* count =
       LoadMemory(builder_.getInt32Ty(), ByteAddress(object, NativeMemoryLayout::kObjectFieldCount),
                  MemoryRegion::HeapHeader);
-  count->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                     llvm::MDNode::get(module_.getContext(), {}));
+  MarkInvariant(*count);
   auto* kind_offset = builder_.CreateAdd(
       builder_.CreateMul(builder_.CreateZExt(count, builder_.getInt64Ty()),
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
       builder_.getInt64(runtime::FieldStorage::KindOffset(0, instruction.index)));
   const auto address = FieldAddress(ByteAddress(object, sizeof(runtime::HeapObject)),
                                     *builder_.getInt32(instruction.index), kind_offset);
-  if (reading) {
-    const auto& type = source_.value_types.at(instruction.dst);
-    Store(instruction.dst, ReadStoredValue(address, type), type);
-  } else {
-    WriteStoredValue(address, instruction.lhs);
-    EmitWriteBarrier(object, instruction.lhs);
-    if (program_.native_mode == NativeProgramMode::Reloadable && instruction.index == 0 &&
-        source_.value_types.at(instruction.dst).kind == Kind::Function) {
-      auto helper =
-          module_.getOrInsertFunction(runtime::kNativeCaptureReceiverSymbol, builder_.getInt8Ty(),
-                                      builder_.getPtrTy(), builder_.getPtrTy());
-      CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object}));
-    }
+  EmitFieldAccess(instruction, object, address);
+  if (!reading && program_.native_mode == NativeProgramMode::Reloadable && instruction.index == 0 &&
+      source_.value_types.at(instruction.dst).kind == Kind::Function) {
+    auto helper =
+        module_.getOrInsertFunction(runtime::kNativeCaptureReceiverSymbol, builder_.getInt8Ty(),
+                                    builder_.getPtrTy(), builder_.getPtrTy());
+    CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object}));
   }
 }
 
@@ -352,11 +352,8 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   using runtime::NativeMemoryLayout;
   const auto reading = instruction.opcode == Opcode::GetField;
   const auto declaration = instruction.field_declaration;
-  if (!declaration) {
-    std::unreachable();
-  }
   const auto field = *declaration;
-  const auto origin = origins_.subspan(instruction_index_).front();
+  const auto origin = origins_[instruction_index_];
   const auto& canonical = program_.functions.at(function_index_).instructions.at(origin);
   if (!reading &&
       (canonical.opcode != instruction.opcode || canonical.field_declaration != field)) {
@@ -376,9 +373,6 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
     return;
   }
   const auto cached_access = field_accesses_.at(origin);
-  if (!cached_access) {
-    std::unreachable();
-  }
   const auto access_index = *cached_access;
   auto* cache = ByteAddress(field_caches_, access_index * sizeof(NativeFieldCache));
   auto* layout =
@@ -387,8 +381,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   auto* layout_id =
       LoadMemory(builder_.getInt64Ty(), ByteAddress(layout, NativeMemoryLayout::kClassId),
                  MemoryRegion::ClassLayout);
-  layout_id->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                         llvm::MDNode::get(module_.getContext(), {}));
+  MarkInvariant(*layout_id);
   auto* cached_id =
       LoadMemory(builder_.getInt64Ty(), ByteAddress(cache, offsetof(NativeFieldCache, layout_id)),
                  MemoryRegion::FieldCache);
@@ -414,18 +407,11 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   builder_.SetInsertPoint(EmitFieldReadiness(storage, instruction, slot, std::nullopt, resolve));
   // 全部字段就绪后不再读取或写入逐字段状态，直到发布替换整个字段块。
   const auto address = FieldAddress(values, *slot, kind_offset);
-  if (reading) {
-    const auto& type = source_.value_types.at(instruction.dst);
-    Store(instruction.dst, ReadStoredValue(address, type), type);
-  } else {
-    WriteStoredValue(address, instruction.lhs);
-    EmitWriteBarrier(object, instruction.lhs);
-  }
+  EmitFieldAccess(instruction, object, address);
   builder_.CreateBr(done);
   builder_.SetInsertPoint(resolve);
   if (reading) {
-    Poll();
-    PrepareRuntimeCall();
+    PrepareInlineRuntimeCall();
   }
   auto helper = module_.getOrInsertFunction(
       reading ? runtime::kNativeLoadFieldSymbol : runtime::kNativeStoreFieldSymbol,
@@ -453,9 +439,6 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   using runtime::InstanceStorage;
   using runtime::NativeMemoryLayout;
   const auto declaration = instruction.field_declaration;
-  if (!declaration) {
-    std::unreachable();
-  }
   const auto& direct = field_layouts_.at(*declaration);
   auto& context = module_.getContext();
   auto* layout =
@@ -479,17 +462,10 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   StoreCheckpoint();
   Recover();
   builder_.SetInsertPoint(ready);
-  const auto reading = instruction.opcode == Opcode::GetField;
   const auto address =
       FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), *builder_.getInt32(direct.slot),
                    builder_.getInt64(runtime::FieldStorage::KindOffset(direct.count, direct.slot)));
-  if (reading) {
-    const auto& type = source_.value_types.at(instruction.dst);
-    Store(instruction.dst, ReadStoredValue(address, type), type);
-  } else {
-    WriteStoredValue(address, instruction.lhs);
-    EmitWriteBarrier(object, instruction.lhs);
-  }
+  EmitFieldAccess(instruction, object, address);
 }
 
 void FunctionEmitter::CacheGlobals() {
@@ -610,10 +586,7 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
   builder_.CreateBr(done);
   builder_.SetInsertPoint(resolve);
   if (reading) {
-    if (!IsBoundaryPollRequired(instruction_index_)) {
-      Poll();
-    }
-    PrepareRuntimeCall();
+    PrepareInlineRuntimeCall();
     auto helper = module_.getOrInsertFunction(runtime::kNativeLoadGlobalSymbol,
                                               builder_.getInt8Ty(), builder_.getPtrTy(),
                                               builder_.getInt32Ty(), builder_.getPtrTy());
@@ -836,11 +809,8 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   auto* done = llvm::BasicBlock::Create(module_.getContext(), "array.done", body_);
   builder_.CreateCondBr(builder_.CreateICmpULT(length, capacity), append, grow);
   builder_.SetInsertPoint(grow);
-  if (program_.native_mode == NativeProgramMode::Reloadable) {
-    Poll();
-  }
   // 只有扩容路径进入运行时；轮询可能改变数组，完整 push 必须重新读取当前长度。
-  PrepareRuntimeCall();
+  PrepareInlineRuntimeCall();
   const auto reg = instruction.lhs + 1;
   PackArguments(instruction.lhs, BuiltinArity(builtin));
   auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),

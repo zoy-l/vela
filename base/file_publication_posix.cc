@@ -15,9 +15,10 @@
 #include "base/path.h"
 
 namespace vela {
+namespace {
 
-std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
-    const std::filesystem::path& path) {
+template <class Storage>
+std::expected<Storage, std::string> ReadFile(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary | std::ios::ate);
   if (!input) {
     return std::unexpected("cannot open file '" + PathText(path) + "'");
@@ -31,13 +32,25 @@ std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
   if (std::cmp_greater(size, std::numeric_limits<std::streamsize>::max())) {
     return std::unexpected("file exceeds stream size limit");
   }
-  std::vector<std::byte> bytes(size);
+  Storage bytes;
+  bytes.resize(size);
   input.seekg(0);
   void* storage = bytes.data();
   if (size != 0 && !input.read(static_cast<char*>(storage), static_cast<std::streamsize>(size))) {
     return std::unexpected("cannot read complete file '" + PathText(path) + "'");
   }
   return bytes;
+}
+
+}  // namespace
+
+std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
+    const std::filesystem::path& path) {
+  return ReadFile<std::vector<std::byte>>(path);
+}
+
+std::expected<std::string, std::string> ReadTextFile(const std::filesystem::path& path) {
+  return ReadFile<std::string>(path);
 }
 
 }  // namespace vela

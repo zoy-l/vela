@@ -1,5 +1,6 @@
 #include "compiler/aot/native_type_optimizer.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 
@@ -71,6 +72,12 @@ Fact ResultFact(ir::Instruction& instruction,
 
 void ElideNativeResultBindings(ir::Program& program) {
   for (auto& function : program.functions) {
+    if (std::ranges::none_of(function.instructions, [](const auto& instruction) {
+          return instruction.opcode == Opcode::BuiltinCall &&
+                 instruction.index == static_cast<std::uint32_t>(Builtin::BindRuntimeType);
+        })) {
+      continue;
+    }
     const auto graph = ir::BuildFlowGraph(function);
     for (const auto& block : graph.blocks) {
       absl::flat_hash_map<ir::RegisterId, Fact> facts;

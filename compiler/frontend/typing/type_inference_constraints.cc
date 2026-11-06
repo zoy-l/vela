@@ -15,12 +15,12 @@ namespace vela::frontend {
 
 void TypeInference::AddCandidate(const TypeParameterId& parameter,
                                  const TypeName& type,
+                                 const std::string& key,
                                  Evidence evidence) {
   if (type.name == kNullTypeName || HasUnspecifiedType(type)) {
     return;
   }
   auto& candidates = variables_.at(parameter).candidates;
-  const auto key = CanonicalTypeText(type);
   const auto [found, inserted] = candidates.try_emplace(
       key, Candidate{.type = type, .from_bound = evidence == Evidence::Bound});
   if (evidence == Evidence::Bound) {
@@ -36,39 +36,37 @@ void TypeInference::Bind(const TypeParameter& parameter,
                          Evidence evidence,
                          Relation relation) {
   auto& variable = variables_.at(parameter.identity);
-  if (!variable.binding_keys.emplace(CanonicalTypeText(type), evidence, relation).second) {
+  const auto key = CanonicalTypeText(type);
+  if (!variable.binding_keys.emplace(key, evidence, relation).second) {
     return;
   }
   variable.bindings.push_back({.type = type, .relation = relation});
   variable.fixed = variable.fixed || evidence == Evidence::Explicit;
-  AddCandidate(parameter.identity, type, evidence);
+  variable.changed = true;
+  AddCandidate(parameter.identity, type, key, evidence);
   // null 本身不确定类型；与其它输入共同出现时仅产生已有的可空合并候选。
-  const bool has_null = std::ranges::any_of(variable.bindings, [](const Binding& binding) {
-    return binding.relation == Relation::Input && binding.type.name == kNullTypeName;
-  });
-  if (!has_null) {
+  const bool new_null =
+      !variable.has_null_input && relation == Relation::Input && type.name == kNullTypeName;
+  variable.has_null_input = variable.has_null_input || new_null;
+  if (!variable.has_null_input) {
     return;
   }
   std::vector<Candidate> nullable;
-  for (const auto& [key, candidate] : variable.candidates) {
-    static_cast<void>(key);
+  const auto append_nullable = [&](const Candidate& candidate) {
     if (candidate.type.name != kVoidTypeName && !IsNullableTypeName(candidate.type)) {
-      const TypeName null{
-          .name = std::string(kNullTypeName),
-          .location = {},
-          .kind = TypeName::Kind::Named,
-          .arguments = {},
-          .parameter = {},
-      };
-      const auto common = CommonType(candidate.type, null);
-      if (!common) {
-        std::unreachable();
-      }
-      nullable.push_back({.type = *common, .from_bound = candidate.from_bound});
+      nullable.push_back({.type = Nullable(candidate.type), .from_bound = candidate.from_bound});
     }
+  };
+  if (new_null) {
+    for (const auto& [candidate_key, candidate] : variable.candidates) {
+      append_nullable(candidate);
+    }
+  } else if (const auto candidate = variable.candidates.find(key);
+             candidate != variable.candidates.end()) {
+    append_nullable(candidate->second);
   }
   for (const auto& candidate : nullable) {
-    AddCandidate(parameter.identity, candidate.type,
+    AddCandidate(parameter.identity, candidate.type, CanonicalTypeText(candidate.type),
                  candidate.from_bound ? Evidence::Bound : evidence);
   }
 }
@@ -180,6 +178,12 @@ void TypeInference::SelectCandidates() {
   conflicts_.clear();
   for (const auto& parameter : parameters_) {
     auto& variable = variables_.at(parameter.identity);
+    if (!std::exchange(variable.changed, false)) {
+      if (!variable.type && !variable.candidates.empty()) {
+        conflicts_.push_back(parameter.identity);
+      }
+      continue;
+    }
     variable.type.reset();
     std::vector<const TypeName*> valid;
     for (auto& [key, candidate] : variable.candidates) {
@@ -190,15 +194,14 @@ void TypeInference::SelectCandidates() {
     }
     const TypeName* selected = nullptr;
     for (const auto* candidate : valid) {
-      const bool most_specific = std::ranges::all_of(valid, [&](const TypeName* other) {
-        return IsSame(*candidate, *other) || IsStaticSubtype(*candidate, *other);
-      });
-      if (most_specific) {
+      if (selected == nullptr ||
+          (!IsSame(*selected, *candidate) && !IsStaticSubtype(*selected, *candidate))) {
         selected = candidate;
-        break;
       }
     }
-    if (selected != nullptr) {
+    if (selected != nullptr && std::ranges::all_of(valid, [&](const TypeName* other) {
+          return IsSame(*selected, *other) || IsStaticSubtype(*selected, *other);
+        })) {
       variable.type = *selected;
     } else if (!variable.candidates.empty()) {
       conflicts_.push_back(parameter.identity);

@@ -1,8 +1,8 @@
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/lowerer.h"
 
 #include <bit>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -60,7 +60,7 @@ void Lowerer::LowerJSONDecodePlans() {
       const auto class_index = class_ids_.at(plan.name);
       auto constructor = program_.classes.at(class_index).constructor;
       if (constructor == kInvalidFunctionTarget) {
-        const auto name = "$construct." + plan.name;
+        const auto name = InitializerKey(InitializerKind::ConstructorFactory, plan.name);
         constructor = AddFunctionId(name);
         program_.classes.at(class_index).constructor = constructor;
         LowerConstructorFactory(model_.classes.at(plan.name), name);
@@ -85,7 +85,7 @@ void Lowerer::LowerPublicConstructors() {
         (source.constructor && source.constructor->visibility == frontend::Visibility::Private)) {
       continue;
     }
-    const auto name = "$construct." + source.name;
+    const auto name = InitializerKey(InitializerKind::ConstructorFactory, source.name);
     const auto target = AddFunctionId(name);
     program_.classes.at(class_ids_.at(source.name)).constructor = target;
     LowerConstructorFactory(model_.classes.at(source.name), name);
@@ -123,13 +123,7 @@ RegisterId Lowerer::LowerHostConstructorFactory(const frontend::ClassDescriptor&
   const auto& declaration = *owner.declaration;
   const auto location = declaration.location;
   const auto count = static_cast<std::uint32_t>(owner.constructor.parameters.size());
-  const auto target_name = declaration.name + ".$constructor";
-  auto target = function_ids_.find(target_name);
-  if (target == function_ids_.end()) {
-    static_cast<void>(AddFunctionId(target_name));
-    pending_constructors_.push_back(&declaration);
-    target = function_ids_.find(target_name);
-  }
+  const auto target = ConstructorTarget(owner);
   const auto base = AllocateRegisterWindow(count, location);
   for (std::uint32_t index = 0; index < count; ++index) {
     const auto& parameter = owner.constructor.parameters.at(index);
@@ -137,15 +131,14 @@ RegisterId Lowerer::LowerHostConstructorFactory(const frontend::ClassDescriptor&
         {.reg = index, .type = current_function_->value_types.at(index)}, parameter.type, location);
     Emit({.opcode = Opcode::Move, .dst = base + index, .lhs = value.reg, .location = location});
   }
-  const auto object = EmitTemporary(
-      {.opcode = Opcode::Call, .lhs = base, .index = target->second, .location = location});
+  const auto object =
+      EmitTemporary({.opcode = Opcode::Call, .lhs = base, .index = target, .location = location});
   RecordValueType(object, owner.type);
   return object;
 }
 
 void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
                                       const std::string& name) {
-  constexpr auto kMaskBits = std::numeric_limits<std::uint64_t>::digits;
   const auto& declaration = *owner.declaration;
   const auto location = declaration.location;
   const bool generated = declaration.constructor_kind == frontend::ConstructorKind::Generated;
@@ -184,8 +177,9 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
   });
   RecordValueType(object, owner.type);
   std::vector<RegisterId> arguments;
-  arguments.reserve(ConstructorMaskCount(owner) + count);
-  for (std::uint32_t mask = 0; mask < ConstructorMaskCount(owner); ++mask) {
+  const auto masks = ConstructorMaskCount(owner);
+  arguments.reserve(masks + count);
+  for (std::uint32_t mask = 0; mask < masks; ++mask) {
     arguments.push_back(EmitTemporary({.opcode = Opcode::LoadInt, .location = location}));
   }
   for (std::uint32_t parameter = 0; parameter < count; ++parameter) {
@@ -208,14 +202,16 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
           .lhs = value.reg,
           .index = field,
           .location = location,
+          .field_declaration = FieldDeclaration(owner.type, field),
       });
       if (!arguments.empty()) {
         const auto bit = EmitTemporary({
             .opcode = Opcode::LoadInt,
-            .immediate = std::bit_cast<std::int64_t>(std::uint64_t{1} << (field % kMaskBits)),
+            .immediate =
+                std::bit_cast<std::int64_t>(std::uint64_t{1} << (field % kConstructorMaskBits)),
             .location = location,
         });
-        const auto mask = arguments.at(field / kMaskBits);
+        const auto mask = arguments.at(field / kConstructorMaskBits);
         Emit({
             .opcode = Opcode::BitOrInt,
             .dst = mask,

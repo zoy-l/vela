@@ -7,8 +7,11 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 
 #include <clang/AST/ASTConsumer.h>
 #include <clang/AST/ASTContext.h>
@@ -139,15 +142,14 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     module.target = context_->getTargetInfo().getTriple().str();
     module.clang_version = CLANG_VERSION_STRING;
     const auto& sources = context_->getSourceManager();
+    std::vector<std::string> parsed_inputs;
     for (auto file = sources.fileinfo_begin(); file != sources.fileinfo_end(); ++file) {
-      module.inputs.push_back(RealPath(file->first.getName(), compiler_->getDiagnostics()));
+      parsed_inputs.push_back(RealPath(file->first.getName(), compiler_->getDiagnostics()));
     }
-    std::ranges::sort(module.inputs);
-    const auto duplicates = std::ranges::unique(module.inputs);
-    module.inputs.erase(duplicates.begin(), duplicates.end());
+    std::ranges::sort(parsed_inputs);
     std::ranges::sort(module.classes, {}, &Class::key);
     for (const auto& header : collection_->headers) {
-      if (!std::ranges::binary_search(module.inputs, header)) {
+      if (!std::ranges::binary_search(parsed_inputs, header)) {
         auto& diagnostics = compiler_->getDiagnostics();
         diagnostics.Report(diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error, "%0"))
             << "configured header was not read by the translation unit: " + header;
@@ -177,8 +179,14 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   Source Location(const clang::Decl& declaration) {
     const auto& sources = context_->getSourceManager();
     const auto location = sources.getExpansionLoc(declaration.getLocation());
+    const auto filename = sources.getFilename(location);
+    const auto [path, inserted] =
+        source_paths_.try_emplace(std::string_view(filename.data(), filename.size()));
+    if (inserted) {
+      path->second = RealPath(filename, compiler_->getDiagnostics());
+    }
     return {
-        .path = RealPath(sources.getFilename(location), compiler_->getDiagnostics()),
+        .path = path->second,
         .line = sources.getExpansionLineNumber(location),
         .column = sources.getExpansionColumnNumber(location),
     };
@@ -353,8 +361,9 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
       }
       member.kind = MemberKind::Constructor;
     }
-    if (const auto name = Annotation(method, "vela.name:")) {
-      member.name = *name;
+    const auto explicit_name = Annotation(method, "vela.name:");
+    if (explicit_name) {
+      member.name = *explicit_name;
     }
     if (const auto name = Annotation(method, "vela.getter:")) {
       member.name = *name;
@@ -366,7 +375,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     }
     if ((constructor != nullptr && member.kind != MemberKind::Constructor) ||
         (method.isStatic() && member.kind != MemberKind::Static) ||
-        (constructor != nullptr && Annotation(method, "vela.name:"))) {
+        (constructor != nullptr && explicit_name)) {
       Error(method, "constructor and static method annotations do not define instance properties");
       return;
     }
@@ -459,7 +468,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
       const auto* setter = member.kind == MemberKind::Setter ? &member : &previous;
       if (getter->kind != MemberKind::Getter || setter->kind != MemberKind::Setter ||
           setter->parameters.size() != 1 ||
-          !IsSameLogicalType(getter->result, setter->parameters[0].type)) {
+          !getter->result.IsSameLogicalType(setter->parameters[0].type)) {
         Error(record, "conflicting exported member or property types: " + member.name +
                           "; rename overloads with VELA_NAME or exclude with VELA_IGNORE");
       }
@@ -469,10 +478,6 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     }
   }
 
-  static bool IsSameLogicalType(const Type& left, const Type& right) {
-    return left.IsSameLogicalType(right);
-  }
-
   clang::CompilerInstance* compiler_;
   Collection* collection_;
   clang::ASTContext* context_;
@@ -480,6 +485,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   std::map<std::string, const clang::CXXRecordDecl*> keys_;
   std::set<std::string> export_names_;
   std::vector<clang::CXXRecordDecl*> records_;
+  absl::flat_hash_map<std::string, std::string> source_paths_;
 };
 
 class Consumer final : public clang::ASTConsumer {

@@ -345,6 +345,8 @@ struct Program final {
   };
   std::vector<Import> imports;
   std::vector<SourceFile> sources;
+  // 加载器解析后的导入目标，按 source_id 和原始 import 顺序索引；不完整图可缺少目标。
+  std::vector<std::vector<std::uint32_t>> import_sources;
   std::vector<FileResolution> file_resolutions;
   std::vector<std::string> standard_names;
   std::vector<Enum> enums;

@@ -17,6 +17,15 @@ namespace vela::ir {
                                     DeclarationKind kind,
                                     std::string_view name);
 [[nodiscard]] std::string MethodKey(std::string_view owner, const frontend::Function& method);
+[[nodiscard]] DeclarationKind MethodDeclarationKind(const frontend::Function& method);
+[[nodiscard]] DeclarationKind MethodDeclarationKind(const frontend::FunctionDescriptor& method);
+enum class InitializerKind : std::uint8_t {
+  Global,
+  StaticField,
+  InstanceField,
+  ConstructorFactory,
+};
+[[nodiscard]] std::string InitializerKey(InitializerKind kind, std::string_view name);
 
 struct ClassDeclarations final {
   DeclarationId declaration;

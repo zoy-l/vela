@@ -1,4 +1,4 @@
-#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
@@ -47,19 +47,19 @@ Opcode Lowerer::SelectDoubleOpcode(TokenKind operation) {
   std::unreachable();
 }
 
-Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) {
-  const auto bits = std::bit_cast<std::uint64_t>(expression.double_value);
+Lowerer::LoweredValue Lowerer::EmitDoubleConstant(double value, frontend::SourceLocation location) {
+  const auto bits = std::bit_cast<std::uint64_t>(value);
   const auto next = static_cast<std::uint32_t>(current_function_->doubles.size());
   const auto [entry, inserted] = double_constant_ids_.try_emplace(bits, next);
   if (inserted) {
-    current_function_->doubles.push_back(expression.double_value);
+    current_function_->doubles.push_back(value);
   }
-  const RegisterId reg = AllocateTemporary(expression.location);
+  const RegisterId reg = AllocateRegister(location);
   Emit({
       .opcode = Opcode::LoadDouble,
       .dst = reg,
       .index = entry->second,
-      .location = expression.location,
+      .location = location,
   });
   return {
       .reg = reg,

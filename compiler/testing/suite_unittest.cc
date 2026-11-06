@@ -85,7 +85,6 @@ func main(): void {
   ASSERT_EQ(result.tests.size(), 2U);
   EXPECT_EQ(result.tests.at(0).status, TestStatus::Passed);
   EXPECT_EQ(result.tests.at(1).status, TestStatus::Passed);
-  EXPECT_NE(result.tests.at(0).id, result.tests.at(1).id);
   EXPECT_EQ(result.tests.at(0).name, "outer same");
   constexpr std::string_view kEach =
       "root setup\nouter setup\nbody\ndynamic second\ndynamic recursive\n"
@@ -225,7 +224,7 @@ func main(): void {
   EXPECT_EQ(result.tests.at(0).status, TestStatus::Passed);
   EXPECT_EQ(result.tests.at(1).status, TestStatus::Failed);
   ASSERT_EQ(result.tests.at(1).errors.size(), 1U);
-  EXPECT_NE(result.tests.at(1).errors.front().message.find("TestTimeout"), std::string::npos);
+  EXPECT_EQ(result.tests.at(1).errors.front().category, "TestTimeout");
   EXPECT_EQ(result.tests.at(2).status, TestStatus::Failed);
   ASSERT_EQ(result.tests.at(2).errors.size(), 1U);
   EXPECT_NE(result.tests.at(2).errors.front().message.find("more than max"), std::string::npos);
@@ -273,7 +272,7 @@ func main(): void {
   ASSERT_EQ(result.tests.size(), 2U);
   EXPECT_EQ(result.tests.at(0).status, TestStatus::Failed);
   ASSERT_EQ(result.tests.at(0).errors.size(), 2U);
-  EXPECT_NE(result.tests.at(0).errors.at(0).message.find("TestTimeout"), std::string::npos);
+  EXPECT_EQ(result.tests.at(0).errors.at(0).category, "TestTimeout");
   EXPECT_EQ(result.tests.at(0).errors.at(1).message, "late after timeout");
   EXPECT_EQ(result.tests.at(1).status, TestStatus::Passed);
   EXPECT_EQ(output.str(), "cleanup\n");

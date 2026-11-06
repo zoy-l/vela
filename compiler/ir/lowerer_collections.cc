@@ -13,7 +13,7 @@ namespace vela::ir {
 
 std::uint32_t Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) {
   if (type.nullable) {
-    type = model_.types.at(type.name.substr(0, type.name.size() - 1));
+    type = model_.types.at(frontend::NonNullableTypeName(type));
   }
   if (const auto found = collection_type_ids_.find(type.name);
       found != collection_type_ids_.end()) {
@@ -34,7 +34,7 @@ std::uint32_t Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) {
 Lowerer::LoweredValue Lowerer::LowerCollectionConstruction(const frontend::Expression& expression) {
   const auto& type = model_.expression_types.at(&expression);
   const auto layout = RegisterCollectionType(type);
-  const auto result = AllocateTemporary(expression.location);
+  const auto result = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::NewCollection,
       .dst = result,
@@ -60,7 +60,7 @@ Lowerer::LoweredValue Lowerer::LowerMapLiteral(const frontend::Expression& expre
         .lhs = value.reg,
         .location = entry.value->location,
     });
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     RecordValueType(
         result, {.kind = frontend::TypeDescriptor::Kind::Void, .name = frontend::kVoidTypeName});
     EmitBuiltinCall(Builtin::MapSet, result, base, location);

@@ -20,7 +20,7 @@
 namespace vela::ir {
 
 RegisterId Lowerer::EmitTemporary(Instruction instruction) {
-  const auto result = AllocateTemporary(instruction.location);
+  const auto result = AllocateRegister(instruction.location);
   instruction.dst = result;
   Emit(instruction);
   return result;
@@ -35,8 +35,8 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
   const auto base = AllocateRegisterWindow(arguments.size(), location);
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     auto argument = LoweredValue{
-        .reg = arguments.subspan(index).front(),
-        .type = argument_types.subspan(index).front(),
+        .reg = arguments[index],
+        .type = argument_types[index],
     };
     RecordValueType(argument.reg, argument.type);
     const auto& target = signature.parameters.at(index).type;
@@ -56,7 +56,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
   });
   RecordValueType(result, signature.return_type);
   // 同一个已求值的 receiver/version 调用窗口跨所有迭代复用，避免逐次物化检查参数。
-  EmitBuiltinCall(Builtin::ArrayCheckMutation, AllocateTemporary(location), guard, location);
+  EmitBuiltinCall(Builtin::ArrayCheckMutation, AllocateRegister(location), guard, location);
   return result;
 }
 
@@ -84,7 +84,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
     });
   }
   if (algorithm == ArrayAlgorithm::Sort && signature == nullptr) {
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     EmitBuiltinCall(Builtin::ArraySortDefault, result, base, location);
     return {.reg = result, .type = result_type};
   }
@@ -97,7 +97,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
                      ? Comparison::Double
                      : Comparison::Integer;
   }
-  const auto length = AllocateTemporary(location);
+  const auto length = AllocateRegister(location);
   EmitBuiltinCall(Builtin::ArrayLength, length, base, location);
   const auto callback = base + 1;
   const auto guard = AllocateRegisterWindow(2, location);
@@ -126,7 +126,7 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   Emit({.opcode = Opcode::Move, .dst = arguments, .lhs = base, .location = location});
   Emit({.opcode = Opcode::LoadInt, .dst = arguments + 1, .location = location});
   Emit({.opcode = Opcode::Move, .dst = arguments + 2, .lhs = length, .location = location});
-  const auto work = AllocateTemporary(location);
+  const auto work = AllocateRegister(location);
   EmitBuiltinCall(Builtin::ArraySlice, work, arguments, location);
   RecordValueType(work, result_type);
   const auto scratch = EmitTemporary({
@@ -175,7 +175,7 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
                                              frontend::SourceLocation location) {
   if (inputs.validation_plan) {
     const std::array checked{*inputs.validation_plan, value};
-    const auto validated = AllocateTemporary(location);
+    const auto validated = AllocateRegister(location);
     if (algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
       RecordValueType(validated, algorithm == ArrayAlgorithm::Reduce
                                      ? result_type
@@ -320,7 +320,7 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
                         *inputs.signature, types, inputs.guard, location);
   if (inputs.validation_plan) {
     const std::array arguments{*inputs.validation_plan, comparison};
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     RecordValueType(result,
                     {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
     EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
@@ -330,9 +330,7 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
   auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
   const bool floating = inputs.comparison == Comparison::Double;
   if (floating) {
-    frontend::Expression literal;
-    literal.location = location;
-    zero = LowerDoubleLiteral(literal).reg;
+    zero = EmitDoubleConstant(0, location).reg;
   }
   const auto less = EmitTemporary({
       .opcode = floating ? Opcode::LessDouble : Opcode::LessInt,

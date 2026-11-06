@@ -126,6 +126,14 @@ enum class TokenRole : std::uint8_t {
          kind == TokenKind::StringMiddle || kind == TokenKind::StringTail;
 }
 
+[[nodiscard]] constexpr bool IsIdentifierStart(char value) noexcept {
+  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || value == '_';
+}
+
+[[nodiscard]] constexpr bool IsIdentifierPart(char value) noexcept {
+  return IsIdentifierStart(value) || (value >= '0' && value <= '9');
+}
+
 // 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。
 [[nodiscard]] inline bool IsMemberName(TokenKind kind) noexcept {
   return kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set ||

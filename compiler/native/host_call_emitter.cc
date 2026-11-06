@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include <llvm/IR/Attributes.h>
@@ -76,8 +75,7 @@ llvm::Value* FunctionEmitter::EmitHostPointer(llvm::Value* wrapper, const Source
         builder_.getPtrTy(),
         ByteAddress(wrapper, runtime::NativeMemoryLayout::kObjectNativePayload));
     // 宿主包装在保根期间不移动，原生指针直到包装销毁都不改变，允许循环复用这次借用。
-    pointer->setMetadata(llvm::LLVMContext::MD_invariant_load,
-                         llvm::MDNode::get(module_.getContext(), {}));
+    MarkInvariant(*pointer);
     return pointer;
   };
   if (!type.nullable) {
@@ -109,9 +107,6 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     result_type = ValueType(context, return_type);
   }
   auto* target = builder_.CreateExtractValue(entries, 0);
-  if (!callee.signature) {
-    std::unreachable();
-  }
   const auto& call_signature = *callee.signature;
   std::vector<llvm::Value*> parameters(arguments.begin(), arguments.end());
   for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -153,9 +148,6 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
   }
   // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接调用
   // 从包装对象固定位置借用原生指针，原生调用期间仍保留调用者的根登记。
-  if (!callee.signature) {
-    std::unreachable();
-  }
   const auto& signature = *callee.signature;
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     const auto& type = callee.value_types[index];

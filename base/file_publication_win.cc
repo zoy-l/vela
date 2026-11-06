@@ -30,9 +30,10 @@
 #include "base/path.h"
 
 namespace vela {
+namespace {
 
-std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
-    const std::filesystem::path& path) {
+template <class Storage>
+std::expected<Storage, std::string> ReadFile(const std::filesystem::path& path) {
   auto* const file = CreateFileW(path.c_str(), GENERIC_READ,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -52,14 +53,15 @@ std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
   if (std::cmp_greater(size, std::numeric_limits<std::size_t>::max())) {
     return std::unexpected("file exceeds host size limit");
   }
-  std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+  Storage bytes;
+  bytes.resize(static_cast<std::size_t>(size));
   std::size_t offset = 0;
   while (offset < bytes.size()) {
     const auto remaining = std::span(bytes).subspan(offset);
     const auto count = static_cast<DWORD>(
         std::min<std::size_t>(remaining.size(), std::numeric_limits<DWORD>::max()));
     DWORD received = 0;
-    if (ReadFile(handle.get(), remaining.data(), count, &received, nullptr) == 0) {
+    if (::ReadFile(handle.get(), remaining.data(), count, &received, nullptr) == 0) {
       return std::unexpected(
           "cannot read file: " +
           std::error_code(static_cast<int>(GetLastError()), std::system_category()).message());
@@ -70,6 +72,17 @@ std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
     offset += received;
   }
   return bytes;
+}
+
+}  // namespace
+
+std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
+    const std::filesystem::path& path) {
+  return ReadFile<std::vector<std::byte>>(path);
+}
+
+std::expected<std::string, std::string> ReadTextFile(const std::filesystem::path& path) {
+  return ReadFile<std::string>(path);
 }
 
 }  // namespace vela

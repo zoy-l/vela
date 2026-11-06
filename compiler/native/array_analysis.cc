@@ -67,12 +67,12 @@ std::uint64_t ResultBits(const ir::Instruction& instruction, std::span<const std
     case Opcode::LoadInt:
       return std::bit_cast<std::uint64_t>(instruction.immediate);
     case Opcode::Move:
-      return bits.subspan(instruction.lhs).front();
+      return bits[instruction.lhs];
     case Opcode::BitAndInt:
-      return bits.subspan(instruction.lhs).front() & bits.subspan(instruction.rhs).front();
+      return bits[instruction.lhs] & bits[instruction.rhs];
     case Opcode::BitOrInt:
     case Opcode::BitXorInt:
-      return bits.subspan(instruction.lhs).front() | bits.subspan(instruction.rhs).front();
+      return bits[instruction.lhs] | bits[instruction.rhs];
     default:
       return kUnknownBits;
   }
@@ -86,7 +86,7 @@ std::vector<std::uint64_t> IntegerBits(const ir::Function& function,
   std::vector<std::size_t> pending;
   std::vector<std::uint8_t> queued(function.instructions.size());
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-    const auto& access = accesses.subspan(index).front();
+    const auto& access = accesses[index];
     if (!access.defines_value) {
       continue;
     }
@@ -169,12 +169,10 @@ void RecordWrite(const ir::Instruction& instruction,
                  std::span<ArrayState> arrays,
                  std::span<const std::uint64_t> values) {
   if (instruction.opcode == Opcode::SetIndex) {
-    arrays.subspan(aliases.Find(instruction.dst)).front().bits |=
-        values.subspan(instruction.rhs).front();
+    arrays[aliases.Find(instruction.dst)].bits |= values[instruction.rhs];
   } else if (instruction.opcode == Opcode::BuiltinCall &&
              instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush)) {
-    arrays.subspan(aliases.Find(instruction.lhs)).front().bits |=
-        values.subspan(instruction.lhs + 1).front();
+    arrays[aliases.Find(instruction.lhs)].bits |= values[instruction.lhs + 1];
   }
 }
 

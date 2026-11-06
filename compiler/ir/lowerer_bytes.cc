@@ -22,7 +22,7 @@ void Lowerer::EmitBuiltinCall(Builtin builtin,
     Emit({
         .opcode = Opcode::Move,
         .dst = static_cast<RegisterId>(base + index),
-        .lhs = values.subspan(index).front(),
+        .lhs = values[index],
         .location = location,
     });
   }
@@ -48,9 +48,7 @@ void Lowerer::EmitIndexRead(RegisterId result,
                             frontend::SourceLocation location) {
   using Kind = frontend::TypeDescriptor::Kind;
   if (receiver.type.kind == Kind::Array) {
-    const auto name = receiver.type.nullable
-                          ? receiver.type.name.substr(0, receiver.type.name.size() - 1)
-                          : receiver.type.name;
+    const auto name = frontend::NonNullableTypeName(receiver.type);
     RecordValueType(result, model_.array_elements.at(name));
   } else if (receiver.type.kind == Kind::ByteArray) {
     RecordValueType(result, {.kind = Kind::Int, .name = frontend::kIntTypeName});
@@ -81,7 +79,7 @@ void Lowerer::EmitIndexWrite(const LoweredValue& receiver,
                              frontend::SourceLocation location) {
   if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
       receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     const std::array values{receiver.reg, index, value};
     EmitBuiltinCall(receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic
                         ? Builtin::DynamicIndexWrite

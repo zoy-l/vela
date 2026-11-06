@@ -82,7 +82,7 @@ std::string StringSpelling(std::string_view source, std::span<const frontend::To
 std::size_t StringTailIndex(std::span<const frontend::Token> tokens, std::size_t head) {
   std::size_t depth = 1;
   while (depth != 0) {
-    const auto kind = tokens.subspan(++head).front().kind;
+    const auto kind = tokens[++head].kind;
     if (kind == TokenKind::StringHead) {
       ++depth;
     }
@@ -251,7 +251,7 @@ class Formatter final {
     std::vector<std::size_t> widths(items.size() + 1);
     constexpr std::size_t kContinuationWidth = 80;
     for (std::size_t index = 0; index < items.size(); ++index) {
-      const auto& item = items.subspan(index).front();
+      const auto& item = items[index];
       widths.at(index + 1) = widths.at(index) + item.spelling().size() + 1;
       if (item.kind == TokenKind::LeftParen || item.kind == TokenKind::LeftBracket ||
           (item.kind == TokenKind::LeftBrace && item.role == TokenRole::MapDelimiter)) {
@@ -263,11 +263,11 @@ class Formatter final {
         openers.pop_back();
         multiline_.at(opening) = widths.at(index + 1) - widths.at(opening) > kContinuationWidth;
         if (item.role == TokenRole::MapDelimiter) {
-          const auto& start = items.subspan(opening).front();
+          const auto& start = items[opening];
           multiline_.at(opening) =
               multiline_.at(opening) ||
               source.substr(start.offset, item.offset - start.offset).contains('\n') ||
-              items.subspan(index - 1).front().kind == TokenKind::Comma;
+              items[index - 1].kind == TokenKind::Comma;
         }
       }
     }
@@ -372,7 +372,7 @@ void Formatter::Close(const FormatItem& item, TokenKind next) {
 
 void Formatter::Comment(const FormatItem& item, std::size_t index) {
   if (index != 0) {
-    const auto& previous = items_.subspan(index - 1).front();
+    const auto& previous = items_[index - 1];
     const auto end = previous.offset + previous.text.size();
     const auto gap = source_.substr(end, item.offset - end);
     if (gap.contains('\n')) {
@@ -403,10 +403,10 @@ void Formatter::Comment(const FormatItem& item, std::size_t index) {
 }
 
 void Formatter::Separate(std::size_t index) {
-  const auto& item = items_.subspan(index).front();
+  const auto& item = items_[index];
   const auto kind = item.kind;
   if (index != 0 && output_.ends_with('\n') && !IsClosing(item)) {
-    const auto& previous = items_.subspan(index - 1).front();
+    const auto& previous = items_[index - 1];
     const auto previous_end = previous.offset + previous.text.size();
     const auto gap = source_.substr(previous_end, item.offset - previous_end);
     if (gap.find('\n') != gap.rfind('\n')) {
@@ -424,15 +424,14 @@ void Formatter::Separate(std::size_t index) {
 }
 
 void Formatter::Emit(std::size_t index) {
-  const auto& item = items_.subspan(index).front();
+  const auto& item = items_[index];
   if (item.item != ItemKind::Syntax) {
     Comment(item, index);
     return;
   }
   Separate(index);
   const auto kind = item.kind;
-  const auto next =
-      index + 1 < items_.size() ? items_.subspan(index + 1).front().kind : TokenKind::EndOfFile;
+  const auto next = index + 1 < items_.size() ? items_[index + 1].kind : TokenKind::EndOfFile;
   if (kind == TokenKind::Case || kind == TokenKind::Default) {
     Newline();
     auto& scope = scopes_.back();
@@ -446,7 +445,7 @@ void Formatter::Emit(std::size_t index) {
     Close(item, next);
     return;
   }
-  if (index != 0 && NeedsSpace(items_.subspan(index - 1).front(), item)) {
+  if (index != 0 && NeedsSpace(items_[index - 1], item)) {
     Space();
   }
   if (IsOpening(item)) {

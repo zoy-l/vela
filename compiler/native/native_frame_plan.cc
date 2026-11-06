@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -15,7 +14,6 @@
 #include "base/callable.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
@@ -78,9 +76,9 @@ std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
 }
 
 }  // namespace
-std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& source,
-                                                           const ir::Program& program,
-                                                           const NativeRootPlan& roots) {
+std::size_t PlanTemporaryCount(const ir::Function& source,
+                               const ir::Program& program,
+                               const NativeRootPlan& roots) {
   std::size_t scratch_count = roots.count == 0 && !source.is_async ? 0 : 1;
   scratch_count = std::max(scratch_count, roots.minimum_temporary_count);
   if (!source.native_symbol.empty()) {
@@ -97,12 +95,6 @@ std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& s
     }
   }
   for (const auto& instruction : source.instructions) {
-    if ((instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
-         (instruction.opcode == Opcode::BuiltinCall &&
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) &&
-        instruction.array_type == ir::kInvalidArrayType) {
-      return std::unexpected("native code requires upstream array storage types");
-    }
     scratch_count = std::max(scratch_count, TemporaryArgumentCount(instruction));
     if (program.native_mode == NativeProgramMode::Reloadable &&
         instruction.opcode == Opcode::Call) {
@@ -110,40 +102,24 @@ std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& s
           scratch_count,
           static_cast<std::size_t>(program.functions.at(instruction.index).parameter_count));
     }
-    const auto access = ir::AnalyzeRegisters(instruction, program.functions);
-    bool has_type =
-        !access.defines_value || source.value_types.at(instruction.dst).kind != Kind::Invalid;
-    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-      has_type = has_type && source.value_types.at(reg).kind != Kind::Invalid;
-    });
-    if (!has_type) {
-      return std::unexpected(
-          "native function " + source.name + " is missing an upstream value type for opcode " +
-          std::to_string(static_cast<unsigned>(instruction.opcode)) + " (index " +
-          std::to_string(instruction.index) + ", result " + std::to_string(instruction.dst) + ")");
-    }
   }
   return scratch_count;
 }
 
-std::expected<NativeFrameLayout, std::string> PlanNativeFrame(
-    llvm::Module& module,
-    const ir::Program& program,
-    const EscapePlan& escape,
-    const NativeRootPlan& roots,
-    NativeFrameRecovery recovery,
-    NativeEntryKind kind,
-    std::span<const GeneratedFunction> generated,
-    std::span<const std::optional<CallableTarget>> direct_calls) {
+NativeFrameLayout PlanNativeFrame(llvm::Module& module,
+                                  const ir::Program& program,
+                                  const EscapePlan& escape,
+                                  const NativeRootPlan& roots,
+                                  std::size_t temporary_count,
+                                  NativeFrameRecovery recovery,
+                                  NativeEntryKind kind,
+                                  std::span<const GeneratedFunction> generated,
+                                  std::span<const std::optional<CallableTarget>> direct_calls) {
   const auto& function = escape.function.get();
   const auto has_checkpoints = !escape.checkpoints.empty();
   const auto reference_count = has_checkpoints ? escape.reference_count : 0;
   const auto virtual_state_bytes = has_checkpoints ? sizeof(runtime::NativeVirtualState) : 0;
   auto& context = module.getContext();
-  const auto scratch_count = PlanTemporaryCount(function, program, roots);
-  if (!scratch_count) {
-    return std::unexpected(scratch_count.error());
-  }
   std::vector<llvm::Type*> fields;
   constexpr std::size_t kAuxiliaryFields = 7;
   fields.reserve(function.register_count + kAuxiliaryFields);
@@ -168,7 +144,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(
   // 仅借用记录和物化需要稳定局部地址。其余局部值由独立 alloca 提升为 SSA，
   // 不应因检查点或暂存参数较大而全部退化为堆中的寄存器文件。
   const auto temporary_field = static_cast<unsigned>(fields.size());
-  fields.push_back(llvm::ArrayType::get(NativeRecordType(context), *scratch_count));
+  fields.push_back(llvm::ArrayType::get(NativeRecordType(context), temporary_count));
   fields.push_back(NativeRecordType(context));
   auto* debug_storage = llvm::ArrayType::get(
       llvm::Type::getInt8Ty(context), function.register_count * sizeof(runtime::NativeDebugValue));

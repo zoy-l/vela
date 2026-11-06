@@ -15,11 +15,11 @@ namespace vela::frontend {
 
 std::optional<Enum> Parser::ParseEnum() {
   const Token name = Peek();
-  const std::optional<Token> name_token = Expect(TokenKind::Identifier, "expected enum name");
-  if (!name_token.has_value()) {
+  const auto* name_token = Expect(TokenKind::Identifier, "expected enum name");
+  if (name_token == nullptr) {
     return std::nullopt;
   }
-  if (!Expect(TokenKind::LeftBrace, "expected '{' after enum name").has_value()) {
+  if (Expect(TokenKind::LeftBrace, "expected '{' after enum name") == nullptr) {
     return std::nullopt;
   }
 
@@ -27,8 +27,8 @@ std::optional<Enum> Parser::ParseEnum() {
   declaration.name = name_token->lexeme;
   declaration.location = name.location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
-    const std::optional<Token> member = Expect(TokenKind::Identifier, "expected enum member name");
-    if (!member.has_value()) {
+    const auto* member = Expect(TokenKind::Identifier, "expected enum member name");
+    if (member == nullptr) {
       return std::nullopt;
     }
     declaration.members.push_back({.name = member->lexeme, .location = member->location});
@@ -36,26 +36,26 @@ std::optional<Enum> Parser::ParseEnum() {
       break;
     }
   }
-  if (!Expect(TokenKind::RightBrace, "expected '}' after enum members").has_value()) {
+  if (Expect(TokenKind::RightBrace, "expected '}' after enum members") == nullptr) {
     return std::nullopt;
   }
   return declaration;
 }
 
 std::optional<Class> Parser::ParseClassHeader(ClassKind kind) {
-  const auto name = Expect(TokenKind::Identifier, "expected class name");
-  if (!name) {
+  const auto* const name = Expect(TokenKind::Identifier, "expected class name");
+  if (name == nullptr) {
     return std::nullopt;
   }
   Class declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
   if (kind == ClassKind::Native) {
-    if (!Expect(TokenKind::Equal, "expected '=' before native class key")) {
+    if (Expect(TokenKind::Equal, "expected '=' before native class key") == nullptr) {
       return std::nullopt;
     }
-    const auto key = Expect(TokenKind::StringLiteral, "expected native class key string");
-    if (!key || !IsNativeTypeKey(key->lexeme)) {
+    const auto* const key = Expect(TokenKind::StringLiteral, "expected native class key string");
+    if ((key == nullptr) || !IsNativeTypeKey(key->lexeme)) {
       AddDiagnostic(name->location,
                     "native class key requires dot-separated non-keyword identifiers");
       return std::nullopt;
@@ -102,7 +102,7 @@ std::optional<Class> Parser::ParseClass(ClassKind kind) {
     return std::nullopt;
   }
   auto declaration = std::move(*header);
-  if (!Expect(TokenKind::LeftBrace, "expected '{' after class name")) {
+  if (Expect(TokenKind::LeftBrace, "expected '{' after class name") == nullptr) {
     return std::nullopt;
   }
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
@@ -110,7 +110,7 @@ std::optional<Class> Parser::ParseClass(ClassKind kind) {
       return std::nullopt;
     }
   }
-  if (!Expect(TokenKind::RightBrace, "expected '}' after class body")) {
+  if (Expect(TokenKind::RightBrace, "expected '}' after class body") == nullptr) {
     return std::nullopt;
   }
   return declaration;
@@ -122,7 +122,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   bool has_storage = false;
   const auto is_accessor_modifier = [&]() {
     return (Check(TokenKind::Get) || Check(TokenKind::Set)) && current_ + 1 < tokens_.size() &&
-           IsMemberName(tokens_.subspan(current_ + 1).front().kind);
+           IsMemberName(tokens_[current_ + 1].kind);
   };
   while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
          is_accessor_modifier()) {
@@ -171,7 +171,7 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
       return nullptr;
     }
     constructor->parameters = std::move(*parameters);
-    if (!Expect(TokenKind::RightParen, "expected ')' after constructor parameters")) {
+    if (Expect(TokenKind::RightParen, "expected ')' after constructor parameters") == nullptr) {
       return nullptr;
     }
   }
@@ -246,10 +246,10 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
 }
 
 std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modifiers) {
-  if (!Expect(TokenKind::Colon, "expected ':' after field name")) {
+  if (Expect(TokenKind::Colon, "expected ':' after field name") == nullptr) {
     return std::nullopt;
   }
-  const auto type = ParseType();
+  auto type = ParseType();
   if (!type) {
     return std::nullopt;
   }
@@ -260,11 +260,11 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
       return std::nullopt;
     }
   }
-  if (!Expect(TokenKind::Semicolon, "expected ';' after field declaration")) {
+  if (Expect(TokenKind::Semicolon, "expected ';' after field declaration") == nullptr) {
     return std::nullopt;
   }
   return Field{
-      .type = *type,
+      .type = std::move(*type),
       .name = name.lexeme,
       .location = name.location,
       .visibility = modifiers.visibility,
@@ -274,15 +274,16 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
 }
 
 std::optional<Interface> Parser::ParseInterface() {
-  const auto name = Expect(TokenKind::Identifier, "expected interface name");
-  if (!name) {
+  const auto* const name = Expect(TokenKind::Identifier, "expected interface name");
+  if (name == nullptr) {
     return std::nullopt;
   }
   Interface declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
   auto type_parameters = ParseTypeParameters();
-  if (!type_parameters || !Expect(TokenKind::LeftBrace, "expected '{' after interface name")) {
+  if (!type_parameters ||
+      (Expect(TokenKind::LeftBrace, "expected '{' after interface name") == nullptr)) {
     return std::nullopt;
   }
   declaration.type_parameters = std::move(*type_parameters);
@@ -293,7 +294,7 @@ std::optional<Interface> Parser::ParseInterface() {
     }
     declaration.methods.push_back(std::move(*method));
   }
-  if (!Expect(TokenKind::RightBrace, "expected '}' after interface body")) {
+  if (Expect(TokenKind::RightBrace, "expected '}' after interface body") == nullptr) {
     return std::nullopt;
   }
   return declaration;
@@ -311,7 +312,7 @@ std::optional<Function> Parser::ParseInterfaceMethod() {
   method.location = member.location;
   auto type_parameters = ParseTypeParameters();
   if (!type_parameters ||
-      !Expect(TokenKind::LeftParen, "expected '(' after interface method name")) {
+      (Expect(TokenKind::LeftParen, "expected '(' after interface method name") == nullptr)) {
     return std::nullopt;
   }
   method.type_parameters = std::move(*type_parameters);
@@ -320,12 +321,13 @@ std::optional<Function> Parser::ParseInterfaceMethod() {
     return std::nullopt;
   }
   method.parameters = std::move(*parameters);
-  if (!Expect(TokenKind::RightParen, "expected ')' after interface parameters") ||
-      !Expect(TokenKind::Colon, "expected ':' before interface return type")) {
+  if ((Expect(TokenKind::RightParen, "expected ')' after interface parameters") == nullptr) ||
+      (Expect(TokenKind::Colon, "expected ':' before interface return type") == nullptr)) {
     return std::nullopt;
   }
   auto returned = ParseType();
-  if (!returned || !Expect(TokenKind::Semicolon, "expected ';' after interface method")) {
+  if (!returned ||
+      (Expect(TokenKind::Semicolon, "expected ';' after interface method") == nullptr)) {
     return std::nullopt;
   }
   method.return_type = std::move(*returned);
@@ -335,11 +337,11 @@ std::optional<Function> Parser::ParseInterfaceMethod() {
 std::optional<Function> Parser::ParseFunction() {
   const bool is_async = Match(TokenKind::Async);
   const bool external = Match(TokenKind::External);
-  if (!Expect(TokenKind::Func, "expected 'func' before function declaration")) {
+  if (Expect(TokenKind::Func, "expected 'func' before function declaration") == nullptr) {
     return std::nullopt;
   }
-  const auto name = TakeName();
-  if (!name) {
+  const auto* const name = TakeName();
+  if (name == nullptr) {
     AddDiagnostic(Peek().location, "expected function name");
     return std::nullopt;
   }
@@ -350,7 +352,8 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
                                                   std::string native_symbol,
                                                   bool is_async) {
   auto type_parameters = ParseTypeParameters();
-  if (!type_parameters || !Expect(TokenKind::LeftParen, "expected '(' after function name")) {
+  if (!type_parameters ||
+      (Expect(TokenKind::LeftParen, "expected '(' after function name") == nullptr)) {
     return std::nullopt;
   }
   Function function;
@@ -373,25 +376,25 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
     return std::nullopt;
   }
   function.parameters = std::move(*parameters);
-  if (!Expect(TokenKind::RightParen, "expected ')' after parameters") ||
-      !Expect(TokenKind::Colon, "expected ':' before return type")) {
+  if ((Expect(TokenKind::RightParen, "expected ')' after parameters") == nullptr) ||
+      (Expect(TokenKind::Colon, "expected ':' before return type") == nullptr)) {
     return std::nullopt;
   }
-  const auto type = ParseType();
+  auto type = ParseType();
   if (!type) {
     return std::nullopt;
   }
-  function.return_type = *type;
+  function.return_type = std::move(*type);
   if (!function.native_symbol.empty()) {
     if (Match(TokenKind::Equal)) {
-      const auto symbol = Expect(TokenKind::StringLiteral, "expected native symbol string");
-      if (!symbol || symbol->lexeme.empty() || symbol->lexeme.contains('\0')) {
+      const auto* const symbol = Expect(TokenKind::StringLiteral, "expected native symbol string");
+      if ((symbol == nullptr) || symbol->lexeme.empty() || symbol->lexeme.contains('\0')) {
         AddDiagnostic(name.location, "native symbol must be nonempty and contain no null byte");
         return std::nullopt;
       }
       function.native_symbol = symbol->lexeme;
     }
-    return Expect(TokenKind::Semicolon, "expected ';' after external function")
+    return (Expect(TokenKind::Semicolon, "expected ';' after external function") != nullptr)
                ? std::optional<Function>(std::move(function))
                : std::nullopt;
   }
@@ -415,8 +418,8 @@ std::optional<std::vector<Parameter>> Parser::ParseParameters(ParameterTyping ty
 }
 
 std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
-  const auto name = TakeName();
-  if (!name) {
+  const auto* const name = TakeName();
+  if (name == nullptr) {
     AddDiagnostic(Peek().location, "expected parameter name");
     return std::nullopt;
   }
@@ -431,11 +434,11 @@ std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
         .location = name->location,
     };
   }
-  const auto type = ParseType();
+  auto type = ParseType();
   if (!type) {
     return std::nullopt;
   }
-  return Parameter{.type = *type, .name = name->lexeme, .location = name->location};
+  return Parameter{.type = std::move(*type), .name = name->lexeme, .location = name->location};
 }
 
 }  // namespace vela::frontend

@@ -195,7 +195,7 @@ bool TypeChecker::IsPotentiallyNullable(const Type& type) const {
 }
 
 void TypeChecker::QueueBoundCheck(std::string owner,
-                                  std::span<const TypeParameter> parameters,
+                                  std::vector<TypeParameter> parameters,
                                   std::vector<Type> arguments,
                                   SourceLocation location) {
   const bool bounded = std::ranges::any_of(
@@ -205,7 +205,7 @@ void TypeChecker::QueueBoundCheck(std::string owner,
   }
   bound_checks_.push_back({
       .owner = std::move(owner),
-      .parameters = std::vector<TypeParameter>(parameters.begin(), parameters.end()),
+      .parameters = std::move(parameters),
       .arguments = std::move(arguments),
       .location = location,
   });
@@ -284,8 +284,8 @@ bool TypeChecker::DrainBoundChecks() {
       for (const auto& argument : application.arguments) {
         arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
       }
-      QueueBoundCheck(std::move(application.owner), application.parameters, std::move(arguments),
-                      application.location);
+      QueueBoundCheck(std::move(application.owner), std::move(application.parameters),
+                      std::move(arguments), application.location);
     }
     while (!bound_checks_.empty()) {
       auto check = std::move(bound_checks_.back());
@@ -299,6 +299,7 @@ bool TypeChecker::DrainBoundChecks() {
 
 void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
   InterfaceDescriptor interface;
+  interface_method_applications_.try_emplace(source.name);
   interface.type = {
       .kind = Type::Kind::Interface,
       .name = InternTypeName(source.name),
@@ -327,8 +328,7 @@ void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
 
 void TypeChecker::CheckTemplateFunction(const Function& function, const ClassInfo* owner) {
   const auto errors = ErrorCount(diagnostics_);
-  const auto captured = FindCapturedMutableDeclarations(function);
-  captured_declarations_.insert(captured.begin(), captured.end());
+  CollectCapturedMutableDeclarations(function, captured_declarations_);
   const auto signature = ResolveSignature(function);
   CheckFunctionBody(function, signature, owner);
   if (ErrorCount(diagnostics_) != errors) {
@@ -348,8 +348,7 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
   const auto found = classes_.find(self.name);
   if (IsValid(self) && found != classes_.end()) {
     const auto& info = found->second;
-    const auto captured = FindCapturedMutableDeclarations(source);
-    captured_declarations_.insert(captured.begin(), captured.end());
+    CollectCapturedMutableDeclarations(source, captured_declarations_);
     CheckClassBody(source, info);
     for (const auto& method : source.method_templates) {
       CheckTemplateFunction(method, &info);
@@ -519,21 +518,19 @@ void TypeChecker::RegisterSpecializations() {
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
     ResolveClass(source, classes_.at(source.name));
-    const auto captured = FindCapturedMutableDeclarations(source);
-    captured_declarations_.insert(captured.begin(), captured.end());
+    CollectCapturedMutableDeclarations(source, captured_declarations_);
   }
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
     if (source.base_class) {
-      MergeBaseClass(source.name, merged_classes_, visiting_classes_);
+      MergeBaseClass(source.name);
     }
     CheckClassImplementation(source);
   }
   while (registered_functions_ < specializer_->function_count()) {
     const auto& function = specializer_->function(registered_functions_++);
     functions_.try_emplace(function.name, ResolveSignature(function));
-    const auto captured = FindCapturedMutableDeclarations(function);
-    captured_declarations_.insert(captured.begin(), captured.end());
+    CollectCapturedMutableDeclarations(function, captured_declarations_);
   }
   RegisterMethodApplications();
 }

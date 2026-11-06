@@ -19,6 +19,8 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
       return {.code = "ExecutionStopped", .message = "script execution stopped"};
     case ExecutionStatus::TargetDeleted:
       return {.code = "TargetDeleted", .message = "named declaration has been deleted"};
+    case ExecutionStatus::ExecutionTimedOut:
+      return {.code = "ExecutionTimedOut", .message = "execution timed out"};
     case ExecutionStatus::RegExpSyntaxError:
       return {.code = "RegExpSyntaxError", .message = "invalid regular expression"};
     case ExecutionStatus::RegExpGroupError:

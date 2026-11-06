@@ -29,6 +29,7 @@ struct Initialized final {
   static constexpr auto kWordBits = std::numeric_limits<std::uint64_t>::digits;
   absl::InlinedVector<std::uint64_t, 1> fields;
   Base base = Base::Pending;
+  bool operator==(const Initialized&) const = default;
 
   void Insert(std::size_t index) {
     fields.at(index / kWordBits) |= std::uint64_t{1} << (index % kWordBits);
@@ -99,6 +100,7 @@ class Initialization final {
   const Class& owner_;
   const ConstructorInitializationFacts& facts_;
   absl::flat_hash_map<std::string_view, std::size_t> field_indices_;
+  std::vector<std::pair<const Field*, std::size_t>> instance_fields_;
   Diagnostics diagnostics_;
   std::vector<Control> controls_;
   std::vector<Finally> finalizers_;
@@ -112,10 +114,9 @@ void Initialization::RequireComplete(const Initialized& initialized, SourceLocat
   if (owner_.base_class && initialized.base != Initialized::Base::Complete) {
     Error(location, "derived constructor must call super(...) before this escapes or returns");
   }
-  for (const auto& field : owner_.fields) {
-    if (field.storage == MemberStorage::Instance &&
-        !initialized.Has(field_indices_.at(field.name))) {
-      Error(location, "field '" + field.name +
+  for (const auto& [field, index] : instance_fields_) {
+    if (!initialized.Has(index)) {
+      Error(location, "field '" + field->name +
                           "' must be initialized before this escapes or the constructor returns");
     }
   }
@@ -145,7 +146,7 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     return true;
   }
   if (expression.kind == Expression::Kind::Lambda) {
-    const auto& lambda = facts_.lambdas.subspan(facts_.lambda_indices->at(&expression)).front();
+    const auto& lambda = facts_.lambdas[facts_.lambda_indices->at(&expression)];
     if (std::ranges::any_of(lambda.captures, [](const Capture& capture) -> bool {
           return capture.name == kReceiverName;
         })) {
@@ -379,8 +380,11 @@ Path Initialization::Try(const Statement& statement, const Initialized& initiali
   if (statement.finally_branch) {
     finalizers_.pop_back();
     // 异常可在字段写入之前发生；finally 的异常入口不继承普通出口的初始化事实。
-    static_cast<void>(Walk(*statement.finally_branch, initialized));
-    if (after) {
+    const bool same_input = after && *after == initialized;
+    auto exceptional = Walk(*statement.finally_branch, initialized);
+    if (same_input) {
+      after = std::move(exceptional);
+    } else if (after) {
       after = Walk(*statement.finally_branch, std::move(*after));
     }
   }
@@ -405,8 +409,10 @@ Diagnostics Initialization::Run() {
   }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
+      const auto index = field_indices_.at(field.name);
+      instance_fields_.emplace_back(&field, index);
       if (field.initializer || owner_.IsConstructorField(field)) {
-        initialized.Insert(field_indices_.at(field.name));
+        initialized.Insert(index);
       }
     }
   }

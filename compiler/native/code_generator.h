@@ -14,6 +14,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
 
 namespace llvm {
@@ -71,8 +72,8 @@ struct NativeModule final {
 [[nodiscard]] std::expected<NativeModule, frontend::Diagnostics> Generate(
     const ir::Program& program,
     const NativeCallPlan& calls,
+    const FieldTargets& field_targets,
     const std::string& module_name,
-    std::span<const std::uint8_t> exports,
     NativeDebugging debugging = NativeDebugging::Safepoints,
     NativeCodeTier tier = NativeCodeTier::Baseline,
     EscapeOptimization escape = EscapeOptimization::Enabled,

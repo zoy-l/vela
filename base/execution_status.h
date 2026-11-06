@@ -38,6 +38,7 @@ enum class ExecutionStatus : std::uint8_t {
   RegExpExecutionError,
   ExecutionStopped,
   TargetDeleted,
+  ExecutionTimedOut,
 };
 
 [[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;

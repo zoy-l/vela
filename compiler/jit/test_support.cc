@@ -38,13 +38,15 @@ std::expected<SourceCandidate, SourceCandidateError> PrepareText(
 
 std::expected<CompiledImage, frontend::Diagnostics> CompileText(Compiler& compiler,
                                                                 std::string text,
-                                                                NativeCodeTier tier) {
+                                                                NativeCodeTier tier,
+                                                                IRPreservation preservation) {
   SourceSession source("main.vela");
   const auto candidate = PrepareText(source, std::move(text));
   if (!candidate) {
     return std::unexpected(candidate.error().diagnostics);
   }
-  return compiler.Compile(candidate->snapshot().program, {.tier = tier, .preserve_ir = true});
+  return compiler.Compile(candidate->snapshot().program,
+                          {.tier = tier, .preserve_ir = preservation == IRPreservation::Preserve});
 }
 
 std::expected<CompiledUpdate, std::string> CompileUpdate(Compiler& compiler,

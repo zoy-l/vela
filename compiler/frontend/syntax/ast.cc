@@ -103,40 +103,60 @@ namespace {
 
 enum class TypeText : std::uint8_t { Display, Canonical };
 
-std::string RenderType(const TypeName& type, TypeText mode) {
+void RenderType(const TypeName& type, TypeText mode, std::string& text) {
   using Kind = TypeName::Kind;
   switch (type.kind) {
     case Kind::Inferred:
-      return {};
+      return;
     case Kind::Named:
-      return type.name;
+      text += type.name;
+      return;
     case Kind::Parameter:
-      return mode == TypeText::Display
-                 ? type.name
-                 : '@' + type.parameter.owner + '#' + std::to_string(type.parameter.index);
+      if (mode == TypeText::Display) {
+        text += type.name;
+      } else {
+        text += '@';
+        text += type.parameter.owner;
+        text += '#';
+        text += std::to_string(type.parameter.index);
+      }
+      return;
     case Kind::Array:
     case Kind::Nullable: {
       const auto& child = type.arguments.front();
-      auto text = RenderType(child, mode);
-      if (child.kind == Kind::Function) {
-        text = '(' + text + ')';
+      const bool function = child.kind == Kind::Function;
+      if (function) {
+        text += '(';
       }
-      return text + (type.kind == Kind::Array ? "[]" : "?");
+      RenderType(child, mode, text);
+      if (function) {
+        text += ')';
+      }
+      text += type.kind == Kind::Array ? "[]" : "?";
+      return;
     }
-    case Kind::Generic: {
-      auto text = type.name + '<';
+    case Kind::Generic:
+      text += type.name;
+      text += '<';
       for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-        text += (index == 0 ? "" : ", ") + RenderType(type.arguments.at(index), mode);
+        if (index != 0) {
+          text += ", ";
+        }
+        RenderType(type.arguments[index], mode, text);
       }
-      return text + '>';
-    }
-    case Kind::Function: {
-      std::string text = "(";
+      text += '>';
+      return;
+    case Kind::Function:
+      text += '(';
       for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
-        text += (index == 0 ? "" : ", ") + RenderType(type.arguments.at(index), mode);
+        if (index != 0) {
+          text += ", ";
+        }
+        RenderType(type.arguments[index], mode, text);
       }
-      return text + ") => " + RenderType(type.arguments.back(), mode);
-    }
+      text += ") => ";
+      RenderType(type.arguments.back(), mode, text);
+      return;
   }
   std::unreachable();
 }
@@ -144,11 +164,15 @@ std::string RenderType(const TypeName& type, TypeText mode) {
 }  // namespace
 
 std::string TypeName::ToString() const {
-  return RenderType(*this, TypeText::Display);
+  std::string text;
+  RenderType(*this, TypeText::Display, text);
+  return text;
 }
 
 std::string CanonicalTypeText(const TypeName& type) {
-  return RenderType(type, TypeText::Canonical);
+  std::string text;
+  RenderType(type, TypeText::Canonical, text);
+  return text;
 }
 
 }  // namespace vela::frontend

@@ -33,9 +33,7 @@ bool TypeInference::HasUnspecifiedType(const TypeName& type) {
          std::ranges::any_of(type.arguments, HasUnspecifiedType);
 }
 
-namespace {
-
-TypeName Nullable(TypeName type) {
+TypeName TypeInference::Nullable(TypeName type) {
   if (IsNullableTypeName(type)) {
     return type;
   }
@@ -50,8 +48,6 @@ TypeName Nullable(TypeName type) {
   return result;
 }
 
-}  // namespace
-
 TypeParameter IntrinsicTypeParameter(std::string_view name) {
   return {
       .name = std::string(name),
@@ -65,11 +61,11 @@ TypeName IntrinsicTypeVariable(std::string_view name, SourceLocation location) {
   return ParameterTypeName(IntrinsicTypeParameter(name), location);
 }
 
-TypeInference::TypeInference(std::span<const TypeParameter> parameters,
+TypeInference::TypeInference(std::vector<TypeParameter> parameters,
                              InferenceTypeRelations& relations)
-    : relations_(&relations), parameters_(parameters.begin(), parameters.end()) {
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    const auto& parameter = parameters.subspan(index).front();
+    : relations_(&relations), parameters_(std::move(parameters)) {
+  for (std::size_t index = 0; index < parameters_.size(); ++index) {
+    const auto& parameter = parameters_[index];
     variables_.try_emplace(parameter.identity);
     parameter_indices_.emplace(parameter.identity, index);
   }
@@ -123,12 +119,14 @@ TypeInference::Relation TypeInference::EvidenceRelation(Evidence evidence) {
 
 TypeInference::Relation TypeInference::ArgumentRelation(const TypeName& pattern,
                                                         Relation relation,
-                                                        std::size_t index) const {
+                                                        std::size_t index) {
   // 数组 intrinsic 按调用方向转换每个参数和结果；普通函数值仍使用整体不变契约。
   if (relation == Relation::Callback) {
     return index + 1 == pattern.arguments.size() ? Relation::Conversion : Relation::Context;
   }
-  return relations_->IsInvariantType(pattern) ? Relation::Equal : relation;
+  return pattern.kind != TypeName::Kind::Generic || pattern.name != kFutureTypeName
+             ? Relation::Equal
+             : relation;
 }
 
 void TypeInference::Match(const TypeName& pattern,

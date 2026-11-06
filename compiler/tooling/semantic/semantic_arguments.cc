@@ -1,4 +1,3 @@
-#include "base/array_algorithm.h"
 #include "compiler/tooling/semantic/semantic_index.h"
 
 #include <cstddef>
@@ -13,8 +12,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/node_hash_map.h>
 
-#include "base/builtin.h"
-#include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
@@ -27,27 +24,6 @@ namespace {
 using frontend::Token;
 using frontend::TokenKind;
 using frontend::TokenRole;
-
-std::optional<frontend::FunctionDescriptor> ArrayCallParameters(
-    std::string_view name,
-    const frontend::TypeDescriptor& element) {
-  if (name == "join") {
-    return frontend::BuiltinSignature(Builtin::ArrayJoin);
-  }
-  if (const auto algorithm = frontend::FindArrayAlgorithm(name)) {
-    auto accumulator = element;
-    if (*algorithm == ArrayAlgorithm::Map || *algorithm == ArrayAlgorithm::Reduce) {
-      accumulator.name = "R";
-    }
-    return frontend::ArrayAlgorithmSignature(*algorithm, element, accumulator);
-  }
-  for (const auto& [method, builtin] : frontend::ArrayMethods()) {
-    if (method == name) {
-      return frontend::ArrayMethodSignature(builtin, element);
-    }
-  }
-  return std::nullopt;
-}
 
 std::optional<TokenKind> ArgumentClosing(const Token& token) {
   switch (token.kind) {
@@ -66,11 +42,11 @@ std::optional<std::size_t> CalleeToken(const std::vector<Token>& tokens, std::si
     return std::nullopt;
   }
   auto index = opening - 1;
-  const auto& previous = tokens.at(index);
+  const auto& previous = tokens[index];
   if (previous.kind == TokenKind::Greater && previous.role == TokenRole::TypeDelimiter) {
     std::size_t depth = 1;
     while (index > 0 && depth != 0) {
-      const auto& token = tokens.at(--index);
+      const auto& token = tokens[--index];
       if (token.role == TokenRole::TypeDelimiter) {
         if (token.kind == TokenKind::Greater) {
           ++depth;
@@ -84,7 +60,7 @@ std::optional<std::size_t> CalleeToken(const std::vector<Token>& tokens, std::si
     }
     --index;
   }
-  const auto kind = tokens.at(index).kind;
+  const auto kind = tokens[index].kind;
   return frontend::IsMemberName(kind) || kind == TokenKind::Print ? std::optional(index)
                                                                   : std::nullopt;
 }
@@ -153,7 +129,7 @@ std::optional<std::vector<std::size_t>> ArgumentOpenings(const std::vector<Token
                                                          std::size_t offset) {
   std::vector<std::size_t> opening;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    const auto& token = tokens.at(index);
+    const auto& token = tokens[index];
     if (token.offset >= offset) {
       break;
     }
@@ -162,7 +138,7 @@ std::optional<std::vector<std::size_t>> ArgumentOpenings(const std::vector<Token
     }
     if (ArgumentClosing(token)) {
       opening.push_back(index);
-    } else if (!opening.empty() && ArgumentClosing(tokens.at(opening.back())) == token.kind) {
+    } else if (!opening.empty() && ArgumentClosing(tokens[opening.back()]) == token.kind) {
       opening.pop_back();
     }
   }
@@ -171,7 +147,7 @@ std::optional<std::vector<std::size_t>> ArgumentOpenings(const std::vector<Token
 
 std::string ArgumentName(std::span<const Token> argument) {
   if (argument.size() > 1 && argument.front().kind == TokenKind::Identifier &&
-      argument.subspan(1).front().kind == TokenKind::Colon) {
+      argument[1].kind == TokenKind::Colon) {
     return argument.front().lexeme;
   }
   return {};
@@ -207,7 +183,7 @@ std::optional<ArgumentCompletionQuery> ReadArgumentSlots(std::span<const Token> 
   std::size_t argument_start = 0;
   bool selected = false;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const auto& token = arguments.subspan(index).front();
+    const auto& token = arguments[index];
     const auto boundary = token.kind == TokenKind::Comma || token.kind == TokenKind::RightParen ||
                           token.kind == TokenKind::RightBrace ||
                           token.kind == TokenKind::Semicolon || token.kind == TokenKind::EndOfFile;
@@ -241,10 +217,8 @@ std::optional<ArgumentCompletionQuery> ReadArgumentSlots(std::span<const Token> 
 std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
     const frontend::SourceSnapshot& snapshot,
     std::size_t offset) {
-  for (const auto& comment : snapshot.comments) {
-    if (offset >= comment.offset && offset <= comment.offset + comment.length) {
-      return std::nullopt;
-    }
+  if (IsInComment(snapshot.comments, offset)) {
+    return std::nullopt;
   }
   // 快照已保留 parser 的泛型标记，比较运算中的逗号不能误作类型实参。
   const auto& tokens = snapshot.tokens;
@@ -253,7 +227,7 @@ std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
     return std::nullopt;
   }
   const auto start = opening->back();
-  const auto& open = tokens.at(start);
+  const auto& open = tokens[start];
   if (open.kind != TokenKind::LeftParen) {
     return std::nullopt;
   }
@@ -264,57 +238,28 @@ std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
   auto query = ReadArgumentSlots(std::span(tokens).subspan(start + 1), offset);
   if (query) {
     query->source = ArgumentSource(snapshot, std::span(tokens).subspan(start + 1), open, offset);
-    query->callee_offset = tokens.at(*callee).offset;
+    query->callee_offset = tokens[*callee].offset;
   }
   return query;
 }
 
-std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
+const frontend::FunctionDescriptor* SemanticIndex::FindCallParameters(
     std::size_t callee_offset) const {
   const auto found = calls_.find(Key{0, callee_offset});
   if (found == calls_.end()) {
-    return std::nullopt;
+    return nullptr;
   }
   const auto& call = *found->second;
   const auto& facts = FactsFor(call);
-  if (const auto builtin = facts.builtin_calls.find(&call);
-      builtin != facts.builtin_calls.end() &&
-      (builtin->second == Builtin::NewByteArray || builtin->second == Builtin::NewRegExp)) {
-    return frontend::BuiltinSignature(builtin->second);
+  const auto target = facts.call_targets.find(&call);
+  if (target == facts.call_targets.end() ||
+      target->second.argument_names == frontend::CallArgumentNames::Positional) {
+    return nullptr;
   }
-  if (const auto async = facts.async_calls.find(&call); async != facts.async_calls.end()) {
-    return async->second.signature;
-  }
-  const auto& callee = *call.callee;
-  if (callee.kind == frontend::Expression::Kind::Member) {
-    return FindMemberCallParameters(call);
-  }
-  // 函数值只接受位置实参；不把内部的数字参数名暴露为命名实参补全。
-  if (facts.bindings.contains(&callee) || model_.globals.contains(callee.text) ||
-      facts.expression_types.contains(&callee)) {
-    return std::nullopt;
-  }
-  if (callee.kind == frontend::Expression::Kind::Name) {
-    const auto application = facts.generic_applications.find(&callee);
-    const auto& name =
-        application == facts.generic_applications.end() ? callee.text : application->second;
-    const auto type = model_.types.find(name);
-    const auto owner = model_.classes.find(type == model_.types.end() ? name : type->second.name);
-    if (owner != model_.classes.end()) {
-      return owner->second.constructor;
-    }
-    if (const auto function = model_.functions.find(name); function != model_.functions.end()) {
-      return function->second;
-    }
-    if (const auto builtin =
-            frontend::FindBuiltin(frontend::TypeDescriptor::Kind::Invalid, callee.text)) {
-      return frontend::BuiltinSignature(*builtin);
-    }
-  }
-  return std::nullopt;
+  return &target->second.signature;
 }
 
-std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberValueParameters(
+const frontend::FunctionDescriptor* SemanticIndex::FindMemberValueParameters(
     const frontend::Expression& expression) const {
   const auto& facts = FactsFor(expression);
   for (const auto* members : {
@@ -327,69 +272,12 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberValueParame
     if (member != members->end()) {
       const auto& reference = member->second;
       if (const auto owner = model_.classes.find(reference.owner); owner != model_.classes.end()) {
-        return owner->second.methods.at(reference.member);
+        return &owner->second.methods.at(reference.member);
       }
-      return model_.interfaces.at(reference.owner).methods.at(reference.member);
+      return &model_.interfaces.at(reference.owner).methods.at(reference.member);
     }
   }
-  return std::nullopt;
-}
-
-std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParameters(
-    const frontend::Expression& call) const {
-  const auto& callee = *call.callee;
-  if (const auto signature = FindMemberValueParameters(call)) {
-    return signature;
-  }
-  if (const auto signature = FindMemberValueParameters(callee)) {
-    return signature;
-  }
-  auto receiver = ReceiverFor(*callee.object);
-  const auto& facts = FactsFor(call);
-  const absl::node_hash_map<std::string, frontend::FunctionDescriptor>* methods = nullptr;
-  const absl::flat_hash_map<std::string, frontend::MethodTemplate>* templates = nullptr;
-  if (const auto class_type = model_.classes.find(receiver.type.name);
-      class_type != model_.classes.end()) {
-    methods = &class_type->second.methods;
-    templates = &class_type->second.method_templates;
-  } else if (const auto interface_type = model_.interfaces.find(receiver.type.name);
-             interface_type != model_.interfaces.end()) {
-    methods = &interface_type->second.methods;
-    templates = &interface_type->second.method_templates;
-  }
-  if (templates != nullptr && templates->contains(callee.text)) {
-    const auto type = facts.expression_types.find(&callee);
-    if (type != facts.expression_types.end() &&
-        type->second.kind == frontend::TypeDescriptor::Kind::Function) {
-      const auto& checked = model_.function_types.at(type->second.name);
-      const auto& declaration = *templates->at(callee.text).declaration;
-      frontend::FunctionDescriptor signature;
-      signature.return_type = checked.return_type;
-      for (std::size_t index = 0; index < declaration.parameters.size(); ++index) {
-        signature.AddParameter(declaration.parameters.at(index).name,
-                               checked.parameters.at(index).type);
-      }
-      signature.optional_parameters.insert(declaration.optional_parameters.begin(),
-                                           declaration.optional_parameters.end());
-      return signature;
-    }
-  }
-  if (methods != nullptr) {
-    const auto method = methods->find(callee.text);
-    if (method != methods->end()) {
-      return method->second;
-    }
-  }
-  if (const auto builtin = frontend::FindBuiltin(receiver.type.kind, callee.text)) {
-    return frontend::BuiltinSignature(*builtin);
-  }
-  if (receiver.type.kind == frontend::TypeDescriptor::Kind::Array) {
-    const auto element = model_.array_elements.find(receiver.type.name);
-    if (element != model_.array_elements.end()) {
-      return ArrayCallParameters(callee.text, element->second);
-    }
-  }
-  return std::nullopt;
+  return nullptr;
 }
 
 }  // namespace vela::tooling

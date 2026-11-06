@@ -91,16 +91,14 @@ std::expected<std::string, std::string> ReadSourceText(const std::filesystem::pa
     }
     return std::string(*overlay);
   }
-  const auto bytes = ReadBinaryFile(path);
-  if (!bytes) {
-    return std::unexpected(bytes.error());
+  auto source = ReadTextFile(path);
+  if (!source) {
+    return std::unexpected(source.error());
   }
-  const void* storage = bytes->data();
-  const std::string_view source(static_cast<const char*>(storage), bytes->size());
-  if (auto result = VerifyNativeBindingSource(path, source); !result) {
+  if (auto result = VerifyNativeBindingSource(path, *source); !result) {
     return std::unexpected(result.error());
   }
-  return std::string(source);
+  return source;
 }
 
 std::expected<std::filesystem::path, std::string> DiskImportPath(
@@ -471,7 +469,7 @@ std::optional<std::uint32_t> ModuleLoader::LoadSdk(std::string_view identity,
   std::shared_ptr<const ParsedSource> source;
   if (cached == cache_->sources.end()) {
     auto parsed = ParseSourceSnapshot(std::string(*text));
-    BindSdkDeclarations(identity, parsed.program);
+    BindSdkDeclarations(parsed.program);
     source = std::make_shared<const ParsedSource>(std::move(parsed));
     cache_->sources.emplace(key, source);
   } else {
@@ -564,7 +562,7 @@ ParseResult BindModuleGraph(ModuleGraph graph,
   auto& standard_names = result.program.standard_names;
   absl::flat_hash_set<std::string> included(standard_names.begin(), standard_names.end());
   for (const auto& source : result.program.sources) {
-    for (const auto& name : CollectStandardNames(source.syntax->tokens)) {
+    for (const auto& name : source.syntax->standard_names) {
       if (included.insert(name).second) {
         standard_names.push_back(name);
       }

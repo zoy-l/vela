@@ -19,7 +19,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   const auto receiver = LowerExpression(*expression.callee->object);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
   if (!splice && expression.arguments.empty()) {
-    const auto result = AllocateTemporary(location);
+    const auto result = AllocateRegister(location);
     EmitBuiltinCall(Builtin::ArrayLength, result, base, location);
     return {.reg = result, .type = result_type};
   }
@@ -73,14 +73,14 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   if (builtin == Builtin::ArrayPush) {
     builtin = Builtin::ArrayPushMany;
   }
-  const auto result = AllocateTemporary(location);
+  const auto result = AllocateRegister(location);
   EmitBuiltinCall(builtin, result, base, location);
   return {.reg = result, .type = result_type};
 }
 
 std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
   if (type.nullable) {
-    return RegisterArrayType(model_.types.at(type.name.substr(0, type.name.size() - 1)));
+    return RegisterArrayType(model_.types.at(frontend::NonNullableTypeName(type)));
   }
   const auto found = array_type_ids_.find(type.name);
   if (found != array_type_ids_.end()) {
@@ -105,7 +105,7 @@ std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
 
 Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& expression) {
   const auto& type = model_.expression_types.at(&expression);
-  const RegisterId array = AllocateTemporary(expression.location);
+  const RegisterId array = AllocateRegister(expression.location);
   Emit({
       .opcode = Opcode::NewArray,
       .dst = array,
@@ -115,7 +115,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& exp
   });
   for (std::size_t index = 0; index < expression.elements.size(); ++index) {
     const LoweredValue element = LowerExpression(*expression.elements.at(index));
-    const RegisterId index_reg = AllocateTemporary(expression.location);
+    const RegisterId index_reg = AllocateRegister(expression.location);
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = index_reg,
@@ -136,10 +136,9 @@ Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& exp
 Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression) {
   const auto& result_type = model_.expression_types.at(&expression);
   const LoweredValue array = LowerExpression(*expression.object);
-  const RegisterId result = AllocateTemporary(expression.location);
+  const RegisterId result = AllocateRegister(expression.location);
   if (expression.null_safe) {
-    const auto null_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfNull, .lhs = array.reg, .location = expression.location});
+    const auto null_jump = BeginNullSafe(array.reg, expression.location);
     const LoweredValue index = LowerExpression(*expression.index);
     EmitIndexRead(result, array, index.reg, expression.location);
     FinishNullSafe(null_jump, result, expression.location);

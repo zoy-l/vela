@@ -31,10 +31,6 @@
 namespace vela::compiler {
 namespace {
 
-std::string_view Text(const yyjson_val* value) {
-  return {yyjson_get_str(value), yyjson_get_len(value)};
-}
-
 bool IsSeparator(char value) {
   return value == ' ' || value == '\r' || value == '\n' || value == '\t' || value == ',' ||
          value == ':' || value == ']' || value == '}';
@@ -73,7 +69,7 @@ std::vector<ConfigurationEntry> IndexChildren(const ConfigurationEntry& entry,
     absl::flat_hash_set<std::string_view> keys;
     auto iterator = yyjson_obj_iter_with(entry.value);
     while (auto* key = yyjson_obj_iter_next(&iterator)) {
-      const auto name = Text(key);
+      const auto name = GetJsonString(key);
       const auto field =
           entry.field.empty() ? std::string(name) : entry.field + "." + std::string(name);
       children.push_back({.value = key, .field = field});
@@ -175,7 +171,7 @@ std::expected<void, ConfigurationError> ConfigurationReader::Fields(
   }
   auto iterator = yyjson_obj_iter_with(object);
   while (const auto* key = yyjson_obj_iter_next(&iterator)) {
-    const auto name = Text(key);
+    const auto name = GetJsonString(key);
     if (std::ranges::find(allowed, name) == allowed.end()) {
       return std::unexpected(Error(
           key, field.empty() ? std::string(name) : std::string(field) + "." + std::string(name),
@@ -191,7 +187,7 @@ std::expected<std::string, ConfigurationError> ConfigurationReader::String(
   if (!yyjson_is_str(value) || yyjson_get_len(value) == 0) {
     return std::unexpected(Error(value, std::string(field), "must be a nonempty string"));
   }
-  return std::string(Text(value));
+  return std::string(GetJsonString(value));
 }
 
 std::expected<testing::Timeout, ConfigurationError> ConfigurationReader::Timeout(
@@ -226,7 +222,7 @@ std::expected<testing::TagConfiguration, ConfigurationError> ReadTag(
     const ConfigurationReader& reader,
     yyjson_val* key) {
   const auto* value = yyjson_obj_iter_get_val(key);
-  const auto name = Text(key);
+  const auto name = GetJsonString(key);
   const auto field = "test.tags." + std::string(name);
   auto selector = reader.Selector(key, field);
   if (!selector) {
@@ -238,7 +234,6 @@ std::expected<testing::TagConfiguration, ConfigurationError> ReadTag(
     return std::unexpected(fields.error());
   }
   testing::TagConfiguration result{
-      .selector_text = std::string(name),
       .selector = std::move(*selector),
       .timeout = std::nullopt,
       .skip = std::nullopt,
@@ -252,7 +247,7 @@ std::expected<testing::TagConfiguration, ConfigurationError> ReadTag(
   }
   if (const auto* skip = GetJsonField(value, "skip")) {
     if (yyjson_is_str(skip)) {
-      result.skip = testing::Skip{.enabled = true, .reason = std::string(Text(skip))};
+      result.skip = testing::Skip{.enabled = true, .reason = std::string(GetJsonString(skip))};
     } else if (yyjson_is_true(skip)) {
       result.skip = testing::Skip{.enabled = true, .reason = "skipped by tag configuration"};
     } else if (yyjson_is_false(skip)) {

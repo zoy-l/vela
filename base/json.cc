@@ -19,6 +19,15 @@ const yyjson_val* GetJsonField(const yyjson_val* object, std::string_view key) n
   return yyjson_obj_getn(object, key.data(), key.size());
 }
 
+std::string_view GetJsonString(const yyjson_val* value) noexcept {
+  return yyjson_is_str(value) ? std::string_view(yyjson_get_str(value), yyjson_get_len(value))
+                              : std::string_view{};
+}
+
+std::string_view GetJsonString(const yyjson_val* object, std::string_view key) noexcept {
+  return GetJsonString(GetJsonField(object, key));
+}
+
 yyjson_mut_val* GetMutableJsonField(yyjson_mut_val* object, std::string_view key) noexcept {
   return yyjson_mut_obj_getn(object, key.data(), key.size());
 }

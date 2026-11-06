@@ -33,6 +33,9 @@ struct StandardDeclaration final {
   std::string_view source;
 };
 
+constexpr auto kAsyncNames = std::to_array<std::string_view>(
+    {kFutureTypeName, kCompleterTypeName, kTimerTypeName, kTimeoutExceptionTypeName});
+
 constexpr auto kDeclarations = std::to_array<StandardDeclaration>({
     {
         .name = kMathTypeName,
@@ -382,26 +385,18 @@ std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
 
 std::vector<std::string> CollectStandardNames(std::span<const Token> tokens) {
   absl::flat_hash_set<std::string> used;
-  constexpr auto kAsyncNames = std::to_array<std::string_view>(
-      {kFutureTypeName, kCompleterTypeName, kTimerTypeName, kTimeoutExceptionTypeName});
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    const auto& token = tokens.subspan(index).front();
+    const auto& token = tokens[index];
     if (token.kind != TokenKind::Identifier) {
       continue;
     }
     if ((token.lexeme == kIntTypeName || token.lexeme == kDoubleTypeName) &&
-        (index + 1 == tokens.size() || tokens.subspan(index + 1).front().kind != TokenKind::Dot)) {
+        (index + 1 == tokens.size() || tokens[index + 1].kind != TokenKind::Dot)) {
       continue;
     }
-    if (IsStandardName(token.lexeme)) {
+    if (IsStandardName(token.lexeme) ||
+        std::ranges::find(kAsyncNames, token.lexeme) != kAsyncNames.end()) {
       used.insert(token.lexeme);
-      if (token.lexeme == kJsonTypeName) {
-        used.insert(std::string(kErrorTypeName));
-      }
-    }
-    if (std::ranges::find(kAsyncNames, token.lexeme) != kAsyncNames.end()) {
-      used.insert(std::string(kErrorTypeName));
-      used.insert(std::string(kTimeoutExceptionTypeName));
     }
   }
   return {used.begin(), used.end()};
@@ -420,11 +415,13 @@ bool IsStandardName(std::string_view name) noexcept {
 
 bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
   const auto& name = declaration.name;
-  return (name == kIntTypeName || name == kDoubleTypeName || name == kByteArrayTypeName ||
-          name == kByteDataTypeName || name == kRegExpTypeName || name == kRegExpMatchTypeName) &&
-         declaration.location.source_id < program.sources.size() &&
-         program.sources.at(declaration.location.source_id).path ==
-             std::string(kStandardSourcePrefix) + name;
+  if (name != kIntTypeName && name != kDoubleTypeName && name != kByteArrayTypeName &&
+      name != kByteDataTypeName && name != kRegExpTypeName && name != kRegExpMatchTypeName) {
+    return false;
+  }
+  const std::string_view path = program.sources[declaration.location.source_id].path;
+  return path.starts_with(kStandardSourcePrefix) &&
+         path.substr(kStandardSourcePrefix.size()) == name;
 }
 
 Diagnostics AddStandardEnvironment(Program& program) {
@@ -434,6 +431,11 @@ Diagnostics AddStandardEnvironment(Program& program) {
     if (alias.target.name == kIntTypeName || alias.target.name == kDoubleTypeName) {
       used.insert(alias.target.name);
     }
+  }
+  if (std::ranges::any_of(kAsyncNames,
+                          [&](std::string_view name) { return used.contains(name); })) {
+    used.insert(std::string(kErrorTypeName));
+    used.insert(std::string(kTimeoutExceptionTypeName));
   }
   if (used.contains(kDateTypeName)) {
     used.insert(std::string(kDatePartsTypeName));

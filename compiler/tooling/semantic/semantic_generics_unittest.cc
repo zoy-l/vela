@@ -13,6 +13,25 @@
 namespace vela::tooling {
 namespace {
 
+TEST(SemanticCompletionTest, LocalShadowingAndBuiltinConstructorsKeepTheirDetails) {
+  const std::string source = "func main(): void { const sleep = 42; sleep; ByteArray(1); }";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto local = index.Complete(source.rfind("sleep") + std::string_view("sleep").size());
+  const auto shadow = std::ranges::find(local, "sleep", &Completion::label);
+  ASSERT_NE(shadow, local.end());
+  EXPECT_EQ(std::ranges::count(local, "sleep", &Completion::label), 1);
+  EXPECT_EQ(shadow->kind, CompletionKind::Constant);
+  EXPECT_EQ(shadow->detail, "int");
+  const auto constructors =
+      index.Complete(source.find("ByteArray") + std::string_view("ByteArray").size());
+  const auto bytes = std::ranges::find(constructors, "ByteArray", &Completion::label);
+  ASSERT_NE(bytes, constructors.end());
+  EXPECT_EQ(std::ranges::count(constructors, "ByteArray", &Completion::label), 1);
+  EXPECT_EQ(bytes->kind, CompletionKind::Type);
+  EXPECT_NE(bytes->detail.find("constructor(length: int)"), std::string::npos);
+}
+
 TEST(GenericSemanticTest, UnusedDefinitionsExposeParameterIdentityBoundsAndMembers) {
   const std::string source = R"(
 interface Reader<E> { read(): E; }
@@ -189,6 +208,22 @@ TEST(GenericSemanticTest, RenamePreservesKnownFactsWithIncompleteTrailingInput) 
   EXPECT_TRUE(index.PrepareRename(source.find("value;"), PositionEncoding::Utf8));
   for (const std::string_view name : {"class", "T,U", "", " T", "T/*comment*/"}) {
     EXPECT_FALSE(index.RenameSymbol(source.find("<T") + 1, name, PositionEncoding::Utf8));
+  }
+}
+
+TEST(GenericSemanticTest, RenamePreservesEmbeddedStandardAndSdkSources) {
+  for (const std::string_view source : {
+           "func main(): void { let value = Math.sqrt(4.0); print(value); }",
+           "import 'sdk:test'; func main(): void { let value = 42; print(value); }",
+       }) {
+    SCOPED_TRACE(source);
+    const frontend::SourceInput input{.path = "main.vela", .text = source};
+    const SemanticIndex index(input.path, std::span(&input, 1));
+    const auto edits = index.RenameSymbol(source.find("value ="), "answer", PositionEncoding::Utf8);
+    ASSERT_TRUE(edits) << edits.error();
+    ASSERT_EQ(edits->size(), 2U);
+    EXPECT_EQ(edits->front().path, edits->back().path);
+    EXPECT_FALSE(index.RenameSymbol(source.find("value ="), "print", PositionEncoding::Utf8));
   }
 }
 

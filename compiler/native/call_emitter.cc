@@ -37,7 +37,7 @@ llvm::BasicBlock* FunctionEmitter::EmitSquareRootCall(const ir::Instruction& ins
                                                       std::uint32_t target) {
   const auto& callee = program_.functions.at(target);
   llvm::BasicBlock* intrinsic_done = nullptr;
-  if (CanInlineSquareRoot(callee)) {
+  if (generated_[target].square_root) {
     auto* operand = Payload(instruction.lhs);
     auto* matches = SquareRootCondition(*imports_.at(target), operand);
     if (program_.native_mode == NativeProgramMode::Reloadable || roots_.debug_values) {
@@ -54,11 +54,7 @@ llvm::BasicBlock* FunctionEmitter::EmitSquareRootCall(const ir::Instruction& ins
           callee.return_type);
     builder_.CreateBr(intrinsic_done);
     builder_.SetInsertPoint(bound);
-    if (program_.native_mode == NativeProgramMode::Reloadable &&
-        !IsBoundaryPollRequired(instruction_index_)) {
-      Poll();
-    }
-    PrepareRuntimeCall();
+    PrepareInlineRuntimeCall();
   }
   return intrinsic_done;
 }
@@ -129,7 +125,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  const auto& target = generated_.subspan(selected.function).front();
+  const auto& target = generated_[selected.function];
   auto* result = target.leaf == nullptr ? result_ : leaf_result_;
   arguments.back() = result;
   auto* import_done = EmitInlineImportCall(instruction, selected, arguments);

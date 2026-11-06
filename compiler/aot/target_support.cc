@@ -34,15 +34,9 @@
 namespace vela::compiler::aot {
 namespace {
 
-std::string_view Text(const yyjson_val* object, std::string_view key) {
-  const auto* value = GetJsonField(object, key);
-  return yyjson_is_str(value) ? std::string_view(yyjson_get_str(value), yyjson_get_len(value))
-                              : std::string_view();
-}
-
 std::expected<std::filesystem::path, std::string>
 PackagedPath(const yyjson_val* root, std::string_view key, const std::filesystem::path& package) {
-  const auto relative = Utf8Path(Text(root, key));
+  const auto relative = Utf8Path(GetJsonString(root, key));
   if (relative.empty() || relative.has_root_path() ||
       std::ranges::any_of(relative, [](const auto& part) { return part == ".."; })) {
     return std::unexpected("target support requires a package-relative path for " +
@@ -77,18 +71,18 @@ std::expected<Roots, std::string> ResolveRoots(const yyjson_val* root,
   }
   for (std::size_t index = 0; index < yyjson_arr_size(external); ++index) {
     const auto* entry = yyjson_arr_get(external, index);
-    const auto name = Text(entry, "name");
-    const auto environment = Text(entry, "environment");
-    if (name.empty() || environment.empty() || Text(entry, "version").empty() ||
-        Text(entry, "source").empty() || Text(entry, "license").empty() ||
-        Text(entry, "instructions").empty()) {
+    const auto name = GetJsonString(entry, "name");
+    const auto environment = GetJsonString(entry, "environment");
+    if (name.empty() || environment.empty() || GetJsonString(entry, "version").empty() ||
+        GetJsonString(entry, "source").empty() || GetJsonString(entry, "license").empty() ||
+        GetJsonString(entry, "instructions").empty()) {
       return std::unexpected(
           "external SDK root requires version, provenance, license, and instructions");
     }
     const auto value = llvm::sys::Process::GetEnv(environment);
     if (!value || value->empty()) {
       return std::unexpected("configure " + std::string(environment) + ": " +
-                             std::string(Text(entry, "instructions")));
+                             std::string(GetJsonString(entry, "instructions")));
     }
     const auto path = Utf8Path(*value);
     if (!path.is_absolute()) {
@@ -100,8 +94,8 @@ std::expected<Roots, std::string> ResolveRoots(const yyjson_val* root,
 }
 
 std::expected<void, std::string> VerifyFile(const Roots& roots, const yyjson_val* file) {
-  const auto name = Text(file, "path");
-  const auto expected = Text(file, "sha256");
+  const auto name = GetJsonString(file, "path");
+  const auto expected = GetJsonString(file, "sha256");
   if (name.empty() || expected.empty()) {
     return std::unexpected("target support file requires path and sha256");
   }
@@ -209,15 +203,17 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
   }
   const auto* root = parsed->root();
   if (yyjson_get_uint(GetJsonField(root, "format_version")) != 1 ||
-      Text(root, "target") != runtime::NativeTargetIdentity() ||
-      Text(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
-      Text(root, "toolchain_build") != NativeToolchainBuildIdentity(NativeOptimization::Release)) {
+      GetJsonString(root, "target") != runtime::NativeTargetIdentity() ||
+      GetJsonString(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
+      GetJsonString(root, "toolchain_build") !=
+          NativeToolchainBuildIdentity(NativeOptimization::Release)) {
     return std::unexpected("target support target or runtime ABI does not match this compiler");
   }
   std::error_code error;
-  const auto package = std::filesystem::absolute(
-                           manifest.parent_path() / Utf8Path(Text(root, "package_root")), error)
-                           .lexically_normal();
+  const auto package =
+      std::filesystem::absolute(
+          manifest.parent_path() / Utf8Path(GetJsonString(root, "package_root")), error)
+          .lexically_normal();
   if (error) {
     return std::unexpected("cannot resolve target support package: " + error.message());
   }
@@ -231,7 +227,7 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
   }
   for (std::size_t index = 0; index < yyjson_arr_size(files); ++index) {
     const auto* file = yyjson_arr_get(files, index);
-    if (kind != NativeOutputKind::Executable && Text(file, "role") == "link") {
+    if (kind != NativeOutputKind::Executable && GetJsonString(file, "role") == "link") {
       continue;
     }
     const auto verified = VerifyFile(*roots, file);

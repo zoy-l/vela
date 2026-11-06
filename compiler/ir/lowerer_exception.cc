@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <iterator>
 #include <optional>
-#include <utility>
+#include <string>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/ir/ir.h"
@@ -23,7 +25,9 @@ Lowerer::Completion Lowerer::LowerFinalizers(std::size_t depth) {
     const auto final = saved_finalizers.at(index - 1);
     finalizers_.resize(index - 1);
     current_handler_ = final.outer_handler;
-    auto saved_scopes = scopes_;
+    std::vector<absl::flat_hash_map<std::string, Local>> hidden_scopes(
+        std::make_move_iterator(scopes_.begin() + static_cast<std::ptrdiff_t>(final.scope_depth)),
+        std::make_move_iterator(scopes_.end()));
     scopes_.resize(final.scope_depth);
     std::vector<ControlTargets> hidden_controls(
         std::make_move_iterator(controls_.begin() +
@@ -31,7 +35,8 @@ Lowerer::Completion Lowerer::LowerFinalizers(std::size_t depth) {
         std::make_move_iterator(controls_.end()));
     controls_.resize(final.control_depth);
     LowerScopedStatement(*final.body);
-    scopes_ = std::move(saved_scopes);
+    scopes_.insert(scopes_.end(), std::make_move_iterator(hidden_scopes.begin()),
+                   std::make_move_iterator(hidden_scopes.end()));
     controls_.insert(controls_.end(), std::make_move_iterator(hidden_controls.begin()),
                      std::make_move_iterator(hidden_controls.end()));
     if (!model_.control_flow.at(final.body).can_fall_through) {
@@ -54,13 +59,13 @@ void Lowerer::LowerReturn(const frontend::Statement& statement) {
       result = value.reg;
     }
     if (!finalizers_.empty()) {
-      const auto snapshot = AllocateTemporary(statement.location);
+      const auto snapshot = AllocateRegister(statement.location);
       Emit(
           {.opcode = Opcode::Move, .dst = snapshot, .lhs = result, .location = statement.location});
       result = snapshot;
     }
   } else {
-    result = AllocateTemporary(statement.location);
+    result = AllocateRegister(statement.location);
     Emit({.opcode = Opcode::LoadNull, .dst = result, .location = statement.location});
   }
   if (LowerFinalizers(0) == Completion::Continue) {
@@ -101,7 +106,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
   }
   const auto handler = static_cast<std::uint32_t>(current_function_->handlers.size());
   current_function_->handlers.push_back({});
-  const auto exception = AllocateTemporary(statement.location);
+  const auto exception = AllocateRegister(statement.location);
   std::vector<std::size_t> exits;
   const auto finish = [&]() -> void {
     if (LowerFinalizers(finally_depth) == Completion::Continue) {
@@ -118,7 +123,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
   current_function_->handlers.at(handler).target =
       static_cast<std::uint32_t>(current_function_->instructions.size());
   Emit({.opcode = Opcode::Catch, .dst = exception, .location = statement.location});
-  const auto payload = AllocateTemporary(statement.location);
+  const auto payload = AllocateRegister(statement.location);
   Emit({
       .opcode = Opcode::ExceptionValue,
       .dst = payload,
@@ -133,7 +138,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
   for (const auto& clause : statement.catches) {
     std::optional<std::size_t> mismatch;
     if (!clause.name.empty()) {
-      const auto condition = AllocateTemporary(clause.location);
+      const auto condition = AllocateRegister(clause.location);
       Emit({
           .opcode = Opcode::IsType,
           .dst = condition,
@@ -148,7 +153,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
     PushScope();
     if (!clause.name.empty()) {
       // 各 catch 的局部绑定具有各自的类型，不能改写共享异常载荷寄存器的类型。
-      const auto bound = AllocateTemporary(clause.location);
+      const auto bound = AllocateRegister(clause.location);
       Emit({.opcode = Opcode::Move, .dst = bound, .lhs = payload, .location = clause.location});
       DeclareLocal(clause.name, bound, model_.catch_types.at(&clause), clause.location, &clause);
     }
@@ -169,7 +174,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
   if (catch_finalizer) {
     current_function_->handlers.at(*catch_finalizer).target =
         static_cast<std::uint32_t>(current_function_->instructions.size());
-    const auto replacement = AllocateTemporary(statement.location);
+    const auto replacement = AllocateRegister(statement.location);
     Emit({.opcode = Opcode::Catch, .dst = replacement, .location = statement.location});
     if (LowerFinalizers(finally_depth) == Completion::Continue) {
       Emit({.opcode = Opcode::Rethrow, .lhs = replacement, .location = statement.location});

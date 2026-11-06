@@ -98,8 +98,17 @@ std::expected<void, Error> Discovery::Add(const std::filesystem::path& path) {
 }
 
 std::vector<std::filesystem::path> Discovery::Finish(const std::filesystem::path& root) {
-  std::ranges::sort(paths_, {},
-                    [&root](const auto& path) { return PathText(path.lexically_proximate(root)); });
+  std::vector<std::pair<std::string, std::filesystem::path>> ordered;
+  ordered.reserve(paths_.size());
+  for (auto& path : paths_) {
+    auto key = PathText(path.lexically_proximate(root));
+    ordered.emplace_back(std::move(key), std::move(path));
+  }
+  std::ranges::sort(ordered, {}, &decltype(ordered)::value_type::first);
+  paths_.clear();
+  for (auto& entry : ordered) {
+    paths_.push_back(std::move(entry.second));
+  }
   return std::move(paths_);
 }
 

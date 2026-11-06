@@ -25,6 +25,12 @@ struct BuiltinParameter final {
                                                  std::string_view name);
 [[nodiscard]] std::optional<Builtin> FindBuiltinProperty(TypeDescriptor::Kind receiver,
                                                          std::string_view name);
+[[nodiscard]] std::span<const std::pair<std::string_view, Builtin>> BuiltinMethods(
+    TypeDescriptor::Kind receiver) noexcept;
+[[nodiscard]] std::span<const std::pair<std::string_view, Builtin>> BuiltinProperties(
+    TypeDescriptor::Kind receiver) noexcept;
+[[nodiscard]] std::span<const std::pair<std::string_view, Builtin>> CollectionMethods(
+    TypeDescriptor::Kind receiver) noexcept;
 // 签名只描述显式参数；receiver 由检查与 lowering 独立传递。
 [[nodiscard]] const FunctionDescriptor& BuiltinSignature(Builtin builtin);
 [[nodiscard]] bool IsBuiltinName(std::string_view name);
@@ -43,12 +49,10 @@ struct CollectionMethod final {
     const TypeDescriptor& receiver,
     std::span<const TypeDescriptor> arguments,
     std::string_view name);
-[[nodiscard]] std::optional<Builtin> FindSetOperation(std::string_view name);
 [[nodiscard]] FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
                                                         const TypeDescriptor& element,
                                                         const TypeDescriptor& accumulator);
 [[nodiscard]] FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
-                                                         const TypeDescriptor& element,
-                                                         const TypeDescriptor& accumulator);
+                                                         const FunctionDescriptor& callback);
 
 }  // namespace vela::frontend

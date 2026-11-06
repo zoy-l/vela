@@ -68,7 +68,7 @@ std::string SpecializationName(std::string_view base, std::span<const TypeName> 
     if (index != 0) {
       result += ", ";
     }
-    result += CanonicalTypeText(arguments.subspan(index).front());
+    result += CanonicalTypeText(arguments[index]);
   }
   return result + '>';
 }
@@ -92,7 +92,7 @@ TypeSubstitutions Specializer::Bind(std::span<const TypeParameter> parameters,
     return result;
   }
   for (std::size_t index = 0; index < parameters.size(); ++index) {
-    result.emplace(parameters.subspan(index).front().identity, arguments.subspan(index).front());
+    result.emplace(parameters[index].identity, arguments[index]);
   }
   return result;
 }
@@ -101,11 +101,12 @@ void Specializer::RenameMethodParameters(std::span<const Function> methods,
                                          const std::string& owner,
                                          TypeSubstitutions& substitutions) {
   for (const auto& method : methods) {
+    const auto method_owner = owner + '.' + method.name;
     for (std::size_t index = 0; index < method.type_parameters.size(); ++index) {
       const auto& parameter = method.type_parameters.at(index);
       auto renamed = ParameterTypeName(parameter, parameter.location);
       renamed.parameter = {
-          .owner = owner + '.' + method.name,
+          .owner = method_owner,
           .index = static_cast<std::uint32_t>(index),
       };
       substitutions.emplace(parameter.identity, std::move(renamed));
@@ -115,9 +116,10 @@ void Specializer::RenameMethodParameters(std::span<const Function> methods,
 
 void Specializer::AssignMethodParameters(std::vector<Function>& methods, const std::string& owner) {
   for (auto& method : methods) {
+    const auto method_owner = owner + '.' + method.name;
     for (std::size_t index = 0; index < method.type_parameters.size(); ++index) {
       method.type_parameters.at(index).identity = {
-          .owner = owner + '.' + method.name,
+          .owner = method_owner,
           .index = static_cast<std::uint32_t>(index),
       };
     }
@@ -893,11 +895,11 @@ absl::flat_hash_map<std::string, TypeName> Specializer::TakeTypeApplications() {
   return std::exchange(generic_types_, {});
 }
 
-const void* Specializer::FunctionSource(std::size_t index) const {
+const Function* Specializer::FunctionSource(std::size_t index) const {
   return functions_.at(index).source;
 }
 
-const void* Specializer::ClassSource(std::size_t index) const {
+const Class* Specializer::ClassSource(std::size_t index) const {
   return classes_.at(index).source;
 }
 

@@ -29,6 +29,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
   const auto& element = model_.array_elements.at(receiver.name);
   auto callback_signature = frontend::ArrayCallbackSignature(algorithm, element, dynamic);
+  auto signature = frontend::ArrayAlgorithmSignature(algorithm, callback_signature);
   callback_signature.return_type = dynamic;
   auto callback =
       CreateMemberFunction(receiver, std::string(name) + ".callback", callback_signature);
@@ -43,7 +44,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   for (std::size_t index = 0; index < callback_signature.parameters.size(); ++index) {
     arguments.at(index + 1) = static_cast<RegisterId>(index + 1);
   }
-  const auto invoked = AllocateTemporary({});
+  const auto invoked = AllocateRegister({});
   EmitBuiltinCall(Builtin::DynamicArrayInvoke, invoked, arguments, {});
   Emit({.opcode = Opcode::Return, .dst = invoked, .location = {}});
   callback.register_count = next_register_;
@@ -58,7 +59,6 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
       .name = frontend::InternTypeName(program_.classes.at(closure).name),
   };
 
-  auto signature = frontend::ArrayAlgorithmSignature(algorithm, element, dynamic);
   signature.parameters.front().type = dynamic;
   if (algorithm == ArrayAlgorithm::Map) {
     signature.return_type = dynamic;
@@ -82,19 +82,19 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   });
   const auto wrapper =
       EmitTemporary({.opcode = Opcode::LoadInt, .immediate = closure, .location = {}});
-  const auto plan = AllocateTemporary({});
+  const auto plan = AllocateRegister({});
   const std::array prepare{RegisterId{0}, RegisterId{1}, initial, selector, wrapper};
   EmitBuiltinCall(Builtin::DynamicArrayPrepare, plan, prepare, {});
   const std::array plan_argument{plan};
   EmitBuiltinCall(Builtin::DynamicArrayCallback, 1, plan_argument, {});
-  const auto length = AllocateTemporary({});
+  const auto length = AllocateRegister({});
   EmitBuiltinCall(Builtin::ArrayLength, length, 0, {});
   const auto guard = AllocateRegisterWindow(2, {});
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = 0, .location = {}});
   EmitBuiltinCall(Builtin::ArrayMutation, guard + 1, 0, {});
   std::optional<RegisterId> output;
   if (algorithm == ArrayAlgorithm::Map) {
-    output = AllocateTemporary({});
+    output = AllocateRegister({});
     EmitBuiltinCall(Builtin::DynamicArrayOutput, *output, plan_argument, {});
   }
   const auto result = LowerArrayTraversal(
@@ -113,7 +113,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   Emit({.opcode = Opcode::Return, .dst = result.reg, .location = {}});
   if (default_sort) {
     BindJump(*default_sort);
-    const auto sorted = AllocateTemporary({});
+    const auto sorted = AllocateRegister({});
     EmitBuiltinCall(Builtin::ArraySortDefault, sorted, 0, {});
     Emit({.opcode = Opcode::Return, .dst = sorted, .location = {}});
   }

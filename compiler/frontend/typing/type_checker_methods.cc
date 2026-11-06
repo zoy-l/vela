@@ -166,7 +166,7 @@ std::optional<std::size_t> TypeChecker::CallbackParameterCount(const Expression&
   if (expression.kind == Expression::Kind::Lambda) {
     return expression.function->parameters.size();
   }
-  if (const auto signature = GenericSignature(expression)) {
+  if (const auto* signature = GenericSignature(expression)) {
     return signature->parameters.size();
   }
   if (expression.kind == Expression::Kind::Conditional ||
@@ -194,7 +194,12 @@ std::optional<std::size_t> TypeChecker::CallbackParameterCount(const Expression&
   return count;
 }
 
-TypeChecker::InferenceSignature TypeChecker::FunctionInferenceSignature(const Function& function) {
+const TypeChecker::InferenceSignature& TypeChecker::FunctionInferenceSignature(
+    const Function& function) {
+  const auto found = function_inference_signatures_.find(&function);
+  if (found != function_inference_signatures_.end()) {
+    return found->second;
+  }
   InferenceSignature source;
   source.type_parameters = function.type_parameters;
   source.parameters = function.parameters;
@@ -202,7 +207,7 @@ TypeChecker::InferenceSignature TypeChecker::FunctionInferenceSignature(const Fu
   source.optional_parameters.insert(function.optional_parameters.begin(),
                                     function.optional_parameters.end());
   NormalizeInferenceSignature(source);
-  return source;
+  return function_inference_signatures_.emplace(&function, std::move(source)).first->second;
 }
 
 void TypeChecker::NormalizeInferenceSignature(InferenceSignature& source) {
@@ -247,7 +252,7 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
     return InvalidType();
   }
   ValidateTypeParameters(declaration.type_parameters);
-  const auto source = FunctionInferenceSignature(declaration);
+  const auto& source = FunctionInferenceSignature(declaration);
   FunctionInfo signature;
   std::vector<TypeName> arguments;
   std::vector<std::optional<Type>> checked;
@@ -320,7 +325,7 @@ void TypeChecker::RegisterMethodApplications() {
     if (specializer_->method_owner_kind(index) == DeclarationKind::Interface) {
       auto& interface = interfaces_.at(owner);
       interface.methods.try_emplace(method.name, std::move(signature));
-      interface.method_applications.emplace(method.name, &method);
+      interface_method_applications_.at(owner).emplace(method.name, &method);
       const auto implementers = interface_implementers_.find(owner);
       if (implementers != interface_implementers_.end()) {
         for (const auto& implementation : implementers->second) {
@@ -329,8 +334,7 @@ void TypeChecker::RegisterMethodApplications() {
       }
     } else {
       classes_.at(owner).methods.try_emplace(method.name, std::move(signature));
-      const auto captured = FindCapturedMutableDeclarations(method);
-      captured_declarations_.insert(captured.begin(), captured.end());
+      CollectCapturedMutableDeclarations(method, captured_declarations_);
     }
   }
 }
@@ -339,17 +343,15 @@ void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
                                         const std::string& interface,
                                         const Function& method) {
   const auto& specialized = method.application;
-  if (!specialized) {
-    std::unreachable();
-  }
   const auto& application = *specialized;
-  if (!owner.interface_method_templates.contains({interface, application.name}) ||
-      !queued_interface_bindings_.emplace(owner.type.name, interface, method.name).second) {
+  const auto interface_name = interfaces_.at(interface).type.name;
+  if (!interface_method_templates_.contains({owner.type.name, interface, application.name}) ||
+      !queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
     return;
   }
   interface_bindings_.push_back({
-      .owner = std::string(owner.type.name),
-      .interface = interface,
+      .owner = owner.type.name,
+      .interface = interface_name,
       .method = method.name,
       .location = method.location,
   });
@@ -357,23 +359,21 @@ void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
 
 void TypeChecker::DrainInterfaceBindings() {
   while (!interface_bindings_.empty()) {
-    auto binding = std::move(interface_bindings_.back());
+    auto binding = interface_bindings_.back();
     interface_bindings_.pop_back();
     auto& owner = classes_.at(binding.owner);
-    const auto& method = *interfaces_.at(binding.interface).method_applications.at(binding.method);
+    const auto& method = *interface_method_applications_.at(binding.interface).at(binding.method);
     const auto& specialized = method.application;
-    if (!specialized) {
-      std::unreachable();
-    }
     const auto& application = *specialized;
     const auto implementation =
-        owner.interface_method_templates.at({binding.interface, application.name});
+        interface_method_templates_.at({owner.type.name, binding.interface, application.name});
     const auto target = MaterializeMethod(implementation, application.arguments, binding.location);
     if (!target) {
       AddDiagnostic(target.error().location, target.error().message);
       continue;
     }
-    owner.interface_targets.insert_or_assign({binding.interface, binding.method}, *target);
+    owner.interface_targets.insert_or_assign(
+        std::pair{std::string(binding.interface), std::string(binding.method)}, *target);
   }
 }
 

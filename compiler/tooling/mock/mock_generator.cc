@@ -25,6 +25,7 @@
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/lexer.h"
 #include "compiler/tooling/format/formatter.h"
 
 namespace vela::tooling {
@@ -34,7 +35,7 @@ constexpr std::string_view kGeneratorVersion = "1";
 constexpr std::string_view kDescriptorVersion = "1";
 enum class AdapterKind : std::uint8_t { Implementation, Pattern };
 
-enum class AliasMismatch : std::uint8_t { Type };
+enum class AliasBinding : std::uint8_t { Matched, Mismatch };
 using AliasArguments = absl::flat_hash_map<std::string, std::optional<frontend::TypeName>>;
 
 struct GenericAlias final {
@@ -43,57 +44,30 @@ struct GenericAlias final {
   std::vector<std::string> parameters;
 };
 
-std::expected<void, AliasMismatch> BindAliasType(const frontend::TypeName& pattern,
-                                                 const frontend::TypeName& actual,
-                                                 AliasArguments& arguments) {
+AliasBinding BindAliasType(const frontend::TypeName& pattern,
+                           const frontend::TypeName& actual,
+                           AliasArguments& arguments) {
   const auto parameter = arguments.find(pattern.name);
   if (parameter != arguments.end()) {
     auto& bound = parameter->second;
     if (bound && bound->ToString() != actual.ToString()) {
-      return std::unexpected(AliasMismatch::Type);
+      return AliasBinding::Mismatch;
     }
     bound = actual;
-    return {};
+    return AliasBinding::Matched;
   }
   if (pattern.kind != actual.kind || pattern.name != actual.name ||
       pattern.arguments.size() != actual.arguments.size()) {
-    return std::unexpected(AliasMismatch::Type);
+    return AliasBinding::Mismatch;
   }
   for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
     const auto bound =
         BindAliasType(pattern.arguments.at(index), actual.arguments.at(index), arguments);
-    if (!bound) {
+    if (bound != AliasBinding::Matched) {
       return bound;
     }
   }
-  return {};
-}
-
-std::string Quote(std::string_view value) {
-  std::string result = "'";
-  for (const char character : value) {
-    switch (character) {
-      case '\\':
-        result += "\\\\";
-        break;
-      case '\'':
-        result += "\\'";
-        break;
-      case '\n':
-        result += "\\n";
-        break;
-      case '\r':
-        result += "\\r";
-        break;
-      case '$':
-        result += "\\$";
-        break;
-      default:
-        result += character;
-        break;
-    }
-  }
-  return result + '\'';
+  return AliasBinding::Matched;
 }
 
 std::string RelativeModule(std::string_view module, const std::filesystem::path& directory) {
@@ -134,8 +108,8 @@ class MockGenerator final {
   absl::flat_hash_set<std::string> identifiers_;
   absl::flat_hash_set<std::string> exported_;
   absl::flat_hash_map<std::string, const frontend::Program::TypeAlias*> aliases_;
-  std::map<std::string, std::string> public_aliases_;
-  std::map<std::pair<frontend::TypeName::Kind, std::string>, std::vector<GenericAlias>>
+  absl::flat_hash_map<std::string, std::string> public_aliases_;
+  absl::flat_hash_map<std::pair<frontend::TypeName::Kind, std::string>, std::vector<GenericAlias>>
       generic_aliases_;
   absl::flat_hash_set<std::string> naming_aliases_;
   std::map<std::string, std::string> imports_;
@@ -231,7 +205,7 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
     for (const auto& parameter : alias.parameters) {
       arguments.emplace(parameter, std::nullopt);
     }
-    if (!BindAliasType(alias.target, type, arguments)) {
+    if (BindAliasType(alias.target, type, arguments) != AliasBinding::Matched) {
       continue;
     }
     if (std::ranges::any_of(arguments, [](const auto& entry) { return !entry.second; })) {
@@ -446,7 +420,7 @@ void MockGenerator::EmitInterface(const frontend::Interface& declaration) {
     const auto identity =
         RelativeModule(origin.module_uri, api_directory_) + "#" + origin.name + '.' + method.name;
     body_ << "const " << fields.at(index) << " = " << sdk_ << ".MockMethod(" << control << ", "
-          << Quote(identity) << ");\n";
+          << frontend::QuoteStringLiteral(identity) << ");\n";
   }
   const auto field_arguments = [this, &fields] {
     for (std::size_t index = 0; index < fields.size(); ++index) {
@@ -502,7 +476,7 @@ void MockGenerator::EmitAdapter(const frontend::Interface& declaration,
       body_ << "return ";
     }
     const auto invocation = is_void ? ".invokeVoid(" : ".invoke<" + result.ToString() + ">(";
-    body_ << "this." << fields.subspan(index).front() << (pattern ? ".query(" : invocation);
+    body_ << "this." << fields[index] << (pattern ? ".query(" : invocation);
     Arguments(method);
     body_ << ')';
     body_ << ";\n}\n";
@@ -569,7 +543,7 @@ std::expected<std::string, frontend::Diagnostics> MockGenerator::Generate(
     if (!path.starts_with(frontend::kSdkSourcePrefix) && !path.starts_with('.')) {
       path.insert(0, "./");
     }
-    source << "import " << Quote(path) << " as " << name << ";\n";
+    source << "import " << frontend::QuoteStringLiteral(path) << " as " << name << ";\n";
   }
   source << body_.str();
   auto formatted = FormatSource(source.str());

@@ -167,7 +167,7 @@ class Suite final : public runtime::TestBridge {
   std::expected<runtime::Value, std::string> CheckCallback(runtime::Value identity);
   [[nodiscard]] std::expected<CallbackExpectation*, std::string> FindCallback(
       runtime::Value identity);
-  [[nodiscard]] runtime::Value CurrentTestScope() const;
+  [[nodiscard]] std::optional<std::uint64_t> CurrentTestScope() const;
   std::expected<runtime::Value, std::string> RegisterFinalizer(
       runtime::Value callback,
       std::vector<runtime::FutureTraceFrame> trace);

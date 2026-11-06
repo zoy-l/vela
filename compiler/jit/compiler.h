@@ -32,7 +32,6 @@ struct CompileOptions final {
   std::optional<std::filesystem::path> code_cache = std::nullopt;
   bool preserve_ir = false;
   native::EscapeOptimization escape = native::EscapeOptimization::Enabled;
-  std::optional<std::string> host_namespace = std::nullopt;
 };
 
 struct CompileTimings final {
@@ -51,7 +50,6 @@ struct CompiledImage final {
   CodeCacheStatus cache = CodeCacheStatus::Disabled;
   CompileTimings timings;
   std::size_t compiled_functions = 0;
-  std::string host_header;
 };
 
 // 编译不访问 Isolate；未发布结果可以丢弃。映像最后引用在 Isolate 线程释放时退休 ORC

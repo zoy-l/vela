@@ -13,7 +13,9 @@
 
 #include "base/builtin.h"
 #include "base/layout_description.h"
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
@@ -25,6 +27,48 @@ namespace vela::ir {
 namespace {
 
 using test::Prepare;
+
+TEST(PreparationTest, FieldIdentitiesApplyOnlyToReloadableInstances) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text = R"(
+class Box { value: int; }
+func read(box: Box, error: Error, parts: DateParts): int {
+  return box.value + error.code.length + parts.millisecond;
+}
+)",
+  };
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded()) << frontend::DiagnosticsText(checked.diagnostics);
+  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+    frontend::DeclarationIds identities;
+    const auto prepared = PrepareProgram(parsed.program, checked.model,
+                                         {.declarations = &identities, .native_mode = mode});
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    std::size_t instance_reads = 0;
+    std::size_t fixed_reads = 0;
+    for (const auto& function : prepared.program.functions) {
+      for (const auto& instruction : function.instructions) {
+        if (instruction.opcode != Opcode::GetField) {
+          continue;
+        }
+        const auto name = function.value_types[instruction.lhs].name;
+        if (name == "Box") {
+          ++instance_reads;
+          EXPECT_EQ(instruction.field_declaration.has_value(),
+                    mode == NativeProgramMode::Reloadable);
+        } else if (name == "Error" || name == "DateParts") {
+          ++fixed_reads;
+          EXPECT_FALSE(instruction.field_declaration);
+        }
+      }
+    }
+    EXPECT_GT(instance_reads, 0U);
+    EXPECT_GT(fixed_reads, 1U);
+  }
+}
 
 TEST(PreparationTest, EnumRuntimeNamesDoNotBorrowSourceDeclarations) {
   const frontend::SourceInput input{

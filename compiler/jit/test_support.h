@@ -24,8 +24,12 @@ std::expected<SourceCandidate, SourceCandidateError> PrepareText(
     const SourceSession& source,
     std::string text,
     std::span<const DeclarationId> retained = {});
-std::expected<CompiledImage, frontend::Diagnostics>
-CompileText(Compiler& compiler, std::string text, NativeCodeTier tier = NativeCodeTier::Baseline);
+enum class IRPreservation : std::uint8_t { Discard, Preserve };
+std::expected<CompiledImage, frontend::Diagnostics> CompileText(
+    Compiler& compiler,
+    std::string text,
+    NativeCodeTier tier = NativeCodeTier::Baseline,
+    IRPreservation preservation = IRPreservation::Discard);
 struct CompiledUpdate final {
   SourceCandidate source;
   CompiledImage code;

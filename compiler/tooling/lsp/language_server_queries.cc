@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/tooling/lsp/language_server_internal.h"
 
 #include <cstddef>
@@ -131,25 +132,28 @@ void LanguageServer::DocumentLinks(RpcCall call) {
 std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
                                                        std::size_t offset) {
-  const auto files = IndexFor(uri, opened).source_files();
-  if (files.empty()) {
+  const auto parsed = modules_.sources.find(opened.path);
+  if (parsed == modules_.sources.end()) {
     return {};
   }
-  const auto& syntax = *files.front().syntax;
+  const auto& syntax = *parsed->second->source;
+  if (IsCompletionExcluded(syntax, offset)) {
+    return {};
+  }
   const auto arguments = PrepareArgumentCompletion(syntax, offset);
   const auto completion_text = arguments ? arguments->source : CompletionSource(syntax, offset);
-  std::vector<frontend::SourceInput> overlays;
-  overlays.reserve(documents_.size());
-  for (const auto& [open_uri, opened_document] : documents_) {
-    overlays.push_back({
-        .path = opened_document.path,
-        .text = open_uri == uri ? completion_text : opened_document.source.text(),
-    });
-  }
   auto cached = completion_indices_.find(uri);
   if (cached == completion_indices_.end() || cached->second.text != completion_text) {
     if (cached != completion_indices_.end()) {
       completion_indices_.erase(cached);
+    }
+    std::vector<frontend::SourceInput> overlays;
+    overlays.reserve(documents_.size());
+    for (const auto& [open_uri, opened_document] : documents_) {
+      overlays.push_back({
+          .path = opened_document.path,
+          .text = open_uri == uri ? completion_text : opened_document.source.text(),
+      });
     }
     // 占位符只更新本次查询的模块快照；真实文档缓存仍供诊断与其它语义请求复用。
     auto query_modules = modules_;
@@ -240,10 +244,10 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     auto begin = *offset;
     auto end = *offset;
     const auto text = source.text();
-    while (begin > 0 && IsIdentifierByte(text.at(begin - 1))) {
+    while (begin > 0 && frontend::IsIdentifierPart(text.at(begin - 1))) {
       --begin;
     }
-    while (end < text.size() && IsIdentifierByte(text.at(end))) {
+    while (end < text.size() && frontend::IsIdentifierPart(text.at(end))) {
       ++end;
     }
     const TextRange range{

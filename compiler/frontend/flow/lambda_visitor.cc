@@ -5,40 +5,36 @@
 namespace vela::frontend {
 namespace {
 
-template <class Node, class Visitor>
-void WalkStatement(Node* statement, Visitor visitor, const Function* parent);
+void WalkStatement(const Statement* statement, LambdaVisitor visitor);
 
-template <class Node, class Visitor>
-void WalkExpression(Node* expression, Visitor visitor, const Function* parent) {
+void WalkExpression(const Expression* expression, LambdaVisitor visitor) {
   if (expression == nullptr) {
     return;
   }
   if (expression->function) {
-    visitor(*expression, parent);
-    auto& function = *expression->function;
-    WalkStatement(function.body.get(), visitor, &function);
+    visitor(*expression);
+    WalkStatement(expression->function->body.get(), visitor);
   }
   for (auto* child : ExpressionOperands(*expression)) {
-    WalkExpression(child, visitor, parent);
+    WalkExpression(child, visitor);
   }
-  for (auto& element : expression->elements) {
-    WalkExpression(element.get(), visitor, parent);
+  for (const auto& element : expression->elements) {
+    WalkExpression(element.get(), visitor);
   }
-  for (auto& entry : expression->entries) {
-    WalkExpression(entry.key.get(), visitor, parent);
-    WalkExpression(entry.value.get(), visitor, parent);
+  for (const auto& entry : expression->entries) {
+    WalkExpression(entry.key.get(), visitor);
+    WalkExpression(entry.value.get(), visitor);
   }
-  for (auto& argument : expression->arguments) {
-    WalkExpression(argument.value.get(), visitor, parent);
+  for (const auto& argument : expression->arguments) {
+    WalkExpression(argument.value.get(), visitor);
   }
-  for (auto& arm : expression->arms) {
-    WalkExpression(arm.pattern.get(), visitor, parent);
-    WalkExpression(arm.value.get(), visitor, parent);
+  for (const auto& arm : expression->arms) {
+    WalkExpression(arm.pattern.get(), visitor);
+    WalkExpression(arm.value.get(), visitor);
   }
 }
 
-template <class Node, class Visitor>
-void WalkStatement(Node* statement, Visitor visitor, const Function* parent) {
+void WalkStatement(const Statement* statement, LambdaVisitor visitor) {
   if (statement == nullptr) {
     return;
   }
@@ -48,7 +44,7 @@ void WalkStatement(Node* statement, Visitor visitor, const Function* parent) {
            statement->increment.get(),
            statement->iterable.get(),
        }) {
-    WalkExpression(expression, visitor, parent);
+    WalkExpression(expression, visitor);
   }
   for (auto* child : {
            statement->then_branch.get(),
@@ -56,33 +52,27 @@ void WalkStatement(Node* statement, Visitor visitor, const Function* parent) {
            statement->initializer.get(),
            statement->finally_branch.get(),
        }) {
-    WalkStatement(child, visitor, parent);
+    WalkStatement(child, visitor);
   }
-  for (auto& child : statement->statements) {
-    WalkStatement(child.get(), visitor, parent);
+  for (const auto& child : statement->statements) {
+    WalkStatement(child.get(), visitor);
   }
-  for (auto& branch : statement->cases) {
-    WalkExpression(branch.label.get(), visitor, parent);
-    WalkStatement(branch.body.get(), visitor, parent);
+  for (const auto& branch : statement->cases) {
+    WalkExpression(branch.label.get(), visitor);
+    WalkStatement(branch.body.get(), visitor);
   }
-  for (auto& caught : statement->catches) {
-    WalkStatement(caught.body.get(), visitor, parent);
+  for (const auto& caught : statement->catches) {
+    WalkStatement(caught.body.get(), visitor);
   }
 }
 
 }  // namespace
 
-void VisitLambdas(Expression& expression, LambdaVisitor visitor) {
-  WalkExpression(&expression, visitor, nullptr);
+void VisitLambdas(const Expression& expression, LambdaVisitor visitor) {
+  WalkExpression(&expression, visitor);
 }
-void VisitLambdas(Statement& statement, LambdaVisitor visitor) {
-  WalkStatement(&statement, visitor, nullptr);
-}
-void VisitLambdas(const Expression& expression, ConstLambdaVisitor visitor) {
-  WalkExpression(&expression, visitor, nullptr);
-}
-void VisitLambdas(const Statement& statement, ConstLambdaVisitor visitor) {
-  WalkStatement(&statement, visitor, nullptr);
+void VisitLambdas(const Statement& statement, LambdaVisitor visitor) {
+  WalkStatement(&statement, visitor);
 }
 
 }  // namespace vela::frontend

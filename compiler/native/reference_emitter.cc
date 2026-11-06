@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <expected>
 #include <string>
-#include <utility>
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
@@ -59,9 +58,6 @@ void FunctionEmitter::CompleteCall(llvm::Value* status, ir::RegisterId result) {
 void FunctionEmitter::StoreRoots(std::size_t index) {
   for (const auto reg : roots_.stores.at(index)) {
     const auto& slot = roots_.slots.at(reg);
-    if (!slot) {
-      std::unreachable();
-    }
     WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
   }
 }
@@ -72,9 +68,6 @@ void FunctionEmitter::ClearRoots(std::size_t index) {
   }
   for (const auto reg : roots_.clears.at(index)) {
     const auto& slot = roots_.slots.at(reg);
-    if (!slot) {
-      std::unreachable();
-    }
     ClearRoot(*slot);
   }
 }
