@@ -9,7 +9,7 @@ namespace vela::runtime {
 struct NativeImage;
 }
 
-namespace vela::benchmarks::dasprofile {
+namespace vela::benchmarks::algorithms {
 
 // 顺序对应 Vela prepare 的输入编号。
 enum class Workload : std::uint8_t {
@@ -67,4 +67,4 @@ class CppWorkload final {
 // 独立翻译单元使跨语言和 C++ 路径调用同一个不可内联函数。
 [[nodiscard]] std::int64_t AddOne(std::int64_t value) noexcept;
 
-}  // namespace vela::benchmarks::dasprofile
+}  // namespace vela::benchmarks::algorithms

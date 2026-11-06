@@ -67,6 +67,8 @@ Vela 的语言和运行时设计汲取了以下项目的优秀思想：
 - **JavaScript / TypeScript**：表达力丰富的现代语法结构与内置集合约定。
 - **Wren / Lua**：清晰简约的宿主交互边界与纯粹自包含的运行时理念。
 
+部分基准测试移植自 [daScript 的基准套件](https://api.github.com/repositories/1166763612)。
+
 ## 许可证
 
 Vela 基于 [MIT License](LICENSE) 协议发布。

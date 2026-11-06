@@ -1,4 +1,4 @@
-#include "benchmarks/dasprofile/workloads.h"
+#include "benchmarks/algorithms/workloads.h"
 
 #include <algorithm>
 #include <array>
@@ -24,7 +24,7 @@
 
 #pragma clang fp contract(off)
 
-namespace vela::benchmarks::dasprofile {
+namespace vela::benchmarks::algorithms {
 namespace {
 
 constexpr std::int64_t kDictionaryKeys = 500000;
@@ -545,14 +545,16 @@ CppWorkload::CppWorkload(Workload workload) : workload_(workload) {
       particles_.reserve(kParticles);
       for (std::int64_t i = 0; i < kParticles; ++i) {
         const auto value = static_cast<double>(i);
-        particles_.push_back({.x = value,
-                              .y = value + 1,
-                              .z = value + 2,
-                              .position_padding = 0,
-                              .vx = 1,
-                              .vy = 2,
-                              .vz = 3,
-                              .velocity_padding = 0,});
+        particles_.push_back({
+            .x = value,
+            .y = value + 1,
+            .z = value + 2,
+            .position_padding = 0,
+            .vx = 1,
+            .vy = 2,
+            .vz = 3,
+            .velocity_padding = 0,
+        });
       }
       break;
     case Workload::Sort:
@@ -628,4 +630,4 @@ double CppWorkload::Run() {
   std::unreachable();
 }
 
-}  // namespace vela::benchmarks::dasprofile
+}  // namespace vela::benchmarks::algorithms

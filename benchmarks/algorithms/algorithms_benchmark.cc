@@ -12,9 +12,9 @@
 #include <benchmark/benchmark.h>
 
 #include "base/native_program_mode.h"
+#include "benchmarks/algorithms/workloads.h"
+#include "benchmarks/algorithms_native/entries.h"
 #include "benchmarks/aot_benchmark_memory.h"
-#include "benchmarks/dasprofile/workloads.h"
-#include "benchmarks/dasprofile_native/entries.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
 #include "runtime/heap/heap.h"
@@ -25,10 +25,10 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
-namespace vela::benchmarks::dasprofile {
+namespace vela::benchmarks::algorithms {
 namespace {
 
-constexpr const char* kAddOneBinding = "dasprofile.addOne";
+constexpr const char* kAddOneBinding = "algorithms.addOne";
 
 bool IsExpected(double actual, double expected) {
   return std::isfinite(actual) &&
@@ -181,16 +181,16 @@ void Native(benchmark::State& state, Case problem) {
 
 int Register() {
   const auto baseline =
-      std::make_shared<JitWorkload>(VELA_DASPROFILE_BENCHMARK_SOURCE, NativeCodeTier::Baseline);
+      std::make_shared<JitWorkload>(VELA_ALGORITHMS_BENCHMARK_SOURCE, NativeCodeTier::Baseline);
   const auto optimized =
-      std::make_shared<JitWorkload>(VELA_DASPROFILE_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
-  benchmark::AddCustomContext("dasprofile_upstream", "https://github.com/borisbat/dasProfile");
-  benchmark::AddCustomContext("dasprofile_revision", "436d58d2840ff839550d44d32f98e10a15b57bf2");
-  benchmark::AddCustomContext("dasprofile_cpp",
+      std::make_shared<JitWorkload>(VELA_ALGORITHMS_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
+  benchmark::AddCustomContext("algorithms_upstream",
+                              "https://api.github.com/repositories/1166763612");
+  benchmark::AddCustomContext("algorithms_revision", "436d58d2840ff839550d44d32f98e10a15b57bf2");
+  benchmark::AddCustomContext("algorithms_cpp",
                               "GN Release flags; FP contraction disabled; stable_sort");
   for (const auto& problem : kCases) {
-    const auto suffix =
-        "dasprofile." + std::string(problem.name) + "/" + std::to_string(problem.size);
+    const auto suffix = std::string(problem.name) + "/" + std::to_string(problem.size);
     benchmark::RegisterBenchmark("aot/native/" + suffix, Native, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/cpp/" + suffix, Cpp, problem)->UseRealTime();
     const auto baseline_name = "hot/steady/baseline/" + suffix;
@@ -206,4 +206,4 @@ int Register() {
 [[maybe_unused]] const int kRegistered = Register();
 
 }  // namespace
-}  // namespace vela::benchmarks::dasprofile
+}  // namespace vela::benchmarks::algorithms

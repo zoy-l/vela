@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 import math
+from pathlib import Path
 import re
 from statistics import mean, median, stdev
+
+
+ALGORITHM_WORKLOADS = frozenset(case["name"] for case in json.loads(
+    (Path(__file__).resolve().parent.parent / "benchmarks/algorithms/cases.json").read_text(encoding="utf-8")))
 
 
 CASE = re.compile(
@@ -127,8 +133,8 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     if paired_ratios:
         geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
         lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
-    if any(workload.startswith("dasprofile.") for workload, _ in keys):
-        lines.extend(["", "The ported dasProfile workloads use the same source as the JIT comparisons. Input preparation is excluded; "
+    if any(workload in ALGORITHM_WORKLOADS for workload, _ in keys):
+        lines.extend(["", "The algorithm workloads use the same source as the JIT comparisons. Input preparation is excluded; "
                       "each timed call checks its result, and particle positions advance between calls. "
                       "Floating-point work uses double; sorting is stable on both sides. "
                       "Vela retains checked int64 arithmetic, managed containers and GC ownership. "
@@ -381,7 +387,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                     "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns", "linking_ns")
     suites = {}
     for key in keys:
-        suite = "dasprofile" if key[0].startswith("dasprofile.") else "aot"
+        suite = "algorithms" if key[0] in ALGORITHM_WORKLOADS else "aot"
         for backend in ("baseline", "optimized"):
             for entry in counters[backend, *key]:
                 values = tuple(entry[field] for field in suite_fields)
@@ -406,7 +412,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     startup_fields = ("load_ns", "instantiation_ns", "initial_publication_pause_ns", "first_execution_ns")
     lines.extend(["", "Fresh-Isolate setup and first workload execution from a shared image, median microseconds. "
                   "load_ns includes Isolate creation and initial publication, and excludes suite compilation. "
-                  "dasProfile input preparation runs after loading and before first_execution_ns; "
+                  "Algorithm input preparation runs after loading and before first_execution_ns; "
                   "it is excluded from both first-workload and steady timing.", "",
                   "| Workload | Backend | " + " | ".join(field.removesuffix("_ns") + " us" for field in startup_fields) + " |",
                   "| --- | --- | " + " | ".join("---:" for _ in startup_fields) + " |"])

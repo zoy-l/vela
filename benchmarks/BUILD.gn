@@ -186,12 +186,12 @@ action("aot_native_inputs") {
   deps = [ "//compiler:vela" ]
 }
 
-dasprofile_directory = "$target_gen_dir/dasprofile_native"
-dasprofile_object = "$dasprofile_directory/workload.o"
+algorithms_directory = "$target_gen_dir/algorithms_native"
+algorithms_object = "$algorithms_directory/workload.o"
 map_literal_directory = "$target_gen_dir/map_literal_native"
 map_literal_object = "$map_literal_directory/workload.o"
 if (target_os == "win") {
-  dasprofile_object = "$dasprofile_directory/workload.obj"
+  algorithms_object = "$algorithms_directory/workload.obj"
   map_literal_object = "$map_literal_directory/workload.obj"
 }
 
@@ -282,13 +282,13 @@ action("host_interop_inputs") {
 executable("vela_aot_benchmarks") {
   testonly = true
   sources = [
+    "algorithms/algorithms_benchmark.cc",
+    "algorithms/host_kernel.cc",
+    "algorithms/workloads.cc",
+    "algorithms/workloads.h",
     "aot_benchmark.cc",
     "aot_benchmark_main.cc",
     "aot_benchmark_types.h",
-    "dasprofile/dasprofile_benchmark.cc",
-    "dasprofile/host_kernel.cc",
-    "dasprofile/workloads.cc",
-    "dasprofile/workloads.h",
     "escape_benchmark.cc",
     "generics_benchmark.cc",
     "host_interop_benchmark.cc",
@@ -297,22 +297,22 @@ executable("vela_aot_benchmarks") {
     "native_class_benchmark.cc",
     "reload_benchmark.cc",
     "reload_scaling_benchmark.cc",
+    algorithms_object,
     aot_object,
-    dasprofile_object,
     host_interop_object,
     map_literal_object,
     native_class_object,
   ]
   include_dirs = [ root_gen_dir ]
   benchmark_source = rebase_path("aot_workloads.vela", "")
-  dasprofile_source = rebase_path("dasprofile/workloads.vela", "")
+  algorithms_source = rebase_path("algorithms/workloads.vela", "")
   defines = [
     "VELA_AOT_BENCHMARK_SOURCE=\"$benchmark_source\"",
-    "VELA_DASPROFILE_BENCHMARK_SOURCE=\"$dasprofile_source\"",
+    "VELA_ALGORITHMS_BENCHMARK_SOURCE=\"$algorithms_source\"",
   ]
   deps = [
+    ":algorithms_native_inputs",
     ":aot_native_inputs",
-    ":dasprofile_native_inputs",
     ":host_interop_inputs",
     ":jit_benchmark_support",
     ":map_literal_native_inputs",
@@ -327,31 +327,31 @@ executable("vela_aot_benchmarks") {
   ]
 }
 
-action("dasprofile_native_inputs") {
+action("algorithms_native_inputs") {
   testonly = true
   script = "//tools/aot_benchmarks.py"
   inputs = [
-    "dasprofile/cases.json",
-    "dasprofile/workloads.vela",
+    "algorithms/cases.json",
+    "algorithms/workloads.vela",
     "spectral_norm.vela",
   ]
   outputs = [
-    dasprofile_object,
-    "$dasprofile_object.h",
-    "$dasprofile_object.aot.json",
-    "$dasprofile_directory/entries.h",
-    "$dasprofile_directory/build_metrics.json",
+    algorithms_object,
+    "$algorithms_object.h",
+    "$algorithms_object.aot.json",
+    "$algorithms_directory/entries.h",
+    "$algorithms_directory/build_metrics.json",
   ]
   args = [
-    "--suite=dasprofile",
+    "--suite=algorithms",
     "--compiler",
     rebase_path(aot_compiler, root_build_dir),
     "--source",
-    rebase_path("dasprofile/workloads.vela", root_build_dir),
+    rebase_path("algorithms/workloads.vela", root_build_dir),
     "--cases",
-    rebase_path("dasprofile/cases.json", root_build_dir),
+    rebase_path("algorithms/cases.json", root_build_dir),
     "--output",
-    rebase_path(dasprofile_directory, root_build_dir),
+    rebase_path(algorithms_directory, root_build_dir),
   ]
   deps = [ "//compiler:vela" ]
 }

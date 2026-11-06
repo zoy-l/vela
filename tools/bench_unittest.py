@@ -84,7 +84,7 @@ def native_samples(repetitions: int = 1) -> list[dict]:
 
 
 def ported_aot_samples(repetitions: int = 1) -> list[dict]:
-    return [{"name": f"aot/{backend}/dasprofile.queen/8/real_time", "real_time": elapsed,
+    return [{"name": f"aot/{backend}/queen/8/real_time", "real_time": elapsed,
              "time_unit": "us", "result": 92, "expected_result": 92,
              "repetition_index": index, "repetitions": repetitions,
              "process_resident_bytes": 4096, "baseline_bytes": 100, "retained_bytes": 100,
@@ -99,7 +99,7 @@ def reloadable_samples(repetitions: int = 3) -> dict:
     rows = ported_aot_samples(repetitions)
     template = rows[0]
     for backend, elapsed in (("baseline", 40), ("optimized", 30)):
-        rows += [dict(template, name=f"hot/steady/{backend}/dasprofile.queen/8/real_time",
+        rows += [dict(template, name=f"hot/steady/{backend}/queen/8/real_time",
                       repetition_index=index, real_time=elapsed,
                       code_batches=1, code_executable_bytes=1024, code_read_only_bytes=0,
                       code_writable_bytes=0, external_field_bytes=128,
@@ -114,6 +114,31 @@ def reloadable_samples(repetitions: int = 3) -> dict:
 
 
 class BenchmarkReportTest(unittest.TestCase):
+    def test_workload_manifests_have_unique_unqualified_names(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "benchmarks"
+        basic = json.loads((root / "aot_cases.json").read_text(encoding="utf-8"))
+        algorithms = json.loads((root / "algorithms/cases.json").read_text(encoding="utf-8"))
+        names = [case["name"] for case in basic + algorithms]
+        self.assertEqual(len(names), 24)
+        self.assertEqual(len(names), len(set(names)))
+        self.assertIn("spectralNormInt", [case["name"] for case in basic])
+        self.assertIn("spectralNorm", [case["name"] for case in algorithms])
+
+    def test_unqualified_workloads_keep_distinct_preparation_suites(self) -> None:
+        report = reloadable_samples(1)
+        basic = [dict(row, name=row["name"].replace("/queen/8/", "/spectralNormInt/500/"))
+                 for row in report["benchmarks"]]
+        for row in basic:
+            if row["name"].startswith("hot/"):
+                row["suite_preparation_ns"] = 2000
+        report["benchmarks"].extend(basic)
+        report["context"]["jit_prepared_suites"] = "4"
+        names = [row["name"] for row in report["benchmarks"]]
+        text = jit_comparison_report(report, names, 1)
+        for suite in ("aot", "algorithms"):
+            for backend in ("baseline", "optimized"):
+                self.assertEqual(text.count(f"| {suite} | {backend} |"), 1)
+
     def test_escape_report_requires_complete_modes_checksums_and_virtual_code_retirement(self) -> None:
         rows = [dict(name=f"escape/{mode}/numeric/real_time", real_time=time, time_unit="ns",
                      result=42, expected_result=42, allocation_bytes=128)
@@ -146,7 +171,7 @@ class BenchmarkReportTest(unittest.TestCase):
         rows = report["benchmarks"]
         names = sorted({row["name"] for row in rows})
         text = jit_comparison_report(report, names, 3)
-        self.assertIn("| dasprofile.queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x | 2.00x | 3.00x |", text)
+        self.assertIn("| queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x | 2.00x | 3.00x |", text)
         self.assertIn("AOT ≤ 2× C++: 1/1; optimized JIT ≤ 3× C++: 1/1", text)
         self.assertIn("Geometric mean optimized JIT/AOT over 1 paired workloads: 1.50x.", text)
         for field, invalid in (("code_read_only_bytes", -1), ("code_read_only_bytes", float("nan")),
@@ -171,7 +196,7 @@ class BenchmarkReportTest(unittest.TestCase):
         text = jit_comparison_report(report, names, 3)
         self.assertIn("single setup observations", text)
         self.assertIn("Fresh-Isolate setup", text)
-        self.assertEqual(text.count("| dasprofile | optimized |"), 1)
+        self.assertEqual(text.count("| algorithms | optimized |"), 1)
         rows[-1]["suite_preparation_ns"] += 1
         with self.assertRaisesRegex(ValueError, "compiled more than once"):
             jit_comparison_report(report, names, 3)
@@ -259,7 +284,7 @@ class BenchmarkReportTest(unittest.TestCase):
         rows = ported_aot_samples(3)
         names = sorted({row["name"] for row in rows})
         text = aot_comparison_report({"benchmarks": rows}, names, 3)
-        self.assertIn("| dasprofile.queen | 8 | 20.000 | 10.000 | - | 2.000 |", text)
+        self.assertIn("| queen | 8 | 20.000 | 10.000 | - | 2.000 |", text)
         self.assertIn("over 1 paired workloads: 2.00x", text)
         with self.assertRaisesRegex(ValueError, "missing"):
             aot_comparison_report({"benchmarks": rows[:3]}, names, 3)
@@ -278,7 +303,7 @@ class BenchmarkReportTest(unittest.TestCase):
         for index, row in enumerate(rows):
             row["expected_result"] = 1.274224115941234
             row["result"] = row["expected_result"] + index * 1e-15
-        self.assertIn("dasprofile.queen", aot_comparison_report({"benchmarks": rows}, names, 1))
+        self.assertIn("queen", aot_comparison_report({"benchmarks": rows}, names, 1))
         rows[-1]["result"] += 1e-6
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             aot_comparison_report({"benchmarks": rows}, names, 1)

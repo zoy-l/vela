@@ -88,6 +88,6 @@ export async func asyncWork(): Future<int> {
   return sum;
 }
 
-export func spectralNorm(): int {
+export func spectralNormInt(): int {
   return (spectral.run() * 1000000000.0).toInt();
 }

@@ -1,695 +1,5 @@
 {
-  "previous": {
-    "run_date": "2026-11-06T05:25:42.006273+00:00",
-    "source": {
-      "revision": "c0162e5c05fb57ac68b47a185cb0360a062f0c28",
-      "working_tree": "M base/builtin.h\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/ir/analysis.cc\n M compiler/ir/optimizer.cc\n M compiler/ir/preparation_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/native_storage_unittest.cc\n M compiler/jit/recursion_unittest.cc\n M compiler/language/string_unittest.cc\n M compiler/native/code_generator.cc\n M compiler/native/field_access.cc\n M compiler/native/field_access.h\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/memory_emitter.cc\n M compiler/native/native_roots.cc\n M compiler/native/native_roots.h\n M runtime/library/builtins.cc\n M runtime/native/native_abi.cc\n M runtime/native/native_abi.h\n M runtime/native/native_abi_unittest.cc\n M runtime/strings/string_unittest.cc\n?? compiler/native/field_access_unittest.cc\n?? compiler/native/native_roots_unittest.cc\n?? compiler/native/recursive_inliner.cc\n?? compiler/native/recursive_inliner.h\n?? compiler/native/recursive_inliner_unittest.cc",
-      "modified_file_sha256": {
-        "base/builtin.h": "9c636c3c7ea1e9e6e5fa730d11324fc485ac5e0e19fda326551b0ac4d8d03be3",
-        "compiler/BUILD.gn": "40f4b35fa459145c799cda876de819760d8c4ccb27db5d7c215cd76db6cc2439",
-        "compiler/ir/analysis.cc": "14f4e382ba428a5b61a3cdcbe81cd46fba267985a7e5dd5ad465da6672903ad9",
-        "compiler/ir/optimizer.cc": "b6b7e416ec59153429a9c04c1240c67cb8a2814ad4a4c6460ce89bee5b26b468",
-        "compiler/ir/preparation_unittest.cc": "f2c92e7ab2510c2bd28b4c868a7b28f7c0381cb6514809f4e296b5c93164a574",
-        "compiler/jit/compiler_unittest.cc": "65a32fd2233404b8d7c7d9fbbcef0e20ea4316460426f461618c69c33e6b0b30",
-        "compiler/jit/native_storage_unittest.cc": "2caf7fe19a982284ad389add868e3fd8c65c296e93a1c9a4ea05269f7712d4c6",
-        "compiler/jit/recursion_unittest.cc": "bfb1d50d41a118a385247de318e061f04236be4e2ed53dda594e288a844606fa",
-        "compiler/language/string_unittest.cc": "cd936859e4887035f5784e2a4f4cfd6c73c1b98d7344b97892f46299f6883ccf",
-        "compiler/native/code_generator.cc": "1f15c7e94fed88e9a595478e91c778c392737a8f9a941689808c9a0652ee13e7",
-        "compiler/native/field_access.cc": "365a0cbbf46c80807c82fda26b0123c2ba9e4c72524f93940351674dfc04c0d8",
-        "compiler/native/field_access.h": "033986b59b60c769d7f41e80cc4748a110b00b2988d0fd594056cb1bc179457f",
-        "compiler/native/field_access_unittest.cc": "edc4a9535efe24eaa62b1e232ee13a0ca9e4f50759f707f1cf5770f2e2e7e567",
-        "compiler/native/function_emitter.cc": "52d381512b395e214467176740b1751566ac4cc93520084efcc23fd23e1f81cd",
-        "compiler/native/function_emitter.h": "5645190c2138bfaaeb0b88a2b50d23f910cf18231d7cb28a2a9b9f2a15a9f535",
-        "compiler/native/memory_emitter.cc": "ec22aa98fb95b2be5e67b79f3a0aad13db909f439807540559e4cc77eec4fd03",
-        "compiler/native/native_roots.cc": "17fe795700290735ac53dfff15f63c889dd258d4805d48b7dcf0246b271b4e06",
-        "compiler/native/native_roots.h": "865f69ba81fa85e1a478fae1804068eb8287a2f97c0a9132572ebac1c26eaefc",
-        "compiler/native/native_roots_unittest.cc": "74eb8f6f757c790325396a4c3914fe090fa43e524a4eac0c513bab5bd67d72ff",
-        "compiler/native/recursive_inliner.cc": "6f73939e6c97c0deacc22738d3b6e4b2fe5bdcf2c5aa9d1691109d64db073002",
-        "compiler/native/recursive_inliner.h": "73113db8df630f159bc54bf634c3579c3f7604ffc7a9c27ab08baf4d3bc6d226",
-        "compiler/native/recursive_inliner_unittest.cc": "579e7e9533571d323a61201e1b31b97f2105213a83a3b5192d42d46bf0c1fe68",
-        "runtime/library/builtins.cc": "30ab91c999d268a7b3ce816131b3ec01b16aecbd14cd0e9b69650cb266eeaf47",
-        "runtime/native/native_abi.cc": "3d87a9d90108fb976da5f64e805b02ce0b01f08dea930987eb182059d658234f",
-        "runtime/native/native_abi.h": "f9e9eabb9dc8db030cf0792b4fc02bbde781dca9b6b50e2ed758b3e794191c25",
-        "runtime/native/native_abi_unittest.cc": "948bb4b688aab51d56731f441c74dc2e77ed1afc876e6c7e2871996795d6b610",
-        "runtime/strings/string_unittest.cc": "15ae2e278acb45c15e3584db4b43bc4ff09884ee743027b0e4215ac2daf05c0e"
-      },
-      "working_tree_content_sha256_excluding_summary": "88a3e152a72d21229fbbf8e0a6fb48e9dd16a0852303b32d0056ffcda88bacda",
-      "baseline_source_revision": "c0162e5c05fb57ac68b47a185cb0360a062f0c28",
-      "baseline_source_fingerprint": "2c3f1b18ee76556963a79ab1eaca66a548c1baacc2626c03a1b61ac237d0d256",
-      "baseline_binary_sha256": "032e16258c5a20093f09d64772efb5d3d2191aa8f95baf2b8e6fb58c16697692",
-      "benchmark_binary_sha256": "c2adf365b75d87e12294646b66fef786cbfc6e5a82afe8fdfec86b6d934d72a2",
-      "native_object_sha256": "4fb37c16b9b2d34e7b10222fdb712bc24c0ef9720ae17dc3f23c620efaeec0c8",
-      "native_runtime_abi": "3cc1a78c1ff9d706b3abaebb3a189398b44624f3cd12be129ef982576601d48c/release",
-      "native_abi_version": 19
-    },
-    "machine": {
-      "os": "Windows",
-      "release": "11",
-      "version": "10.0.26300",
-      "architecture": "AMD64",
-      "logical_cpus": 24,
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
-      "host": "DESKTOP-E7S678P"
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
-      "llvm_sdk": "21.1.8",
-      "runtime_configuration": "GN release; clang-cl /O2 /MT; checked arithmetic",
-      "generated_configuration": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots"
-    },
-    "build": "release",
-    "implementation": {
-      "maximum_recursive_inline_depth": 3,
-      "maximum_lowered_llvm_instructions": 8192,
-      "scope": "Existing scalar self-recursion eligibility in closed AOT and optimized reloadable JIT",
-      "publication": "Each complete layer is evaluated in a temporary clone and committed only within the instruction cap",
-      "function_identity_and_linkage_preserved": true,
-      "logical_frames_overflow_checks_stack_limits_safepoints_and_recovery_preserved": true,
-      "old_fixed_two_layer_implementation_removed": true,
-      "compiler_object_cache_identity_includes_new_sources": true
-    },
-    "measurement": {
-      "repetitions": 9,
-      "minimum_time_seconds": 0.5,
-      "warmup_seconds": 0.3,
-      "random_interleaving": true,
-      "affinity": "logical CPU 2",
-      "priority": "High",
-      "validation_process_affinity_mask": 16777203,
-      "aggregation": "Median and sample CV of every iteration sample; no outlier filtering",
-      "limitations": [
-        "Tooling regression continued on other logical CPUs; C++ controls and variation are retained",
-        "Primary AOT Fibonacci CV is below 2%; its C++ control drift is below 5%",
-        "JIT and managed-reference queens remain controls; no meaningful speedup is claimed for them",
-        "The instruction cap bounds this transformation before LLVM O3, not final machine-code bytes",
-        "The high-variance exploratory baseline and short loaded JIT probe are not performance evidence"
-      ]
-    },
-    "suite": {
-      "identity": "bounded-recursive-inlining/v1",
-      "description": "Fibonacci and queens across AOT, C++, baseline JIT and optimized JIT",
-      "expected_cases_per_stage": 8,
-      "observed_samples_per_stage": 72,
-      "all_expected_cases_passed": true,
-      "all_checksums_passed": true,
-      "all_retained_heap_checks_passed": true,
-      "plans": [
-        {
-          "stage": "before",
-          "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\before.exe",
-          "logical_cpu": 2,
-          "priority": "High",
-          "arguments": [
-            "--benchmark_filter=^(aot/(native|cpp)/|hot/steady/).*dasprofile\\.(fibonacciRecursive|queen)/",
-            "--benchmark_min_time=0.5s",
-            "--benchmark_min_warmup_time=0.3",
-            "--benchmark_repetitions=9",
-            "--benchmark_enable_random_interleaving=true",
-            "--benchmark_out_format=json",
-            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\matched_before.json"
-          ]
-        },
-        {
-          "stage": "after",
-          "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\after.exe",
-          "logical_cpu": 2,
-          "priority": "High",
-          "arguments": [
-            "--benchmark_filter=^(aot/(native|cpp)/|hot/steady/).*dasprofile\\.(fibonacciRecursive|queen)/",
-            "--benchmark_min_time=0.5s",
-            "--benchmark_min_warmup_time=0.3",
-            "--benchmark_repetitions=9",
-            "--benchmark_enable_random_interleaving=true",
-            "--benchmark_out_format=json",
-            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\matched_after.json"
-          ]
-        }
-      ]
-    },
-    "comparison": {
-      "within_run_comparable": true,
-      "comparable_to_previous": false,
-      "reason": "Previous entry measures the root-slot suite; this entry uses a focused recursive suite with explicit warmup"
-    },
-    "benchmark_contexts": {
-      "before": {
-        "date": "2026-11-06T13:09:38+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\before.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "07ea98826e2bfc6e4fa7b154627a72dcdc3ffb0b0d71bb60a02cef214d445d15/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "2",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      },
-      "after": {
-        "date": "2026-11-06T13:10:45+08:00",
-        "host_name": "DESKTOP-E7S678P",
-        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\after.exe",
-        "num_cpus": 24,
-        "mhz_per_cpu": 4700,
-        "caches": [
-          {
-            "type": "Data",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Instruction",
-            "level": 1,
-            "size": 32768,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 2,
-            "size": 1048576,
-            "num_sharing": 2
-          },
-          {
-            "type": "Unified",
-            "level": 3,
-            "size": 33554432,
-            "num_sharing": 12
-          }
-        ],
-        "load_avg": [],
-        "library_version": "1.9.5",
-        "library_build_type": "release",
-        "json_schema_version": 1,
-        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-        "aot_runtime_abi": "3cc1a78c1ff9d706b3abaebb3a189398b44624f3cd12be129ef982576601d48c/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
-        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-        "jit_cpu": "znver4",
-        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-        "jit_prepared_suites": "2",
-        "jit_steady_setup": "shared-image/fresh-isolate/v1"
-      }
-    },
-    "results": {
-      "before": {
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 4018195.906450784,
-          "sample_stddev_ns": 51537.44955435479,
-          "cv": 0.012874639902230468,
-          "sample_count": 9,
-          "counters": {
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/cpp/dasprofile.queen/8/real_time": {
-          "median_ns": 45232.59483259093,
-          "sample_stddev_ns": 1342.0699987582698,
-          "cv": 0.029583050491212955,
-          "sample_count": 9,
-          "counters": {
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 11177401.639378943,
-          "sample_stddev_ns": 97551.51060376303,
-          "cv": 0.008724635707825222,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/native/dasprofile.queen/8/real_time": {
-          "median_ns": 116314.43333317294,
-          "sample_stddev_ns": 1162.631113177418,
-          "cv": 0.009985658237390935,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 52768.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 61216.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 9.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 142399680.0003806,
-          "sample_stddev_ns": 5651901.50279567,
-          "cv": 0.03994836679047027,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 194568.0,
-            "code_read_only_bytes": 5564.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 24801700.0,
-            "llvm_optimization_ns": 859034400.0,
-            "machine_compilation_ns": 995786800.0,
-            "linking_ns": 4718200.0,
-            "compilation_peak_resident_bytes": 92471296.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.queen/8/real_time": {
-          "median_ns": 864958.9651052433,
-          "sample_stddev_ns": 19055.784222670172,
-          "cv": 0.02193201102014014,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 32672.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 54560.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 194568.0,
-            "code_read_only_bytes": 5564.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 24801700.0,
-            "llvm_optimization_ns": 859034400.0,
-            "machine_compilation_ns": 995786800.0,
-            "linking_ns": 4718200.0,
-            "compilation_peak_resident_bytes": 92471296.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 18534231.579044566,
-          "sample_stddev_ns": 901289.1053944946,
-          "cv": 0.04953570357909253,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 620584.0,
-            "code_read_only_bytes": 18708.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 56198400.0,
-            "llvm_optimization_ns": 3613956800.0,
-            "machine_compilation_ns": 3475780900.0,
-            "linking_ns": 7683600.0,
-            "compilation_peak_resident_bytes": 202129408.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.queen/8/real_time": {
-          "median_ns": 420807.5895535256,
-          "sample_stddev_ns": 4404.622760815079,
-          "cv": 0.010480022235865624,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 61088.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 64032.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 620584.0,
-            "code_read_only_bytes": 18708.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 56198400.0,
-            "llvm_optimization_ns": 3613956800.0,
-            "machine_compilation_ns": 3475780900.0,
-            "linking_ns": 7683600.0,
-            "compilation_peak_resident_bytes": 202129408.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        }
-      },
-      "after": {
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 3929170.2857008204,
-          "sample_stddev_ns": 56774.427577118615,
-          "cv": 0.014465053964119923,
-          "sample_count": 9,
-          "counters": {
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/cpp/dasprofile.queen/8/real_time": {
-          "median_ns": 45912.52680148709,
-          "sample_stddev_ns": 346.8023307430746,
-          "cv": 0.007549548074522069,
-          "sample_count": 9,
-          "counters": {
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 9731852.85713823,
-          "sample_stddev_ns": 132297.86189892158,
-          "cv": 0.013640836560579522,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 736.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 736.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "aot/native/dasprofile.queen/8/real_time": {
-          "median_ns": 119147.80574379893,
-          "sample_stddev_ns": 3073.573006831903,
-          "cv": 0.025967922720658718,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 736.0,
-            "allocated_bytes": 26080.0,
-            "retained_bytes": 736.0,
-            "committed_bytes": 52320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "entry_frame_bytes": 64.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 9.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 140290079.99924943,
-          "sample_stddev_ns": 2838757.555409667,
-          "cv": 0.020278095635881024,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 194568.0,
-            "code_read_only_bytes": 5564.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 22489600.0,
-            "llvm_optimization_ns": 789260700.0,
-            "machine_compilation_ns": 855734600.0,
-            "linking_ns": 3833300.0,
-            "compilation_peak_resident_bytes": 92643328.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/baseline/dasprofile.queen/8/real_time": {
-          "median_ns": 855674.0384619844,
-          "sample_stddev_ns": 9766.657204506308,
-          "cv": 0.011439079857962853,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 32864.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 54624.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 194568.0,
-            "code_read_only_bytes": 5564.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 22489600.0,
-            "llvm_optimization_ns": 789260700.0,
-            "machine_compilation_ns": 855734600.0,
-            "linking_ns": 3833300.0,
-            "compilation_peak_resident_bytes": 92643328.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
-          "median_ns": 18635527.027072385,
-          "sample_stddev_ns": 270520.26809348154,
-          "cv": 0.01449407297383461,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 1376.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 1376.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 620584.0,
-            "code_read_only_bytes": 18708.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 45120400.0,
-            "llvm_optimization_ns": 2865825000.0,
-            "machine_compilation_ns": 3040483100.0,
-            "linking_ns": 6688000.0,
-            "compilation_peak_resident_bytes": 205410304.0,
-            "result": 1346269.0,
-            "expected_result": 1346269.0
-          }
-        },
-        "hot/steady/optimized/dasprofile.queen/8/real_time": {
-          "median_ns": 419104.83965221874,
-          "sample_stddev_ns": 5223.077599988385,
-          "cv": 0.01246766450348329,
-          "sample_count": 9,
-          "counters": {
-            "baseline_bytes": 1376.0,
-            "allocated_bytes": 10016.0,
-            "retained_bytes": 1376.0,
-            "committed_bytes": 47008.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0,
-            "code_batches": 1.0,
-            "code_functions": 69.0,
-            "code_images": 1.0,
-            "code_executable_bytes": 620584.0,
-            "code_read_only_bytes": 18708.0,
-            "code_writable_bytes": 0.0,
-            "llvm_lowering_ns": 45120400.0,
-            "llvm_optimization_ns": 2865825000.0,
-            "machine_compilation_ns": 3040483100.0,
-            "linking_ns": 6688000.0,
-            "compilation_peak_resident_bytes": 205410304.0,
-            "result": 92.0,
-            "expected_result": 92.0
-          }
-        }
-      }
-    },
-    "workload_comparisons": {
-      "aot/dasprofile.fibonacciRecursive/31": {
-        "before_ns": 11177401.639378943,
-        "after_ns": 9731852.85713823,
-        "time_reduction_percent": 12.932780165543312,
-        "before_over_cpp": 2.7816965373527007,
-        "after_over_cpp": 2.4768213514580273,
-        "cpp_normalized_time_reduction_percent": 10.960044771268207,
-        "before_cv": 0.008724635707825222,
-        "after_cv": 0.013640836560579522,
-        "cpp_control_change_percent": -2.2155619791220826
-      },
-      "aot/dasprofile.queen/8": {
-        "before_ns": 116314.43333317294,
-        "after_ns": 119147.80574379893,
-        "time_reduction_percent": -2.4359594329192324,
-        "before_over_cpp": 2.571473818021296,
-        "after_over_cpp": 2.595104518184344,
-        "cpp_normalized_time_reduction_percent": -0.9189555031608787,
-        "before_cv": 0.009985658237390935,
-        "after_cv": 0.025967922720658718,
-        "cpp_control_change_percent": 1.5031902799577113
-      },
-      "baseline/dasprofile.fibonacciRecursive/31": {
-        "before_ns": 142399680.0003806,
-        "after_ns": 140290079.99924943,
-        "time_reduction_percent": 1.4814640040803018,
-        "before_over_cpp": 35.4387101365001,
-        "after_over_cpp": 35.704759478050164,
-        "cpp_normalized_time_reduction_percent": -0.7507308830522197,
-        "before_cv": 0.03994836679047027,
-        "after_cv": 0.020278095635881024,
-        "cpp_control_change_percent": -2.2155619791220826
-      },
-      "baseline/dasprofile.queen/8": {
-        "before_ns": 864958.9651052433,
-        "after_ns": 855674.0384619844,
-        "time_reduction_percent": 1.0734528478040795,
-        "before_over_cpp": 19.122470605688626,
-        "after_over_cpp": 18.63704958260475,
-        "cpp_normalized_time_reduction_percent": 2.538484869938673,
-        "before_cv": 0.02193201102014014,
-        "after_cv": 0.011439079857962853,
-        "cpp_control_change_percent": 1.5031902799577113
-      },
-      "optimized/dasprofile.fibonacciRecursive/31": {
-        "before_ns": 18534231.579044566,
-        "after_ns": 18635527.027072385,
-        "time_reduction_percent": -0.5465316843367152,
-        "before_over_cpp": 4.612575397155186,
-        "after_over_cpp": 4.742865712614053,
-        "cpp_normalized_time_reduction_percent": -2.824676113461999,
-        "before_cv": 0.04953570357909253,
-        "after_cv": 0.01449407297383461,
-        "cpp_control_change_percent": -2.2155619791220826
-      },
-      "optimized/dasprofile.queen/8": {
-        "before_ns": 420807.5895535256,
-        "after_ns": 419104.83965221874,
-        "time_reduction_percent": 0.40463859102766175,
-        "before_over_cpp": 9.303193661804384,
-        "after_over_cpp": 9.128333133663297,
-        "cpp_normalized_time_reduction_percent": 1.879575278100487,
-        "before_cv": 0.010480022235865624,
-        "after_cv": 0.01246766450348329,
-        "cpp_control_change_percent": 1.5031902799577113
-      }
-    },
-    "machine_code": {
-      "aot_fibonacci_recursive": {
-        "object_sha256": "4fb37c16b9b2d34e7b10222fdb712bc24c0ef9720ae17dc3f23c620efaeec0c8",
-        "symbol": "vela_aot_97efa82b81d962c4d7afb46cf847f885_body_16",
-        "code_bytes": 3504,
-        "instruction_count": 773,
-        "command": [
-          "C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin\\llvm-objdump.exe",
-          "-d",
-          "--disassemble-symbols=vela_aot_97efa82b81d962c4d7afb46cf847f885_body_16",
-          "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-recursive-inlining\\after.obj"
-        ]
-      }
-    },
-    "diagnostics": {
-      "arithmetic": {
-        "source": "benchmarks/aot_workloads.vela:18",
-        "generated_entry": "aot_native/workload.obj entry_3",
-        "loop_folded_to_closed_form": true,
-        "remaining_normal_path": [
-          "native entry validation",
-          "logical and physical stack checks",
-          "global initialization-state probe",
-          "128-bit closed-form sum",
-          "final int64 overflow test",
-          "NativeValue result encoding and decoding"
-        ],
-        "boundary_consumer": "runtime/native/native_call.cc:352",
-        "interpretation": "The earlier approximately 8.5x ratio is not 1000 checked additions; fixed entry costs and final overflow validation need separate measurement"
-      }
-    },
-    "validation": {
-      "debug_all": {
-        "command": "python -m tools.vl test debug all",
-        "cpp_suites": 8,
-        "cpp_tests": 2549,
-        "python_tests": 216,
-        "aot_jit_corpus_categories": 26,
-        "aot_jit_corpus_cases": 481
-      },
-      "lint": {
-        "command": "python -m tools.vl lint --jobs 12",
-        "files": 769,
-        "failures": 0
-      },
-      "targeted": {
-        "llvm_budget_tests": 3,
-        "recursion_and_debugger_tests": 16
-      },
-      "release_build": "python -m tools.vl build release benchmarks",
-      "benchmark_iteration_samples": 144
-    }
-  },
+  "previous": null,
   "latest": {
     "run_date": "2026-11-06T15:38:09.307752+08:00",
     "source": {
@@ -856,9 +166,6 @@
         "json_schema_version": 1,
         "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
         "aot_runtime_abi": "3cc1a78c1ff9d706b3abaebb3a189398b44624f3cd12be129ef982576601d48c/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
         "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
         "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
         "jit_cpu": "znver4",
@@ -905,9 +212,6 @@
         "json_schema_version": 1,
         "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
         "aot_runtime_abi": "7b26ecacd67279650c1a68da2146ae26ea85ca3e01487f5da708c2de3df4ac4c/release",
-        "dasprofile_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-        "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-        "dasprofile_upstream": "https://github.com/borisbat/dasProfile",
         "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
         "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
         "jit_cpu": "znver4",
@@ -924,42 +228,42 @@
           "median_ns": 1.3215602399432889,
           "cv": 0.10078930697094039,
           "checksum": 499500,
-          "process_resident_bytes_median": 13750272.0
+          "process_resident_bytes_median": 13750272
         },
         "aot/cpp/calls/1000/real_time": {
           "samples": 9,
           "median_ns": 1128.3346550293038,
           "cv": 0.005780785697155043,
           "checksum": 500500,
-          "process_resident_bytes_median": 13799424.0
+          "process_resident_bytes_median": 13799424
         },
         "aot/cpp/host/1000/real_time": {
           "samples": 9,
           "median_ns": 941.9078064380209,
           "cv": 0.02182151848588346,
           "checksum": 500500,
-          "process_resident_bytes_median": 13758464.0
+          "process_resident_bytes_median": 13758464
         },
         "aot/native/arithmetic/1000/real_time": {
           "samples": 9,
           "median_ns": 10.838125354827312,
           "cv": 0.0028867537678177757,
           "checksum": 499500,
-          "process_resident_bytes_median": 13692928.0,
+          "process_resident_bytes_median": 13692928,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 16,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "aot/native/calls/1000/real_time": {
@@ -967,21 +271,21 @@
           "median_ns": 312.6313467644694,
           "cv": 0.006230769784361327,
           "checksum": 500500,
-          "process_resident_bytes_median": 13754368.0,
+          "process_resident_bytes_median": 13754368,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 32,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "aot/native/host/1000/real_time": {
@@ -989,21 +293,21 @@
           "median_ns": 1348.281886558038,
           "cv": 0.005887713186620216,
           "checksum": 500500,
-          "process_resident_bytes_median": 13758464.0,
+          "process_resident_bytes_median": 13758464,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 16,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "entry/cpp_direct/arithmetic/real_time": {
@@ -1011,28 +315,28 @@
           "median_ns": 1.702157632093425,
           "cv": 0.006122104694414403,
           "checksum": 499500,
-          "process_resident_bytes_median": 13754368.0
+          "process_resident_bytes_median": 13754368
         },
         "entry/cpp_indirect/arithmetic/real_time": {
           "samples": 9,
           "median_ns": 1.7050331279271609,
           "cv": 0.0023335224667119514,
           "checksum": 499500,
-          "process_resident_bytes_median": 13754368.0
+          "process_resident_bytes_median": 13754368
         },
         "entry/generated/arithmetic/1000/real_time": {
           "samples": 9,
           "median_ns": 3.4302981085454243,
           "cv": 0.0020928280772884176,
           "checksum": 499500,
-          "process_resident_bytes_median": 13758464.0,
+          "process_resident_bytes_median": 13758464,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/generated/calls/1000/real_time": {
@@ -1040,14 +344,14 @@
           "median_ns": 306.33277256678343,
           "cv": 0.021614332372460358,
           "checksum": 500500,
-          "process_resident_bytes_median": 13758464.0,
+          "process_resident_bytes_median": 13758464,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/generated/host/1000/real_time": {
@@ -1055,14 +359,14 @@
           "median_ns": 1341.536204577928,
           "cv": 0.004846740676328635,
           "checksum": 500500,
-          "process_resident_bytes_median": 13692928.0,
+          "process_resident_bytes_median": 13692928,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/arithmetic/1000/real_time": {
@@ -1070,14 +374,14 @@
           "median_ns": 5.729934939996422,
           "cv": 0.0012104817634798904,
           "checksum": 499500,
-          "process_resident_bytes_median": 13758464.0,
+          "process_resident_bytes_median": 13758464,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/calls/1000/real_time": {
@@ -1085,14 +389,14 @@
           "median_ns": 308.7847041501218,
           "cv": 0.01394413069606597,
           "checksum": 500500,
-          "process_resident_bytes_median": 13754368.0,
+          "process_resident_bytes_median": 13754368,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/host/1000/real_time": {
@@ -1100,14 +404,14 @@
           "median_ns": 1342.1808139406874,
           "cv": 0.0025940111868144483,
           "checksum": 500500,
-          "process_resident_bytes_median": 13754368.0,
+          "process_resident_bytes_median": 13754368,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         }
       },
@@ -1117,42 +421,42 @@
           "median_ns": 1.3255735788019103,
           "cv": 0.19025823221730115,
           "checksum": 499500,
-          "process_resident_bytes_median": 13737984.0
+          "process_resident_bytes_median": 13737984
         },
         "aot/cpp/calls/1000/real_time": {
           "samples": 9,
           "median_ns": 933.4767176201901,
           "cv": 0.0003470878379709804,
           "checksum": 500500,
-          "process_resident_bytes_median": 13697024.0
+          "process_resident_bytes_median": 13697024
         },
         "aot/cpp/host/1000/real_time": {
           "samples": 9,
           "median_ns": 933.9082729875437,
           "cv": 0.0007133951436864203,
           "checksum": 500500,
-          "process_resident_bytes_median": 13692928.0
+          "process_resident_bytes_median": 13692928
         },
         "aot/native/arithmetic/1000/real_time": {
           "samples": 9,
           "median_ns": 8.157816715383687,
           "cv": 0.0031284641874150657,
           "checksum": 499500,
-          "process_resident_bytes_median": 13688832.0,
+          "process_resident_bytes_median": 13688832,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 16,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "aot/native/calls/1000/real_time": {
@@ -1160,21 +464,21 @@
           "median_ns": 308.48777396312295,
           "cv": 0.0042626263217541765,
           "checksum": 500500,
-          "process_resident_bytes_median": 13692928.0,
+          "process_resident_bytes_median": 13692928,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 32.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 32,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "aot/native/host/1000/real_time": {
@@ -1182,21 +486,21 @@
           "median_ns": 1341.338570571879,
           "cv": 0.0023357041603053663,
           "checksum": 500500,
-          "process_resident_bytes_median": 13701120.0,
+          "process_resident_bytes_median": 13701120,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           },
           "entry_plan": {
-            "entry_frame_bytes": 16.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "suspended_frames": 0.0,
-            "saved_state_bytes": 0.0
+            "entry_frame_bytes": 16,
+            "entry_shadow_slots": 0,
+            "entry_static_root_stores": 0,
+            "suspended_frames": 0,
+            "saved_state_bytes": 0
           }
         },
         "entry/cpp_direct/arithmetic/real_time": {
@@ -1204,28 +508,28 @@
           "median_ns": 1.6960210595294072,
           "cv": 0.003391754558320312,
           "checksum": 499500,
-          "process_resident_bytes_median": 13688832.0
+          "process_resident_bytes_median": 13688832
         },
         "entry/cpp_indirect/arithmetic/real_time": {
           "samples": 9,
           "median_ns": 1.70409659208759,
           "cv": 0.008328689203836273,
           "checksum": 499500,
-          "process_resident_bytes_median": 13701120.0
+          "process_resident_bytes_median": 13701120
         },
         "entry/generated/arithmetic/1000/real_time": {
           "samples": 9,
           "median_ns": 3.4195635366898927,
           "cv": 0.0022760972474070843,
           "checksum": 499500,
-          "process_resident_bytes_median": 13783040.0,
+          "process_resident_bytes_median": 13783040,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/generated/calls/1000/real_time": {
@@ -1233,14 +537,14 @@
           "median_ns": 303.7284336953197,
           "cv": 0.0032157505075872264,
           "checksum": 500500,
-          "process_resident_bytes_median": 13676544.0,
+          "process_resident_bytes_median": 13676544,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/generated/host/1000/real_time": {
@@ -1248,14 +552,14 @@
           "median_ns": 1336.8189499068594,
           "cv": 0.002602650131649557,
           "checksum": 500500,
-          "process_resident_bytes_median": 13737984.0,
+          "process_resident_bytes_median": 13737984,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/arithmetic/1000/real_time": {
@@ -1263,14 +567,14 @@
           "median_ns": 3.9978042558627047,
           "cv": 0.0008595300728116255,
           "checksum": 499500,
-          "process_resident_bytes_median": 13692928.0,
+          "process_resident_bytes_median": 13692928,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/calls/1000/real_time": {
@@ -1278,14 +582,14 @@
           "median_ns": 304.8949821751313,
           "cv": 0.0036724656560765353,
           "checksum": 500500,
-          "process_resident_bytes_median": 13676544.0,
+          "process_resident_bytes_median": 13676544,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         },
         "entry/target/host/1000/real_time": {
@@ -1293,14 +597,14 @@
           "median_ns": 1339.2873048067845,
           "cv": 0.00448361042464128,
           "checksum": 500500,
-          "process_resident_bytes_median": 13705216.0,
+          "process_resident_bytes_median": 13705216,
           "heap": {
-            "baseline_bytes": 320.0,
-            "allocated_bytes": 320.0,
-            "retained_bytes": 320.0,
-            "committed_bytes": 320.0,
-            "remaining_suspended_frames": 0.0,
-            "remaining_saved_bytes": 0.0
+            "baseline_bytes": 320,
+            "allocated_bytes": 320,
+            "retained_bytes": 320,
+            "committed_bytes": 320,
+            "remaining_suspended_frames": 0,
+            "remaining_saved_bytes": 0
           }
         }
       }
@@ -1387,6 +691,11 @@
       "benchmark_iteration_samples": 252,
       "benchmark_runs_completed_with_exit_zero": true,
       "validation_run_after_benchmarks": true
+    },
+    "metadata_cleanup": {
+      "retired_previous_entry": true,
+      "omitted_unselected_suite_context": true,
+      "original_summary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-benchmark-names\\rolling_summary.before_names.json"
     }
   }
 }

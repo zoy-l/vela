@@ -50,12 +50,12 @@ def aot_entries(cases: list[dict], manifest: dict) -> list[str]:
     return header
 
 
-def dasprofile_entries(cases: list[dict], manifest: dict) -> list[str]:
+def algorithm_entries(cases: list[dict], manifest: dict) -> list[str]:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>",
-              '#include "benchmarks/dasprofile/workloads.h"',
+              '#include "benchmarks/algorithms/workloads.h"',
               'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
-              "namespace vela::benchmarks::dasprofile {",
+              "namespace vela::benchmarks::algorithms {",
               "inline const auto* const kImage = " + manifest["image"] + "();",
               "inline constexpr std::uint32_t kPrepare = " + str(indices["prepare"]) + ";",
               "inline constexpr auto kCases = std::to_array<Case>({"]
@@ -65,17 +65,17 @@ def dasprofile_entries(cases: list[dict], manifest: dict) -> list[str]:
                       ", .expected = " + str(case["expected"]) +
                       ", .increment = " + str(case.get("increment", 0)) +
                       native_function_fields(manifest, indices[case["name"]]) + "},")
-    header.extend(["});", "}  // namespace vela::benchmarks::dasprofile", ""])
+    header.extend(["});", "}  // namespace vela::benchmarks::algorithms", ""])
     return header
 
 
 def generate(compiler: Path, source: Path, cases_path: Path, output: Path, suite: str) -> None:
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
     exports = [case["name"] for case in cases]
-    if suite == "dasprofile":
+    if suite == "algorithms":
         exports.insert(0, "prepare")
     manifest = compile_workloads(compiler, source, exports, output)
-    header = dasprofile_entries(cases, manifest) if suite == "dasprofile" else aot_entries(cases, manifest)
+    header = algorithm_entries(cases, manifest) if suite == "algorithms" else aot_entries(cases, manifest)
     (output / "entries.h").write_text("\n".join(header), encoding="utf-8", newline="\n")
 
 
@@ -85,7 +85,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--suite", choices=("aot", "dasprofile"), required=True)
+    parser.add_argument("--suite", choices=("aot", "algorithms"), required=True)
     arguments = parser.parse_args()
     generate(arguments.compiler.resolve(), arguments.source.resolve(), arguments.cases.resolve(),
              arguments.output.resolve(), arguments.suite)

@@ -1,7 +1,7 @@
-# dasProfile: Vela AOT, JIT and C++
+# Algorithm Benchmarks: Vela AOT, JIT and C++
 
-This directory contains all 16 workloads ported from
-[dasProfile](https://github.com/borisbat/dasProfile/tree/436d58d2840ff839550d44d32f98e10a15b57bf2),
+This directory contains 16 workloads adapted from
+[the upstream sources](https://api.github.com/repositories/1166763612),
 revision `436d58d2840ff839550d44d32f98e10a15b57bf2`. It runs Vela AOT, reloadable JIT and C++ with
 matching inputs and checked results. The sources, adapters and build rules are
 self-contained in this repository.
@@ -14,7 +14,7 @@ The command builds Release, compiles [workloads.vela](workloads.vela) through
 the production `vela build --emit=obj` path, and links the object with
 [the C++ workloads](workloads.cc) into the existing `vela_aot_benchmarks`
 executable. Its AOT/C++ cases join the existing benchmark registry as
-`aot/native/dasprofile.*` and `aot/cpp/dasprofile.*`.
+`aot/native/<workload>/<size>` and `aot/cpp/<workload>/<size>`.
 The command uses seven repetitions with random interleaving, and writes
 `out/benchmarks/aot_comparison.json` plus its Markdown report. Each
 invocation checks its result. Runtime errors, incorrect checksums, missing
@@ -40,7 +40,7 @@ Google Benchmark filters can select a subset:
 
 ```sh
 python3 -m tools.vl bench --aot-compare -- \
-  '--benchmark_filter=^aot/(native|cpp)/dasprofile\.(interop|sort)/'
+  '--benchmark_filter=^aot/(native|cpp)/(interop|sort)/'
 ```
 
 The JIT comparison requires C++, closed AOT and reloadable baseline/optimized

@@ -90,7 +90,7 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   boundary or a bounded loop has established the valid range. Use direct indexing within that
   established contract; external indices still require validation at their actual input boundary.
   Other pointer and bounds diagnostics remain enabled.
-- In `benchmarks/dasprofile` reference ports, preserve upstream numerical coefficients and
+- In `benchmarks/algorithms` reference ports, preserve upstream numerical coefficients and
   conventional mathematical symbols. Its local `.clang-tidy` permits those literals and names,
   contiguous buffer indexing, and pointer arithmetic. Bound traversals by prepared container sizes
   or fixed algorithm dimensions and check every workload result; do not add per-element checked

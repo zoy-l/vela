@@ -1,6 +1,6 @@
 import '../spectral_norm.vela' as spectral;
 
-external func addOne(value: int): int = 'dasprofile.addOne';
+external func addOne(value: int): int = 'algorithms.addOne';
 
 let keys: string[] = [];
 let numbers: double[] = [];

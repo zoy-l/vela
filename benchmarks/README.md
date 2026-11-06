@@ -87,7 +87,7 @@ The build emits source through the production `vela build` interface.
 Generated `out/release/gen/benchmarks/*_native/build_metrics.json` records
 compilation/publication time, object size, target and build identities.
 
-The [16 dasProfile ports](dasprofile/README.md) use the same Vela source for AOT
+The [16 algorithm workloads](algorithms/README.md) use the same Vela source for AOT
 and JIT. Input preparation is excluded from steady timing, every invocation checks
 its result, and stateful particles advance between calls. No daScript installation
 is required.

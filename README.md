@@ -67,6 +67,9 @@ Vela draws design and implementation insights from:
 - **JavaScript / TypeScript**: Syntax readability, modern async model, and collection conventions.
 - **Wren / Lua**: Minimalist embedding boundaries and self-contained runtime philosophies.
 
+Some benchmark workloads are adapted from the
+[daScript benchmark suite](https://api.github.com/repositories/1166763612).
+
 ## License
 
 Vela is distributed under the [MIT License](LICENSE).

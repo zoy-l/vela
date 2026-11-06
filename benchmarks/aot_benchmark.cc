@@ -15,10 +15,10 @@
 
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
+#include "benchmarks/algorithms/workloads.h"
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/aot_benchmark_types.h"
 #include "benchmarks/aot_native/entries.h"
-#include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
 #include "compiler/native/code_generator.h"
@@ -314,7 +314,7 @@ std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int6
 std::int64_t CppSpectralNorm() {
   // 两套 Vela 用例使用相同的 500 阶、两次幂迭代；这里只转换原生用例的定点结果。
   constexpr double kFixedPointScale = 1'000'000'000.0;
-  dasprofile::CppWorkload workload(dasprofile::Workload::SpectralNorm);
+  algorithms::CppWorkload workload(algorithms::Workload::SpectralNorm);
   return static_cast<std::int64_t>(workload.Run() * kFixedPointScale);
 }
 
