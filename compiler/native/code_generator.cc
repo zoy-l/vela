@@ -102,6 +102,61 @@ bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index
   return calls != 0 && calls <= kMaximumRecursiveCalls;
 }
 
+bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_index) {
+  if (!CanUnrollRecursion(function, function_index)) {
+    return false;
+  }
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions.at(index);
+    if (instruction.opcode == Opcode::Return ||
+        (instruction.opcode == Opcode::Call && instruction.index == function_index)) {
+      continue;
+    }
+    if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
+        instruction.opcode == Opcode::JumpIfNull) {
+      if (instruction.index <= index) {
+        return false;
+      }
+      continue;
+    }
+    const auto effects = ir::AnalyzeEffects(instruction);
+    if (effects.reads_state || effects.writes_state || effects.may_suspend ||
+        effects.changes_control || effects.MayCollectOnSuccess()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CanUnrollManagedRecursion(const ir::Function& function,
+                               std::size_t function_index,
+                               const NativeFunctionMetrics& metrics) {
+  // 仅复制完整入口，不省略根、错误位置或逻辑深度。限制单个自调用和帧大小，
+  // 由已有 LLVM 指令预算约束展开后的代码体积。
+  constexpr std::size_t kMaximumExpandedFrameBytes = kMaximumNativeStackBytes / 8;
+  return !function.is_async && function.handlers.empty() &&
+         function.instructions.size() <= kMaximumInlineInstructions &&
+         function.register_count <= kMaximumInlineInstructions &&
+         metrics.frame_bytes <= kMaximumExpandedFrameBytes &&
+         std::ranges::count_if(function.instructions, [&](const auto& instruction) {
+           return instruction.opcode == Opcode::Call && instruction.index == function_index;
+         }) == 1;
+}
+
+bool CanExpandRecursion(const ir::Program& program,
+                        std::size_t index,
+                        const NativeFunctionMetrics& metrics,
+                        NativeCodePlacement placement,
+                        NativeCodeTier tier) {
+  if (program.native_mode != NativeProgramMode::Closed && tier != NativeCodeTier::Optimized) {
+    return false;
+  }
+  const auto& function = program.functions[index];
+  return CanUnrollRecursion(function, index) ||
+         (placement == NativeCodePlacement::Linked &&
+          CanUnrollManagedRecursion(function, index, metrics));
+}
+
 bool CanUseBoundedLeaf(const ir::Function& function) {
   if (!function.native_symbol.empty() || !IsScalar(function.return_type)) {
     return false;
@@ -346,7 +401,7 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
   }
 }
 
-enum class LeafKind : std::uint8_t { None, Bounded, Guarded };
+enum class LeafKind : std::uint8_t { None, Bounded, Guarded, Recursive };
 
 struct InliningPlan final {
   bool enabled;
@@ -354,8 +409,10 @@ struct InliningPlan final {
 };
 
 InliningPlan PlanInlining(const ir::Function& function,
+                          std::size_t function_index,
                           NativeProgramMode mode,
-                          NativeDebugging debugging) {
+                          NativeDebugging debugging,
+                          NativeCodePlacement placement) {
   const auto small = CanInlineSmallFunction(function);
   const auto guarded = CanUseGuardedLeaf(function);
   auto leaf = LeafKind::None;
@@ -365,6 +422,9 @@ InliningPlan PlanInlining(const ir::Function& function,
       leaf = LeafKind::Bounded;
     } else if (guarded) {
       leaf = LeafKind::Guarded;
+    } else if (placement == NativeCodePlacement::Linked &&
+               CanUseRecursiveLeaf(function, function_index)) {
+      leaf = LeafKind::Recursive;
     }
   }
   return {.enabled = small || guarded, .leaf = leaf};
@@ -379,6 +439,12 @@ void AddLeafEntry(llvm::Module& module,
   }
   // 直接调用已确认当前版本；守卫限制不轮询的工作量，失败交还调用者建立逻辑帧。
   auto* type = function.body->getFunctionType();
+  if (kind == LeafKind::Recursive) {
+    std::vector<llvm::Type*> parameters(type->param_begin(), type->param_end());
+    parameters.insert(parameters.end() - 1, llvm::Type::getInt32Ty(module.getContext()));
+    type = llvm::FunctionType::get(type->getReturnType(), parameters, false);
+    function.budgeted_recursion = true;
+  }
   function.leaf =
       llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, prefix + "_leaf", module);
   function.leaf->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -424,6 +490,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     const std::string& module_name,
     NativeCodeTier tier,
     NativeDebugging debugging,
+    NativeCodePlacement placement,
     std::span<const std::optional<BorrowedFunction>> borrows,
     std::span<const std::uint8_t> needed) {
   FunctionDeclarations declarations;
@@ -471,11 +538,12 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
       }
     }
-    const auto inlining = PlanInlining(function, program.native_mode, debugging);
+    const auto inlining = PlanInlining(function, index, program.native_mode, debugging, placement);
     if (inlining.leaf != LeafKind::None) {
       AddLeafEntry(module, module_name + '_' + std::to_string(index), inlining.leaf, current);
       baseline.leaf = current.leaf;
       baseline.leaf_guard = current.leaf_guard;
+      baseline.budgeted_recursion = current.budgeted_recursion;
     }
     if (inlining.enabled) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -530,6 +598,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     NativeDebugging debugging,
     NativeCodeTier tier,
     EscapeOptimization escape,
+    NativeCodePlacement placement,
     std::span<const std::optional<BorrowedFunction>> borrows) {
   const auto& generated = declarations.baseline;
   const auto& optimized = declarations.optimized;
@@ -540,15 +609,15 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
                                     : std::span<const GeneratedFunction>(generated);
   const auto emission_tier = target.baseline_body == nullptr ? tier : NativeCodeTier::Baseline;
   auto emitted = EmitFunction(module, program, calls, field_targets, array_element_bits, image,
-                              index, emission_entries, body_dependencies, debugging, emission_tier,
-                              escape, declarations.borrowable);
+                              index, emission_entries, body_dependencies, debugging, placement,
+                              emission_tier, escape, declarations.borrowable);
   if (!emitted) {
     return emitted;
   }
   if (const auto& borrow = borrows[index]) {
     const auto borrowed =
         EmitBorrowedFunction(module, program, calls, field_targets, array_element_bits, image,
-                             index, borrow->plan, generated, debugging);
+                             index, borrow->plan, generated, debugging, placement);
     if (!borrowed) {
       return std::unexpected(borrowed.error());
     }
@@ -557,15 +626,15 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     emitted->borrowed_root_stores = borrowed->root_stores;
   }
   if (target.baseline_body != nullptr) {
-    auto optimized_metrics =
-        EmitFunction(module, program, calls, field_targets, array_element_bits, image, index,
-                     optimized, body_dependencies, debugging, NativeCodeTier::Optimized, escape);
+    auto optimized_metrics = EmitFunction(module, program, calls, field_targets, array_element_bits,
+                                          image, index, optimized, body_dependencies, debugging,
+                                          placement, NativeCodeTier::Optimized, escape);
     if (!optimized_metrics) {
       return optimized_metrics;
     }
     emitted = std::move(optimized_metrics);
   }
-  EmitWrapper(module, function, static_cast<std::uint32_t>(index), target, image);
+  EmitWrapper(module, function, static_cast<std::uint32_t>(index), target, image, placement);
   return emitted;
 }
 
@@ -653,8 +722,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   const auto borrows = escape == EscapeOptimization::Enabled
                            ? PlanBorrows(program)
                            : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
-  const auto declarations = DeclareFunctions(module, program, module_name, tier, debugging, borrows,
-                                             NeededFunctions(program, tier, reused));
+  const auto declarations =
+      DeclareFunctions(module, program, module_name, tier, debugging, placement, borrows,
+                       NeededFunctions(program, tier, reused));
   if (!declarations) {
     return std::unexpected(declarations.error());
   }
@@ -693,7 +763,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     auto& dependencies = output.body_dependencies.at(index);
     auto emitted = EmitDeclaredFunction(module, program, calls, field_targets,
                                         array_element_bits.at(index), image, index, *declarations,
-                                        dependencies, debugging, tier, escape, borrows);
+                                        dependencies, debugging, tier, escape, placement, borrows);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
@@ -703,9 +773,10 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     dependencies.erase(duplicates.begin(), duplicates.end());
     // 恢复布局由只读描述共享；优化 JIT 与封闭代码采用相同的有界展开预算，
     // 各逻辑帧仍保留独立的恢复位置和活跃值，不展开基线动态分派。
-    if ((program.native_mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized) &&
-        CanUnrollRecursion(function, index)) {
-      output.recursive_functions.push_back(optimized.at(index).body);
+    if (CanExpandRecursion(program, index, *emitted, placement, tier)) {
+      const auto& function_entries = optimized.at(index);
+      output.recursive_functions.push_back(
+          function_entries.budgeted_recursion ? function_entries.leaf : function_entries.body);
     }
   }
   output.function_metrics = std::move(metrics);

@@ -16,6 +16,10 @@ inline constexpr std::string_view kNativeScalarToStringSymbol = "vela_native_v10
 inline constexpr std::string_view kNativeStoreGlobalSymbol = "vela_native_v10_store_global";
 inline constexpr std::string_view kNativeMapGetSymbol = "vela_native_v11_map_get";
 inline constexpr std::string_view kNativeMapSetSymbol = "vela_native_v11_map_set";
+inline constexpr std::string_view kNativeStringIntMapGetSymbol =
+    "vela_native_v1_string_int_map_get";
+inline constexpr std::string_view kNativeStringIntMapSetSymbol =
+    "vela_native_v1_string_int_map_set";
 inline constexpr std::string_view kNativeAsyncCallSymbol = "vela_native_v1_async_call";
 inline constexpr std::string_view kNativeAsyncErrorSymbol = "vela_native_v1_async_error";
 inline constexpr std::string_view kNativeAsyncReturnSymbol = "vela_native_v1_async_return";
@@ -43,6 +47,10 @@ inline constexpr std::string_view kNativeResuspendSymbol = "vela_native_v1_resus
 inline constexpr std::string_view kNativeRethrowSymbol = "vela_native_v1_rethrow";
 inline constexpr std::string_view kNativeRootsEnterSymbol = "vela_native_v1_roots_enter";
 inline constexpr std::string_view kNativeRootsExitSymbol = "vela_native_v1_roots_exit";
+inline constexpr std::string_view kNativeReleaseHostHandlesSymbol =
+    "vela_native_v1_release_host_handles";
+inline constexpr std::string_view kNativeBorrowStringViewSymbol =
+    "vela_native_v1_borrow_string_view";
 inline constexpr std::string_view kNativeSleepSymbol = "vela_native_v1_sleep";
 inline constexpr std::string_view kNativeSuspendSymbol = "vela_native_v1_suspend";
 inline constexpr std::string_view kNativeThrowSymbol = "vela_native_v1_throw";

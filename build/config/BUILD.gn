@@ -72,6 +72,25 @@ config("vela_defaults") {
       cflags += [ "-O3" ]
     }
   }
+
+  if (vela_thin_lto) {
+    thin_lto_cache = rebase_path("$root_out_dir/thinlto-cache", root_build_dir)
+    if (target_os == "win") {
+      cflags += [ "/clang:-flto=thin" ]
+      ldflags += [
+        "-Xlinker",
+        "/lldltocache:$thin_lto_cache",
+      ]
+    } else {
+      cflags += [ "-flto=thin" ]
+      ldflags += [ "-flto=thin" ]
+      if (target_os == "mac") {
+        ldflags += [ "-Wl,-cache_path_lto,$thin_lto_cache" ]
+      } else {
+        ldflags += [ "-Wl,--thinlto-cache-dir=$thin_lto_cache" ]
+      }
+    }
+  }
 }
 
 config("vela_warnings") {

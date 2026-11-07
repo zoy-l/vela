@@ -114,7 +114,8 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
                                   NativeFrameRecovery recovery,
                                   NativeEntryKind kind,
                                   std::span<const GeneratedFunction> generated,
-                                  std::span<const std::optional<CallableTarget>> direct_calls) {
+                                  std::span<const std::optional<CallableTarget>> direct_calls,
+                                  std::size_t auxiliary_bytes) {
   const auto& function = escape.function.get();
   const auto has_checkpoints = !escape.checkpoints.empty();
   const auto reference_count = has_checkpoints ? escape.reference_count : 0;
@@ -172,6 +173,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
             module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
         .local_fields = {},
         .leaf_result_field = std::nullopt,
+        .auxiliary_field = std::nullopt,
     };
   }
   for (const auto& site : escape.allocations) {
@@ -185,6 +187,13 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
     leaf_result_field = static_cast<unsigned>(fields.size());
     fields.push_back(NativeRecordType(context));
   }
+  std::optional<unsigned> auxiliary_field;
+  if (auxiliary_bytes != 0) {
+    auxiliary_field = static_cast<unsigned>(fields.size());
+    auto* unit = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(context), 2);
+    const auto alignment = runtime::kNativeFrameAlignment;
+    fields.push_back(llvm::ArrayType::get(unit, (auxiliary_bytes + alignment - 1) / alignment));
+  }
   if (roots.debug_values) {
     fields.push_back(debug_storage);
   }
@@ -196,6 +205,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
       .local_fields = std::move(local_fields),
       .temporary_field = temporary_field,
       .leaf_result_field = leaf_result_field,
+      .auxiliary_field = auxiliary_field,
   };
 }
 

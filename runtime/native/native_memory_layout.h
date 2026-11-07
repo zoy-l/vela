@@ -3,12 +3,14 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_context.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
@@ -43,8 +45,13 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
+  static constexpr auto kContextHandles = offsetof(NativeContext, handles_);
+  static constexpr auto kBorrowedStringViewBytes = sizeof(std::string_view);
+  static constexpr auto kMapLookupBytes = sizeof(Heap::MapLookup);
+  static constexpr auto kMapLookupIntegerValue = offsetof(Heap::MapLookup, integer_value);
   static constexpr auto kExecutionControlState = offsetof(NativeExecution, control_state_);
   static constexpr auto kExecutionBarrierState = offsetof(NativeExecution, barrier_state_);
+  static constexpr auto kExecutionStackRoots = offsetof(NativeExecution, stack_roots_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
@@ -55,6 +62,8 @@ struct NativeMemoryLayout final {
   static constexpr auto kProgramGlobalCaches = offsetof(NativeProgramState, global_caches);
   static constexpr auto kProgramGlobals =
       offsetof(NativeProgramState, values) + (sizeof(Value) * NativeProgramState::kGlobals);
+  static constexpr auto kProgramConstants =
+      offsetof(NativeProgramState, values) + (sizeof(Value) * NativeProgramState::kConstants);
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
   static constexpr auto kFrameStorage = offsetof(NativeFrameAccess, storage);
 };
@@ -71,6 +80,7 @@ static_assert(sizeof(std::atomic<std::uint8_t>) == sizeof(std::uint8_t));
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);
 static_assert(std::is_standard_layout_v<NativeFrameAccess>);
 static_assert(std::is_standard_layout_v<NativeTraceFrame>);
+static_assert(std::is_standard_layout_v<NativeStackRoots>);
 static_assert(std::is_standard_layout_v<NativeExecution>);
 static_assert(std::is_standard_layout_v<NativeInstance>);
 static_assert(std::is_standard_layout_v<NativeProgramState>);

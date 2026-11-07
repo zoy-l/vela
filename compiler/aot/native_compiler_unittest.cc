@@ -47,6 +47,21 @@ namespace {
 
 using ir::test::Prepare;
 
+TEST(NativeCompilerTest, ConvertsCachedStringConstantsToDynamicFieldRegisters) {
+  const auto prepared = Prepare(R"(
+class Box { value: dynamic = null; }
+export func read(): dynamic {
+  const box = Box();
+  box.value = 'cached';
+  return box.value;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"read"}, .preserve_ir = true});
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_constant"), std::string::npos);
+}
+
 std::unique_ptr<llvm::Module> ParseModule(std::string_view text, llvm::LLVMContext& context) {
   llvm::SMDiagnostic diagnostic;
   auto module =
@@ -340,6 +355,43 @@ export func update(points: Particle[]): void {
   EXPECT_TRUE(result->llvm_ir.contains("fadd <2 x double>")) << result->llvm_ir;
 }
 
+TEST(NativeCompilerTest, FoldsRepeatedIndependentFieldTraversalsWithoutReassociatingAdds) {
+  const auto prepared = Prepare(R"(
+export class Point { x: double; dx: double; }
+export func update(points: Point[]): void {
+  for (let round = 0; round < 10; round++) {
+    for (const point in points) { point.x += point.dx; }
+  }
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << result.error().front().message;
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  std::size_t additions = 0;
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      EXPECT_TRUE(loop->getSubLoops().empty());
+      for (const auto* block : loop->blocks()) {
+        for (const auto& instruction : *block) {
+          if (instruction.getOpcode() == llvm::Instruction::FAdd) {
+            EXPECT_FALSE(instruction.getFastMathFlags().any());
+            ++additions;
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GE(additions, 10U);
+}
+
 struct LoopHostCalls {
   std::vector<const llvm::CallBase*> direct;
   std::vector<const llvm::StoreInst*> frame_stores;
@@ -416,6 +468,47 @@ export func calculate(count: int): int {
       const auto frame_store_count = calls.frame_stores.size();
       EXPECT_GE(frame_store_count, 1U) << result->llvm_ir;
       EXPECT_LE(frame_store_count, 2U) << result->llvm_ir;
+    }
+  }
+  EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
+}
+
+TEST(NativeCompilerTest, BorrowsStringConstantsDirectlyInsideHostCallLoops) {
+  const auto prepared = Prepare(R"(
+external func length(text: string): int;
+export func calculate(count: int): int {
+  let result = 0;
+  for (let index = 0; index < count; index++) { result += length('borrowed'); }
+  return result;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"calculate"}, .preserve_ir = true});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(module->getFunction("vela_native_v1_constant"), nullptr);
+  std::size_t direct_loops = 0;
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      const auto calls = CollectHostCalls(*loop);
+      if (calls.direct.empty()) {
+        continue;
+      }
+      ++direct_loops;
+      EXPECT_FALSE(calls.has_checked);
+      for (const auto* call : calls.direct) {
+        ASSERT_EQ(call->arg_size(), 2U);
+        const auto* argument = llvm::dyn_cast<llvm::Instruction>(call->getArgOperand(1));
+        ASSERT_NE(argument, nullptr);
+        EXPECT_FALSE(loop->contains(argument->getParent())) << result->llvm_ir;
+      }
     }
   }
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;

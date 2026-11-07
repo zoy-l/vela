@@ -21,7 +21,7 @@ MICROSECONDS = {"ns": 0.001, "us": 1.0, "ms": 1000.0, "s": 1_000_000.0}
 LABELS = {"cpp": "C++", "jit": "Vela JIT", "luajit_interp": "Lua interpreter",
           "luajit": "LuaJIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
-    r"^native/(cpp|cpp_indirect|jit|jit_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
+    r"^native/(cpp|cpp_indirect|jit|jit_control|aot|aot_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
 NATIVE_BASELINES = {
     "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
     "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
@@ -516,7 +516,7 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
         samples[backend, workload, count] = [
             entry["real_time"] * MICROSECONDS[entry["time_unit"]] * 1000 / count
             for entry in entries]
-        if backend in {"jit", "jit_control"}:
+        if backend in {"jit", "jit_control", "aot", "aot_control"}:
             fields = ("baseline_heap_bytes", "end_heap_bytes", "baseline_heap_objects",
                       "end_heap_objects")
             values = {field: [entry[field] for entry in entries] for field in fields}
@@ -525,30 +525,48 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
                 raise ValueError(f"{name}: invalid heap counter")
             heaps[backend, workload, count] = values
 
-    backends = ("cpp", "cpp_indirect", "jit_control", "jit")
-    lines = ["Native call comparison: median wall nanoseconds per call/loop iteration.",
-             f"Every selected case passed all {repetitions} repetitions.",
-             "C++ uses the same non-inlined kernels and NativeContext as the JIT. "
-             "The indirect target is hidden from the compiler before timing.",
-             "JIT totals include loop work, checksum accumulation, native binding adapters and entry/exit "
-             "amortized over the batch. Registration, compilation and warm-up are excluded.",
-             "JIT minus control subtracts independent medians, not paired samples. It estimates "
-             "the additional native path including changed generated code, not an isolated "
-             "ABI cost. The string control uses the known kernel result.", "",
-             "| Workload | Calls/batch | C++ direct ns | C++ indirect ns | JIT control ns | JIT native ns | "
-             "JIT minus control ns | Samples direct/indirect/control/native | CV direct/indirect/control/native |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
+    backends = ("cpp", "cpp_indirect", "jit", "aot", "jit_control", "aot_control")
     keys = sorted({(workload, count) for _, workload, count in samples})
     for workload, count in keys:
-        values = [samples.get((backend, workload, count), []) for backend in backends]
-        medians = [median(times) if times else None for times in values]
-        elapsed = [f"{value:.3f}" if value is not None else "-" for value in medians]
-        delta = (f"{medians[3] - medians[2]:.3f}"
-                 if medians[3] is not None and medians[2] is not None else "-")
+        missing = [backend for backend in backends if (backend, workload, count) not in samples]
+        if missing:
+            raise ValueError(f"{workload}/{count}: native comparison requires all six backends; "
+                             f"missing {missing}")
+    lines = ["Native call comparison: median wall nanoseconds per call/loop iteration.",
+             f"Every selected case passed all {repetitions} repetitions.",
+             "JIT and AOT compile the same generated source and use the same full runtime entry. "
+             "C++ uses the same non-inlined kernels and NativeContext. "
+             "The indirect target is hidden from the compiler before timing.",
+             "Script totals include loop work, checksum accumulation, native binding adapters and entry/exit "
+             "amortized over the batch. Registration, compilation and warm-up are excluded.",
+             "Ratios divide complete script batch time by C++ direct batch time. "
+             "The string control uses the known kernel result.", "",
+             "| Workload | Calls/batch | C++ direct ns | C++ indirect ns | JIT native ns | AOT native ns | "
+             "JIT/C++ | AOT/C++ | Samples direct/indirect/JIT/AOT/JIT-control/AOT-control | CV direct/indirect/JIT/AOT |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
+    for workload, count in keys:
+        values = [samples[backend, workload, count] for backend in backends]
+        medians = [median(times) for times in values]
+        elapsed = [f"{value:.3f}" for value in medians[:4]]
+        ratios = [f"{medians[index] / medians[0]:.3f}" for index in (2, 3)]
         counts = "/".join(str(len(times)) for times in values)
-        cvs = "/".join(variation(times) if times else "-" for times in values)
-        lines.append("| " + " | ".join([workload, str(count), *elapsed, delta, counts, cvs]) + " |")
-    lines.extend(["", "JIT GC heap snapshots, in bytes/objects. "
+        cvs = "/".join(variation(times) for times in values[:4])
+        lines.append("| " + " | ".join([workload, str(count), *elapsed, *ratios, counts, cvs]) + " |")
+    lines.extend(["", "Native minus control subtracts independent medians, not paired samples. "
+                  "It estimates the additional native path including changed generated code, "
+                  "not an isolated ABI cost.", "",
+                  "| Workload | Calls/batch | JIT control ns | AOT control ns | JIT minus control ns | AOT minus control ns | CV JIT/AOT controls |",
+                  "| --- | ---: | ---: | ---: | ---: | ---: | --- |"])
+    for workload, count in keys:
+        jit = samples["jit", workload, count]
+        aot = samples["aot", workload, count]
+        jit_control = samples["jit_control", workload, count]
+        aot_control = samples["aot_control", workload, count]
+        times = (median(jit_control), median(aot_control),
+                 median(jit) - median(jit_control), median(aot) - median(aot_control))
+        lines.append("| " + " | ".join([workload, str(count), *[f"{time:.3f}" for time in times],
+                                          variation(jit_control) + "/" + variation(aot_control)]) + " |")
+    lines.extend(["", "Script GC heap snapshots, in bytes/objects. "
                   "These are live snapshots, not cumulative allocation counts, host malloc counts "
                   "or process RSS.", "",
                   "| Workload | Calls/batch | Backend | Baseline heap bytes | End heap bytes | "

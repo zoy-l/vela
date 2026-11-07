@@ -20,6 +20,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/heap.h"
@@ -29,7 +30,23 @@
 
 namespace vela::compiler::native {
 
-llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth) {
+std::size_t FunctionEmitter::PlanAuxiliaryStorage() {
+  if (!auxiliary_bytes_) {
+    auxiliary_bytes_ = placement_ == NativeCodePlacement::Linked
+                           ? PlanStringViewStorage() + PlanMapLookupStorage()
+                           : 0;
+  }
+  return *auxiliary_bytes_;
+}
+
+llvm::Value* FunctionEmitter::AllocateAuxiliary(std::size_t bytes) {
+  auto* address = ByteAddress(auxiliary_storage_, auxiliary_offset_);
+  const auto alignment = runtime::kNativeFrameAlignment;
+  auxiliary_offset_ += ((bytes + alignment - 1) / alignment) * alignment;
+  return address;
+}
+
+llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth, std::uint64_t reserved_bytes) {
   using runtime::NativeMemoryLayout;
   auto* word = builder_.getInt64Ty();
   auto* stack_limit = builder_.CreateLoad(
@@ -38,7 +55,8 @@ llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth) {
   auto* stack_position = builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress,
                                                   {builder_.getPtrTy()}, {builder_.getInt32(0)});
   auto* stack_available =
-      builder_.CreateICmpUGT(builder_.CreatePtrToInt(stack_position, word), stack_limit);
+      builder_.CreateICmpUGT(builder_.CreatePtrToInt(stack_position, word),
+                             builder_.CreateAdd(stack_limit, builder_.getInt64(reserved_bytes)));
   return builder_.CreateAnd(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)),
                             stack_available);
 }
@@ -67,7 +85,10 @@ void FunctionEmitter::EmitFrameEntry() {
   entry_depth_ = depth;
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
-  builder_.CreateCondBr(HasStackBudget(depth), available, failed,
+  auto* budget = kind_ == NativeEntryKind::Leaf && generated_[function_index_].budgeted_recursion
+                     ? builder_.getTrue()
+                     : HasStackBudget(depth);
+  builder_.CreateCondBr(budget, available, failed,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(available);
   builder_.CreateBr(initialize);
@@ -81,6 +102,8 @@ void FunctionEmitter::EmitFrameEntry() {
   };
   llvm::Value* resources = nullptr;
   llvm::Value* root_range = nullptr;
+  llvm::Value* stack_roots_head = nullptr;
+  llvm::Value* previous_stack_roots = nullptr;
   const bool on_stack = frame_bytes_ <= kMaximumNativeStackBytes;
   if (IsRecovering()) {
     // 优化帧已预留基线存储，并持有根区间直到恢复返回；此处不分配资源或重复登记根。
@@ -88,13 +111,33 @@ void FunctionEmitter::EmitFrameEntry() {
     // 成功路径没有 GC 安全点；根槽只在失败分支写入并由 leaf_failure 临时登记。
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
   } else if (on_stack && roots_.count != 0) {
-    // 栈上根只借用 RootRange，不构造拥有堆存储的 NativeFrame。
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
-    root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
-    auto enter = module_.getOrInsertFunction(runtime::kNativeRootsEnterSymbol, builder_.getVoidTy(),
-                                             pointer, pointer, word, pointer);
-    builder_.CreateCall(enter,
-                        {execution, root_slots_, builder_.getInt64(roots_.count), root_range});
+    if (placement_ == NativeCodePlacement::Linked &&
+        program_.native_mode == NativeProgramMode::Closed) {
+      using runtime::NativeStackRoots;
+      auto* frame = allocate(sizeof(NativeStackRoots), alignof(NativeStackRoots));
+      auto* head = builder_.CreateLoad(
+          pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionStackRoots));
+      MarkInvariant(*head);
+      stack_roots_head = head;
+      previous_stack_roots = builder_.CreateLoad(pointer, head);
+      // 先发布空槽，再由安全点根计划写入活动引用；登记时即使正处于 Sweep 也没有待追踪值。
+      static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
+      builder_.CreateMemSet(root_slots_, builder_.getInt8(0), roots_.count * sizeof(runtime::Value),
+                            llvm::Align(alignof(runtime::Value)));
+      builder_.CreateStore(root_slots_, ByteAddress(frame, offsetof(NativeStackRoots, values)));
+      builder_.CreateStore(builder_.getInt64(roots_.count),
+                           ByteAddress(frame, offsetof(NativeStackRoots, count)));
+      builder_.CreateStore(previous_stack_roots,
+                           ByteAddress(frame, offsetof(NativeStackRoots, previous)));
+      builder_.CreateStore(frame, head);
+    } else {
+      root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
+      auto enter = module_.getOrInsertFunction(
+          runtime::kNativeRootsEnterSymbol, builder_.getVoidTy(), pointer, pointer, word, pointer);
+      builder_.CreateCall(enter,
+                          {execution, root_slots_, builder_.getInt64(roots_.count), root_range});
+    }
   } else if (!on_stack) {
     resources = allocate(sizeof(runtime::NativeFrame), alignof(runtime::NativeFrame));
     auto* access =
@@ -157,7 +200,9 @@ void FunctionEmitter::EmitFrameEntry() {
     cleanup.CreateBr(restored);
     cleanup.SetInsertPoint(restored);
   }
-  if (root_range != nullptr) {
+  if (stack_roots_head != nullptr) {
+    cleanup.CreateStore(previous_stack_roots, stack_roots_head);
+  } else if (root_range != nullptr) {
     auto exit =
         module_.getOrInsertFunction(runtime::kNativeRootsExitSymbol, cleanup.getVoidTy(), pointer);
     cleanup.CreateCall(exit, {root_range});
@@ -217,7 +262,7 @@ void FunctionEmitter::CacheImports() {
     }
     // 绑定随实例创建后不可变；闭包临时切换实例会在返回时恢复，作用域内可复用。
     imports_.emplace(target->function,
-                     LoadImport(builder_, module_, body_->getArg(0), target->function));
+                     LoadImport(builder_, module_, body_->getArg(0), target->function, placement_));
     inline_import = inline_import || CanInlineImportCall(callee);
   }
   if (inline_import) {

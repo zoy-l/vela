@@ -139,6 +139,44 @@ TEST(NativeAbiTest, StackRootEntryInitializesReusedStorageAndReleasesRegistratio
   EXPECT_EQ(heap.object_count(), baseline);
 }
 
+TEST(NativeAbiTest, NativeStackRootsKeepNestedFramesAndReleasePoppedValues) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto baseline = heap.object_count();
+  auto** head = heap.native_stack_roots_head();
+  const auto pop = [head](NativeStackRoots* frame) { *head = frame->previous; };
+  {
+    std::array<Value, 1> outer_values;
+    NativeStackRoots outer{.values = outer_values.data(), .count = outer_values.size()};
+    *head = &outer;
+    const std::unique_ptr<NativeStackRoots, decltype(pop)> outer_registration(&outer, pop);
+    outer_values.front() = Value::String(heap.AllocateString("outer"));
+    ASSERT_NE(outer_values.front().AsString(), nullptr);
+    {
+      std::array<Value, 1> inner_values;
+      NativeStackRoots inner{
+          .values = inner_values.data(),
+          .count = inner_values.size(),
+          .previous = *head,
+      };
+      *head = &inner;
+      const std::unique_ptr<NativeStackRoots, decltype(pop)> inner_registration(&inner, pop);
+      inner_values.front() = Value::String(heap.AllocateString("inner"));
+      ASSERT_NE(inner_values.front().AsString(), nullptr);
+      heap.Collect();
+      EXPECT_EQ(outer_values.front().AsString()->value(), "outer");
+      EXPECT_EQ(inner_values.front().AsString()->value(), "inner");
+      EXPECT_EQ(heap.object_count(), baseline + 2);
+    }
+    heap.Collect();
+    EXPECT_EQ(outer_values.front().AsString()->value(), "outer");
+    EXPECT_EQ(heap.object_count(), baseline + 1);
+  }
+  EXPECT_EQ(*head, nullptr);
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
+}
+
 TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
   Isolate isolate;
   const auto image = EmptyImage();

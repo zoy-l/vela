@@ -3,26 +3,111 @@
 #include "runtime/native/native_symbols.h"
 
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/ModRef.h>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <vector>
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
+#include "compiler/native/map_analysis.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native/native_abi.h"
 #include "runtime/native/native_memory_layout.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
+
+std::size_t FunctionEmitter::PlanMapLookupStorage() {
+  if (program_.native_mode != NativeProgramMode::Closed || !roots_.bounded_polls) {
+    return 0;
+  }
+  map_lookup_pairs_ = FindMapLookups(source_, program_.functions);
+  std::vector<bool> allocated(source_.instructions.size());
+  std::size_t bytes = 0;
+  const auto alignment = runtime::kNativeFrameAlignment;
+  const auto lookup_bytes =
+      ((runtime::NativeMemoryLayout::kMapLookupBytes + alignment - 1) / alignment) * alignment;
+  for (std::size_t index = 0; index < map_lookup_pairs_.size(); ++index) {
+    auto& get = map_lookup_pairs_[index];
+    if (!get) {
+      continue;
+    }
+    const auto& instruction = source_.instructions[*get];
+    const auto& key = source_.value_types[instruction.lhs + 1];
+    const auto& value = source_.value_types[instruction.dst];
+    const auto& stored = source_.value_types[source_.instructions[index].lhs + 2];
+    if (key.kind != Kind::String || key.nullable || value.kind != Kind::Int || !value.nullable ||
+        stored.kind != Kind::Int || stored.nullable) {
+      get.reset();
+      continue;
+    }
+    if (!allocated[*get]) {
+      allocated[*get] = true;
+      bytes += lookup_bytes;
+    }
+  }
+  return bytes;
+}
+
+void FunctionEmitter::CacheMapLookups() {
+  if (placement_ != NativeCodePlacement::Linked ||
+      program_.native_mode != NativeProgramMode::Closed || !roots_.bounded_polls) {
+    return;
+  }
+  const auto& lookups = map_lookup_pairs_;
+  map_lookups_.resize(source_.instructions.size());
+  for (std::size_t index = 0; index < lookups.size(); ++index) {
+    if (!lookups[index]) {
+      continue;
+    }
+    const auto get = *lookups[index];
+    auto*& lookup = map_lookups_[get];
+    if (lookup == nullptr) {
+      lookup = AllocateAuxiliary(runtime::NativeMemoryLayout::kMapLookupBytes);
+    }
+    map_lookups_[index] = lookup;
+  }
+}
+
+void FunctionEmitter::CacheConstants() {
+  if (placement_ != NativeCodePlacement::Linked ||
+      program_.native_mode != NativeProgramMode::Closed) {
+    return;
+  }
+  llvm::Value* storage = nullptr;
+  for (const auto& instruction : source_.instructions) {
+    if (instruction.opcode != Opcode::LoadString || constants_.contains(instruction.index)) {
+      continue;
+    }
+    if (storage == nullptr) {
+      auto* state = LoadProgramData(builder_, body_->getArg(0));
+      storage = builder_.CreateLoad(
+          builder_.getPtrTy(), ByteAddress(state, runtime::NativeMemoryLayout::kProgramConstants));
+      storage = builder_.CreateLoad(
+          builder_.getPtrTy(),
+          ByteAddress(storage, runtime::NativeMemoryLayout::kObjectNativePayload));
+    }
+    // 实例发布前已创建全部字符串常量；非移动 GC 和实例根保证整个调用期间可借用。
+    const auto offset =
+        (instruction.index * sizeof(runtime::Value)) + runtime::NativeMemoryLayout::kValuePayload;
+    constants_.emplace(instruction.index,
+                       builder_.CreateLoad(builder_.getPtrTy(), ByteAddress(storage, offset)));
+  }
+}
 
 llvm::Value* FunctionEmitter::Encode(ir::RegisterId reg) {
   return EncodeValue(builder_, Load(reg), source_.value_types.at(reg));
@@ -83,8 +168,142 @@ void FunctionEmitter::ClearRoot(std::size_t slot) {
   clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
 }
 
+void FunctionEmitter::EmitStringCodePointAt(const ir::Instruction& instruction) {
+  using runtime::NativeMemoryLayout;
+  auto* string = Reference(instruction.lhs);
+  Check(builder_.CreateIsNotNull(string), ExecutionStatus::TypeError);
+  auto* index = Payload(instruction.lhs + 1);
+  auto* length =
+      LoadMemory(builder_.getInt32Ty(), ByteAddress(string, NativeMemoryLayout::kStringLength),
+                 MemoryRegion::HeapHeader);
+  MarkInvariant(*length);
+  Check(builder_.CreateICmpULT(index, builder_.CreateZExt(length, builder_.getInt64Ty())),
+        ExecutionStatus::IndexOutOfBounds);
+  auto* bytes =
+      LoadMemory(builder_.getInt32Ty(), ByteAddress(string, NativeMemoryLayout::kObjectLength),
+                 MemoryRegion::HeapHeader);
+  MarkInvariant(*bytes);
+  auto& context = module_.getContext();
+  auto* ascii = llvm::BasicBlock::Create(context, "string.index.ascii", body_);
+  auto* unicode = llvm::BasicBlock::Create(context, "string.index.unicode", body_);
+  auto* done = llvm::BasicBlock::Create(context, "string.index.done", body_);
+  // 有效 UTF-8 的字节数等于码点数时，每个元素恰好是一个 ASCII 字节。
+  builder_.CreateCondBr(builder_.CreateICmpEQ(bytes, length), ascii, unicode);
+  builder_.SetInsertPoint(ascii);
+  auto* data = ByteAddress(string, sizeof(runtime::StringObject));
+  auto* point = builder_.CreateLoad(builder_.getInt8Ty(),
+                                    builder_.CreateInBoundsGEP(builder_.getInt8Ty(), data, index));
+  Store(instruction.dst, builder_.CreateZExt(point, builder_.getInt64Ty()),
+        {.kind = Kind::Int, .name = frontend::kIntTypeName});
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(unicode);
+  PackArguments(instruction.lhs, BuiltinArity(Builtin::StringCodePointAt));
+  auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
+                                            builder_.getPtrTy(), builder_.getInt32Ty(),
+                                            builder_.getPtrTy(), builder_.getPtrTy());
+  CompleteCall(builder_.CreateCall(helper,
+                                   {
+                                       body_->getArg(0),
+                                       builder_.getInt32(instruction.index),
+                                       arguments_,
+                                       result_,
+                                   }),
+               instruction.dst);
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(done);
+}
+
+void FunctionEmitter::EmitLocatedMapBuiltin(const ir::Instruction& instruction,
+                                            Builtin builtin,
+                                            llvm::Value* map) {
+  const auto& value_type =
+      source_.value_types[builtin == Builtin::MapGet ? instruction.dst : instruction.lhs + 2];
+  auto* pointer = builder_.getPtrTy();
+  auto* key = Reference(instruction.lhs + 1);
+  if (builtin == Builtin::MapGet) {
+    auto get =
+        module_.getOrInsertFunction(runtime::kNativeStringIntMapGetSymbol, builder_.getInt8Ty(),
+                                    pointer, pointer, pointer, pointer);
+    auto& function = *llvm::cast<llvm::Function>(get.getCallee());
+    function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
+        llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
+    function.addParamAttr(1, llvm::Attribute::ReadOnly);
+    function.addParamAttr(2, llvm::Attribute::WriteOnly);
+    function.addParamAttr(2, llvm::Attribute::NoAlias);
+    function.addParamAttr(3, llvm::Attribute::WriteOnly);
+    function.addParamAttr(3, llvm::Attribute::NoAlias);
+    auto* present = builder_.CreateICmpNE(
+        builder_.CreateCall(get, {map, key, result_, map_lookups_[instruction_index_]}),
+        builder_.getInt8(0));
+    auto* value = builder_.CreateLoad(builder_.getInt64Ty(), result_);
+    Store(instruction.dst, MakeOptional(builder_, present, value, value_type), value_type);
+  } else {
+    auto* location = map_lookups_[instruction_index_];
+    auto* value_slot = builder_.CreateLoad(
+        pointer, ByteAddress(location, runtime::NativeMemoryLayout::kMapLookupIntegerValue));
+    auto& context = module_.getContext();
+    auto* update = llvm::BasicBlock::Create(context, "map.update", body_);
+    auto* insert = llvm::BasicBlock::Create(context, "map.insert", body_);
+    auto* done = llvm::BasicBlock::Create(context, "map.stored", body_);
+    builder_.CreateCondBr(builder_.CreateIsNotNull(value_slot), update, insert);
+    builder_.SetInsertPoint(update);
+    builder_.CreateStore(Payload(instruction.lhs + 2), value_slot);
+    builder_.CreateBr(done);
+    builder_.SetInsertPoint(insert);
+    PrepareInlineRuntimeCall();
+    auto set =
+        module_.getOrInsertFunction(runtime::kNativeStringIntMapSetSymbol, builder_.getInt8Ty(),
+                                    pointer, pointer, pointer, builder_.getInt64Ty(), pointer);
+    CheckStatus(builder_.CreateCall(set, {
+                                             body_->getArg(0),
+                                             map,
+                                             key,
+                                             Payload(instruction.lhs + 2),
+                                             map_lookups_[instruction_index_],
+                                         }));
+    builder_.CreateBr(done);
+    builder_.SetInsertPoint(done);
+    Store(instruction.dst, builder_.getFalse(),
+          {.kind = Kind::Null, .name = frontend::kNullTypeName});
+  }
+}
+
+void FunctionEmitter::EmitMapBuiltin(const ir::Instruction& instruction, Builtin builtin) {
+  auto* map = Reference(instruction.lhs);
+  Check(builder_.CreateIsNotNull(map), ExecutionStatus::TypeError);
+  if (!map_lookups_.empty() && map_lookups_[instruction_index_] != nullptr) {
+    EmitLocatedMapBuiltin(instruction, builtin, map);
+    return;
+  }
+  auto* key = Pack(Encode(instruction.lhs + 1), 0);
+  auto* pointer = builder_.getPtrTy();
+  if (builtin == Builtin::MapGet) {
+    auto get = module_.getOrInsertFunction(runtime::kNativeMapGetSymbol, builder_.getVoidTy(),
+                                           pointer, pointer, pointer);
+    auto& function = *module_.getFunction(runtime::kNativeMapGetSymbol);
+    function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
+        llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
+    function.addParamAttr(1, llvm::Attribute::ReadOnly);
+    function.addParamAttr(2, llvm::Attribute::WriteOnly);
+    function.addParamAttr(2, llvm::Attribute::NoAlias);
+    builder_.CreateCall(get, {map, key, result_});
+    Unpack(instruction.dst);
+  } else {
+    auto set = module_.getOrInsertFunction(runtime::kNativeMapSetSymbol, builder_.getInt8Ty(),
+                                           pointer, pointer, pointer, pointer);
+    auto* value = Pack(Encode(instruction.lhs + 2), 1);
+    CheckStatus(builder_.CreateCall(set, {body_->getArg(0), map, key, value}));
+    Store(instruction.dst, builder_.getFalse(),
+          {.kind = Kind::Null, .name = frontend::kNullTypeName});
+  }
+}
+
 std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
   const auto builtin = static_cast<Builtin>(instruction.index);
+  if (placement_ == NativeCodePlacement::Linked && builtin == Builtin::StringCodePointAt) {
+    EmitStringCodePointAt(instruction);
+    return {};
+  }
   if (builtin == Builtin::ScalarToString) {
     const auto& type = source_.value_types.at(instruction.lhs);
     if (type.nullable ||
@@ -133,29 +352,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     return {};
   }
   if (builtin == Builtin::MapGet || builtin == Builtin::MapSet) {
-    auto* map = Reference(instruction.lhs);
-    Check(builder_.CreateIsNotNull(map), ExecutionStatus::TypeError);
-    auto* key = Pack(Encode(instruction.lhs + 1), 0);
-    auto* pointer = builder_.getPtrTy();
-    if (builtin == Builtin::MapGet) {
-      auto get = module_.getOrInsertFunction(runtime::kNativeMapGetSymbol, builder_.getVoidTy(),
-                                             pointer, pointer, pointer);
-      auto& function = *module_.getFunction(runtime::kNativeMapGetSymbol);
-      function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
-          llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
-      function.addParamAttr(1, llvm::Attribute::ReadOnly);
-      function.addParamAttr(2, llvm::Attribute::WriteOnly);
-      function.addParamAttr(2, llvm::Attribute::NoAlias);
-      builder_.CreateCall(get, {map, key, result_});
-      Unpack(instruction.dst);
-    } else {
-      auto set = module_.getOrInsertFunction(runtime::kNativeMapSetSymbol, builder_.getInt8Ty(),
-                                             pointer, pointer, pointer, pointer);
-      auto* value = Pack(Encode(instruction.lhs + 2), 1);
-      CheckStatus(builder_.CreateCall(set, {body_->getArg(0), map, key, value}));
-      Store(instruction.dst, builder_.getFalse(),
-            {.kind = Kind::Null, .name = frontend::kNullTypeName});
-    }
+    EmitMapBuiltin(instruction, builtin);
     return {};
   }
   if (builtin == Builtin::ArrayReserve) {
@@ -203,6 +400,10 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
   llvm::Value* status = nullptr;
   switch (instruction.opcode) {
     case Opcode::LoadString: {
+      if (const auto constant = constants_.find(instruction.index); constant != constants_.end()) {
+        Store(instruction.dst, constant->second, {.kind = Kind::String, .name = {}});
+        return {};
+      }
       auto helper = module_.getOrInsertFunction(runtime::kNativeConstantSymbol,
                                                 builder_.getVoidTy(), pointer, word, pointer);
       builder_.CreateCall(helper, {context, index, result_});

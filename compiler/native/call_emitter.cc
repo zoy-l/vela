@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 #include "base/callable.h"
 #include "base/declaration.h"
@@ -94,10 +95,105 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
   return arguments;
 }
 
+llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
+                                           CallableTarget selected,
+                                           std::span<llvm::Value* const> arguments) {
+  const auto& target = generated_[selected.function];
+  const auto& callee = program_.functions.at(selected.function);
+  auto* result = arguments.back();
+  auto& context = module_.getContext();
+  auto* leaf = llvm::BasicBlock::Create(context, "call.leaf", body_);
+  auto* observable = llvm::BasicBlock::Create(context, "call.observable", body_);
+  auto* merge = llvm::BasicBlock::Create(context, "call.done", body_);
+  auto* failed = llvm::BasicBlock::Create(context, "call.leaf.failed", body_);
+  auto* returned = llvm::BasicBlock::Create(context, "call.leaf.returned", body_);
+  // 调试器及控制请求需要真正的被调用帧；无请求时只执行有界的纯计算。
+  llvm::Value* ready = builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0));
+  if (target.budgeted_recursion) {
+    // 纯计算最多展开固定深度；一次预留逻辑和物理栈预算，内层不维护可观察帧。
+    auto* depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(kRecursiveLeafDepth + 1));
+    ready = builder_.CreateAnd(
+        ready, HasStackBudget(depth, kMaximumNativeStackBytes * kRecursiveLeafDepth));
+  }
+  if (target.leaf_guard != nullptr) {
+    ready = builder_.CreateAnd(ready, builder_.CreateCall(target.leaf_guard, arguments));
+  }
+  auto* branch = builder_.CreateCondBr(builder_.CreateNot(ready), observable, leaf,
+                                       llvm::MDBuilder(context).createUnlikelyBranchWeights());
+  if (target.leaf_guard == nullptr && !target.budgeted_recursion) {
+    // 纯叶调用沿用循环的有界轮询预算；异常分支仍建立完整调用链。
+    branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
+  }
+  builder_.SetInsertPoint(leaf);
+  std::vector<llvm::Value*> leaf_arguments(arguments.begin(), arguments.end());
+  if (target.budgeted_recursion) {
+    leaf_arguments.insert(leaf_arguments.end() - 1, builder_.getInt32(kRecursiveLeafDepth));
+  }
+  auto* computed = builder_.CreateCall(target.leaf, leaf_arguments);
+  builder_.CreateCondBr(
+      builder_.CreateICmpEQ(computed, Status(builder_, ExecutionStatus::Returned)), returned,
+      failed, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(failed);
+  if (target.budgeted_recursion) {
+    // 只重放无状态的纯计算；预算耗尽和算术失败都由完整入口建立真实错误调用链。
+    builder_.CreateBr(observable);
+  } else {
+    PrepareObservableCall();
+    auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result);
+    auto failure = module_.getOrInsertFunction(
+        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+    auto* materialized =
+        builder_.CreateCall(failure, {
+                                         body_->getArg(0),
+                                         position,
+                                         computed,
+                                         llvm::ConstantPointerNull::get(builder_.getPtrTy()),
+                                         builder_.getInt64(0),
+                                     });
+    Fail(materialized);
+  }
+  builder_.SetInsertPoint(returned);
+  builder_.CreateBr(merge);
+  builder_.SetInsertPoint(observable);
+  PrepareObservableCall();
+  auto* called = builder_.CreateCall(target.body, arguments);
+  CheckStatus(called);
+  if (callee.return_type.kind != Kind::Void) {
+    Store(instruction.dst,
+          builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
+          callee.return_type);
+  }
+  PollAfterRuntimeCall();
+  auto* observed = builder_.GetInsertBlock();
+  builder_.CreateBr(merge);
+  builder_.SetInsertPoint(merge);
+  auto* outcome = builder_.CreatePHI(builder_.getInt8Ty(), 2);
+  outcome->addIncoming(computed, returned);
+  outcome->addIncoming(called, observed);
+  return outcome;
+}
+
 void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarget selected) {
+  const auto& callee = program_.functions.at(selected.function);
+  const auto& target = generated_[selected.function];
+  if (kind_ == NativeEntryKind::Leaf && target.budgeted_recursion &&
+      selected.function == function_index_) {
+    auto arguments = CallArguments(instruction, selected, std::nullopt);
+    auto* budget = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
+    arguments.insert(arguments.end() - 1, builder_.CreateNUWSub(budget, builder_.getInt32(1)));
+    CheckStatus(builder_.CreateCall(target.leaf, arguments));
+    if (callee.return_type.kind == Kind::Void) {
+      Store(instruction.dst, builder_.getFalse(), callee.return_type);
+    } else {
+      Store(instruction.dst,
+            builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
+            callee.return_type);
+    }
+    return;
+  }
   // 即使被调用方使用延迟叶入口，调用者也必须占用深度预算并保留失败时的调用链。
   PrepareTraceFrame();
-  const auto& callee = program_.functions.at(selected.function);
   auto* intrinsic_done = EmitSquareRootCall(instruction, selected.function);
   const auto borrowed = escape_.borrowed_calls.empty()
                             ? std::optional<std::size_t>{}
@@ -126,7 +222,6 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  const auto& target = generated_[selected.function];
   auto* result = target.leaf == nullptr ? result_ : leaf_result_;
   arguments.back() = result;
   auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
@@ -144,62 +239,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
                                       "call.typed.entry");
     status = builder_.CreateCall(target.body->getFunctionType(), entry, arguments);
   } else if (target.leaf != nullptr) {
-    auto& context = module_.getContext();
-    auto* leaf = llvm::BasicBlock::Create(context, "call.leaf", body_);
-    auto* observable = llvm::BasicBlock::Create(context, "call.observable", body_);
-    auto* merge = llvm::BasicBlock::Create(context, "call.done", body_);
-    auto* failed = llvm::BasicBlock::Create(context, "call.leaf.failed", body_);
-    auto* returned = llvm::BasicBlock::Create(context, "call.leaf.returned", body_);
-    // 调试器及控制请求需要真正的被调用帧；无请求时只执行有界的纯计算。
-    llvm::Value* ready = builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0));
-    if (target.leaf_guard != nullptr) {
-      ready = builder_.CreateAnd(ready, builder_.CreateCall(target.leaf_guard, arguments));
-    }
-    auto* branch = builder_.CreateCondBr(builder_.CreateNot(ready), observable, leaf,
-                                         llvm::MDBuilder(context).createUnlikelyBranchWeights());
-    if (target.leaf_guard == nullptr) {
-      // 纯叶调用沿用循环的有界轮询预算；异常分支仍建立完整调用链。
-      branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
-    }
-    builder_.SetInsertPoint(leaf);
-    auto* computed = builder_.CreateCall(target.leaf, arguments);
-    builder_.CreateCondBr(
-        builder_.CreateICmpEQ(computed, Status(builder_, ExecutionStatus::Returned)), returned,
-        failed, llvm::MDBuilder(context).createLikelyBranchWeights());
-    builder_.SetInsertPoint(failed);
-    PrepareObservableCall();
-    auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result);
-    auto failure = module_.getOrInsertFunction(
-        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
-    auto* materialized =
-        builder_.CreateCall(failure, {
-                                         body_->getArg(0),
-                                         position,
-                                         computed,
-                                         llvm::ConstantPointerNull::get(builder_.getPtrTy()),
-                                         builder_.getInt64(0),
-                                     });
-    Fail(materialized);
-    builder_.SetInsertPoint(returned);
-    builder_.CreateBr(merge);
-    builder_.SetInsertPoint(observable);
-    PrepareObservableCall();
-    auto* called = builder_.CreateCall(target.body, arguments);
-    CheckStatus(called);
-    if (callee.return_type.kind != Kind::Void) {
-      Store(instruction.dst,
-            builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
-            callee.return_type);
-    }
-    PollAfterRuntimeCall();
-    auto* observed = builder_.GetInsertBlock();
-    builder_.CreateBr(merge);
-    builder_.SetInsertPoint(merge);
-    auto* outcome = builder_.CreatePHI(builder_.getInt8Ty(), 2);
-    outcome->addIncoming(computed, returned);
-    outcome->addIncoming(called, observed);
-    status = outcome;
+    status = EmitLeafCall(instruction, selected, arguments);
   } else {
     status = builder_.CreateCall(borrowed ? target.borrowed : target.body, arguments);
   }

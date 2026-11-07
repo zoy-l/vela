@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/value/object.h"
 
@@ -53,6 +54,15 @@ extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
                                                 HeapObject* map,
                                                 const NativeValue* key,
                                                 const NativeValue* value) noexcept;
+extern "C" std::uint8_t vela_native_v1_string_int_map_get(HeapObject* map,
+                                                          StringObject* key,
+                                                          std::int64_t* result,
+                                                          Heap::MapLookup* lookup) noexcept;
+extern "C" std::uint8_t vela_native_v1_string_int_map_set(NativeExecution* execution,
+                                                          HeapObject* map,
+                                                          StringObject* key,
+                                                          std::int64_t value,
+                                                          const Heap::MapLookup* lookup) noexcept;
 extern "C" std::uint8_t vela_native_v1_concat(NativeExecution* execution,
                                               const NativeValue* left,
                                               const NativeValue* right,

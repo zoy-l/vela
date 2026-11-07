@@ -181,13 +181,16 @@ All modes check results and the intended allocation/materialization evidence.
 
 ## Native host-call boundaries
 
-`--native-compare` measures direct C++, opaque C++ function pointers,
-`native/jit/*` host calls and `native/jit_control/*` script loop controls.
+`--native-compare` uses `vela_aot_benchmarks` to measure direct C++, opaque C++
+function pointers, `native/jit/*` and `native/aot/*` host calls, and the corresponding
+`native/jit_control/*` and `native/aot_control/*` script loop controls.
 Cases cover empty, integer, double and borrowed-string signatures at two batch sizes.
-The host kernels are shared and compilation/registration/warm-up are excluded.
+JIT and AOT compile the same generated source and use the same complete runtime
+entry. The host kernels are shared and compilation/registration/warm-up are excluded.
+Every selected signature/batch pair requires all six backends in the report.
 
 Per-call time divides complete batch time by its call count.
-“JIT minus control” subtracts independent medians, not paired samples; generated
+“Native minus control” subtracts independent medians, not paired samples; generated
 loop and checksum differences remain part of that estimate. It is not a pure ABI
 latency measurement. Heap snapshots are live counts, not cumulative allocation or
 host malloc counts. See [native_call_benchmark.cc](native_call_benchmark.cc).

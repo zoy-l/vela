@@ -13,6 +13,18 @@ absolute paths into GN arguments. The generated toolchain uses the same paths
 for compilation, archiving, linking, and formatting. This keeps Debug and
 Release outputs separate and avoids ambient tool discovery.
 
+`python -m tools.vl build release` enables ThinLTO for C and C++ compilation,
+including the runtime and third-party sources built by GN. Debug builds keep
+native object files. The `vela_thin_lto` GN argument records this choice, and
+each Release output directory stores incremental link results in
+`thinlto-cache/`.
+
+ThinLTO bitcode requires the linker shipped with the same pinned Clang package.
+Builds and native distribution packages therefore use that package's LLVM
+archiver and LLD linker. The LLVM development SDK supplies the compiler backend
+libraries; its older linker does not consume the Release runtime archive.
+macOS uses the Xcode SDK with the pinned `ld64.lld` linker.
+
 The supported bootstrap hosts are Windows x64, Linux x64, and macOS arm64.
 The initial local validation runs on Windows x64. Adding another host requires
 the matching CIPD package entries and the corresponding GN toolchain flags in

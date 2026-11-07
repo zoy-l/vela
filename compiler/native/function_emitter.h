@@ -22,6 +22,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
@@ -34,6 +35,9 @@ class Module;
 
 namespace vela::compiler::native {
 
+inline constexpr std::uint32_t kRecursiveLeafDepth = 8;
+inline constexpr std::uint8_t kNativeLeafRetry = 255;
+
 struct GeneratedFunction final {
   llvm::Function* body = nullptr;
   llvm::Function* entry = nullptr;
@@ -45,6 +49,7 @@ struct GeneratedFunction final {
   llvm::Function* borrowed = nullptr;
   llvm::Function* leaf = nullptr;
   llvm::Function* leaf_guard = nullptr;
+  bool budgeted_recursion = false;
   bool square_root = false;
   [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
     return tier == NativeCodeTier::Optimized && recovery != nullptr;
@@ -62,6 +67,7 @@ enum class NativeEntryKind : std::uint8_t {
 
 // 同一分流的 initial、resume、leaf 和恢复入口共享不可变分析结果。
 struct FunctionEmissionFacts final {
+  NativeCodePlacement placement;
   const FieldTargets* field_targets = nullptr;
   std::size_t temporary_count = 0;
   std::vector<std::optional<std::uint32_t>> field_accesses;
@@ -91,6 +97,7 @@ class FunctionEmitter final {
         source_(escape.function.get()),
         origins_(escape.origins),
         function_index_(function_index),
+        placement_(facts.placement),
         field_targets_(*facts.field_targets),
         temporary_count_(facts.temporary_count),
         field_accesses_(facts.field_accesses),
@@ -105,6 +112,7 @@ class FunctionEmitter final {
         roots_(roots) {}
 
   std::expected<void, std::string> Emit();
+  std::size_t PlanAuxiliaryStorage();
   [[nodiscard]] std::uint64_t frame_bytes() const noexcept { return frame_bytes_; }
 
  private:
@@ -152,6 +160,10 @@ class FunctionEmitter final {
   llvm::Value* EmitDirectHostCall(const ir::Function& callee,
                                   llvm::Value* entries,
                                   std::span<llvm::Value* const> arguments);
+  void InitializeNativeStringView(llvm::Value* string, llvm::Value* storage);
+  llvm::Value* EmitNativeStringArgument(llvm::Value* string,
+                                        std::size_t parameter,
+                                        llvm::Value* kind);
   bool CanInlineImportCall(const ir::Function& callee) const;
   llvm::BasicBlock* EmitInlineImportCall(const ir::Instruction& instruction,
                                          CallableTarget selected,
@@ -230,6 +242,9 @@ class FunctionEmitter final {
   void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);
   void EmitIndex(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
+  void EmitStringCodePointAt(const ir::Instruction& instruction);
+  void EmitMapBuiltin(const ir::Instruction& instruction, Builtin builtin);
+  void EmitLocatedMapBuiltin(const ir::Instruction& instruction, Builtin builtin, llvm::Value* map);
   std::expected<void, std::string> EmitBuiltin(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
@@ -247,6 +262,9 @@ class FunctionEmitter final {
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
   std::optional<CallableTarget> CallTarget(std::size_t index) const;
   void EmitCall(const ir::Instruction& instruction, CallableTarget selected);
+  llvm::Value* EmitLeafCall(const ir::Instruction& instruction,
+                            CallableTarget selected,
+                            std::span<llvm::Value* const> arguments);
   llvm::BasicBlock* EmitSquareRootCall(const ir::Instruction& instruction, std::uint32_t target);
   std::vector<llvm::Value*> CallArguments(const ir::Instruction& instruction,
                                           CallableTarget selected,
@@ -258,9 +276,16 @@ class FunctionEmitter final {
   void PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
-  llvm::Value* HasStackBudget(llvm::Value* depth);
+  llvm::Value* HasStackBudget(llvm::Value* depth, std::uint64_t reserved_bytes = 0);
   void EmitFrameEntry();
   void CacheImports();
+  void BorrowHostExecution();
+  void CacheConstants();
+  void CacheNativeStringViews();
+  void CacheMapLookups();
+  std::size_t PlanStringViewStorage();
+  std::size_t PlanMapLookupStorage();
+  llvm::Value* AllocateAuxiliary(std::size_t bytes);
   void CacheFields();
   void EmitImport();
   llvm::Value* Output();
@@ -279,6 +304,7 @@ class FunctionEmitter final {
   const ir::Function& source_;
   std::span<const std::size_t> origins_;
   std::size_t function_index_;
+  NativeCodePlacement placement_;
   std::size_t instruction_index_ = 0;
   const FieldTargets& field_targets_;
   std::size_t temporary_count_;
@@ -297,6 +323,7 @@ class FunctionEmitter final {
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
   llvm::Value* host_parent_ = nullptr;
+  bool host_execution_borrowed_ = false;
   llvm::Value* entry_depth_ = nullptr;
   llvm::Value* global_owner_ = nullptr;
   llvm::Value* global_values_ = nullptr;
@@ -333,9 +360,19 @@ class FunctionEmitter final {
   std::vector<std::optional<unsigned>> frame_locals_;
   unsigned temporary_field_ = 0;
   std::optional<unsigned> leaf_result_field_;
+  std::optional<unsigned> auxiliary_field_;
+  llvm::Value* auxiliary_storage_ = nullptr;
+  std::size_t auxiliary_offset_ = 0;
+  std::optional<std::size_t> auxiliary_bytes_;
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> constants_;
+  std::vector<std::optional<std::uint32_t>> string_constant_registers_;
+  std::vector<std::uint32_t> native_view_constants_;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> constant_string_views_;
+  std::vector<llvm::Value*> map_lookups_;
+  std::vector<std::optional<std::size_t>> map_lookup_pairs_;
   std::span<const std::uint64_t> array_element_bits_;
   const NativeRootPlan& roots_;
 };
@@ -351,6 +388,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     std::span<const GeneratedFunction> generated,
     std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
+    NativeCodePlacement placement,
     NativeCodeTier tier = NativeCodeTier::Baseline,
     EscapeOptimization optimization = EscapeOptimization::Enabled,
     std::span<const std::optional<ir::ClassId>> borrowable = {});
@@ -365,6 +403,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     std::size_t function_index,
     const EscapePlan& plan,
     std::span<const GeneratedFunction> generated,
-    NativeDebugging debugging);
+    NativeDebugging debugging,
+    NativeCodePlacement placement);
 
 }  // namespace vela::compiler::native

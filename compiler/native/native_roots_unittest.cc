@@ -159,6 +159,35 @@ TEST(NativeRootRecoveryTest, ReservesRecoveryCapacityAndMetadataOnlyReferences) 
   ExpectDistinctLiveRoots(function, {}, plan, required);
 }
 
+TEST(NativeConstantRootsTest, OmitsOnlyStableInstanceStringsAndKeepsOverwrittenRegisters) {
+  const auto prepared = ir::test::Prepare(R"(
+external func consume(text: string): void;
+export func constant(): void {
+  const text = 'constant'; const copy = text;
+  for (let index = 0; index < 8; index++) { consume(copy); }
+}
+export func changed(flag: bool, input: string): void {
+  let text = 'constant'; if (flag) { text = input; }
+  consume(text);
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& functions = prepared.program.functions;
+  const auto stable = std::ranges::find(functions, "constant", &ir::Function::name);
+  const auto changed = std::ranges::find(functions, "changed", &ir::Function::name);
+  ASSERT_NE(stable, functions.end());
+  ASSERT_NE(changed, functions.end());
+  for (const auto constants : {NativeConstantRoots::Local, NativeConstantRoots::Instance}) {
+    const auto plan = PlanNativeRoots(*stable, functions, NativeProgramMode::Closed,
+                                      NativeDebugging::Safepoints, {}, constants);
+    EXPECT_EQ(plan.count == 0, constants == NativeConstantRoots::Instance);
+    const auto reassigned = PlanNativeRoots(*changed, functions, NativeProgramMode::Closed,
+                                            NativeDebugging::Safepoints, {}, constants);
+    EXPECT_GT(reassigned.count, 0U);
+    ExpectDistinctLiveRoots(*changed, functions, reassigned);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Debugging,
                          NativeRootsTest,
                          testing::Values(NativeDebugging::Safepoints,

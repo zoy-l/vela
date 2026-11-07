@@ -324,6 +324,27 @@ Value Heap::LoadMapValue(HeapObject& object, Value key) noexcept {
   return ReadMapEntry(layout, entry);
 }
 
+Value Heap::ResolveMapValue(HeapObject& object, Value key, MapLookup& lookup) noexcept {
+  const auto& layout = *object.collection_layout();
+  const auto& storage = *StorageAfter<CollectionStorage>(object);
+  const auto hash = HashKey(key);
+  const auto slot = storage.capacity == 0 ? Slot{} : FindSlot(storage.table, layout, key, hash);
+  const auto& values = *layout.values;
+  auto* integer =
+      slot.found && !values.HasTaggedElements() && values.element.kind == ValueKind::Integer
+          ? &ElementSlots<std::int64_t>(storage.table.values)[slot.entry]
+          : nullptr;
+  lookup = {.hash = hash, .bucket = slot.bucket, .entry = slot.entry, .integer_value = integer};
+  return ReadMapEntry(layout, {.table = &storage.table, .slot = slot});
+}
+
+std::expected<void, ExecutionStatus> Heap::StoreMapValue(HeapObject& object,
+                                                         Value key,
+                                                         Value value,
+                                                         MapLookup lookup) noexcept {
+  return InsertCollectionLocated(object, key, value, lookup).transform([](auto) {});
+}
+
 void Heap::StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value value) noexcept {
   const auto& layout = *object.collection_layout();
   const auto& values = layout.values;
@@ -347,12 +368,27 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
   Slot slot;
   if (storage.capacity != 0) {
     slot = FindSlot(table, layout, key, hash);
-    if (slot.found) {
-      if (layout.values) {
-        StoreCollectionEntry(object, slot.entry, value);
-      }
-      return CollectionInsert::Updated;
+  }
+  return InsertCollectionLocated(
+      object, key, value,
+      {.hash = hash, .bucket = slot.bucket, .entry = slot.entry, .integer_value = nullptr});
+}
+
+std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionLocated(
+    HeapObject& object,
+    Value key,
+    Value value,
+    MapLookup lookup) noexcept {
+  const auto& layout = *object.collection_layout();
+  auto& storage = *StorageAfter<CollectionStorage>(object);
+  const auto& table = storage.table;
+  const auto hash = lookup.hash;
+  Slot slot{.bucket = lookup.bucket, .entry = lookup.entry, .found = lookup.entry != kEmpty};
+  if (slot.found) {
+    if (layout.values) {
+      StoreCollectionEntry(object, slot.entry, value);
     }
+    return CollectionInsert::Updated;
   }
   if (storage.used == storage.capacity) {
     const auto grown = GrowCollection(object);

@@ -22,7 +22,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="release")
     comparison = parser.add_mutually_exclusive_group()
     comparison.add_argument("--compare", action="store_true", help="Compare Vela, C++, LuaJIT and LuaJIT interpreter")
-    comparison.add_argument("--native-compare", action="store_true", help="Compare JIT native calls with direct and indirect C++ calls")
+    comparison.add_argument("--native-compare", action="store_true", help="Compare JIT/AOT native calls with direct and indirect C++ calls")
     comparison.add_argument("--native-class-compare", action="store_true", help="Compare generated class bindings across JIT, AOT and reloadable modes")
     comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT and C++ workloads")
     comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT and C++")
@@ -59,7 +59,7 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     build(parsed.variant, "benchmarks")
-    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare or parsed.native_class_compare else "vela_benchmarks"
+    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare or parsed.native_compare or parsed.native_class_compare else "vela_benchmarks"
     executable = output_directory(parsed.variant) / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
     comparing = parsed.compare or parsed.native_compare or parsed.native_class_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare

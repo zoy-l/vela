@@ -197,10 +197,10 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
                 run([tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", "/Fe" + str(host), host_object,
                      *libraries, runtime, *gtest], env=None)
             else:
-                flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread"]
+                flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
+                         "-fuse-ld=" + str(tools["linker"])]
                 if sys.platform == "darwin":
-                    flags += ["-fuse-ld=" + str(tools["linker"]),
-                              "-isysroot", str(tools["sysroot"]), "-nostdinc++",
+                    flags += ["-isysroot", str(tools["sysroot"]), "-nostdinc++",
                               "-isystem", str(tools["sysroot"] / "usr/include/c++/v1"),
                               "-framework", "CoreFoundation"]
                 run([tools["cxx"], *flags, *["-I" + str(path) for path in includes],

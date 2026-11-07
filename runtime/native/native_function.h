@@ -23,6 +23,7 @@
 #include "runtime/native/native_host_type.h"
 #include "runtime/native/native_type.h"
 #include "runtime/native/native_type_traits.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
@@ -111,7 +112,7 @@ struct NativeCodec<std::string_view> final : NativePlainCodec {
       .type = layout::Type{.kind = layout::Type::Kind::String},
       .hosts = {},
   };
-  static std::string_view Decode(Value value);
+  static std::string_view Decode(Value value) { return value.AsString()->value(); }
   static NativeResult Encode(NativeContext& context, std::string_view text) {
     return context.String(text);
   }
@@ -403,6 +404,19 @@ struct NativeAdapterBase {
        std::is_same_v<Result, std::int64_t> || std::is_same_v<Result, double>) &&
       !(NativeCodec<Args>::kNeedsScope || ...) &&
       !(std::is_same_v<typename NativeAbiCodec<Args>::Type, NativeValue> || ...);
+  // Windows x64 的 16 字节平凡聚合按引用传值。视图存储由 C++ 构造，生成代码
+  // 只复制其不透明字节，每次调用均提供独立副本，允许宿主修改自己的值参数。
+#if defined(_WIN32) && defined(_M_X64)
+  static constexpr bool kNativeStringViews =
+      kDirect && kNeedsContext && (std::is_same_v<Args, std::string_view> || ...) &&
+      ((std::is_same_v<Args, std::string_view> ||
+        std::is_same_v<Args, typename NativeDirectArgument<Args>::Type>) &&
+       ...);
+  static_assert(sizeof(std::string_view) == 2 * sizeof(void*) &&
+                std::is_trivially_copyable_v<std::string_view>);
+#else
+  static constexpr bool kNativeStringViews = false;
+#endif
   struct EmptyScope final {
     explicit EmptyScope(NativeContext& /*unused*/) noexcept {}
   };
@@ -478,10 +492,25 @@ struct NativeAdapterBase {
   static R DirectCall(NativeContext& context,
                       NativeDirectArgument<Args>::Type... arguments) noexcept {
     Scope scope(context);
+    return UnscopedDirectCall(context, arguments...);
+  }
+
+  static R UnscopedDirectCall(NativeContext& context,
+                              NativeDirectArgument<Args>::Type... arguments) noexcept {
     if constexpr (std::is_void_v<R>) {
       InvokeFunction(context, NativeDirectArgument<Args>::Decode(arguments)...);
     } else {
       return InvokeFunction(context, NativeDirectArgument<Args>::Decode(arguments)...);
+    }
+  }
+
+  static constexpr auto UnscopedEntry() noexcept {
+    if constexpr (kNativeStringViews ||
+                  (kNeedsContext &&
+                   (std::is_same_v<Args, typename NativeDirectArgument<Args>::Type> && ...))) {
+      return Function;
+    } else {
+      return &UnscopedDirectCall;
     }
   }
 };
@@ -505,11 +534,13 @@ class NativeFunction final {
   // 指向静态的精确函数指针槽；只擦除槽的对象类型，不转换函数指针类型。
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
-  enum class AotCallKind : std::uint8_t { Checked, Direct };
+  enum class AotCallKind : std::uint8_t { Checked, Direct, NativeStringViews };
   enum class Intrinsic : std::uint8_t { None, SquareRoot };
   struct AotEntry final {
     AotEntrySlot slot = nullptr;
+    AotEntrySlot unscoped_slot = nullptr;
     AotCallKind kind = AotCallKind::Checked;
+    AotCallKind unscoped_kind = AotCallKind::Direct;
     Intrinsic intrinsic = Intrinsic::None;
   };
   template <auto Function>
@@ -519,9 +550,13 @@ class NativeFunction final {
       if constexpr (Adapter::kDirect) {
         // 直接入口统一携带上下文；适配器在编译期决定 C++ 函数是否消费它。
         static constexpr auto kTarget = &Adapter::DirectCall;
+        static constexpr auto kUnscopedTarget = Adapter::UnscopedEntry();
         return AotEntry{
             .slot = static_cast<AotEntrySlot>(&kTarget),
+            .unscoped_slot = static_cast<AotEntrySlot>(&kUnscopedTarget),
             .kind = AotCallKind::Direct,
+            .unscoped_kind =
+                Adapter::kNativeStringViews ? AotCallKind::NativeStringViews : AotCallKind::Direct,
         };
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;
@@ -559,5 +594,8 @@ class NativeFunction final {
 
 extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
                                                                  std::uint32_t function) noexcept;
+extern "C" void vela_native_v1_release_host_handles(NativeContext* context) noexcept;
+extern "C" void vela_native_v1_borrow_string_view(StringObject* string,
+                                                  std::string_view* output) noexcept;
 
 }  // namespace vela::runtime

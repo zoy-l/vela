@@ -22,7 +22,11 @@ from tools.aot_callback_fixture import HOST_TESTS as CALLBACK_TESTS, SOURCE as C
 from tools.aot_class_fixture import HOST_TESTS as CLASS_TESTS, SOURCE as CLASS_SOURCE
 from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
 from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
+from tools.aot_repeated_field_fixture import (HOST_TESTS as REPEATED_FIELD_TESTS,
+                                            SOURCE as REPEATED_FIELD_SOURCE)
 from tools.aot_binding_fixture import HOST_TESTS as BINDING_TESTS, SOURCE as BINDING_SOURCE
+from tools.aot_recursive_fixture import HOST_TESTS as RECURSIVE_TESTS, SOURCE as RECURSIVE_SOURCE
+from tools.aot_map_lookup_fixture import HOST_TESTS as MAP_LOOKUP_TESTS, SOURCE as MAP_LOOKUP_SOURCE
 from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
                                      SOURCE as GLOBAL_STORAGE_SOURCE,
                                      LEAF_SOURCE as GLOBAL_LEAF_SOURCE)
@@ -807,6 +811,15 @@ export func calculate(): int {
   const dynamicText: dynamic = unicode;
   for (let index = 0; index < dynamicText.length; index++) { forward.append(dynamicText[index]); }
   for (let index = unicode.length - 1; index >= 0; index--) { backward.append(unicode[index]); }
+  const ascii = 'A\0z'; const asciiCopy = String();
+  for (let index = 0; index < ascii.length; index++) { asciiCopy.append(ascii[index]); }
+  if (asciiCopy.toString() != ascii) { return 0; }
+  for (const input in [ascii, unicode]) {
+    for (const index in [-1, input.length, 4294967296]) {
+      try { const invalid = String(); invalid.append(input[index]); return 0; }
+      catch (error: Error) { if (error.code != 'IndexOutOfBounds') { return 0; } }
+    }
+  }
   if (forward.toString() != unicode || backward.toString() != '\0\u0301e😀中A' ||
       [unicode, unicode].join('界').length != 13 || 'ßﬃ'.toUpperCase().length != 5) { return 0; }
   return values[0].length + values[1].length + values[2].length;
@@ -1199,14 +1212,18 @@ export async func calculate(): Future<int> {
         fixtures["CLASS_ENTRY"] = CLASS_SOURCE
         fixtures["INTEGER_LOOP_ENTRY"] = INTEGER_LOOP_SOURCE
         fixtures["FIELD_LOOP_ENTRY"] = FIELD_LOOP_SOURCE
+        fixtures["REPEATED_FIELD_ENTRY"] = REPEATED_FIELD_SOURCE
+        fixtures["MAP_LOOKUP_ENTRY"] = MAP_LOOKUP_SOURCE
         fixtures["BINDING_ENTRY"] = BINDING_SOURCE
+        fixtures["RECURSIVE_ENTRY"] = RECURSIVE_SOURCE
         fixtures["GLOBAL_STORAGE_ENTRY"] = GLOBAL_STORAGE_SOURCE
         fixtures["GLOBAL_LEAF_ENTRY"] = GLOBAL_LEAF_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
         fixtures["TEXT_ENTRY"] = "export func calculate(value: string): string { return value + '!'; }"
         host = (HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS + MAP_LITERAL_TESTS
                 + NUMERIC_TESTS + CALLBACK_TESTS + CLASS_TESTS
-                + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS + BINDING_TESTS)
+                + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS + BINDING_TESTS
+                + RECURSIVE_TESTS + REPEATED_FIELD_TESTS + MAP_LOOKUP_TESTS)
         loop_lines = [index for index, line in enumerate(INTEGER_LOOP_SOURCE.splitlines(), 1)
                       if "for (let index" in line][:5]
         host = host.replace("INTEGER_LOOP_TRACE_LINES", ", ".join(map(str, loop_lines)))
@@ -1261,10 +1278,10 @@ export async func calculate(): Future<int> {
             self.command([self.tools["cc"], *c_compile_flags, c_source,
                           f"-I{ROOT}", "-o", self.directory / "headers.o"])
             flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
+                     "-fuse-ld=" + str(self.tools["linker"]),
                      "-o", str(executable), *[f"-I{path}" for path in includes]]
             if sys.platform == "darwin":
-                flags.extend(["-fuse-ld=" + str(self.tools["linker"]),
-                              "-isysroot", str(self.tools["sysroot"]), "-nostdinc++",
+                flags.extend(["-isysroot", str(self.tools["sysroot"]), "-nostdinc++",
                               "-isystem", str(self.tools["sysroot"] / "usr/include/c++/v1"),
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
@@ -1273,7 +1290,7 @@ export async func calculate(): Future<int> {
             c_flags[c_flags.index(str(executable))] = str(c_executable)
             self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 60 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 64 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

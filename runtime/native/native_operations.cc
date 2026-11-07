@@ -186,6 +186,25 @@ extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
   return ToNativeStatus(inserted);
 }
 
+extern "C" std::uint8_t vela_native_v1_string_int_map_get(HeapObject* map,
+                                                          StringObject* key,
+                                                          std::int64_t* result,
+                                                          Heap::MapLookup* lookup) noexcept {
+  const auto value = Heap::ResolveMapValue(*map, Value::String(key), *lookup);
+  const auto present = !value.IsNull();
+  *result = present ? value.AsInteger() : 0;
+  return present ? 1 : 0;
+}
+
+extern "C" std::uint8_t vela_native_v1_string_int_map_set(NativeExecution* execution,
+                                                          HeapObject* map,
+                                                          StringObject* key,
+                                                          std::int64_t value,
+                                                          const Heap::MapLookup* lookup) noexcept {
+  return ToNativeStatus(execution->isolate().heap().StoreMapValue(*map, Value::String(key),
+                                                                  Value::Integer(value), *lookup));
+}
+
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
                                                std::uint32_t operation,
                                                const NativeValue* arguments,

@@ -554,9 +554,10 @@ int main() {
                                  "/Fe" + str(executable), str(self.directory / "host_main.obj"),
                                  str(self.directory / "app_bindings.obj"), str(library), str(runtime)]
                 else:
-                    flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread"]
+                    flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
+                             "-fuse-ld=" + str(tools["linker"])]
                     if sys.platform == "darwin":
-                        flags += ["-fuse-ld=" + str(tools["linker"]), "-isysroot", str(tools["sysroot"]),
+                        flags += ["-isysroot", str(tools["sysroot"]),
                                   "-nostdinc++", "-isystem", str(tools["sysroot"] / "usr/include/c++/v1"),
                                   "-framework", "CoreFoundation"]
                     arguments = [str(tools["cxx"]), *flags, *["-I" + str(path) for path in includes],

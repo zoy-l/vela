@@ -146,8 +146,37 @@ contracts.
 
 Each `NativeExecution` owns its `NativeContext`; it borrows the same Isolate for the execution's
 lifetime. Host calls borrow that context and their managed arguments for the duration of the call.
+The context constructs its handle scope on first use and releases it after each host call. Linked
+AOT direct calls perform that cleanup in generated code; dynamic entries retain scoped adapters.
+On Windows x64, bindings whose C++ signature accepts borrowed string views and unchanged scalar
+arguments can expose the native view ABI. C++ constructs each opaque view, and generated calls copy
+it for each value parameter. The compiler never assumes the standard library's member layout.
+Closed synchronous AOT functions whose only successful observable operations are host calls may
+borrow `host_execution` for the whole function. Reentrant executions retain their own contexts,
+restore the outer execution, and preserve the caller's logical frames.
+
 The execution registers its exception root when it publishes an exception envelope, and releases
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
+
+Linked AOT stack roots form a synchronous LIFO chain owned by the Heap. Generated frames initialize
+their root slots before linking and restore the previous head on every exit. Instance string
+constants remain rooted by program state and need no duplicate synchronous frame roots. Native
+string views and collection lookup locations participate in the existing frame-size budget;
+large frames use the same recoverable native storage, with sixteen-byte alignment.
+
+AOT may execute small pure recursive calculations through a bounded leaf entry after reserving
+logical depth and physical stack space. Exhausting the bound or encountering an arithmetic failure
+returns to the full entry to construct the original error and trace. Eligibility excludes state
+access, side effects and loops, so that this execution cannot repeat observable work. Managed
+recursive bodies use complete inlined frames and retain their root and error contracts.
+
+Repeated field traversals may be folded only when every object receives identical independent
+updates, the increment fields remain immutable, and no failure can observe an enlarged update
+prefix. Initialization is preserved as a separate first iteration. Floating additions retain their
+original order. An AOT Map get/set pair may reuse its lookup only when the get dominates the set,
+the map and key have unchanged single-definition origins, and every intervening path avoids state
+access, allocation and user calls. Existing untagged integer entries can then be written directly;
+insertions retain the normal allocation, GC, iteration-order and failure behavior.
 
 Development-session entry lookup caches a borrowed target from the current publication and validates
 its revision before reuse. Publication and stopping clear that cache before old state can retire;

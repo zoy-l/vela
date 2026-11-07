@@ -38,6 +38,13 @@ class InstanceMigration;
 struct NativeRetainedFunction;
 struct LayoutCounts;
 
+// 编译器生成的同步栈帧严格后进先出；槽在发布前清空，不持有独立外部资源。
+struct NativeStackRoots final {
+  const Value* values = nullptr;
+  std::size_t count = 0;
+  NativeStackRoots* previous = nullptr;
+};
+
 class RootRange final {
  public:
   explicit RootRange(
@@ -197,6 +204,9 @@ class Heap final {
   [[nodiscard]] static CancellationToken* GetCancellationToken(const HeapObject& object) noexcept;
   // 异构全局槽属于 GC 对象，不作为脚本数组或 dynamic 类型暴露。
   [[nodiscard]] HeapObject* AllocateValueSlots(std::size_t count) noexcept;
+  [[nodiscard]] NativeStackRoots** native_stack_roots_head() noexcept {
+    return &native_stack_roots_;
+  }
   [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   // 非空引用数组的初始空槽只供构建使用；交给脚本或宿主前必须完成所有元素初始化。
@@ -232,6 +242,20 @@ class Heap final {
                                                                    Value key,
                                                                    Value value) noexcept;
   [[nodiscard]] static Value LoadMapValue(HeapObject& object, Value key) noexcept;
+  struct MapLookup final {
+    std::size_t hash;
+    std::uint32_t bucket;
+    std::uint32_t entry;
+    std::int64_t* integer_value;
+  };
+  // 位置只在编译器证明 map / key 未改变、期间不分配或调用用户代码的片段内借用。
+  [[nodiscard]] static Value ResolveMapValue(HeapObject& object,
+                                             Value key,
+                                             MapLookup& lookup) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus> StoreMapValue(HeapObject& object,
+                                                                   Value key,
+                                                                   Value value,
+                                                                   MapLookup lookup) noexcept;
   [[nodiscard]] static std::expected<bool, ExecutionStatus> HasCollectionKey(
       const HeapObject& object,
       Value key) noexcept;
@@ -499,11 +523,14 @@ class Heap final {
                                                                           Value key,
                                                                           std::size_t hash,
                                                                           Value value) noexcept;
+  std::expected<CollectionInsert, ExecutionStatus>
+  InsertCollectionLocated(HeapObject& object, Value key, Value value, MapLookup lookup) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;
   HeapObject** sweep_link_ = nullptr;
   RootRange* roots_ = nullptr;
+  NativeStackRoots* native_stack_roots_ = nullptr;
   std::uint64_t next_root_identity_ = 0;
   Future::Root* future_roots_ = nullptr;
   std::size_t instance_type_count_ = 0;

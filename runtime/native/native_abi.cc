@@ -34,11 +34,12 @@ NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept {
   if (allocation_bytes_ == 0) {
     return;
   }
-  allocation_ = ::operator new(allocation_bytes_, std::nothrow);
+  allocation_ =
+      ::operator new(allocation_bytes_, std::align_val_t{kNativeFrameAlignment}, std::nothrow);
   if (allocation_ == nullptr) {
     return;
   }
-  static_assert(sizeof(Value) % alignof(std::max_align_t) == 0);
+  static_assert(sizeof(Value) % kNativeFrameAlignment == 0);
   roots_ = {static_cast<Value*>(allocation_), size.root_count};
   std::uninitialized_value_construct_n(roots_.data(), roots_.size());
   storage_ = size.storage_bytes == 0 ? nullptr : std::as_writable_bytes(roots_).last(0).data();
@@ -49,7 +50,7 @@ NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept {
 
 NativeFrame::~NativeFrame() {
   root_range_.Detach();
-  ::operator delete(allocation_);
+  ::operator delete(allocation_, std::align_val_t{kNativeFrameAlignment});
 }
 
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
@@ -60,6 +61,7 @@ NativeExecution::NativeExecution(NativeInstance& instance, const NativeExecution
       context_(instance.isolate(), *this),
       control_state_(&isolate().native_control().state()),
       barrier_state_(&isolate().heap().barrier_state()),
+      stack_roots_(isolate().heap().native_stack_roots_head()),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
   const auto bounds = CurrentNativeStackBounds();
   if (parent != nullptr) {

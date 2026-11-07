@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <queue>
 #include <span>
 #include <utility>
@@ -201,6 +203,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
                      std::size_t index,
                      const ir::RegisterAccess& access,
                      InstructionLiveness liveness,
+                     std::span<const std::optional<std::uint32_t>> instance_strings,
                      std::span<RootLifetime> lifetimes) {
   const auto& instruction = function.instructions[index];
   auto& stores = plan.stores[index];
@@ -209,7 +212,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
       plan.safepoints[index] != 0 || ir::AnalyzeEffects(instruction).MayCollect();
   const auto& after = liveness.after.get();
   liveness.before.get().ForEach([&](ir::RegisterId reg) {
-    if (!HasManagedValue(function, reg)) {
+    if (!HasManagedValue(function, reg) || (!instance_strings.empty() && instance_strings[reg])) {
       return;
     }
     lifetimes[reg].Include(index);
@@ -220,7 +223,8 @@ void RecordLiveRoots(NativeRootPlan& plan,
       clears.push_back(reg);
     }
   });
-  if (access.defines_value && HasManagedValue(function, instruction.dst)) {
+  if (access.defines_value && HasManagedValue(function, instruction.dst) &&
+      (instance_strings.empty() || !instance_strings[instruction.dst])) {
     clears.push_back(instruction.dst);
     // 逆向传递只会从成功后继删除 dst；其余 after 值已包含在 before 中。
     lifetimes[instruction.dst].Include(index);
@@ -236,13 +240,18 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
                                std::span<const ir::Function> functions,
                                NativeProgramMode mode,
                                NativeDebugging debugging,
-                               NativeRecoveryRequirements recovery) {
+                               NativeRecoveryRequirements recovery,
+                               NativeConstantRoots constants) {
   auto plan = InitializeRoots(function, mode, debugging, recovery);
   if (!function.native_symbol.empty()) {
     AssignImportRoots(plan, function);
     return plan;
   }
   const auto graph = ir::BuildFlowGraph(function);
+  const auto instance_strings = constants == NativeConstantRoots::Instance &&
+                                        mode == NativeProgramMode::Closed && !function.is_async
+                                    ? FindStringConstants(function, functions)
+                                    : std::vector<std::optional<std::uint32_t>>{};
   const auto required = recovery.values;
   const auto blocks = ir::AnalyzeLiveness(function, graph, functions, required);
   std::vector<RootLifetime> lifetimes(function.register_count);
@@ -261,7 +270,8 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
         live.ForEach([&](ir::RegisterId reg) { plan.checkpoints[index].push_back(reg); });
       }
-      RecordLiveRoots(plan, function, index, access, {.before = live, .after = after}, lifetimes);
+      RecordLiveRoots(plan, function, index, access, {.before = live, .after = after},
+                      instance_strings, lifetimes);
     }
   }
   AssignRootSlots(plan, lifetimes);

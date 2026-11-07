@@ -12,6 +12,7 @@
 namespace vela::compiler::native {
 
 enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines, Instructions };
+enum class NativeConstantRoots : std::uint8_t { Local, Instance };
 
 inline constexpr std::uint8_t kNativeSafepointBoundary = 1U << 0;
 inline constexpr std::uint8_t kNativeSafepointBeforeRuntime = 1U << 1;
@@ -55,10 +56,12 @@ struct NativeFunctionMetrics final {
   std::uint64_t borrowed_root_stores = 0;
 };
 
-[[nodiscard]] NativeRootPlan PlanNativeRoots(const ir::Function& function,
-                                             std::span<const ir::Function> functions,
-                                             NativeProgramMode mode,
-                                             NativeDebugging debugging,
-                                             NativeRecoveryRequirements recovery = {});
+[[nodiscard]] NativeRootPlan PlanNativeRoots(
+    const ir::Function& function,
+    std::span<const ir::Function> functions,
+    NativeProgramMode mode,
+    NativeDebugging debugging,
+    NativeRecoveryRequirements recovery = {},
+    NativeConstantRoots constants = NativeConstantRoots::Local);
 
 }  // namespace vela::compiler::native

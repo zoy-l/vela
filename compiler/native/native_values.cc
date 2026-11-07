@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -22,13 +24,53 @@
 #include <llvm/IR/Type.h>
 
 #include "base/execution_status.h"
+#include "base/opcode.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
+
+std::vector<std::optional<std::uint32_t>> FindStringConstants(
+    const ir::Function& function,
+    std::span<const ir::Function> functions) {
+  std::vector<const ir::Instruction*> definitions(function.register_count);
+  std::vector<std::size_t> counts(function.register_count);
+  for (const auto& instruction : function.instructions) {
+    if (ir::AnalyzeRegisters(instruction, functions).defines_value) {
+      ++counts.at(instruction.dst);
+      definitions.at(instruction.dst) = &instruction;
+    }
+  }
+  std::vector<std::optional<std::uint32_t>> result(function.register_count);
+  std::vector<std::vector<ir::RegisterId>> copies(function.register_count);
+  std::vector<ir::RegisterId> pending;
+  for (ir::RegisterId reg = function.parameter_count; reg < function.register_count; ++reg) {
+    if (counts[reg] != 1) {
+      continue;
+    }
+    const auto& definition = *definitions[reg];
+    if (definition.opcode == Opcode::LoadString) {
+      result[reg] = definition.index;
+      pending.push_back(reg);
+    } else if (definition.opcode == Opcode::Move) {
+      copies[definition.lhs].push_back(reg);
+    }
+  }
+  while (!pending.empty()) {
+    const auto reg = pending.back();
+    pending.pop_back();
+    for (const auto copy : copies[reg]) {
+      result[copy] = result[reg];
+      pending.push_back(copy);
+    }
+  }
+  return result;
+}
 
 llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution) {
   using runtime::NativeMemoryLayout;
@@ -85,7 +127,8 @@ llvm::StructType* NativeImportType(llvm::LLVMContext& context) {
 llvm::Value* LoadImport(Builder& builder,
                         llvm::Module& module,
                         llvm::Value* execution,
-                        std::uint32_t function) {
+                        std::uint32_t function,
+                        NativeCodePlacement placement) {
   using runtime::NativeFunction;
   auto lookup = module.getOrInsertFunction(runtime::kNativeImportSymbol, builder.getPtrTy(),
                                            builder.getPtrTy(), builder.getInt32Ty());
@@ -95,12 +138,27 @@ llvm::Value* LoadImport(Builder& builder,
   };
   auto* slot =
       builder.CreateLoad(builder.getPtrTy(), address(offsetof(NativeFunction::AotEntry, slot)));
-  auto* kind =
+  llvm::Value* kind =
       builder.CreateLoad(builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, kind)));
   auto* intrinsic = builder.CreateLoad(builder.getInt8Ty(),
                                        address(offsetof(NativeFunction::AotEntry, intrinsic)));
+  llvm::Value* selected_slot = slot;
+  if (placement == NativeCodePlacement::Linked) {
+    auto* unscoped = builder.CreateLoad(builder.getPtrTy(),
+                                        address(offsetof(NativeFunction::AotEntry, unscoped_slot)));
+    auto* unscoped_kind = builder.CreateLoad(
+        builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, unscoped_kind)));
+    selected_slot = builder.CreateSelect(
+        builder.CreateICmpEQ(
+            kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct))),
+        unscoped, slot);
+    kind = builder.CreateSelect(
+        builder.CreateICmpEQ(
+            kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct))),
+        unscoped_kind, kind);
+  }
   // 槽类型只在此擦除，循环内只传实际入口和由 C++ 签名确定的调用约定。
-  auto* target = builder.CreateLoad(builder.getPtrTy(), slot);
+  auto* target = builder.CreateLoad(builder.getPtrTy(), selected_slot);
   llvm::Value* result = llvm::PoisonValue::get(NativeImportType(module.getContext()));
   result = builder.CreateInsertValue(result, target, 0);
   result = builder.CreateInsertValue(result, kind, 1);
@@ -312,7 +370,8 @@ void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
                  std::uint32_t function_index,
                  const GeneratedFunction& function,
-                 llvm::Constant* image) {
+                 llvm::Constant* image,
+                 NativeCodePlacement placement) {
   auto* body = function.body;
   auto* entry = function.entry;
   auto& context = module.getContext();
@@ -378,7 +437,7 @@ void EmitWrapper(llvm::Module& module,
   auto* result_type = ValueType(context, source.return_type);
   auto* result = builder.CreateAlloca(result_type);
   if (!source.native_symbol.empty()) {
-    arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index));
+    arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index, placement));
   }
   arguments.push_back(result);
   llvm::Value* status = nullptr;

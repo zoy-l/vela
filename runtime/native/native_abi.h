@@ -29,6 +29,7 @@ struct NativeCheckpoint;
 struct NativeControlState;
 
 inline constexpr std::uint32_t kNativeAbiVersion = 19;
+inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {
@@ -210,6 +211,7 @@ class NativeExecution final {
   NativeContext context_;
   NativeControlState* control_state_;
   const GcBarrierState* barrier_state_;
+  NativeStackRoots** stack_roots_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   std::size_t base_frame_count_ = 0;

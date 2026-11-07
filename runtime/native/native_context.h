@@ -30,7 +30,6 @@ class Isolate;
 class Future;
 class Completer;
 class CancellationToken;
-class NativeContextScope;
 class NativeExecution;
 
 using NativeResult = std::expected<Value, vela::Error>;
@@ -44,8 +43,19 @@ struct NativeConstructed final {
 class NativeContext final {
  public:
   explicit NativeContext(Isolate& isolate) noexcept : isolate_(&isolate) {}
+  ~NativeContext() = default;
+  NativeContext(const NativeContext&) = delete;
+  NativeContext& operator=(const NativeContext&) = delete;
+  NativeContext(NativeContext&&) = delete;
+  NativeContext& operator=(NativeContext&&) = delete;
   [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
   [[nodiscard]] HandleScope& handles() const noexcept;
+  void ReleaseHandles() noexcept {
+    if (handles_ != nullptr) {
+      handles_storage_.reset();
+      handles_ = nullptr;
+    }
+  }
   template <class T>
   [[nodiscard]] Result<vela::Type<T>> BindType() const {
     return vela::internal::TypeAccess::FromBinding<T>(
@@ -112,8 +122,8 @@ class NativeContext final {
   }
 
  private:
-  friend class NativeContextScope;
   friend class NativeExecution;
+  friend struct NativeMemoryLayout;
   NativeContext(Isolate& isolate, NativeExecution& execution) noexcept
       : isolate_(&isolate), execution_(&execution) {}
   [[nodiscard]] std::expected<HostType, ExecutionStatus> BindTypeContract(NativeType type) const;
@@ -125,29 +135,25 @@ class NativeContext final {
                                                                const void* object,
                                                                std::size_t extra_bytes) const;
   Isolate* isolate_;
-  NativeContextScope* scope_ = nullptr;
   NativeExecution* execution_ = nullptr;
+  mutable HandleScope* handles_ = nullptr;
+  // optional 管理惰性作用域的生命周期；独立借用指针供生成代码检查，避免依赖标准库布局。
+  mutable std::optional<HandleScope> handles_storage_;
 };
 
-// 每次宿主调用独占作用域期限；首次使用句柄才登记根，标量调用不初始化根槽。
+// 同步宿主重入创建新的 NativeExecution 和 NativeContext；本上下文的句柄仅属于
+// 当前宿主调用。存储由执行复用，标量调用不在每次适配时构造大块栈上作用域。
 class NativeContextScope final {
  public:
-  explicit NativeContextScope(NativeContext& context) noexcept
-      : context_(&context), previous_(context.scope_) {
-    context.scope_ = this;
-  }
-  ~NativeContextScope() { context_->scope_ = previous_; }
+  explicit NativeContextScope(NativeContext& context) noexcept : context_(&context) {}
+  ~NativeContextScope() { context_->ReleaseHandles(); }
   NativeContextScope(const NativeContextScope&) = delete;
   NativeContextScope& operator=(const NativeContextScope&) = delete;
   NativeContextScope(NativeContextScope&&) = delete;
   NativeContextScope& operator=(NativeContextScope&&) = delete;
 
  private:
-  friend class NativeContext;
-  [[nodiscard]] HandleScope& handles() noexcept;
   NativeContext* context_;
-  NativeContextScope* previous_;
-  std::optional<HandleScope> handles_;
 };
 
 }  // namespace vela::runtime

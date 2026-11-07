@@ -374,6 +374,11 @@ void Heap::UnregisterRoot(RootRange& root) noexcept {
 }
 
 void Heap::MarkRoots() noexcept {
+  for (auto* frame = native_stack_roots_; frame != nullptr; frame = frame->previous) {
+    for (const Value value : std::span(frame->values, frame->count)) {
+      MarkValue(value);
+    }
+  }
   for (auto* root = future_roots_; root != nullptr; root = root->next_) {
     root->Trace(*this);
   }

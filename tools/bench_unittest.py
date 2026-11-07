@@ -79,7 +79,8 @@ def native_samples(repetitions: int = 1) -> list[dict]:
                  baseline_heap_bytes=100, end_heap_bytes=100,
                  baseline_heap_objects=2, end_heap_objects=2)
             for backend, elapsed in (("cpp", 128), ("cpp_indirect", 192),
-                                     ("jit_control", 640), ("jit", 1920))
+                                     ("jit_control", 640), ("jit", 1920),
+                                     ("aot_control", 320), ("aot", 1280))
             for index in range(repetitions)]
 
 
@@ -438,10 +439,12 @@ class BenchmarkReportTest(unittest.TestCase):
     def test_native_report_normalizes_batches_and_labels_subtraction_and_heap_limits(self) -> None:
         rows = native_samples(3)
         result = native_call_report({"benchmarks": rows}, sorted({row["name"] for row in rows}), 3)
-        self.assertIn("| integer | 64 | 2.000 | 3.000 | 10.000 | 30.000 | 20.000 | 3/3/3/3 |", result)
+        self.assertIn("| integer | 64 | 2.000 | 3.000 | 30.000 | 20.000 | 15.000 | 10.000 | 3/3/3/3/3/3 |", result)
+        self.assertIn("| integer | 64 | 10.000 | 5.000 | 20.000 | 15.000 |", result)
         self.assertIn("not paired samples", result)
         self.assertIn("not cumulative allocation counts", result)
         self.assertIn("| integer | 64 | jit | 100 | 100 | 2 | 2 |", result)
+        self.assertIn("| integer | 64 | aot | 100 | 100 | 2 | 2 |", result)
 
     def test_native_report_rejects_incomplete_samples_and_bad_counters(self) -> None:
         rows = native_samples()
@@ -455,6 +458,11 @@ class BenchmarkReportTest(unittest.TestCase):
         rows[-1]["end_heap_bytes"] = float("nan")
         with self.assertRaisesRegex(ValueError, "invalid heap"):
             native_call_report({"benchmarks": rows}, names, 1)
+        rows = native_samples()
+        incomplete = [row for row in rows if "/aot/" not in row["name"]]
+        with self.assertRaisesRegex(ValueError, "all six backends"):
+            native_call_report({"benchmarks": incomplete},
+                               [row["name"] for row in incomplete], 1)
 
     def test_native_runner_selects_native_registry_and_writes_report(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-native-bench-") as temporary:
@@ -462,6 +470,7 @@ class BenchmarkReportTest(unittest.TestCase):
             parsed = parse_arguments(["--native-compare", "--report", str(report)])
 
             def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
+                self.assertEqual(Path(command[0]).stem, "vela_aot_benchmarks")
                 self.assertIn("--benchmark_filter=^native/", command)
                 rows = native_samples(7)
                 if "--benchmark_list_tests=true" in command:
@@ -473,6 +482,7 @@ class BenchmarkReportTest(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
             self.assertIn("JIT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
+            self.assertIn("AOT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
 
     def test_jit_runner_defaults_to_steady_fourway_with_full_sampling(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-jit-bench-") as temporary:

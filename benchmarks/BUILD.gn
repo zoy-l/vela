@@ -103,9 +103,6 @@ executable("vela_benchmarks") {
     "json_benchmark.cc",
     "liveness_benchmark.cc",
     "mock_benchmark.cc",
-    "native_call_benchmark.cc",
-    "native_call_kernels.cc",
-    "native_call_kernels.h",
     "native_standard_workloads.cc",
     "native_standard_workloads.h",
     "native_workloads.cc",
@@ -151,9 +148,12 @@ executable("vela_benchmarks") {
 
 aot_native_directory = "$target_gen_dir/aot_native"
 aot_object = "$aot_native_directory/workload.o"
+native_call_directory = "$target_gen_dir/native_call"
+native_call_object = "$native_call_directory/workload.o"
 aot_compiler = "$root_out_dir/vela"
 if (target_os == "win") {
   aot_object = "$aot_native_directory/workload.obj"
+  native_call_object = "$native_call_directory/workload.obj"
   aot_compiler += ".exe"
 }
 
@@ -182,6 +182,27 @@ action("aot_native_inputs") {
     rebase_path("aot_cases.json", root_build_dir),
     "--output",
     rebase_path(aot_native_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
+}
+
+action("native_call_inputs") {
+  testonly = true
+  script = "//tools/native_call_benchmarks.py"
+  inputs = [ "//tools/aot_benchmarks.py" ]
+  outputs = [
+    native_call_object,
+    "$native_call_object.h",
+    "$native_call_object.aot.json",
+    "$native_call_directory/entries.h",
+    "$native_call_directory/workloads.vela",
+    "$native_call_directory/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--output",
+    rebase_path(native_call_directory, root_build_dir),
   ]
   deps = [ "//compiler:vela" ]
 }
@@ -311,6 +332,9 @@ executable("vela_aot_benchmarks") {
     "host_interop_benchmark.cc",
     "map_literal_benchmark.cc",
     "map_literal_benchmark.h",
+    "native_call_benchmark.cc",
+    "native_call_kernels.cc",
+    "native_call_kernels.h",
     "native_class_benchmark.cc",
     "reload_benchmark.cc",
     "reload_scaling_benchmark.cc",
@@ -318,6 +342,7 @@ executable("vela_aot_benchmarks") {
     aot_object,
     host_interop_object,
     map_literal_object,
+    native_call_object,
     native_class_object,
   ]
   include_dirs = [ root_gen_dir ]
@@ -334,6 +359,7 @@ executable("vela_aot_benchmarks") {
     ":host_interop_inputs",
     ":jit_benchmark_support",
     ":map_literal_native_inputs",
+    ":native_call_inputs",
     ":native_class_host",
     ":native_class_inputs",
     ":native_class_paths",

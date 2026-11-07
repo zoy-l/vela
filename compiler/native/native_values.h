@@ -4,11 +4,15 @@
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/IRBuilder.h>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
+#include <vector>
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 
 namespace llvm {
 class Type;
@@ -31,6 +35,11 @@ using Builder = llvm::IRBuilder<>;
 
 inline constexpr std::uint64_t kMaximumNativeStackBytes = 4096;
 
+// 只追踪单定义和 Move 链；返回的字符串常量由实例保根，不依赖函数栈根槽。
+std::vector<std::optional<std::uint32_t>> FindStringConstants(
+    const ir::Function& function,
+    std::span<const ir::Function> functions);
+
 bool IsScalar(const SourceType& type);
 bool IsReferenceKind(Kind kind);
 bool HasValidity(const SourceType& type);
@@ -47,7 +56,8 @@ llvm::Constant* EmitConstantTable(llvm::Module& module,
 llvm::Value* LoadImport(Builder& builder,
                         llvm::Module& module,
                         llvm::Value* execution,
-                        std::uint32_t function);
+                        std::uint32_t function,
+                        NativeCodePlacement placement);
 llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
@@ -72,6 +82,7 @@ void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
                  std::uint32_t function_index,
                  const GeneratedFunction& function,
-                 llvm::Constant* image);
+                 llvm::Constant* image,
+                 NativeCodePlacement placement);
 
 }  // namespace vela::compiler::native

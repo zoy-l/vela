@@ -19,6 +19,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
@@ -27,6 +28,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_export_emitter.h"
+#include "compiler/aot/native_field_optimizer.h"
 #include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
 #include "compiler/frontend/diagnostic.h"
@@ -201,6 +203,15 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   const auto optimizing = Clock::now();
   if (const auto finalized = native::Finalize(*generated, options.optimization); !finalized) {
     return diagnostic(finalized.error());
+  }
+  if (options.optimization == NativeOptimization::Release &&
+      options.placement == NativeCodePlacement::Linked) {
+    FoldRepeatedFieldUpdates(module, machine);
+    std::string verification;
+    llvm::raw_string_ostream verifier(verification);
+    if (llvm::verifyModule(module, &verifier)) {
+      return diagnostic(verification);
+    }
   }
   timings.optimization = Clock::now() - optimizing;
   std::string llvm_ir;

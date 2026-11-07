@@ -76,23 +76,6 @@ def xcode_path(arguments: list[str], description: str) -> Path:
     return path.resolve()
 
 
-def xcode_linker_version(linker: Path) -> str:
-    result = subprocess.run(
-        [str(linker), "-version_details"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        version = json.loads(result.stdout)["version"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        raise RuntimeError("Xcode linker did not report its version") from error
-    if not isinstance(version, str) or not all(part.isdecimal() for part in version.split(".")):
-        raise RuntimeError(f"Invalid Xcode linker version: {version!r}")
-    return version
-
-
 def toolchain_tools() -> dict[str, Path]:
     host = host_platform()
     clang_bin = BUILD_TOOLS_ROOT / "clang" / host / "bin"
@@ -107,11 +90,7 @@ def toolchain_tools() -> dict[str, Path]:
         cc = clang_bin / "clang"
         cxx = clang_bin / "clang++"
         archiver = clang_bin / "llvm-ar"
-        linker = (
-            xcode_path(["--find", "ld"], "linker")
-            if platform.system() == "Darwin"
-            else clang_bin / "ld.lld"
-        )
+        linker = clang_bin / ("ld64.lld" if platform.system() == "Darwin" else "ld.lld")
     tools = {
         "gn": require_file(gn_path, "project GN executable"),
         "ninja": require_file(ninja_path, "project Ninja executable"),
@@ -137,7 +116,9 @@ def toolchain_tools() -> dict[str, Path]:
     return tools
 
 
-def gn_value(value: str | list[str]) -> str:
+def gn_value(value: str | bool | list[str]) -> str:
+    if isinstance(value, bool):
+        return json.dumps(value)
     normalized = ([item.replace("\\", "/") for item in value] if isinstance(value, list)
                   else value.replace("\\", "/"))
     return json.dumps(normalized)
@@ -184,6 +165,7 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
         "target_os": target_os(),
         "vela_archiver": tools["archiver"].as_posix(),
         "vela_build_config": variant,
+        "vela_thin_lto": variant == "release",
         "vela_build_identity": compiler_build_identity(),
         "vela_cc": tools["cc"].as_posix(),
         "vela_cxx": tools["cxx"].as_posix(),
@@ -194,7 +176,6 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     args.update(clang_link_configuration())
     if platform.system() == "Darwin":
         args["vela_sysroot"] = tools["sysroot"].as_posix()
-        args["vela_linker_version"] = xcode_linker_version(tools["linker"])
     encoded_args = " ".join(
         f"{key}={gn_value(value)}" for key, value in args.items()
     )

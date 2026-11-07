@@ -1,9 +1,9 @@
 #include "runtime/native/native_function.h"
 #include <optional>
 
-#include <cassert>
 #include <cstddef>
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,7 +26,6 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/native/native_type.h"
-#include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
@@ -46,13 +45,8 @@ bool IsNativeTypeCompatible(const layout::Type& type,
 }  // namespace
 
 HandleScope& NativeContext::handles() const noexcept {
-  assert(scope_ != nullptr);
-  return scope_->handles();
-}
-
-HandleScope& NativeContextScope::handles() noexcept {
-  if (!handles_) {
-    handles_.emplace(context_->isolate());
+  if (handles_ == nullptr) {
+    handles_ = std::addressof(handles_storage_.emplace(isolate()));
   }
   return *handles_;
 }
@@ -181,10 +175,6 @@ NativeResult internal::NativeCodec<CancellationToken>::Encode(NativeContext& con
   const auto value = AllocatedValue(context.isolate().heap().AllocateCancellationToken(token));
   return value.transform_error(
       [](ExecutionStatus status) { return vela::Error::FromStatus(status); });
-}
-
-std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {
-  return value.AsString()->value();
 }
 
 NativeResult internal::ValidateNativeResult(NativeResult result) {

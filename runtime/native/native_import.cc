@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <utility>
 
 #include "base/execution_status.h"
@@ -77,6 +78,15 @@ std::expected<Value, ExecutionStatus> internal::CompleteNativeResult(NativeExecu
 extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
                                                                  std::uint32_t function) noexcept {
   return &execution->instance().import_entry(function);
+}
+
+extern "C" void vela_native_v1_release_host_handles(NativeContext* context) noexcept {
+  context->ReleaseHandles();
+}
+
+extern "C" void vela_native_v1_borrow_string_view(StringObject* string,
+                                                  std::string_view* output) noexcept {
+  std::construct_at(output, string->value());
 }
 
 }  // namespace vela::runtime

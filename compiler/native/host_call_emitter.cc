@@ -1,5 +1,6 @@
 #include "compiler/native/function_emitter.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -9,17 +10,25 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
+#include <llvm/Support/Alignment.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/ModRef.h>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
+#include "base/opcode.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_memory_layout.h"
+#include "runtime/native/native_symbols.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -47,6 +56,9 @@ bool IsHostParameter(const layout::Program& layouts,
 }  // namespace
 
 void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
+  if (host_execution_borrowed_) {
+    return;
+  }
   auto* control = ControlState();
   auto* active = ByteAddress(control, offsetof(runtime::NativeControlState, host_execution));
   if (change == HostBorrow::Enter) {
@@ -67,6 +79,35 @@ void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
   auto* updated = change == HostBorrow::Enter ? builder_.CreateAdd(depth, builder_.getInt64(1))
                                               : builder_.CreateSub(depth, builder_.getInt64(1));
   builder_.CreateStore(updated, address);
+}
+
+void FunctionEmitter::BorrowHostExecution() {
+  if (placement_ != NativeCodePlacement::Linked ||
+      program_.native_mode != NativeProgramMode::Closed || source_.is_async ||
+      !source_.native_symbol.empty() || !source_.handlers.empty() ||
+      !IsScalar(source_.return_type) || import_frame_ == nullptr || !roots_.bounded_polls) {
+    return;
+  }
+  for (const auto& instruction : source_.instructions) {
+    if (instruction.opcode == Opcode::LoadString || instruction.opcode == Opcode::Return) {
+      continue;
+    }
+    if (instruction.opcode == Opcode::Call) {
+      if (!CanInlineImportCall(program_.functions[instruction.index])) {
+        return;
+      }
+    } else if (ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
+      return;
+    }
+  }
+  // 片段内只有宿主调用可执行用户代码。同步重入会恢复 host_execution；其余指令
+  // 只做纯计算或直接失败退出，因此整个函数可共享同一次执行借用。
+  auto* active = ByteAddress(ControlState(), offsetof(runtime::NativeControlState, host_execution));
+  auto* previous = builder_.CreateLoad(builder_.getPtrTy(), active);
+  builder_.CreateStore(body_->getArg(0), active);
+  Builder cleanup(cleanup_->getTerminator());
+  cleanup.CreateStore(previous, active);
+  host_execution_borrowed_ = true;
 }
 
 llvm::Value* FunctionEmitter::EmitHostPointer(llvm::Value* wrapper, const SourceType& type) {
@@ -96,6 +137,107 @@ llvm::Value* FunctionEmitter::EmitHostPointer(llvm::Value* wrapper, const Source
   return result;
 }
 
+void FunctionEmitter::InitializeNativeStringView(llvm::Value* string, llvm::Value* storage) {
+  auto initialize =
+      module_.getOrInsertFunction(runtime::kNativeBorrowStringViewSymbol, builder_.getVoidTy(),
+                                  builder_.getPtrTy(), builder_.getPtrTy());
+  auto& function = *llvm::cast<llvm::Function>(initialize.getCallee());
+  function.addFnAttr(llvm::Attribute::NoUnwind);
+  function.addFnAttr(llvm::Attribute::WillReturn);
+  function.addFnAttr(llvm::Attribute::NoSync);
+  function.addFnAttr(llvm::Attribute::NoFree);
+  function.setMemoryEffects(llvm::MemoryEffects::argMemOnly());
+  function.addParamAttr(0, llvm::Attribute::ReadOnly);
+  function.addParamAttr(1, llvm::Attribute::WriteOnly);
+  const auto captures =
+      llvm::Attribute::getWithCaptureInfo(module_.getContext(), llvm::CaptureInfo::none());
+  function.addParamAttr(1, captures);
+  builder_.CreateCall(initialize, {string, storage});
+}
+
+void FunctionEmitter::CacheNativeStringViews() {
+  for (const auto constant : native_view_constants_) {
+    auto* storage = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+    InitializeNativeStringView(constants_.at(constant), storage);
+    constant_string_views_.emplace(constant, storage);
+  }
+}
+
+llvm::Value* FunctionEmitter::EmitNativeStringArgument(llvm::Value* string,
+                                                       std::size_t parameter,
+                                                       llvm::Value* kind) {
+  const auto* instruction =
+      source_.native_symbol.empty() ? &source_.instructions.at(instruction_index_) : nullptr;
+  auto* native =
+      builder_.CreateICmpEQ(kind, builder_.getInt8(static_cast<std::uint8_t>(
+                                      runtime::NativeFunction::AotCallKind::NativeStringViews)));
+  llvm::Value* view = nullptr;
+  if (instruction != nullptr && instruction->opcode == Opcode::Call &&
+      !string_constant_registers_.empty()) {
+    const auto constant = string_constant_registers_.at(instruction->lhs + parameter);
+    if (constant) {
+      if (const auto found = constant_string_views_.find(*constant);
+          found != constant_string_views_.end()) {
+        auto* copy = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+        const llvm::Align alignment(runtime::kNativeFrameAlignment);
+        builder_.CreateMemCpy(copy, alignment, found->second, alignment,
+                              runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+        view = copy;
+      }
+    }
+  }
+  if (view == nullptr) {
+    view = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+    auto& context = module_.getContext();
+    auto* initialize = llvm::BasicBlock::Create(context, "host.string.view", body_);
+    auto* ready = llvm::BasicBlock::Create(context, "host.string.ready", body_);
+    builder_.CreateCondBr(native, initialize, ready);
+    builder_.SetInsertPoint(initialize);
+    InitializeNativeStringView(string, view);
+    builder_.CreateBr(ready);
+    builder_.SetInsertPoint(ready);
+  }
+  return builder_.CreateSelect(native, view, string);
+}
+
+std::size_t FunctionEmitter::PlanStringViewStorage() {
+  using runtime::NativeMemoryLayout;
+  string_constant_registers_ = FindStringConstants(source_, program_.functions);
+  std::size_t views = 0;
+  if (!source_.native_symbol.empty()) {
+    views += static_cast<std::size_t>(
+        std::ranges::count_if(std::span(source_.value_types).first(source_.parameter_count),
+                              [](const auto& type) { return type.kind == Kind::String; }));
+  }
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    const auto target = CallTarget(index);
+    if (!target) {
+      continue;
+    }
+    const auto& callee = program_.functions[target->function];
+    if (!CanInlineImportCall(callee)) {
+      continue;
+    }
+    const auto& instruction = source_.instructions[index];
+    for (std::size_t parameter = 0; parameter < callee.parameter_count; ++parameter) {
+      if (callee.value_types[parameter].kind != Kind::String) {
+        continue;
+      }
+      ++views;
+      if (instruction.opcode != Opcode::Call) {
+        continue;
+      }
+      if (const auto constant = string_constant_registers_[instruction.lhs + parameter]) {
+        native_view_constants_.push_back(*constant);
+      }
+    }
+  }
+  std::ranges::sort(native_view_constants_);
+  const auto duplicates = std::ranges::unique(native_view_constants_);
+  native_view_constants_.erase(duplicates.begin(), duplicates.end());
+  return (views + native_view_constants_.size()) * NativeMemoryLayout::kBorrowedStringViewBytes;
+}
+
 llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
                                                  llvm::Value* entries,
                                                  std::span<llvm::Value* const> arguments) {
@@ -113,6 +255,9 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     const auto& type = callee.value_types[index];
     if (IsHostParameter(program_.layouts, call_signature, type, index)) {
       parameters[index] = EmitHostPointer(parameters[index], type);
+    } else if (placement_ == NativeCodePlacement::Linked && type.kind == Kind::String) {
+      parameters[index] = EmitNativeStringArgument(parameters[index], index,
+                                                   builder_.CreateExtractValue(entries, 1));
     }
   }
   parameters.insert(parameters.begin(),
@@ -134,6 +279,22 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
       result->addParamAttr(static_cast<unsigned>(index), llvm::Attribute::ZExt);
     }
   }
+  if (placement_ == NativeCodePlacement::Linked) {
+    auto* native_context = parameters.front();
+    auto* handles = builder_.CreateLoad(
+        builder_.getPtrTy(),
+        ByteAddress(native_context, runtime::NativeMemoryLayout::kContextHandles));
+    auto* release = llvm::BasicBlock::Create(context, "host.handles.release", body_);
+    auto* released = llvm::BasicBlock::Create(context, "host.handles.released", body_);
+    builder_.CreateCondBr(builder_.CreateIsNotNull(handles), release, released,
+                          llvm::MDBuilder(context).createUnlikelyBranchWeights());
+    builder_.SetInsertPoint(release);
+    auto cleanup = module_.getOrInsertFunction(runtime::kNativeReleaseHostHandlesSymbol,
+                                               builder_.getVoidTy(), builder_.getPtrTy());
+    builder_.CreateCall(cleanup, {native_context});
+    builder_.CreateBr(released);
+    builder_.SetInsertPoint(released);
+  }
   EmitHostBoundary(HostBorrow::Exit);
   if (return_kind == Kind::Void) {
     return builder_.getFalse();
@@ -152,6 +313,10 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     const auto& type = callee.value_types[index];
     if (IsScalar(type) && !type.nullable) {
+      continue;
+    }
+    // AOT 的直接字符串 ABI 借用 StringObject*；调用者已有根覆盖宿主调用期限。
+    if (placement_ == NativeCodePlacement::Linked && type.kind == Kind::String && !type.nullable) {
       continue;
     }
     if (!IsHostParameter(program_.layouts, signature, type, index)) {

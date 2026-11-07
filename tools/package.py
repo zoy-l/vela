@@ -147,8 +147,7 @@ def windows_support(runtime: Path) -> tuple[dict, dict[str, str]]:
         sdk = ucrt_lib.parents[3]
         version = ucrt_lib.parent.parent.name
         command([tools["cxx"], "/nologo", "/c", "/MT", source, "/Fo" + str(work / "main.obj")])
-        linker = sdk_directory() / "bin/lld-link.exe"
-        linked = command([linker, "/nologo", "/out:" + str(work / "main.exe"),
+        linked = command([tools["linker"], "/nologo", "/out:" + str(work / "main.exe"),
                           work / "main.obj", "/wholearchive:" + str(runtime), "/verbose",
                           *["/libpath:" + str(path) for path in (msvc_lib, ucrt_lib, um_lib)]])
         loaded = set()
@@ -216,6 +215,7 @@ def create_package(executable: Path, runtime: Path, destination: Path,
         identity = json.loads(Path(str(obj) + ".aot.json").read_text(encoding="utf-8"))
         target = identity["target"]
         llvm_version = sdk_specification()[0]
+        tools = toolchain_tools()
         if support_spec is not None:
             support = load_support_specification(support_spec, target)
             for bundled in support.pop("bundled_files", []):
@@ -230,16 +230,14 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                                "link inputs, licenses, minimum OS, and linker arguments")
         library_name = "vela_runtime.lib" if sys.platform == "win32" else "libvela_runtime.a"
         runtime_relative = f"lib/{target}/{library_name}"
-        archive_name = "llvm-lib" if sys.platform == "win32" else "llvm-ar"
-        link_name = "lld-link" if sys.platform == "win32" else "ld64.lld" if sys.platform == "darwin" else "ld.lld"
-        archiver = "libexec/" + executable_name(archive_name)
-        linker = "libexec/" + executable_name(link_name)
+        archiver = "libexec/" + tools["archiver"].name
+        linker = "libexec/" + tools["linker"].name
         files = support["files"]
         for source, relative, role, owner, license_name in (
                 (executable, "bin/" + executable_name("vela"), "compiler", "Vela", "MIT"),
                 (runtime, runtime_relative, "runtime", "Vela and third-party runtime", "share/vela/licenses"),
-                (sdk_directory() / "bin" / executable_name(archive_name), archiver, "archive", f"LLVM {llvm_version}", "Apache-2.0 WITH LLVM-exception"),
-                (sdk_directory() / "bin" / executable_name(link_name), linker, "link", f"LLVM {llvm_version}", "Apache-2.0 WITH LLVM-exception")):
+                (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
+                (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
             files.append(copy_file(source, package, relative, role, owner, license_name))
         # 嵌入宿主需要完整的公共头依赖；不打包编译器实现。
         for directory in ("base", "runtime"):
@@ -258,6 +256,7 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                   "include/efsw/efsw.hpp", "header", "efsw", "MIT")
         for name, path in {
             "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
+            "clang": tools["cxx"].parent.parent / "LICENSE",
             "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
             "efsw": ROOT / "third_party/efsw/LICENSE",
             "pcre2": ROOT / "third_party/pcre2/LICENCE.md",

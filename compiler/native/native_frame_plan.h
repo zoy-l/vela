@@ -24,6 +24,7 @@ struct NativeFrameLayout final {
   std::vector<std::optional<unsigned>> local_fields;
   unsigned temporary_field = 0;
   std::optional<unsigned> leaf_result_field;
+  std::optional<unsigned> auxiliary_field;
 };
 std::size_t PlanTemporaryCount(const ir::Function& source,
                                const ir::Program& program,
@@ -36,5 +37,6 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
                                   NativeFrameRecovery recovery,
                                   NativeEntryKind kind,
                                   std::span<const GeneratedFunction> generated,
-                                  std::span<const std::optional<CallableTarget>> direct_calls);
+                                  std::span<const std::optional<CallableTarget>> direct_calls,
+                                  std::size_t auxiliary_bytes = 0);
 }  // namespace vela::compiler::native
