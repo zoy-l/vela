@@ -3,9 +3,15 @@
 SOURCE = """
 class Point { x: double; dx: double; }
 let points: Point[] = [];
+let stable: Point[] = [];
 func repeat(): void {
   for (let round = 0; round < 10; round++) {
     for (const point in points) { point.x += point.dx; }
+  }
+}
+func repeatStable(): void {
+  for (let round = 0; round < 10; round++) {
+    for (const point in stable) { point.x += point.dx; }
   }
 }
 func fail(): void {
@@ -50,20 +56,22 @@ export func calculate(operation: int, initial: double, delta: double): double {
     }
     return point.x + other.x + total.toDouble();
   }
+  if (operation == 6) {
+    stable.clear(); stable.push(point); stable.push(point); stable.push(other);
+    repeatStable();
+  }
   return point.x + other.x;
 }
 """
 
 HOST_TESTS = r'''
 extern "C" const NativeImage* REPEATED_FIELD_IMAGE() noexcept;
+using NativeRepeatedFieldTest = NativeImageTest<REPEATED_FIELD_IMAGE, 1>;
 
-TEST(NativeRepeatedFieldTest, PreservesRepeatedAliasesFpOrderAndFailurePrefixes) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *REPEATED_FIELD_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeRepeatedFieldTest, PreservesRepeatedAliasesFpOrderAndFailurePrefixes) {
+  NativeExecution execution(*instance);
   for (const auto initial : {0.0, 1.0e16, -1.0e16, 1.5}) {
-    for (std::int64_t operation = 0; operation <= 5; ++operation) {
+    for (std::int64_t operation = 0; operation <= 6; ++operation) {
       SCOPED_TRACE(::testing::PrintToString(std::pair(initial, operation)));
       double first = initial;
       double other = -initial;

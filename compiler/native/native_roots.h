@@ -44,6 +44,8 @@ struct NativeRecoveryRequirements final {
 };
 
 struct NativeFunctionMetrics final {
+  // 计数描述通用入口的静态计划，不把多个互斥函数体的计数相加。
+  // frame_bytes 是同一函数全部生成体的最大值，供递归物理栈预算使用。
   std::uint64_t shadow_slots = 0;
   std::uint64_t frame_bytes = 0;
   std::uint64_t root_stores = 0;

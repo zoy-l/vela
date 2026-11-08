@@ -33,8 +33,9 @@ export func sum(value: int, choose: bool): int {
   const auto found = std::ranges::find(program.functions, "sum", &ir::Function::name);
   ASSERT_NE(found, program.functions.end());
   const auto& function = *found;
-  const auto facts = FindArrayElementBits(program);
-  const auto& bits = facts.at(static_cast<std::size_t>(found - program.functions.begin()));
+  const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+  const auto& bits =
+      facts.generic.at(static_cast<std::size_t>(found - program.functions.begin())).element_bits;
   ASSERT_FALSE(bits.empty());
   std::size_t reads = 0;
   for (const auto& instruction : function.instructions) {
@@ -95,8 +96,9 @@ export func sum(value: int): int {
     const auto found = std::ranges::find(program.functions, "sum", &ir::Function::name);
     ASSERT_NE(found, program.functions.end());
     const auto& function = *found;
-    const auto facts = FindArrayElementBits(program);
-    const auto& bits = facts.at(static_cast<std::size_t>(found - program.functions.begin()));
+    const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+    const auto& bits =
+        facts.generic.at(static_cast<std::size_t>(found - program.functions.begin())).element_bits;
     ASSERT_FALSE(bits.empty());
     std::size_t reads = 0;
     for (const auto& instruction : function.instructions) {
@@ -129,7 +131,9 @@ export func sum(): int {
   auto& program = prepared.program;
   for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
     program.native_mode = mode;
-    const auto facts = FindArrayElementBits(program);
+    const auto analysis_mode = mode == NativeProgramMode::Closed ? ArrayAnalysisMode::FixedStorage
+                                                                 : ArrayAnalysisMode::Elements;
+    const auto facts = AnalyzeArrayAccess(program, analysis_mode);
     std::size_t reads = 0;
     for (std::size_t index = 0; index < program.functions.size(); ++index) {
       for (const auto& instruction : program.functions.at(index).instructions) {
@@ -137,7 +141,7 @@ export func sum(): int {
           const auto expected = mode == NativeProgramMode::Closed
                                     ? std::uint64_t{1023}
                                     : std::numeric_limits<std::uint64_t>::max();
-          EXPECT_EQ(facts.at(index).at(instruction.lhs), expected);
+          EXPECT_EQ(facts.generic.at(index).element_bits.at(instruction.lhs), expected);
           ++reads;
         }
       }
@@ -165,17 +169,122 @@ TEST(ArrayAnalysisTest, EscapedOrUnknownGlobalAliasesInvalidateEveryReader) {
         std::string(operation));
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto& program = prepared.program;
-    const auto facts = FindArrayElementBits(program);
+    const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
     std::size_t reads = 0;
     for (std::size_t index = 0; index < program.functions.size(); ++index) {
       for (const auto& instruction : program.functions.at(index).instructions) {
         if (instruction.opcode == Opcode::GetIndex) {
-          EXPECT_EQ(facts.at(index).at(instruction.lhs), std::numeric_limits<std::uint64_t>::max());
+          EXPECT_EQ(facts.generic.at(index).element_bits.at(instruction.lhs),
+                    std::numeric_limits<std::uint64_t>::max());
           ++reads;
         }
       }
     }
     EXPECT_GT(reads, 0U);
+  }
+}
+
+TEST(ArrayAnalysisTest, PropagatesCopiedElementBitsThroughCyclicArrayDependencies) {
+  const auto prepared = ir::test::Prepare(R"(
+export func sum(): int {
+  const first = [1, 2]; const second = [0, 0]; const third = [0, 0];
+  for (let index = 0; index < 2; index++) {
+    second[index] = first[index]; third[index] = second[index] & 255;
+    first[0] = third[1] | 4;
+  }
+  return first[0] + second[0] + third[0];
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& program = prepared.program;
+  const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    for (const auto& instruction : program.functions[index].instructions) {
+      if (instruction.opcode == Opcode::GetIndex) {
+        EXPECT_EQ(facts.generic[index].element_bits.at(instruction.lhs), 7U);
+      }
+    }
+  }
+}
+
+TEST(ArrayAnalysisTest, UnknownGlobalWritesPropagateThroughArrayCopies) {
+  const auto prepared = ir::test::Prepare(R"(
+let input = [1]; let copy = [0]; let final = [0];
+export func update(value: int): void { input[0] = value; }
+export func sum(): int {
+  copy[0] = input[0]; final[0] = copy[0]; return final[0];
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& program = prepared.program;
+  const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    for (const auto& instruction : program.functions[index].instructions) {
+      if (instruction.opcode == Opcode::GetIndex) {
+        EXPECT_EQ(facts.generic[index].element_bits.at(instruction.lhs),
+                  std::numeric_limits<std::uint64_t>::max());
+      }
+    }
+  }
+}
+
+TEST(ArrayStorageAnalysisTest, KeepsFreshSnapshotsAndSwappedScratchBuffersFixedUnderElementWrites) {
+  const auto prepared = ir::test::Prepare(R"(
+export func sum(choose: bool): int {
+  const source = [3, 2, 1];
+  let first = source.slice(); let second = [0, 0, 0];
+  if (choose) { const old = first; first = second; second = old; }
+  for (let index = 0; index < 3; index++) { second[index] = first[index]; }
+  return second[0] + source[1];
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& program = prepared.program;
+  const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+  std::size_t reads = 0;
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    for (const auto& instruction : program.functions[index].instructions) {
+      if (instruction.opcode == Opcode::GetIndex) {
+        EXPECT_EQ(facts.generic[index].fixed_storage[instruction.lhs], 1);
+        ++reads;
+      }
+    }
+  }
+  EXPECT_EQ(reads, 3U);
+}
+
+TEST(ArrayStorageAnalysisTest,
+     EscapesIncludingErasedAliasesAndStructuralChangesInvalidateTheGroup) {
+  for (const std::string_view operation : {
+           "values.push(2);",
+           "values.reserve(100);",
+           "values.clear();",
+           "publish(values);",
+           "const erased: dynamic = values; publishDynamic(erased);",
+           "const capture = () => values; const alias = capture(); alias.push(2);",
+           "shared = values;",
+           "holder.values = values;",
+           "let alias = values; if (choose) { alias = []; } publish(alias);",
+           R"(let alias: int[]? = values; if (choose) { alias = null; }
+              if (alias != null) { return alias[0]; })",
+       }) {
+    SCOPED_TRACE(operation);
+    const auto prepared = ir::test::Prepare(
+        "external func publish(values: int[]): void; external func publishDynamic(value: dynamic): "
+        "void; "
+        "class Holder { values: int[]; } let shared: int[] = []; let holder = Holder(values: []); "
+        "export func sum(choose: bool): int { const values = [1]; " +
+        std::string(operation) + " return values[0]; }");
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    const auto& program = prepared.program;
+    const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
+    for (std::size_t index = 0; index < program.functions.size(); ++index) {
+      for (const auto& instruction : program.functions[index].instructions) {
+        if (instruction.opcode == Opcode::GetIndex) {
+          EXPECT_EQ(facts.generic[index].fixed_storage[instruction.lhs], 0);
+        }
+      }
+    }
   }
 }
 

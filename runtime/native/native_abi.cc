@@ -176,13 +176,21 @@ extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
 ExecutionStatus NativeExecution::HandleLeafFailure(TracePosition position,
                                                    ExecutionStatus status,
                                                    std::span<const Value> roots) {
-  const RootRange retained(isolate().heap(), roots.data(), roots.size(), std::nullopt);
   NativeTraceFrame frame;
   MaterializeFrame(frame, position.function);
   frame.position.instruction = position.instruction;
-  const auto failure = HandleFailure(status);
+  const auto failure = HandleFailure(status, {}, roots);
   Exit();
   return failure;
+}
+
+extern "C" std::uint8_t vela_native_v1_unrooted_failure(NativeExecution* execution,
+                                                        std::uint8_t status,
+                                                        const Value* roots,
+                                                        std::uint64_t root_count) {
+  return ToNativeStatus(
+      execution->HandleFailure(static_cast<ExecutionStatus>(status), {},
+                               std::span(roots, static_cast<std::size_t>(root_count))));
 }
 
 extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,

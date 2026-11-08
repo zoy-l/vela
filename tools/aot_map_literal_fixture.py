@@ -24,8 +24,7 @@ extern "C" const NativeImage* MAP_LITERAL_IMAGE() noexcept;
 extern "C" const NativeImage* MAP_VALUE_IMAGE() noexcept;
 
 std::int64_t FreezeMapLiteralHeap(NativeContext& context) noexcept {
-  auto& heap = context.isolate().heap();
-  heap.SetAllocationLimit(heap.allocated_bytes());
+  FreezeAllocations(context);
   return 1;
 }
 
@@ -44,13 +43,13 @@ TEST(NativeHostTest, MapLiteralAllocationAndInsertionFailuresStopLaterEffects) {
   heap.SetAllocationLimit(baseline);
   const std::array allocate{Integer(1)};
   const auto allocation = Execute(MAP_LITERAL_ENTRY, execution, allocate, result);
-  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  UnfreezeAllocations(isolate);
   EXPECT_EQ(allocation, ExecutionStatus::OutOfMemory);
   ASSERT_EQ(Execute(MAP_LITERAL_ENTRY, execution, count, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 0);
   const std::array insert{Integer(2)};
   const auto insertion = Execute(MAP_LITERAL_ENTRY, execution, insert, result);
-  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  UnfreezeAllocations(isolate);
   EXPECT_EQ(insertion, ExecutionStatus::OutOfMemory);
   ASSERT_EQ(Execute(MAP_LITERAL_ENTRY, execution, count, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 1);

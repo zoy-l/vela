@@ -3,9 +3,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
+#include "base/builtin.h"
+#include "base/callable.h"
+#include "base/member.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
 
@@ -37,11 +41,77 @@ struct InstructionEffects final {
   }
 };
 
+// 普通控制流分析不跨宿主实现、异步挂起或异常处理边。
+[[nodiscard]] bool CanAnalyzeSynchronousFunction(const Function& function);
+
+[[nodiscard]] inline bool IsBuiltinCall(const Instruction& instruction, Builtin builtin) {
+  return instruction.opcode == Opcode::BuiltinCall &&
+         instruction.index == static_cast<std::uint32_t>(builtin);
+}
+
+enum class ClassFunctionKind : std::uint8_t { Constructor, Entry, FieldInitializer };
+
+// 只枚举实际函数编号；接口 callable 的 function 字段是 selector，不是函数目标。
+template <typename Visitor>
+void ForEachClassFunction(const Class& type, const Visitor& visitor) {
+  const auto visit = [&](std::uint32_t target, ClassFunctionKind kind) {
+    if (target != kInvalidFunctionTarget) {
+      visitor(target, kind);
+    }
+  };
+  visit(type.constructor, ClassFunctionKind::Constructor);
+  if (type.callable && type.callable->mode != CallableMode::InterfaceMethod) {
+    visit(type.callable->function, ClassFunctionKind::Entry);
+  }
+  for (const auto target : type.dispatch_targets) {
+    visit(target, ClassFunctionKind::Entry);
+  }
+  for (const auto& field : type.fields) {
+    visit(field.initializer, ClassFunctionKind::FieldInitializer);
+  }
+}
+
+template <typename Visitor>
+void ForEachPropertyFunction(const MemberDefinition& member, const Visitor& visitor) {
+  if (member.kind != MemberKind::Property) {
+    return;
+  }
+  if (member.target != kInvalidFunctionTarget) {
+    visitor(member.target);
+  }
+  if (member.setter) {
+    visitor(*member.setter);
+  }
+}
+
 [[nodiscard]] InstructionEffects AnalyzeEffects(const Instruction& instruction);
 void RemapJumpTargets(Function& function, std::span<const std::uint32_t> targets);
 
 [[nodiscard]] RegisterAccess AnalyzeRegisters(const Instruction& instruction,
                                               std::span<const Function> functions);
+[[nodiscard]] std::vector<RegisterAccess> AnalyzeRegisterAccesses(
+    const Function& function,
+    std::span<const Function> functions);
+
+struct RegisterDefinition final {
+  std::size_t count = 0;
+  std::optional<std::size_t> first;
+  std::optional<std::size_t> last;
+};
+
+// 参数自带一个入口定义；first/last 只记录指令定义，避免把覆写参数误作单定义值。
+[[nodiscard]] std::vector<RegisterDefinition> FindRegisterDefinitions(
+    const Function& function,
+    std::span<const RegisterAccess> accesses);
+struct RegisterFlow final {
+  std::vector<RegisterDefinition> definitions;
+  // 单定义 Move 链归并到同一来源；覆写和无入口来源的环不产生 origin。
+  std::vector<std::optional<RegisterId>> origins;
+
+  [[nodiscard]] std::optional<std::size_t> OriginDefinition(RegisterId reg) const;
+};
+[[nodiscard]] RegisterFlow AnalyzeRegisterFlow(const Function& function,
+                                               std::span<const RegisterAccess> accesses);
 [[nodiscard]] RegisterId ReadOperand(const Instruction& instruction, Operand operand);
 void WriteOperand(Instruction& instruction, Operand operand, RegisterId value);
 
@@ -75,6 +145,7 @@ struct BlockLiveness final {
 };
 
 [[nodiscard]] FlowGraph BuildFlowGraph(const Function& function);
+[[nodiscard]] std::vector<std::uint8_t> FindReachableBlocks(const FlowGraph& graph);
 [[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(
     const Function& function,
     const FlowGraph& graph,

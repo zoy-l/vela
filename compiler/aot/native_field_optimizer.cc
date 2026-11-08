@@ -26,6 +26,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -57,10 +58,19 @@ bool HasStorageTag(const llvm::Instruction& instruction, llvm::StringRef name) {
     return false;
   }
   const auto* type = llvm::dyn_cast<llvm::MDNode>(tag->getOperand(0));
-  const auto* text = type == nullptr || type->getNumOperands() == 0
-                         ? nullptr
-                         : llvm::dyn_cast<llvm::MDString>(type->getOperand(0));
-  return text != nullptr && text->getString() == name;
+  // 物理字段槽继承 payload 域；消费别名事实时沿类型父链识别所属存储区域。
+  while (type != nullptr) {
+    const auto count = type->getNumOperands();
+    if (count == 0) {
+      return false;
+    }
+    const auto* text = llvm::dyn_cast<llvm::MDString>(type->getOperand(0));
+    if (text != nullptr && text->getString() == name) {
+      return true;
+    }
+    type = count > 1 ? llvm::dyn_cast<llvm::MDNode>(type->getOperand(1)) : nullptr;
+  }
+  return false;
 }
 
 struct FieldUpdate final {
@@ -166,11 +176,10 @@ std::optional<llvm::BasicBlockEdge> FirstIterationEdge(const llvm::Loop& loop) {
       ready->getNumIncomingValues() != 2) {
     return std::nullopt;
   }
-  const auto* initial =
-      llvm::dyn_cast<llvm::ConstantInt>(ready->getIncomingValueForBlock(loop.getLoopPreheader()));
   const auto* repeated =
       llvm::dyn_cast<llvm::ConstantInt>(ready->getIncomingValueForBlock(loop.getLoopLatch()));
-  if (initial == nullptr || repeated == nullptr || !initial->isZero() || !repeated->isOne()) {
+  // 入口可以已经 Ready；只要成功回边恒为 true，false 边就最多在首轮执行。
+  if (repeated == nullptr || !repeated->isOne()) {
     return std::nullopt;
   }
   return llvm::BasicBlockEdge(loop.getHeader(), branch->getSuccessor(1));
@@ -240,6 +249,9 @@ bool CanRepeatInstruction(const llvm::Instruction& instruction,
     return load->isSimple();
   }
   if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+    if (llvm::isa<llvm::AssumeInst>(call)) {
+      return true;
+    }
     const auto* callee = call->getCalledFunction();
     return callee != nullptr &&
            callee->getName() == llvm::StringRef(runtime::kNativeInitializeGlobalSymbol) && first &&
@@ -271,8 +283,8 @@ bool HasOnlyUpdateObservations(const llvm::Loop& loop, const std::vector<FieldUp
 
 std::optional<std::vector<FieldUpdate>> AnalyzeRepeatedFields(
     const llvm::Loop& loop,
-    const llvm::DominatorTree& dominators) {
-  const auto first = FirstIterationEdge(loop);
+    const llvm::DominatorTree& dominators,
+    const std::optional<llvm::BasicBlockEdge>& first) {
   std::vector<FieldUpdate> updates;
   for (auto* block : loop.blocks()) {
     for (auto& instruction : *block) {
@@ -313,6 +325,7 @@ enum class FieldLoopPhase : std::uint8_t { PeelInitialization, FoldUpdates };
 struct RepeatedLoop final {
   llvm::BranchInst* latch;
   unsigned count;
+  std::optional<llvm::BasicBlockEdge> first_iteration;
 };
 
 std::optional<RepeatedLoop> MatchRepeatedLoop(llvm::Loop& loop,
@@ -335,15 +348,14 @@ std::optional<RepeatedLoop> MatchRepeatedLoop(llvm::Loop& loop,
   if (increment == nullptr || !IsUnusedCounter(*index, *increment, *latch->getCondition())) {
     return std::nullopt;
   }
-  // 真正折叠时不能保留其他循环携带数据。先用 LLVM 剥离首轮初始化，
-  // 由常量传播消去 ready / trace 状态后再证明剩余循环。
-  if (std::ranges::any_of(loop.getHeader()->phis(), [&](const auto& phi) {
-        return &phi != index &&
-               (phase == FieldLoopPhase::FoldUpdates || !phi.getType()->isIntegerTy(1));
-      })) {
+  // 剥离首轮时允许尚未建立的缓存值；化简 ready、trace 和缓存 PHI 后，
+  // 真正折叠的剩余循环只能携带计数器，不能保留用户逐轮状态。
+  if (phase == FieldLoopPhase::FoldUpdates &&
+      std::ranges::any_of(loop.getHeader()->phis(),
+                          [&](const auto& phi) { return &phi != index; })) {
     return std::nullopt;
   }
-  return RepeatedLoop{.latch = latch, .count = count};
+  return RepeatedLoop{.latch = latch, .count = count, .first_iteration = FirstIterationEdge(loop)};
 }
 
 class RepeatedFieldPass final : public llvm::PassInfoMixin<RepeatedFieldPass> {
@@ -359,12 +371,12 @@ class RepeatedFieldPass final : public llvm::PassInfoMixin<RepeatedFieldPass> {
       if (!matched) {
         continue;
       }
-      const auto updates = AnalyzeRepeatedFields(*loop, dominators);
+      const auto updates = AnalyzeRepeatedFields(*loop, dominators, matched->first_iteration);
       if (!updates) {
         continue;
       }
       if (phase_ == FieldLoopPhase::PeelInitialization) {
-        if (FirstIterationEdge(*loop) && llvm::canPeel(loop)) {
+        if (matched->first_iteration && llvm::canPeel(loop)) {
           auto& assumptions = analyses.getResult<llvm::AssumptionAnalysis>(function);
           llvm::ValueToValueMapTy values;
           if (llvm::peelLoop(loop, 1, false, &loops, &evolution, dominators, &assumptions, true,
@@ -437,7 +449,7 @@ void FoldRepeatedFieldUpdates(llvm::Module& module, llvm::TargetMachine& machine
       }
       const auto count = evolution.getSmallConstantTripCount(loop, loop->getLoopLatch());
       return count >= 2 && count <= kMaximumRepeatedUpdates &&
-             AnalyzeRepeatedFields(*loop, dominators).has_value();
+             AnalyzeRepeatedFields(*loop, dominators, FirstIterationEdge(*loop)).has_value();
     });
     if (eligible) {
       pipeline.run(function, functions);

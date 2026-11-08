@@ -56,6 +56,12 @@ extern "C" void vela_native_v1_resuspend(NativeResumeState* state,
                                          const NativeValue* source,
                                          const NativeValue* saved,
                                          std::uint64_t count);
+extern "C" std::uint8_t vela_native_v1_scalar_await_return(NativeExecution* execution,
+                                                           std::uint32_t function,
+                                                           NativeResumeEntry entry,
+                                                           std::uint32_t instruction,
+                                                           const NativeValue* source,
+                                                           NativeValue* result);
 extern "C" std::uint8_t vela_native_v1_resume_return(NativeExecution* execution,
                                                      NativeResumeState* state,
                                                      std::uint32_t function,

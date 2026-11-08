@@ -1,13 +1,11 @@
 #include "compiler/native/map_analysis.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
 
 #include "base/builtin.h"
-#include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
@@ -20,48 +18,10 @@ struct LookupState final {
   bool operator==(const LookupState&) const = default;
 };
 
-std::vector<std::optional<ir::RegisterId>> RegisterOrigins(
-    const ir::Function& function,
-    std::span<const ir::Function> functions) {
-  std::vector<std::size_t> counts(function.register_count);
-  std::vector<const ir::Instruction*> definitions(function.register_count);
-  for (const auto& instruction : function.instructions) {
-    if (ir::AnalyzeRegisters(instruction, functions).defines_value) {
-      ++counts[instruction.dst];
-      definitions[instruction.dst] = &instruction;
-    }
-  }
-  std::vector<std::optional<ir::RegisterId>> origins(function.register_count);
-  std::vector<std::vector<ir::RegisterId>> copies(function.register_count);
-  std::vector<ir::RegisterId> pending;
-  for (ir::RegisterId reg = 0; reg < function.register_count; ++reg) {
-    if (reg < function.parameter_count ? counts[reg] != 0 : counts[reg] != 1) {
-      continue;
-    }
-    const auto* definition = definitions[reg];
-    if (definition != nullptr && definition->opcode == Opcode::Move) {
-      copies[definition->lhs].push_back(reg);
-    } else {
-      origins[reg] = reg;
-      pending.push_back(reg);
-    }
-  }
-  while (!pending.empty()) {
-    const auto reg = pending.back();
-    pending.pop_back();
-    for (const auto copy : copies[reg]) {
-      origins[copy] = origins[reg];
-      pending.push_back(copy);
-    }
-  }
-  return origins;
-}
-
 LookupState Transfer(const ir::Function& function, const ir::BasicBlock& block, LookupState state) {
   for (auto index = block.begin; index < block.end; ++index) {
     const auto& instruction = function.instructions[index];
-    if (instruction.opcode == Opcode::BuiltinCall &&
-        instruction.index == static_cast<std::uint32_t>(Builtin::MapGet)) {
+    if (ir::IsBuiltinCall(instruction, Builtin::MapGet)) {
       state.lookup = index;
     } else {
       const auto effects = ir::AnalyzeEffects(instruction);
@@ -104,10 +64,11 @@ LookupState MergeLookupPredecessors(const ir::BasicBlock& block,
 std::vector<std::optional<std::size_t>> FindMapLookups(const ir::Function& function,
                                                        std::span<const ir::Function> functions) {
   std::vector<std::optional<std::size_t>> result(function.instructions.size());
-  if (function.instructions.empty() || function.is_async || !function.handlers.empty()) {
+  if (function.instructions.empty() || !ir::CanAnalyzeSynchronousFunction(function)) {
     return result;
   }
-  const auto origins = RegisterOrigins(function, functions);
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, functions);
+  const auto register_flow = ir::AnalyzeRegisterFlow(function, accesses);
   const auto graph = ir::BuildFlowGraph(function);
   std::vector<LookupState> entries(graph.blocks.size());
   std::vector<LookupState> exits(graph.blocks.size());
@@ -140,9 +101,8 @@ std::vector<std::optional<std::size_t>> FindMapLookups(const ir::Function& funct
     const auto& block = graph.blocks[index];
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions[position];
-      if (instruction.opcode == Opcode::BuiltinCall &&
-          instruction.index == static_cast<std::uint32_t>(Builtin::MapSet) && state.lookup &&
-          IsSameLookup(function.instructions[*state.lookup], instruction, origins)) {
+      if (ir::IsBuiltinCall(instruction, Builtin::MapSet) && state.lookup &&
+          IsSameLookup(function.instructions[*state.lookup], instruction, register_flow.origins)) {
         result[position] = state.lookup;
       }
       state = Transfer(

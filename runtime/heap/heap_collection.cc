@@ -145,10 +145,8 @@ struct Slot final {
   bool found = false;
 };
 
-Slot FindSlot(const Table& table,
-              const CollectionLayout& layout,
-              Value key,
-              std::size_t hash) noexcept {
+template <class Predicate>
+Slot FindSlot(const Table& table, std::size_t hash, const Predicate& same_key) noexcept {
   const auto mask = static_cast<std::uint32_t>(table.buckets.size() - 1);
   auto bucket = static_cast<std::uint32_t>(hash) & mask;
   auto deleted = kEmpty;
@@ -162,12 +160,26 @@ Slot FindSlot(const Table& table,
       if (deleted == kEmpty) {
         deleted = bucket;
       }
-    } else if (table.hashes[entry] == hash &&
-               IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key)) {
+    } else if (table.hashes[entry] == hash && same_key(entry)) {
       return {.bucket = bucket, .entry = entry, .found = true};
     }
     bucket = (bucket + 1) & mask;
   }
+}
+
+Slot FindSlot(const Table& table,
+              const CollectionLayout& layout,
+              Value key,
+              std::size_t hash) noexcept {
+  return FindSlot(table, hash, [&](std::uint32_t entry) {
+    return IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key);
+  });
+}
+
+Slot FindSlot(const Table& table, StringObject* key, std::size_t hash) noexcept {
+  const auto keys = ElementSlots<StringObject*>(table.keys);
+  return FindSlot(table, hash,
+                  [&](std::uint32_t entry) { return IsEqualString(*keys[entry], *key); });
 }
 
 struct CollectionLookup final {
@@ -324,18 +336,21 @@ Value Heap::LoadMapValue(HeapObject& object, Value key) noexcept {
   return ReadMapEntry(layout, entry);
 }
 
-Value Heap::ResolveMapValue(HeapObject& object, Value key, MapLookup& lookup) noexcept {
-  const auto& layout = *object.collection_layout();
+Value Heap::ResolveStringMapValue(HeapObject& object,
+                                  StringObject* key,
+                                  MapLookup& lookup) noexcept {
   const auto& storage = *StorageAfter<CollectionStorage>(object);
-  const auto hash = HashKey(key);
-  const auto slot = storage.capacity == 0 ? Slot{} : FindSlot(storage.table, layout, key, hash);
+  const auto& layout = *object.collection_layout();
+  const auto& table = storage.table;
+  const auto hash = HashKey(Value::String(key));
+  const auto slot = storage.capacity == 0 ? Slot{} : FindSlot(table, key, hash);
   const auto& values = *layout.values;
   auto* integer =
       slot.found && !values.HasTaggedElements() && values.element.kind == ValueKind::Integer
-          ? &ElementSlots<std::int64_t>(storage.table.values)[slot.entry]
+          ? &ElementSlots<std::int64_t>(table.values)[slot.entry]
           : nullptr;
   lookup = {.hash = hash, .bucket = slot.bucket, .entry = slot.entry, .integer_value = integer};
-  return ReadMapEntry(layout, {.table = &storage.table, .slot = slot});
+  return ReadMapEntry(layout, {.table = &table, .slot = slot});
 }
 
 std::expected<void, ExecutionStatus> Heap::StoreMapValue(HeapObject& object,

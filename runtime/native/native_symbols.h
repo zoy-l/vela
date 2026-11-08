@@ -33,6 +33,7 @@ inline constexpr std::string_view kNativeConstantSymbol = "vela_native_v1_consta
 inline constexpr std::string_view kNativeEqualSymbol = "vela_native_v1_equal";
 inline constexpr std::string_view kNativeExceptionValueSymbol = "vela_native_v1_exception_value";
 inline constexpr std::string_view kNativeFailureSymbol = "vela_native_v1_failure";
+inline constexpr std::string_view kNativeUnrootedFailureSymbol = "vela_native_v1_unrooted_failure";
 inline constexpr std::string_view kNativeFrameReleaseSymbol = "vela_native_v1_frame_release";
 inline constexpr std::string_view kNativeFrameStorageSymbol = "vela_native_v1_frame_storage";
 inline constexpr std::string_view kNativeHasExceptionSymbol = "vela_native_v1_has_exception";
@@ -53,6 +54,8 @@ inline constexpr std::string_view kNativeBorrowStringViewSymbol =
     "vela_native_v1_borrow_string_view";
 inline constexpr std::string_view kNativeSleepSymbol = "vela_native_v1_sleep";
 inline constexpr std::string_view kNativeSuspendSymbol = "vela_native_v1_suspend";
+inline constexpr std::string_view kNativeScalarAwaitReturnSymbol =
+    "vela_native_v1_scalar_await_return";
 inline constexpr std::string_view kNativeThrowSymbol = "vela_native_v1_throw";
 inline constexpr std::string_view kNativeTypeTestSymbol = "vela_native_v1_type_test";
 inline constexpr std::string_view kNativeWriteBarrierSymbol = "vela_native_v1_write_barrier";

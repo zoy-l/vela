@@ -66,17 +66,15 @@ export func calculate(operation: int): int {
 HOST_TESTS = r'''
 extern "C" const NativeImage* MAP_LOOKUP_IMAGE() noexcept;
 
-void FreezeMapLookup(NativeContext& context) noexcept {
-  auto& heap = context.isolate().heap();
-  heap.SetAllocationLimit(heap.allocated_bytes());
-}
+class NativeMapLookupTest : public NativeImageTest<MAP_LOOKUP_IMAGE, 1> {
+ protected:
+  void RegisterNatives() override {
+    ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<FreezeAllocations>("lookup.freeze")));
+  }
+};
 
-TEST(NativeMapLookupTest, PreservesGrowthAliasesNullableValuesAndOverflowUnderGc) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<FreezeMapLookup>("lookup.freeze")));
-  const auto instance = NativeInstance::Instantiate(isolate, *MAP_LOOKUP_IMAGE());
-  ASSERT_TRUE(instance);
-  NativeExecution execution(**instance);
+TEST_F(NativeMapLookupTest, PreservesGrowthAliasesNullableValuesAndOverflowUnderGc) {
+  NativeExecution execution(*instance);
   const std::array<std::int64_t, 8> expected{1000, 32, 42, 42, 42, 1, 42, 1};
   for (std::size_t operation = 0; operation < expected.size(); ++operation) {
     const std::array input{Integer(static_cast<std::int64_t>(operation))};
@@ -86,14 +84,6 @@ TEST(NativeMapLookupTest, PreservesGrowthAliasesNullableValuesAndOverflowUnderGc
     EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
   }
-  const std::array fail{Integer(8)};
-  NativeValue output;
-  EXPECT_EQ(Execute(MAP_LOOKUP_ENTRY, execution, fail, output), ExecutionStatus::OutOfMemory);
-  isolate.heap().SetAllocationLimit(std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(execution.current_frame(), nullptr);
-  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
-  const std::array retry{Integer(0)};
-  ASSERT_EQ(Execute(MAP_LOOKUP_ENTRY, execution, retry, output), ExecutionStatus::Returned);
-  EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 1000);
+  ExpectOutOfMemoryAndRetry(MAP_LOOKUP_ENTRY, execution, 8, 1000);
 }
 '''

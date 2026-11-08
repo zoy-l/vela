@@ -14,6 +14,7 @@
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_async.h"
 #include "runtime/value/value.h"
@@ -113,6 +114,27 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
                     builder_.getInt64(saved.size()),
                 });
     Finish(Status(builder_, ExecutionStatus::Returned));
+    return;
+  }
+  const auto next = instruction_index_ + 1;
+  if (IsClosedLinkedProgram(program_.native_mode, placement_) && source_.handlers.empty() &&
+      roots_.bounded_polls && saved.empty() && IsScalar(source_.value_types[instruction.lhs]) &&
+      next < source_.instructions.size() && source_.instructions[next].opcode == Opcode::Return &&
+      source_.instructions[next].dst == instruction.dst) {
+    auto helper = module_.getOrInsertFunction(
+        runtime::kNativeScalarAwaitReturnSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy());
+    CheckStatus(builder_.CreateCall(
+        helper, {
+                    body_->getArg(0),
+                    builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                    generated_[function_index_].resume,
+                    builder_.getInt32(static_cast<std::uint32_t>(origins_[instruction_index_])),
+                    source,
+                    result_,
+                }));
+    StoreAsyncResult();
     return;
   }
   std::size_t capacity = 0;

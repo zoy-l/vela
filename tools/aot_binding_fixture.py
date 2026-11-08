@@ -10,6 +10,12 @@ external func scale(value: double): double = 'binding.scale';
 external func noop(): void = 'binding.noop';
 external func scoped(): int = 'binding.scoped';
 external func mixed(left: string, value: int, enabled: bool, scale: double, right: string): int = 'binding.mixed';
+external func requestStop(): void = 'binding.stop';
+let late = initializeLate();
+func initializeLate(): int { noop(); return 42; }
+func borrowedFailure(value: int): int { noop(); return value + 1; }
+func borrowedLazy(): int { noop(); return late; }
+func borrowedStop(): int { requestStop(); return 42; }
 
 interface HostOperation { apply<T extends int>(value: T): int; }
 class StepOperation implements HostOperation {
@@ -47,6 +53,10 @@ export func calculate(operation: int): int {
     return result;
   }
   if (operation == 7) { return manyViews(); }
+  if (operation == 8) { return borrowedFailure(9223372036854775807); }
+  if (operation == 9) { return borrowedFailure(41); }
+  if (operation == 10) { return borrowedStop(); }
+  if (operation == 11) { return borrowedLazy(); }
   try { return step(-1); }
   catch (error: Error) {
     if (error.code == 'NativeFailure' && error.message == 'negative input') { return 42; }
@@ -70,6 +80,7 @@ std::expected<std::int64_t, vela::Error> CheckedStep(std::int64_t value) noexcep
 bool Invert(bool value) noexcept { return !value; }
 double Scale(double value) noexcept { return value * 2.0; }
 void Noop() noexcept {}
+void RequestStop(NativeContext& context) noexcept { context.isolate().native_control().RequestStop(); }
 double Combine(NativeContext&, std::int64_t value, double scale, bool enabled) noexcept {
   return enabled ? static_cast<double>(value) * scale : 0.0;
 }
@@ -118,6 +129,7 @@ void CheckBindings(std::int64_t failure_result) {
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Noop>("binding.noop")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Scoped>("binding.scoped")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Mixed>("binding.mixed")));
+  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<RequestStop>("binding.stop")));
   const auto instance = NativeInstance::Instantiate(isolate, *BINDING_IMAGE());
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   NativeExecution execution(**instance);
@@ -134,6 +146,24 @@ void CheckBindings(std::int64_t failure_result) {
   const auto blockers = isolate.ReloadBlockers();
   EXPECT_EQ(std::ranges::count(blockers, ExternalResourceKind::RootRange,
                              &ExternalResourceInfo::kind), 0);
+  NativeValue output;
+  const std::array overflow{Integer(8)};
+  ASSERT_EQ(Execute(BINDING_ENTRY, execution, overflow, output), ExecutionStatus::IntegerOverflow);
+  const auto trace = execution.ExceptionDiagnostic().stack_trace;
+  ASSERT_EQ(trace.size(), 2U);
+  EXPECT_EQ(trace.front().function, "borrowedFailure");
+  EXPECT_EQ(trace.back().function, "calculate");
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(isolate.native_control().state().host_execution, nullptr);
+  ExpectIntegerOperations(BINDING_ENTRY, execution, {9, 11, 11});
+  const std::array stop{Integer(10)};
+  ASSERT_EQ(Execute(BINDING_ENTRY, execution, stop, output), ExecutionStatus::Returned);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 42);
+  EXPECT_FALSE(execution.HasException());
+  EXPECT_TRUE(isolate.native_control().IsStopRequested());
+  EXPECT_EQ(isolate.native_control().Poll(), ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(isolate.native_control().state().host_execution, nullptr);
 }
 
 TEST(NativeBindingAbiTest, DirectScalarCallsPreserveBooleanCodecsAndBorrowedRoots) {

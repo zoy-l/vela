@@ -159,7 +159,13 @@ The execution registers its exception root when it publishes an exception envelo
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
 
 Linked AOT stack roots form a synchronous LIFO chain owned by the Heap. Generated frames initialize
-their root slots before linking and restore the previous head on every exit. Instance string
+their root slots before linking and restore the previous head on every exit. Closed synchronous
+frames may defer roots when their complete successful path only performs inline scalar or field
+operations, initialized global access, and direct self-recursion using stack storage. These frames
+retain logical trace and depth bookkeeping. The first failure temporarily roots only its initialized
+live prefix while constructing the exception. Ancestors propagating an existing exception or an
+exception-allocation failure must not trace their abandoned locals; an outer handler retains its
+own observable values through the ordinary root plan. Instance string
 constants remain rooted by program state and need no duplicate synchronous frame roots. Native
 string views and collection lookup locations participate in the existing frame-size budget;
 large frames use the same recoverable native storage, with sixteen-byte alignment.
@@ -169,6 +175,16 @@ logical depth and physical stack space. Exhausting the bound or encountering an 
 returns to the full entry to construct the original error and trace. Eligibility excludes state
 access, side effects and loops, so that this execution cannot repeat observable work. Managed
 recursive bodies use complete inlined frames and retain their root and error contracts.
+
+Closed linked AOT may specialize direct-call bodies using integer ranges, array aliases and all
+element writes. Control-flow constraints and source-constant widening establish a fixed point across
+loops and recursive calls before code generation removes proven redundant bounds or overflow checks.
+Exported, callable, interface, constructor and property entries contribute unrestricted parameters;
+arrays published through globals or unknown uses do not acquire stronger element assumptions.
+Specialized bodies remain outside the NativeImage entry table. Trusted host calls to internal
+functions retain the generic body and its full type-domain checks. Range proofs preserve access and
+failure order, logical frames, roots and physical stack budgets; they do not enlarge parameter-array
+caches or apply to dynamic JIT code.
 
 Repeated field traversals may be folded only when every object receives identical independent
 updates, the increment fields remain immutable, and no failure can observe an enlarged update

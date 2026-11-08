@@ -16,6 +16,7 @@
 #include "base/utf8.h"
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/element_storage.h"
+#include "runtime/heap/mutable_string_storage.h"
 #include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
 #include "runtime/strings/unicode_operations.h"
@@ -28,11 +29,6 @@ namespace {
 
 constexpr std::size_t kInitialMutableStringCapacity = 64;
 enum class TextContext : std::uint8_t { Interpolation, ArrayElement };
-
-struct MutableStringBuffer final {
-  char* data = nullptr;
-  std::size_t capacity = 0;
-};
 
 constexpr std::size_t kInlineFormattedParts = 8;
 
@@ -297,9 +293,9 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
 }
 
 HeapObject* Heap::AllocateMutableString() noexcept {
-  const auto size = sizeof(HeapObject) + sizeof(MutableStringBuffer);
+  const auto size = sizeof(HeapObject) + sizeof(internal::MutableStringStorage);
   return AllocateObject(ObjectKind::MutableString, size, [](HeapObject& object) {
-    std::construct_at(StorageAfter<MutableStringBuffer>(object));
+    std::construct_at(StorageAfter<internal::MutableStringStorage>(object));
   });
 }
 
@@ -325,7 +321,7 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto new_length = length + count;
-  auto& buffer = *StorageAfter<MutableStringBuffer>(builder);
+  auto& buffer = *StorageAfter<internal::MutableStringStorage>(builder);
   if (new_length > buffer.capacity) {
     const auto capacity = std::max({
         new_length,
@@ -346,12 +342,12 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
 }
 
 StringObject* Heap::BuildString(const HeapObject& builder) noexcept {
-  const auto& buffer = *StorageAfter<MutableStringBuffer>(builder);
+  const auto& buffer = *StorageAfter<internal::MutableStringStorage>(builder);
   return AllocateString(std::string_view(buffer.data, builder.length));
 }
 
 void Heap::ReleaseMutableString(HeapObject& object) noexcept {
-  auto& buffer = *StorageAfter<MutableStringBuffer>(object);
+  auto& buffer = *StorageAfter<internal::MutableStringStorage>(object);
   ReleaseExternalStorage(buffer.data, buffer.capacity);
   std::destroy_at(&buffer);
 }

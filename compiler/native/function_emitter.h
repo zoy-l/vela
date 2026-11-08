@@ -21,10 +21,12 @@
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/array_analysis.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/global_analysis.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 
@@ -73,7 +75,8 @@ struct FunctionEmissionFacts final {
   std::vector<std::optional<std::uint32_t>> field_accesses;
   std::vector<FieldKindWrite> field_kind_writes;
   std::vector<std::optional<CallableTarget>> direct_calls;
-  std::span<const std::uint64_t> array_element_bits;
+  ArrayEmissionFacts arrays;
+  const GlobalAccessFacts* global_access = nullptr;
 };
 
 class FunctionEmitter final {
@@ -108,7 +111,8 @@ class FunctionEmitter final {
         kind_(kind),
         tier_(tier),
         builder_(module.getContext()),
-        array_element_bits_(facts.array_element_bits),
+        array_access_(facts.arrays),
+        global_access_(*facts.global_access),
         roots_(roots) {}
 
   std::expected<void, std::string> Emit();
@@ -130,13 +134,18 @@ class FunctionEmitter final {
     GcState,
     FieldPayloads,
     FieldKinds,
+    Execution,
+    StackRoots,
     Count,
   };
   std::array<llvm::MDNode*, static_cast<std::size_t>(MemoryRegion::Count)> memory_tags_{};
+  absl::flat_hash_map<std::uint32_t, llvm::MDNode*> field_payload_tags_;
   llvm::MDNode* MemoryTag(MemoryRegion region);
   llvm::LoadInst* LoadMemory(llvm::Type* type, llvm::Value* address, MemoryRegion region);
   llvm::StoreInst* StoreMemory(llvm::Value* value, llvm::Value* address, MemoryRegion region);
   llvm::Value* Load(ir::RegisterId reg);
+  bool HasRangeProof(std::span<const std::uint8_t> proofs) const;
+  const ir::Instruction& CanonicalInstruction(std::size_t origin) const;
   llvm::Value* Payload(ir::RegisterId reg);
   llvm::Value* Reference(ir::RegisterId reg);
   void Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type);
@@ -146,7 +155,22 @@ class FunctionEmitter final {
   void PrepareTraceFrame();
   void InitializeTraceFrame(llvm::Value* frame);
   void PrepareInlineRuntimeCall();
+  llvm::Value* CallRuntimeBuiltin(const ir::Instruction& instruction);
   void CacheGlobals();
+  void CacheInitializedGlobals(std::size_t callee);
+  bool IsGlobalInitialized(std::size_t index) const;
+  bool IsGlobalInitialized() const { return IsGlobalInitialized(instruction_index_); }
+  void MarkGlobalInitialized(std::uint32_t slot);
+  llvm::Value* IsGlobalReady(llvm::Value* address);
+  void StoreGlobalReady(llvm::Value* address);
+  llvm::Value* GlobalValueAddress(std::uint32_t slot);
+  std::size_t PlanFixedArrayStorage();
+  void CacheFixedArrayStorage();
+  void StoreFixedArrayStorage(ir::RegisterId reg, llvm::Value* value);
+  enum class ArrayStorageField : std::uint8_t { Data, Length, Mutation };
+  std::array<llvm::Type*, 3> ArrayStorageTypes();
+  llvm::Value* LoadArrayStorageField(llvm::Value* array, ArrayStorageField field);
+  llvm::Value* ReadArrayStorage(llvm::Value* array, ir::RegisterId reg, ArrayStorageField field);
   void SetPosition();
   void PrepareRuntimeCall();
   bool IsEntrySlotRequired(std::size_t callee) const;
@@ -156,6 +180,10 @@ class FunctionEmitter final {
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
   void EmitHostBoundary(HostBorrow change);
+  void EnterHostFrame(llvm::Value* depth);
+  void RestoreHostFrame();
+  void StoreExecutionState(Builder& builder, llvm::Value* frame, llvm::Value* depth);
+  void ReleaseBorrowedHostFrame();
   llvm::Value* EmitHostPointer(llvm::Value* wrapper, const SourceType& type);
   llvm::Value* EmitDirectHostCall(const ir::Function& callee,
                                   llvm::Value* entries,
@@ -243,6 +271,7 @@ class FunctionEmitter final {
   void EmitIndex(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitStringCodePointAt(const ir::Instruction& instruction);
+  void EmitAppendCodePoint(const ir::Instruction& instruction);
   void EmitMapBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitLocatedMapBuiltin(const ir::Instruction& instruction, Builtin builtin, llvm::Value* map);
   std::expected<void, std::string> EmitBuiltin(const ir::Instruction& instruction);
@@ -255,6 +284,7 @@ class FunctionEmitter final {
                      ArgumentPrefix prefix = ArgumentPrefix::None);
   void Unpack(ir::RegisterId reg);
   void CompleteCall(llvm::Value* status, ir::RegisterId result);
+  void EmitRuntimeBuiltin(const ir::Instruction& instruction);
   void StoreRoots(std::size_t index);
   void ClearRoots(std::size_t index);
   llvm::Value* RootAddress(std::size_t slot);
@@ -275,6 +305,9 @@ class FunctionEmitter final {
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
   void PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
+  [[nodiscard]] bool CanUseSynchronousStackFrame() const;
+  [[nodiscard]] bool CanDeferRoots() const;
+  [[nodiscard]] bool CanExecuteWithoutCollection(std::size_t index) const;
   void BindFrameStorage();
   llvm::Value* HasStackBudget(llvm::Value* depth, std::uint64_t reserved_bytes = 0);
   void EmitFrameEntry();
@@ -323,14 +356,14 @@ class FunctionEmitter final {
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
   llvm::Value* host_parent_ = nullptr;
-  bool host_execution_borrowed_ = false;
+  llvm::Value* host_trace_active_ = nullptr;
   llvm::Value* entry_depth_ = nullptr;
   llvm::Value* global_owner_ = nullptr;
   llvm::Value* global_values_ = nullptr;
   llvm::Value* global_states_ = nullptr;
   llvm::Value* global_caches_ = nullptr;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> global_ready_;
-  absl::flat_hash_map<std::uint32_t, llvm::Value*> global_initial_ready_;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> global_cached_values_;
   llvm::Value* result_ = nullptr;
   llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
@@ -356,6 +389,7 @@ class FunctionEmitter final {
   };
   absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
   bool leaf_entry_ = false;
+  bool deferred_roots_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::vector<std::optional<unsigned>> frame_locals_;
   unsigned temporary_field_ = 0;
@@ -372,8 +406,12 @@ class FunctionEmitter final {
   std::vector<std::uint32_t> native_view_constants_;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> constant_string_views_;
   std::vector<llvm::Value*> map_lookups_;
+  std::vector<llvm::Value*> fixed_arrays_;
+  llvm::StructType* fixed_array_cache_type_ = nullptr;
+  std::size_t fixed_array_cache_bytes_ = 0;
   std::vector<std::optional<std::size_t>> map_lookup_pairs_;
-  std::span<const std::uint64_t> array_element_bits_;
+  ArrayEmissionFacts array_access_;
+  const GlobalAccessFacts& global_access_;
   const NativeRootPlan& roots_;
 };
 
@@ -382,7 +420,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
-    std::span<const std::uint64_t> array_element_bits,
+    ArrayEmissionFacts array_access,
+    const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
@@ -398,7 +437,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
-    std::span<const std::uint64_t> array_element_bits,
+    ArrayEmissionFacts array_access,
+    const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,

@@ -178,12 +178,14 @@ class NativeExecution final {
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
   [[nodiscard]] Isolate& isolate() const noexcept { return context_.isolate(); }
   [[nodiscard]] NativeContext& context() noexcept { return context_; }
+  [[nodiscard]] std::uintptr_t stack_limit() const noexcept { return stack_limit_; }
   [[nodiscard]] const NativeTraceFrame* current_frame() const noexcept { return current_frame_; }
   [[nodiscard]] std::uint32_t* current_instruction() noexcept {
     return &current_frame_->position.instruction;
   }
   [[nodiscard]] ExecutionStatus HandleFailure(ExecutionStatus status,
-                                              std::string_view message = {});
+                                              std::string_view message = {},
+                                              std::span<const Value> roots = {});
   [[nodiscard]] ExecutionStatus HandleLeafFailure(TracePosition position,
                                                   ExecutionStatus status,
                                                   std::span<const Value> roots);
@@ -266,6 +268,10 @@ extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
                                                     const Value* roots,
                                                     std::uint64_t root_count);
 extern "C" std::uint8_t vela_native_v1_failure(NativeExecution* execution, std::uint8_t status);
+extern "C" std::uint8_t vela_native_v1_unrooted_failure(NativeExecution* execution,
+                                                        std::uint8_t status,
+                                                        const Value* roots,
+                                                        std::uint64_t root_count);
 extern "C" std::uint8_t vela_native_v1_has_exception(NativeExecution* execution) noexcept;
 extern "C" void vela_native_v1_catch(NativeExecution* execution, NativeValue* result) noexcept;
 extern "C" void vela_native_v1_exception_value(const NativeValue* exception,

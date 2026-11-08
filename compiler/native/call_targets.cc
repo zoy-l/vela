@@ -19,68 +19,6 @@
 namespace vela::compiler::native {
 namespace {
 
-class CallableDefinitions final {
- public:
-  CallableDefinitions(const ir::Function& function, const ir::Program& program)
-      : function_(&function),
-        program_(&program),
-        counts_(function.register_count),
-        definitions_(function.register_count),
-        states_(function.register_count),
-        targets_(function.register_count) {
-    for (std::size_t reg = 0; reg < function.parameter_count; ++reg) {
-      counts_.at(reg) = 1;
-    }
-    for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-      const auto& instruction = function.instructions.at(index);
-      if (ir::AnalyzeRegisters(instruction, program.functions).defines_value) {
-        ++counts_.at(instruction.dst);
-        definitions_.at(instruction.dst) = index;
-      }
-    }
-  }
-
-  std::optional<CallableTarget> Resolve(ir::RegisterId reg) {
-    const auto& function = *function_;
-    const auto& program = *program_;
-    std::vector<ir::RegisterId> path;
-    std::optional<CallableTarget> result;
-    while (states_.at(reg) == 0) {
-      states_.at(reg) = 1;
-      path.push_back(reg);
-      const auto definition = definitions_.at(reg);
-      if (counts_.at(reg) != 1 || !definition) {
-        break;
-      }
-      const auto& instruction = function.instructions.at(*definition);
-      if (instruction.opcode == Opcode::Move) {
-        reg = instruction.lhs;
-        continue;
-      }
-      if (instruction.opcode == Opcode::NewInstance) {
-        result = program.classes.at(instruction.index).callable;
-      }
-      break;
-    }
-    if (states_.at(reg) == 2) {
-      result = targets_.at(reg);
-    }
-    for (const auto item : path) {
-      targets_.at(item) = result;
-      states_.at(item) = 2;
-    }
-    return result;
-  }
-
- private:
-  const ir::Function* function_;
-  const ir::Program* program_;
-  std::vector<std::size_t> counts_;
-  std::vector<std::optional<std::size_t>> definitions_;
-  std::vector<std::uint8_t> states_;
-  std::vector<std::optional<CallableTarget>> targets_;
-};
-
 bool IsSameType(const frontend::TypeDescriptor& left, const frontend::TypeDescriptor& right) {
   return left.kind == right.kind && left.nullable == right.nullable && left.name == right.name;
 }
@@ -248,14 +186,22 @@ std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& f
       })) {
     return {};
   }
-  CallableDefinitions definitions(function, program);
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, program.functions);
+  const auto register_flow = ir::AnalyzeRegisterFlow(function, accesses);
   std::vector<std::optional<CallableTarget>> targets(function.instructions.size());
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
     const auto& instruction = function.instructions.at(index);
     if (instruction.opcode != Opcode::CallIndirect) {
       continue;
     }
-    const auto target = definitions.Resolve(instruction.rhs);
+    const auto definition = register_flow.OriginDefinition(instruction.rhs);
+    if (!definition) {
+      continue;
+    }
+    const auto& source = function.instructions[*definition];
+    const auto target = source.opcode == Opcode::NewInstance
+                            ? program.classes[source.index].callable
+                            : std::nullopt;
     if (!target) {
       continue;
     }

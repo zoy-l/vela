@@ -115,6 +115,7 @@ source_set("runtime") {
     "heap/host_root.h",
     "heap/instance_storage.h",
     "heap/intrusive_link_internal.h",
+    "heap/mutable_string_storage.h",
     "heap/native_buffer.h",
     "isolate/external_resources.cc",
     "isolate/external_resources.h",

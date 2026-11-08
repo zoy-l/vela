@@ -16,6 +16,57 @@
 namespace vela::ir {
 namespace {
 
+TEST(AnalysisTest, ReachabilityHandlesEmptyGraphsCyclesAndUnreachablePredecessors) {
+  EXPECT_TRUE(FindReachableBlocks({}).empty());
+  FlowGraph graph{
+      .blocks =
+          {
+              {.successors = {1}, .predecessors = {1}},
+              {.successors = {0}, .predecessors = {0, 2}},
+              {.successors = {1}, .predecessors = {}},
+              {.successors = {}, .predecessors = {}},
+          },
+      .instruction_blocks = {},
+  };
+  EXPECT_EQ(FindReachableBlocks(graph), (std::vector<std::uint8_t>{1, 1, 0, 0}));
+}
+
+TEST(AnalysisTest, RegisterOriginsRejectOverwrittenParametersAndUnanchoredMoveCycles) {
+  constexpr RegisterId kOverwrittenAlias = 5;
+  constexpr RegisterId kCycleLeft = 6;
+  constexpr RegisterId kCycleRight = 7;
+  Function function;
+  function.parameter_count = 2;
+  function.register_count = kCycleRight + 1;
+  function.instructions = {
+      {.opcode = Opcode::Move, .dst = 2, .lhs = 3, .location = {}},
+      {.opcode = Opcode::LoadInt, .dst = 3, .location = {}},
+      {.opcode = Opcode::Move, .dst = 4, .lhs = 0, .location = {}},
+      {.opcode = Opcode::LoadInt, .dst = 1, .location = {}},
+      {.opcode = Opcode::Move, .dst = kOverwrittenAlias, .lhs = 1, .location = {}},
+      {.opcode = Opcode::Move, .dst = kCycleLeft, .lhs = kCycleRight, .location = {}},
+      {.opcode = Opcode::Move, .dst = kCycleRight, .lhs = kCycleLeft, .location = {}},
+  };
+  const auto accesses = AnalyzeRegisterAccesses(function, {});
+  const auto flow = AnalyzeRegisterFlow(function, accesses);
+  const auto& definitions = flow.definitions;
+  EXPECT_EQ(definitions[0].count, 1U);
+  EXPECT_FALSE(definitions[0].last);
+  EXPECT_EQ(definitions[1].count, 2U);
+  EXPECT_EQ(definitions[1].first, 3U);
+  EXPECT_EQ(definitions[1].last, 3U);
+  const auto& origins = flow.origins;
+  EXPECT_EQ(origins[2], 3U);
+  EXPECT_EQ(origins[4], 0U);
+  EXPECT_FALSE(origins[kOverwrittenAlias]);
+  EXPECT_FALSE(origins[kCycleLeft]);
+  EXPECT_FALSE(origins[kCycleRight]);
+  EXPECT_EQ(flow.OriginDefinition(2), 1U);
+  EXPECT_FALSE(flow.OriginDefinition(4));
+  EXPECT_FALSE(flow.OriginDefinition(kOverwrittenAlias));
+  EXPECT_FALSE(flow.OriginDefinition(kCycleLeft));
+}
+
 TEST(AnalysisTest, LateOptimizationPreservesCanonicalErrorAndHandlerOrigins) {
   constexpr std::uint32_t kHandlerTarget = 5;
   constexpr std::int64_t kUnusedConstant = 20;

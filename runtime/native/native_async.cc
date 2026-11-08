@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -75,6 +76,18 @@ std::expected<Value, ExecutionStatus> BindResult(NativeExecution& execution,
   const auto& instance = execution.instance();
   const auto type = instance.image().function(function).result_type;
   return BindValueType(value, instance.layouts().types[type]);
+}
+
+std::expected<Value, ExecutionStatus> AllocateSuspensionResult(NativeExecution& execution,
+                                                               std::uint32_t function) {
+  auto& isolate = execution.isolate();
+  auto& heap = isolate.heap();
+  Future future(&isolate.scheduler());
+  const auto allocated = AllocatedValue(heap.AllocateFuture(future));
+  if (!allocated) {
+    return allocated;
+  }
+  return BindResult(execution, function, *allocated);
 }
 
 struct SuspensionPoint final {
@@ -174,6 +187,54 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
 
 namespace {
 
+bool HasScalarAwaitStackBudget(std::uintptr_t stack_limit) {
+  return std::bit_cast<std::uintptr_t>(&stack_limit) > stack_limit;
+}
+
+class ScalarAwaitReturn final {
+ public:
+  ScalarAwaitReturn(Isolate& isolate,
+                    SuspensionPoint point,
+                    std::uint32_t function,
+                    std::array<Value, 2> references,
+                    Value value,
+                    std::uintptr_t stack_limit)
+      : isolate_(&isolate),
+        point_(point),
+        function_(function),
+        references_(references),
+        value_(value),
+        stack_limit_(stack_limit),
+        roots_(isolate.heap(), references_.data(), references_.size(), std::nullopt) {
+    isolate.scheduler().AddSuspendedFrame(sizeof(ScalarAwaitReturn));
+  }
+  ~ScalarAwaitReturn() { isolate_->scheduler().RemoveSuspendedFrame(sizeof(ScalarAwaitReturn)); }
+  ScalarAwaitReturn(const ScalarAwaitReturn&) = delete;
+  ScalarAwaitReturn& operator=(const ScalarAwaitReturn&) = delete;
+  ScalarAwaitReturn(ScalarAwaitReturn&&) = delete;
+  ScalarAwaitReturn& operator=(ScalarAwaitReturn&&) = delete;
+
+  void Resume() {
+    if (HasScalarAwaitStackBudget(stack_limit_)) {
+      std::ignore = Heap::GetFuture(*references_[1].AsObject())->Complete(value_);
+      return;
+    }
+    // 栈预算不足时由真实恢复入口建立原来的失败位置和诊断。
+    const auto frame = std::make_shared<NativeSuspendedFrame>(*isolate_, point_, 0, references_[0],
+                                                              function_, references_[1]);
+    frame->Resume({.state = FutureState::Succeeded, .value = value_, .diagnostic = {}});
+  }
+
+ private:
+  Isolate* isolate_;
+  SuspensionPoint point_;
+  std::uint32_t function_;
+  std::array<Value, 2> references_;
+  Value value_;
+  std::uintptr_t stack_limit_;
+  RootRange roots_;
+};
+
 std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
                                               std::uint32_t function,
                                               SuspensionPoint point,
@@ -181,19 +242,14 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
                                               std::span<const NativeValue> saved,
                                               std::size_t capacity) {
   auto& isolate = execution.isolate();
-  Future result(&isolate.scheduler());
-  auto* object = isolate.heap().AllocateFuture(result);
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  const auto allocated = AllocateSuspensionResult(execution, function);
+  if (!allocated) {
+    return allocated;
   }
-  const auto output = Value::Object(object);
+  const auto output = *allocated;
   const RootRange root(isolate.heap(), &output, 1, std::nullopt);
   auto suspended = std::make_shared<NativeSuspendedFrame>(
       isolate, point, capacity, execution.instance().state().front(), function, output);
-  const auto bound = BindResult(execution, function, output);
-  if (!bound) {
-    return std::unexpected(bound.error());
-  }
   suspended->Suspend(point.instruction, source, saved);
   return output;
 }
@@ -308,6 +364,27 @@ extern "C" std::uint8_t vela_native_v1_suspend(NativeExecution* execution,
   return StoreNativeResult(
       result, Suspend(*execution, function, {.entry = entry, .instruction = instruction},
                       DecodeNativeValue(*source), std::span(saved, count), capacity));
+}
+
+extern "C" std::uint8_t vela_native_v1_scalar_await_return(NativeExecution* execution,
+                                                           std::uint32_t function,
+                                                           NativeResumeEntry entry,
+                                                           std::uint32_t instruction,
+                                                           const NativeValue* source,
+                                                           NativeValue* result) {
+  auto& isolate = execution->isolate();
+  const auto allocated = AllocateSuspensionResult(*execution, function);
+  if (!allocated) {
+    return ToNativeStatus(allocated.error());
+  }
+  const auto output = *allocated;
+  auto frame = std::make_unique<ScalarAwaitReturn>(
+      isolate, SuspensionPoint{.entry = entry, .instruction = instruction}, function,
+      std::array{execution->instance().state().front(), output}, DecodeNativeValue(*source),
+      execution->stack_limit());
+  // 标量尾 await 仍经过一个相同的微任务边界；队列独占续延并持有其两个精确根。
+  isolate.scheduler().PostMicrotask([frame = std::move(frame)] { frame->Resume(); });
+  return StoreNativeResult(result, output);
 }
 
 extern "C" void vela_native_v1_resuspend(NativeResumeState* state,

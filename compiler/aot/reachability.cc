@@ -20,6 +20,7 @@
 #include "base/member.h"
 #include "base/opcode.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler::aot {
@@ -215,17 +216,12 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
 
 void Reachability::VisitClass(std::uint32_t index, TypeExposure exposure) {
   const auto& source = program_.classes.at(index);
-  if (exposure == TypeExposure::Host && source.constructor != kInvalidFunctionTarget) {
-    Mark(NodeKind::Function, source.constructor, exposure);
-  }
-  if (source.callable && source.callable->mode != CallableMode::InterfaceMethod) {
-    Mark(NodeKind::Function, source.callable->function, exposure);
-  }
-  for (const auto target : source.dispatch_targets) {
-    if (target != kInvalidFunctionTarget) {
+  ir::ForEachClassFunction(source, [&](std::uint32_t target, ir::ClassFunctionKind kind) {
+    if (kind != ir::ClassFunctionKind::FieldInitializer &&
+        (kind != ir::ClassFunctionKind::Constructor || exposure == TypeExposure::Host)) {
       Mark(NodeKind::Function, target, exposure);
     }
-  }
+  });
   for (const auto& type : source.field_types) {
     VisitSource(type, exposure);
   }
@@ -243,12 +239,9 @@ void Reachability::VisitClass(std::uint32_t index, TypeExposure exposure) {
 void Reachability::VisitMember(const MemberDefinition& member, TypeExposure exposure) {
   if (member.kind == MemberKind::Method) {
     Mark(NodeKind::Class, member.target, exposure);
-  } else if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
-    Mark(NodeKind::Function, member.target, exposure);
   }
-  if (member.setter) {
-    Mark(NodeKind::Function, *member.setter, exposure);
-  }
+  ir::ForEachPropertyFunction(
+      member, [&](std::uint32_t target) { Mark(NodeKind::Function, target, exposure); });
   if (member.type) {
     Mark(NodeKind::Type, *member.type, exposure);
   }

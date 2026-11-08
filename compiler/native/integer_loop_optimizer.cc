@@ -23,7 +23,6 @@
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/CFG.h>
-#include <llvm/IR/ConstantRange.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -51,10 +50,10 @@
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
-#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/local_ssa.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
@@ -1164,14 +1163,7 @@ void EmitBoundedLeafGuard(const GeneratedFunction& function) {
   auto& body = *function.leaf;
   auto& guard = *function.leaf_guard;
   llvm::DominatorTree dominators(body);
-  llvm::SmallVector<llvm::AllocaInst*> locals;
-  for (auto& instruction : body.getEntryBlock()) {
-    auto* local = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
-    if (local != nullptr && llvm::isAllocaPromotable(local)) {
-      locals.push_back(local);
-    }
-  }
-  llvm::PromoteMemToReg(locals, dominators);
+  PromoteLocalAllocations(body, dominators);
   llvm::LoopInfo loops(dominators);
   llvm::AssumptionCache assumptions(body);
   for (auto* loop : loops) {

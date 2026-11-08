@@ -190,7 +190,7 @@ extern "C" std::uint8_t vela_native_v1_string_int_map_get(HeapObject* map,
                                                           StringObject* key,
                                                           std::int64_t* result,
                                                           Heap::MapLookup* lookup) noexcept {
-  const auto value = Heap::ResolveMapValue(*map, Value::String(key), *lookup);
+  const auto value = Heap::ResolveStringMapValue(*map, key, *lookup);
   const auto present = !value.IsNull();
   *result = present ? value.AsInteger() : 0;
   return present ? 1 : 0;

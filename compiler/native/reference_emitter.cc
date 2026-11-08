@@ -123,7 +123,9 @@ llvm::Value* FunctionEmitter::Pack(llvm::Value* encoded, std::size_t index) {
 void FunctionEmitter::Unpack(ir::RegisterId reg) {
   auto* record = builder_.CreateLoad(NativeRecordType(module_.getContext()), result_);
   const auto& type = source_.value_types.at(reg);
-  Store(reg, DecodeValue(builder_, record, type), type);
+  auto* value = DecodeValue(builder_, record, type);
+  AssumeNonNull(builder_, value, type);
+  Store(reg, value, type);
 }
 
 void FunctionEmitter::PackArguments(ir::RegisterId first,
@@ -141,6 +143,9 @@ void FunctionEmitter::CompleteCall(llvm::Value* status, ir::RegisterId result) {
 }
 
 void FunctionEmitter::StoreRoots(std::size_t index) {
+  if (deferred_roots_) {
+    return;
+  }
   for (const auto reg : roots_.stores.at(index)) {
     const auto& slot = roots_.slots.at(reg);
     WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
@@ -148,7 +153,7 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
 }
 
 void FunctionEmitter::ClearRoots(std::size_t index) {
-  if (leaf_entry_) {
+  if (leaf_entry_ || deferred_roots_) {
     return;
   }
   for (const auto reg : roots_.clears.at(index)) {
@@ -197,18 +202,7 @@ void FunctionEmitter::EmitStringCodePointAt(const ir::Instruction& instruction) 
         {.kind = Kind::Int, .name = frontend::kIntTypeName});
   builder_.CreateBr(done);
   builder_.SetInsertPoint(unicode);
-  PackArguments(instruction.lhs, BuiltinArity(Builtin::StringCodePointAt));
-  auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
-                                            builder_.getPtrTy(), builder_.getInt32Ty(),
-                                            builder_.getPtrTy(), builder_.getPtrTy());
-  CompleteCall(builder_.CreateCall(helper,
-                                   {
-                                       body_->getArg(0),
-                                       builder_.getInt32(instruction.index),
-                                       arguments_,
-                                       result_,
-                                   }),
-               instruction.dst);
+  EmitRuntimeBuiltin(instruction);
   builder_.CreateBr(done);
   builder_.SetInsertPoint(done);
 }
@@ -298,8 +292,52 @@ void FunctionEmitter::EmitMapBuiltin(const ir::Instruction& instruction, Builtin
   }
 }
 
+void FunctionEmitter::EmitAppendCodePoint(const ir::Instruction& instruction) {
+  using runtime::NativeMemoryLayout;
+  constexpr std::uint64_t kAsciiLimit = 0x80;
+  auto* output = Reference(instruction.lhs);
+  auto* point = Payload(instruction.lhs + 1);
+  Check(builder_.CreateIsNotNull(output), ExecutionStatus::TypeError);
+  auto* length_address = ByteAddress(output, NativeMemoryLayout::kObjectLength);
+  auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
+  auto* capacity = LoadMemory(builder_.getInt64Ty(),
+                              ByteAddress(output, NativeMemoryLayout::kMutableStringCapacity),
+                              MemoryRegion::HeapHeader);
+  auto* wide_length = builder_.CreateZExt(length, builder_.getInt64Ty());
+  auto* available =
+      builder_.CreateAnd(builder_.CreateICmpULT(point, builder_.getInt64(kAsciiLimit)),
+                         builder_.CreateICmpULT(wide_length, capacity));
+  auto* append = llvm::BasicBlock::Create(module_.getContext(), "string.append.ascii", body_);
+  auto* runtime = llvm::BasicBlock::Create(module_.getContext(), "string.append.runtime", body_);
+  auto* done = llvm::BasicBlock::Create(module_.getContext(), "string.append.done", body_);
+  builder_.CreateCondBr(available, append, runtime);
+  builder_.SetInsertPoint(append);
+  // 容量充足的 ASCII 写入不会分配；UTF-8 编码、扩容和失败仍由原运行时操作负责。
+  auto* data =
+      LoadMemory(builder_.getPtrTy(), ByteAddress(output, NativeMemoryLayout::kMutableStringData),
+                 MemoryRegion::HeapHeader);
+  StoreMemory(builder_.CreateTrunc(point, builder_.getInt8Ty()),
+              builder_.CreateGEP(builder_.getInt8Ty(), data, wide_length), MemoryRegion::Elements);
+  StoreMemory(builder_.CreateNUWAdd(length, builder_.getInt32(1)), length_address,
+              MemoryRegion::HeapHeader);
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(runtime);
+  PrepareInlineRuntimeCall();
+  CheckStatus(CallRuntimeBuiltin(instruction));
+  PollAfterRuntimeCall();
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(done);
+  Store(instruction.dst, builder_.getFalse(),
+        {.kind = Kind::Null, .name = frontend::kNullTypeName});
+}
+
 std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
   const auto builtin = static_cast<Builtin>(instruction.index);
+  if (placement_ == NativeCodePlacement::Linked &&
+      builtin == Builtin::MutableStringAppendCodePoint) {
+    EmitAppendCodePoint(instruction);
+    return {};
+  }
   if (placement_ == NativeCodePlacement::Linked && builtin == Builtin::StringCodePointAt) {
     EmitStringCodePointAt(instruction);
     return {};
@@ -362,14 +400,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
     auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
     auto* requested = Payload(instruction.lhs + 1);
-    PackArguments(instruction.lhs, BuiltinArity(builtin));
-    auto reserve = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
-                                               builder_.getPtrTy(), builder_.getInt32Ty(),
-                                               builder_.getPtrTy(), builder_.getPtrTy());
-    CompleteCall(
-        builder_.CreateCall(
-            reserve, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_}),
-        instruction.dst);
+    EmitRuntimeBuiltin(instruction);
     // reserve 的成功契约保留长度并满足容量；将运行时保证交给 LLVM 消除后续扩容分支。
     auto* after = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
     auto* capacity =
@@ -380,14 +411,21 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
         builder_.CreateICmpUGE(builder_.CreateZExt(capacity, builder_.getInt64Ty()), requested));
     return {};
   }
-  PackArguments(instruction.lhs, BuiltinArity(builtin));
+  EmitRuntimeBuiltin(instruction);
+  return {};
+}
+
+void FunctionEmitter::EmitRuntimeBuiltin(const ir::Instruction& instruction) {
+  CompleteCall(CallRuntimeBuiltin(instruction), instruction.dst);
+}
+
+llvm::Value* FunctionEmitter::CallRuntimeBuiltin(const ir::Instruction& instruction) {
+  PackArguments(instruction.lhs, BuiltinArity(static_cast<Builtin>(instruction.index)));
   auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
-  auto* status = builder_.CreateCall(
+  return builder_.CreateCall(
       helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_});
-  CompleteCall(status, instruction.dst);
-  return {};
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitReference(

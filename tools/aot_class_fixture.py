@@ -279,7 +279,7 @@ TEST_F(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOr
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 123);
     EXPECT_EQ(execution.current_frame(), nullptr);
     static_cast<void>(execution.TakeException());
-    heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+    UnfreezeAllocations(isolate);
     heap.Collect();
     EXPECT_EQ(heap.object_count(), baseline);
   }

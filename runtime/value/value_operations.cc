@@ -61,7 +61,7 @@ bool IsEqualValue(Value left, Value right) noexcept {
     case ValueKind::Double:
       return left.AsDouble() == right.AsDouble();
     case ValueKind::String:
-      return left.AsString()->value() == right.AsString()->value();
+      return IsEqualString(*left.AsString(), *right.AsString());
     case ValueKind::Object: {
       const auto* left_object = left.AsObject();
       const auto* right_object = right.AsObject();

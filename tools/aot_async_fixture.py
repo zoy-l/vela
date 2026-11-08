@@ -20,6 +20,7 @@ class Box {
 let effect = 0;
 async func add(value: int): Future<int> { await 0; collect(); return value + 2; }
 async func fifoInput(): Future<int> { await 0; return 42; }
+async func scalarTail(value: int): Future<int> { return await Future.value(value); }
 async func repeatedFifoInput(order: Box): Future<Box> {
   await 0;
   await 0;
@@ -302,6 +303,7 @@ export async func calculate(operation: int): Future<int> {
     await Completer<void>().future;
     return 42;
   }
+  if (operation == 48) { return scalarTail(42); }
   return 0;
 }
 """
@@ -316,6 +318,12 @@ void RegisterComposition(Isolate& isolate) {
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Fetch>("fetch")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<RecordComposition>("record")));
+}
+
+void StartCompositionTask(Isolate& isolate, std::int64_t operation, Value& value) {
+  const std::array arguments{Integer(operation)};
+  ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
+                                           arguments, value));
 }
 
 std::string CompositionDiagnostic(const Future& future) {
@@ -339,9 +347,7 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
     });
     Value value;
     RootRange root(isolate.heap(), &value, 1);
-    const std::array arguments{Integer(operation)};
-    ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
-                                             arguments, value));
+    ASSERT_NO_FATAL_FAILURE(StartCompositionTask(isolate, operation, value));
     isolate.heap().Collect();
     auto* future = Heap::GetFuture(*value.AsObject());
     ASSERT_NE(future, nullptr);
@@ -373,6 +379,47 @@ TEST(NativeHostTest, RepeatedScalarValueAwaitAllocatesOnlyTheResultFuture) {
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
 }
 
+TEST(NativeHostTest, ScalarTailAwaitKeepsMicrotaskOrderRootsAndPendingRequests) {
+  for (const auto mode : {0, 1, 2}) {
+    SCOPED_TRACE(mode);
+    Isolate isolate(1);
+    RegisterComposition(isolate);
+    Value value;
+    RootRange root(isolate.heap(), &value, 1);
+    ASSERT_NO_FATAL_FAILURE(StartCompositionTask(isolate, 48, value));
+    isolate.heap().Collect();
+    auto* future = Heap::GetFuture(*value.AsObject());
+    ASSERT_NE(future, nullptr);
+    EXPECT_TRUE(future->is_pending());
+    std::int64_t order = 0;
+    bool collected = false;
+    future->ObserveResult([&order](const FutureResult&) { order = order * 10 + 2; });
+    isolate.scheduler().PostMicrotask([&order] { order = order * 10 + 1; });
+    if (mode == 1) {
+      ASSERT_TRUE(isolate.native_control().ScheduleSafepoint([&] {
+        collected = true;
+        isolate.heap().Collect();
+      }));
+    } else if (mode == 2) {
+      isolate.native_control().RequestStop();
+    }
+    ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
+    ExpectFutureAnswer(isolate, *future);
+    EXPECT_EQ(order, 12);
+    if (mode == 1) {
+      EXPECT_FALSE(collected);
+      EXPECT_EQ(isolate.native_control().ProcessSafepoint(), ExecutionStatus::Returned);
+      EXPECT_TRUE(collected);
+    } else if (mode == 2) {
+      EXPECT_EQ(isolate.native_control().Poll(), ExecutionStatus::ExecutionStopped);
+    }
+    if (mode != 0) {
+      EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+      EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+    }
+  }
+}
+
 TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) {
   Isolate isolate(1);
   RegisterComposition(isolate);
@@ -380,9 +427,7 @@ TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) 
   ActiveProducer() = &producer;
   Value value;
   RootRange root(isolate.heap(), &value, 1);
-  const std::array arguments{Integer(30)};
-  ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
-                                           arguments, value));
+  ASSERT_NO_FATAL_FAILURE(StartCompositionTask(isolate, 30, value));
   ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
   ActiveProducer() = nullptr;
   isolate.heap().Collect();
@@ -420,10 +465,8 @@ TEST(NativeHostTest, DiscardedComputationStillExecutesQueuedNativeSideEffects) {
   composition_effects = 0;
   const auto baseline = isolate.heap().object_count();
   {
-    const std::array arguments{Integer(33)};
     Value discarded;
-    ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
-                                             arguments, discarded));
+    ASSERT_NO_FATAL_FAILURE(StartCompositionTask(isolate, 33, discarded));
   }
   isolate.heap().Collect();
   ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);

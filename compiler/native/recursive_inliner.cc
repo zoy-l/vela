@@ -5,12 +5,16 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/InstrTypes.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
+
+#include "compiler/native/local_ssa.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -52,6 +56,8 @@ void AdoptBody(llvm::Function& function, llvm::Function& candidate) {
 
 void InlineRecursion(llvm::Function& function) {
   constexpr std::size_t kMaximumDepth = 3;
+  llvm::DominatorTree dominators(function);
+  PromoteLocalAllocations(function, dominators);
   if (function.getInstructionCount() >= kMaximumRecursiveInlineInstructions ||
       RecursiveCalls(function, function).empty()) {
     return;

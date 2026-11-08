@@ -19,6 +19,7 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
@@ -32,9 +33,10 @@ namespace vela::compiler::native {
 
 std::size_t FunctionEmitter::PlanAuxiliaryStorage() {
   if (!auxiliary_bytes_) {
-    auxiliary_bytes_ = placement_ == NativeCodePlacement::Linked
-                           ? PlanStringViewStorage() + PlanMapLookupStorage()
-                           : 0;
+    const auto array_bytes = PlanFixedArrayStorage();
+    auxiliary_bytes_ = array_bytes + (placement_ == NativeCodePlacement::Linked
+                                          ? PlanStringViewStorage() + PlanMapLookupStorage()
+                                          : 0);
   }
   return *auxiliary_bytes_;
 }
@@ -61,6 +63,89 @@ llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth, std::uint64_t r
                             stack_available);
 }
 
+bool FunctionEmitter::CanUseLeafEntry() const {
+  if (!CanUseSynchronousStackFrame() ||
+      (program_.native_mode == NativeProgramMode::Reloadable && kind_ != NativeEntryKind::Leaf) ||
+      !IsScalar(source_.return_type)) {
+    return false;
+  }
+  return std::ranges::all_of(source_.instructions, [&](const ir::Instruction& instruction) {
+    // 标量 return 不装箱；字段和数组读写可保留副作用，但不能进入用户代码或分配。
+    if (instruction.opcode == Opcode::Return) {
+      return true;
+    }
+    if (kind_ == NativeEntryKind::Leaf && generated_[function_index_].budgeted_recursion &&
+        instruction.opcode == Opcode::Call && instruction.index == function_index_) {
+      return true;
+    }
+    if (instruction.opcode == Opcode::GetGlobal) {
+      // 惰性初始化器可能 GC；仅在没有活动引用时沿用延迟逻辑帧入口。
+      return roots_.count == 0;
+    }
+    const auto effects = ir::AnalyzeEffects(instruction);
+    return !effects.MayCollectOnSuccess();
+  });
+}
+
+bool FunctionEmitter::CanUseSynchronousStackFrame() const {
+  return !roots_.debug_values && ir::CanAnalyzeSynchronousFunction(source_) &&
+         frame_bytes_ <= kMaximumNativeStackBytes;
+}
+
+bool FunctionEmitter::CanDeferRoots() const {
+  if (leaf_entry_ || roots_.count == 0 || kind_ != NativeEntryKind::Initial ||
+      !IsClosedLinkedProgram(program_.native_mode, placement_) || !CanUseSynchronousStackFrame()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    if (!CanExecuteWithoutCollection(index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool FunctionEmitter::CanExecuteWithoutCollection(std::size_t index) const {
+  const auto& instruction = source_.instructions[index];
+  if (roots_.safepoints[index] != 0 || instruction.construction ||
+      instruction.completes_construction) {
+    return false;
+  }
+  switch (instruction.opcode) {
+    case Opcode::Call:
+      // 保留逻辑帧的托管自递归复用已证明的栈布局；其他入口仍可能分配帧资源。
+      return instruction.index == function_index_ &&
+             (escape_.borrowed_calls.empty() || !escape_.borrowed_calls[index].has_value());
+    case Opcode::GetGlobal:
+      return IsGlobalInitialized(index);
+    case Opcode::GetField:
+    case Opcode::SetField:
+      return !instruction.field_declaration.has_value();
+    case Opcode::SetGlobal:
+    case Opcode::Return:
+    case Opcode::Jump:
+    case Opcode::JumpIfFalse:
+    case Opcode::JumpIfNull:
+      return true;
+    case Opcode::EqualValue:
+    case Opcode::NotEqualValue: {
+      const auto& left = source_.value_types[instruction.lhs];
+      const auto& right = source_.value_types[instruction.rhs];
+      return left.kind == Kind::Null || right.kind == Kind::Null ||
+             (IsScalar(left) && IsScalar(right));
+    }
+    case Opcode::BuiltinCall:
+    case Opcode::EqualString:
+    case Opcode::NotEqualString:
+      return false;
+    default: {
+      const auto effects = ir::AnalyzeEffects(instruction);
+      return !effects.MayCollectOnSuccess() && !effects.reads_state && !effects.writes_state &&
+             !effects.changes_control;
+    }
+  }
+}
+
 void FunctionEmitter::EmitFrameEntry() {
   using runtime::NativeMemoryLayout;
   using runtime::NativeTraceFrame;
@@ -81,7 +166,7 @@ void FunctionEmitter::EmitFrameEntry() {
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  auto* depth = builder_.CreateLoad(word, depth_address);
+  auto* depth = LoadMemory(word, depth_address, MemoryRegion::Execution);
   entry_depth_ = depth;
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
@@ -107,20 +192,19 @@ void FunctionEmitter::EmitFrameEntry() {
   const bool on_stack = frame_bytes_ <= kMaximumNativeStackBytes;
   if (IsRecovering()) {
     // 优化帧已预留基线存储，并持有根区间直到恢复返回；此处不分配资源或重复登记根。
-  } else if (leaf_entry_ && roots_.count != 0) {
-    // 成功路径没有 GC 安全点；根槽只在失败分支写入并由 leaf_failure 临时登记。
+  } else if ((leaf_entry_ || deferred_roots_) && roots_.count != 0) {
+    // 成功路径没有 GC 安全点；失败分支只写活动前缀，由异常入口临时登记。
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
   } else if (on_stack && roots_.count != 0) {
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
-    if (placement_ == NativeCodePlacement::Linked &&
-        program_.native_mode == NativeProgramMode::Closed) {
+    if (IsClosedLinkedProgram(program_.native_mode, placement_)) {
       using runtime::NativeStackRoots;
       auto* frame = allocate(sizeof(NativeStackRoots), alignof(NativeStackRoots));
       auto* head = builder_.CreateLoad(
           pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionStackRoots));
       MarkInvariant(*head);
       stack_roots_head = head;
-      previous_stack_roots = builder_.CreateLoad(pointer, head);
+      previous_stack_roots = LoadMemory(pointer, head, MemoryRegion::StackRoots);
       // 先发布空槽，再由安全点根计划写入活动引用；登记时即使正处于 Sweep 也没有待追踪值。
       static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
       builder_.CreateMemSet(root_slots_, builder_.getInt8(0), roots_.count * sizeof(runtime::Value),
@@ -130,7 +214,7 @@ void FunctionEmitter::EmitFrameEntry() {
                            ByteAddress(frame, offsetof(NativeStackRoots, count)));
       builder_.CreateStore(previous_stack_roots,
                            ByteAddress(frame, offsetof(NativeStackRoots, previous)));
-      builder_.CreateStore(frame, head);
+      StoreMemory(frame, head, MemoryRegion::StackRoots);
     } else {
       root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
       auto enter = module_.getOrInsertFunction(
@@ -193,15 +277,13 @@ void FunctionEmitter::EmitFrameEntry() {
     auto* previous = cleanup.CreateLoad(
         pointer, cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), frame,
                                             offsetof(NativeTraceFrame, previous)));
-    auto* frame_address = cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), execution,
-                                                     NativeMemoryLayout::kExecutionFrame);
-    cleanup.CreateStore(previous, frame_address);
-    cleanup.CreateStore(depth, depth_address);
+    StoreExecutionState(cleanup, previous, depth);
     cleanup.CreateBr(restored);
     cleanup.SetInsertPoint(restored);
   }
   if (stack_roots_head != nullptr) {
-    cleanup.CreateStore(previous_stack_roots, stack_roots_head);
+    auto* restore_roots = cleanup.CreateStore(previous_stack_roots, stack_roots_head);
+    restore_roots->setMetadata(llvm::LLVMContext::MD_tbaa, MemoryTag(MemoryRegion::StackRoots));
   } else if (root_range != nullptr) {
     auto exit =
         module_.getOrInsertFunction(runtime::kNativeRootsExitSymbol, cleanup.getVoidTy(), pointer);
@@ -224,6 +306,22 @@ void FunctionEmitter::InitializeTraceFrame(llvm::Value* frame) {
                        ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
 }
 
+void FunctionEmitter::StoreExecutionState(Builder& builder,
+                                          llvm::Value* frame,
+                                          llvm::Value* depth) {
+  using runtime::NativeMemoryLayout;
+  auto* execution = body_->getArg(0);
+  auto* tag = MemoryTag(MemoryRegion::Execution);
+  auto* frame_store =
+      builder.CreateStore(frame, builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
+                                                            NativeMemoryLayout::kExecutionFrame));
+  frame_store->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+  auto* depth_store =
+      builder.CreateStore(depth, builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
+                                                            NativeMemoryLayout::kExecutionDepth));
+  depth_store->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+}
+
 void FunctionEmitter::PrepareTraceFrame() {
   using runtime::NativeMemoryLayout;
   using runtime::NativeTraceFrame;
@@ -238,12 +336,11 @@ void FunctionEmitter::PrepareTraceFrame() {
   auto* execution = body_->getArg(0);
   auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
   auto* pointer = builder_.getPtrTy();
-  auto* previous = builder_.CreateLoad(pointer, frame_address);
+  auto* previous = LoadMemory(pointer, frame_address, MemoryRegion::Execution);
   auto* frame = trace_frame_;
   builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
-  builder_.CreateStore(frame, frame_address);
-  auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  builder_.CreateStore(builder_.CreateAdd(entry_depth_, builder_.getInt64(1)), depth_address);
+  auto* next_depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(1));
+  StoreExecutionState(builder_, frame, next_depth);
   builder_.CreateStore(builder_.getTrue(), trace_initialized_);
   builder_.CreateBr(ready);
   builder_.SetInsertPoint(ready);

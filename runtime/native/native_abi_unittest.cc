@@ -319,6 +319,55 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   EXPECT_EQ(heap.object_count(), baseline);
 }
 
+TEST(NativeAbiTest, DeferredFailureRootsRetainOnlyTheFrameCreatingTheException) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto image = EmptyImage();
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  NativeExecution execution(**instance);
+  heap.Collect();
+  const auto baseline = heap.object_count();
+  auto* stopped = heap.AllocateString("stopping execution does not retain abandoned locals");
+  ASSERT_NE(stopped, nullptr);
+  const std::array stopped_roots{Value::String(stopped)};
+  heap.StartCollection();
+  EXPECT_EQ(execution.HandleFailure(ExecutionStatus::ExecutionStopped, {}, stopped_roots),
+            ExecutionStatus::ExecutionStopped);
+  heap.FinishCollection();
+  EXPECT_EQ(heap.object_count(), baseline);
+  EXPECT_FALSE(execution.HasException());
+  auto* text = heap.AllocateString("retained until the first failure returns");
+  ASSERT_NE(text, nullptr);
+  const std::array roots{Value::String(text)};
+  heap.StartCollection();
+  EXPECT_EQ(execution.HandleFailure(ExecutionStatus::IntegerOverflow, {}, roots),
+            ExecutionStatus::IntegerOverflow);
+  EXPECT_EQ(text->value(), "retained until the first failure returns");
+  heap.Collect();
+  ASSERT_TRUE(execution.HasException());
+  const auto with_exception = heap.object_count();
+  auto* unwound = heap.AllocateString("an unwinding ancestor no longer retains its locals");
+  ASSERT_NE(unwound, nullptr);
+  const std::array unwound_roots{Value::String(unwound)};
+  heap.StartCollection();
+  EXPECT_EQ(execution.HandleFailure(ExecutionStatus::IntegerOverflow, {}, unwound_roots),
+            ExecutionStatus::IntegerOverflow);
+  heap.FinishCollection();
+  EXPECT_EQ(heap.object_count(), with_exception);
+  execution.AbortWithOutOfMemory();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
+  auto* failed = heap.AllocateString("failed exception allocation also releases ancestors");
+  ASSERT_NE(failed, nullptr);
+  const std::array failed_roots{Value::String(failed)};
+  heap.StartCollection();
+  EXPECT_EQ(execution.HandleFailure(ExecutionStatus::IntegerOverflow, {}, failed_roots),
+            ExecutionStatus::OutOfMemory);
+  heap.FinishCollection();
+  EXPECT_EQ(heap.object_count(), baseline);
+}
+
 TEST(NativeAbiTest, ExceptionRootsFollowPublicationTransferAndRethrow) {
   Isolate isolate(1);
   auto& heap = isolate.heap();

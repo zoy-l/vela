@@ -150,6 +150,11 @@ class Manifest final {
   }
 
   void DescribeFunctions(const ir::Program& program, const NativeArtifact& artifact) const {
+    auto* scope = Object();
+    Add(scope, "shadow_slots", Text("generic_entry"));
+    Add(scope, "root_stores", Text("generic_entry"));
+    Add(scope, "frame_bytes", Text("maximum_generated_body"));
+    Add(json_.root(), "function_metrics_scope", scope);
     auto* functions = Array();
     for (std::size_t index = 0; index < program.functions.size(); ++index) {
       const auto& metric = artifact.function_metrics.at(index);

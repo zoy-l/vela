@@ -255,6 +255,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
           builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
           callee.return_type);
   }
+  CacheInitializedGlobals(selected.function);
   if (import_done != nullptr) {
     builder_.CreateBr(import_done);
     builder_.SetInsertPoint(import_done);

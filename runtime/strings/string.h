@@ -40,6 +40,11 @@ static_assert(std::is_standard_layout_v<StringObject>);
 static_assert(std::is_trivially_destructible_v<StringObject>);
 static_assert(sizeof(StringObject) == sizeof(HeapObject));
 
+[[nodiscard]] inline bool IsEqualString(const StringObject& left,
+                                        const StringObject& right) noexcept {
+  return &left == &right || left.value() == right.value();
+}
+
 inline constexpr std::size_t kMaximumStringLength =
     std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
 

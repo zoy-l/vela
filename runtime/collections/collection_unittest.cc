@@ -78,6 +78,43 @@ TEST_F(OrderedCollectionTest, PreservesOrderAcrossGrowthDeletionAndReinsertion) 
   VerifySnapshotOrder();
 }
 
+TEST(OrderedStringMapTest, LocatedUpdatesPreserveEqualStringsNullableValuesAndGrowthUnderGc) {
+  for (const auto nullable : std::array{false, true}) {
+    Isolate isolate(1);
+    auto& heap = isolate.heap();
+    const auto* layout = isolate.CreateCollectionLayout({
+        .keys = {.element = {.kind = ValueKind::String}},
+        .values = ArrayLayout{.element = {.kind = ValueKind::Integer, .nullable = nullable}},
+    });
+    std::array<Value, 2> roots;
+    const RootRange range(heap, roots.data(), roots.size());
+    roots[0] = Value::Object(heap.AllocateCollection(*layout));
+    auto* map = roots[0].AsObject();
+    ASSERT_NE(map, nullptr);
+    constexpr std::int64_t kKeys = 257;
+    constexpr std::int64_t kRounds = 4;
+    for (std::int64_t index = 0; index < kKeys * kRounds; ++index) {
+      // 每次分配不同对象，重复键必须按内容命中，不能只比较字符串指针。
+      roots[1] = Value::String(heap.AllocateString(std::to_string(index % kKeys)));
+      auto* key = roots[1].AsString();
+      ASSERT_NE(key, nullptr);
+      Heap::MapLookup lookup{};
+      const auto previous = Heap::ResolveStringMapValue(*map, key, lookup);
+      EXPECT_EQ(previous.IsNull(), index < kKeys);
+      const auto count = previous.IsNull() ? 0 : previous.AsInteger();
+      EXPECT_EQ(count, index / kKeys);
+      ASSERT_TRUE(heap.StoreMapValue(*map, roots[1], Value::Integer(count + 1), lookup));
+      heap.Collect();
+    }
+    if (nullable) {
+      ASSERT_TRUE(heap.StoreMapValue(*map, roots[1], Value::Null()));
+      Heap::MapLookup lookup{};
+      EXPECT_TRUE(Heap::ResolveStringMapValue(*map, roots[1].AsString(), lookup).IsNull());
+      EXPECT_EQ(lookup.integer_value, nullptr);
+    }
+  }
+}
+
 TEST_F(OrderedCollectionTest, IteratorRejectsGrowthBeforeReadingCachedStorage) {
   InsertEntries(EntryPass::Initial);
   ASSERT_FALSE(HasFatalFailure());

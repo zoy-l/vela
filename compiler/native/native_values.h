@@ -3,6 +3,7 @@
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InstrTypes.h>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -10,6 +11,7 @@
 #include <vector>
 #include "base/execution_status.h"
 #include "base/layout_description.h"
+#include "base/opcode.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
@@ -44,6 +46,8 @@ bool IsScalar(const SourceType& type);
 bool IsReferenceKind(Kind kind);
 bool HasValidity(const SourceType& type);
 bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts);
+std::optional<llvm::CmpInst::Predicate> IntegerComparison(Opcode opcode);
+void AssumeNonNull(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind);
 llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type);
 llvm::StructType* NativeRecordType(llvm::LLVMContext& context);

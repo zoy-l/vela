@@ -16,6 +16,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalValue.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/MDBuilder.h>
@@ -35,38 +36,45 @@
 
 namespace vela::compiler::native {
 
+std::optional<llvm::CmpInst::Predicate> IntegerComparison(Opcode opcode) {
+  switch (opcode) {
+    case Opcode::EqualInt:
+      return llvm::CmpInst::ICMP_EQ;
+    case Opcode::NotEqualInt:
+      return llvm::CmpInst::ICMP_NE;
+    case Opcode::LessInt:
+      return llvm::CmpInst::ICMP_SLT;
+    case Opcode::LessEqualInt:
+      return llvm::CmpInst::ICMP_SLE;
+    case Opcode::GreaterInt:
+      return llvm::CmpInst::ICMP_SGT;
+    case Opcode::GreaterEqualInt:
+      return llvm::CmpInst::ICMP_SGE;
+    default:
+      return std::nullopt;
+  }
+}
+
+void AssumeNonNull(Builder& builder, llvm::Value* value, const SourceType& type) {
+  if (IsReferenceKind(type.kind) && !type.nullable) {
+    // 装箱入口、运行时成功结果与已初始化全局都满足同一个类型非空契约。
+    builder.CreateAssumption(builder.CreateIsNotNull(value));
+  }
+}
+
 std::vector<std::optional<std::uint32_t>> FindStringConstants(
     const ir::Function& function,
     std::span<const ir::Function> functions) {
-  std::vector<const ir::Instruction*> definitions(function.register_count);
-  std::vector<std::size_t> counts(function.register_count);
-  for (const auto& instruction : function.instructions) {
-    if (ir::AnalyzeRegisters(instruction, functions).defines_value) {
-      ++counts.at(instruction.dst);
-      definitions.at(instruction.dst) = &instruction;
-    }
-  }
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, functions);
+  const auto register_flow = ir::AnalyzeRegisterFlow(function, accesses);
   std::vector<std::optional<std::uint32_t>> result(function.register_count);
-  std::vector<std::vector<ir::RegisterId>> copies(function.register_count);
-  std::vector<ir::RegisterId> pending;
   for (ir::RegisterId reg = function.parameter_count; reg < function.register_count; ++reg) {
-    if (counts[reg] != 1) {
-      continue;
-    }
-    const auto& definition = *definitions[reg];
-    if (definition.opcode == Opcode::LoadString) {
-      result[reg] = definition.index;
-      pending.push_back(reg);
-    } else if (definition.opcode == Opcode::Move) {
-      copies[definition.lhs].push_back(reg);
-    }
-  }
-  while (!pending.empty()) {
-    const auto reg = pending.back();
-    pending.pop_back();
-    for (const auto copy : copies[reg]) {
-      result[copy] = result[reg];
-      pending.push_back(copy);
+    const auto position = register_flow.OriginDefinition(reg);
+    if (position) {
+      const auto& definition = function.instructions[*position];
+      if (definition.opcode == Opcode::LoadString) {
+        result[reg] = definition.index;
+      }
     }
   }
   return result;

@@ -26,7 +26,10 @@ from tools.aot_repeated_field_fixture import (HOST_TESTS as REPEATED_FIELD_TESTS
                                             SOURCE as REPEATED_FIELD_SOURCE)
 from tools.aot_binding_fixture import HOST_TESTS as BINDING_TESTS, SOURCE as BINDING_SOURCE
 from tools.aot_recursive_fixture import HOST_TESTS as RECURSIVE_TESTS, SOURCE as RECURSIVE_SOURCE
+from tools.aot_range_fixture import HOST_TESTS as RANGE_TESTS, SOURCE as RANGE_SOURCE
 from tools.aot_map_lookup_fixture import HOST_TESTS as MAP_LOOKUP_TESTS, SOURCE as MAP_LOOKUP_SOURCE
+from tools.aot_string_append_fixture import (HOST_TESTS as STRING_APPEND_TESTS,
+                                            SOURCE as STRING_APPEND_SOURCE)
 from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
                                      SOURCE as GLOBAL_STORAGE_SOURCE,
                                      LEAF_SOURCE as GLOBAL_LEAF_SOURCE)
@@ -121,14 +124,32 @@ std::string CopyWithGc(NativeContext& context, std::string_view text) noexcept {
 double Scale(NativeContext&, double value, bool enabled) noexcept { return enabled ? value * 2 : value; }
 void Collect(NativeContext& context) noexcept { context.isolate().heap().Collect(); }
 
+void FreezeAllocations(NativeContext& context) noexcept {
+  auto& heap = context.isolate().heap();
+  heap.SetAllocationLimit(heap.allocated_bytes());
+}
+
+void UnfreezeAllocations(Isolate& isolate) noexcept {
+  isolate.heap().SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+}
+
+void ExitAllFrames(NativeExecution& execution) {
+  while (execution.current_frame() != nullptr) {
+    execution.Exit();
+  }
+}
+
 template <const NativeImage* (*Image)() noexcept, std::size_t GcThreshold = kDefaultGcThreshold>
 class NativeImageTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    ASSERT_NO_FATAL_FAILURE(RegisterNatives());
     auto created = NativeInstance::Instantiate(isolate, *image);
     ASSERT_TRUE(created.has_value()) << created.error().message;
     instance = std::move(*created);
   }
+
+  virtual void RegisterNatives() {}
 
   Isolate isolate{GcThreshold};
   const NativeImage* image = Image();
@@ -138,9 +159,8 @@ class NativeImageTest : public ::testing::Test {
 template <const NativeImage* (*Image)() noexcept>
 class CollectingImageTest : public NativeImageTest<Image, 1> {
  protected:
-  void SetUp() override {
+  void RegisterNatives() override {
     ASSERT_TRUE(this->isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-    NativeImageTest<Image, 1>::SetUp();
   }
 };
 
@@ -164,6 +184,82 @@ void ExpectPendingException(Isolate& isolate, NativeExecution& execution,
   const auto& diagnostic = execution.ExceptionDiagnostic();
   EXPECT_EQ(diagnostic.status, status);
   EXPECT_EQ(diagnostic.message, message);
+}
+
+std::expected<Value, ExecutionStatus> InvokeInternal(NativeExecution& execution,
+                                                     std::string_view name,
+                                                     std::span<const Value> arguments = {}) {
+  const auto target = execution.instance().FindFunction(name);
+  if (!target) {
+    ADD_FAILURE() << "missing internal function: " << name;
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  return InvokeNativeFunction(execution, *target, arguments);
+}
+
+void ExpectInternalFailure(NativeExecution& execution, std::string_view name,
+                            std::span<const Value> arguments, ExecutionStatus expected) {
+  const auto result = InvokeInternal(execution, name, arguments);
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error(), expected);
+  ASSERT_TRUE(execution.HasException());
+  execution.isolate().heap().Collect();
+  const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+  ASSERT_EQ(trace.size(), 1U);
+  EXPECT_EQ(trace.front().function, name);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(*execution.isolate().heap().native_stack_roots_head(), nullptr);
+}
+
+void ExpectOverflowTrace(Entry entry, NativeExecution& execution, std::int64_t operation,
+                           std::size_t depth, std::string_view innermost) {
+  NativeValue output;
+  const std::array arguments{Integer(operation)};
+  ASSERT_EQ(Execute(entry, execution, arguments, output), ExecutionStatus::IntegerOverflow);
+  ASSERT_TRUE(execution.HasException());
+  auto& heap = execution.isolate().heap();
+  heap.Collect();
+  const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+  ASSERT_EQ(trace.size(), depth);
+  EXPECT_EQ(trace.front().function, innermost);
+  EXPECT_EQ(trace.back().function, "calculate");
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(*heap.native_stack_roots_head(), nullptr);
+}
+
+void ExpectOutOfMemoryAndRetry(Entry entry, NativeExecution& execution,
+                                 std::int64_t failing_operation,
+                                 std::int64_t expected) {
+  NativeValue output;
+  const std::array fail{Integer(failing_operation)};
+  EXPECT_EQ(Execute(entry, execution, fail, output), ExecutionStatus::OutOfMemory);
+  auto& isolate = execution.isolate();
+  UnfreezeAllocations(isolate);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
+  const std::array retry{Integer(0)};
+  ASSERT_EQ(Execute(entry, execution, retry, output), ExecutionStatus::Returned);
+  EXPECT_EQ(output.kind, NativeValueKind::Integer);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), expected);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
+}
+
+void ExpectStackLimitAndRetry(Entry entry, NativeExecution& execution,
+                               std::span<const NativeValue> arguments,
+                               std::span<NativeTraceFrame> frames, NativeValue expected,
+                               std::uint32_t function = 0) {
+  for (auto& frame : frames) { execution.MaterializeFrame(frame, function); }
+  NativeValue result;
+  EXPECT_EQ(Execute(entry, execution, arguments, result), ExecutionStatus::StackOverflow);
+  EXPECT_EQ(execution.current_frame(), &frames.back());
+  ExitAllFrames(execution);
+  ASSERT_EQ(Execute(entry, execution, arguments, result), ExecutionStatus::Returned);
+  EXPECT_EQ(result.kind, expected.kind);
+  EXPECT_EQ(result.payload, expected.payload);
+  EXPECT_FALSE(execution.HasException());
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_EQ(*execution.isolate().heap().native_stack_roots_head(), nullptr);
 }
 
 void ExpectIntegerOperations(Entry entry, NativeExecution& execution,
@@ -301,15 +397,8 @@ TEST(NativeHostTest, ScalarEntryPreservesNestedExceptionsAndChecksDepthBeforeExe
   const auto retained = execution.TakeException();
   EXPECT_EQ(retained.AsObject(), pending.AsObject());
   ASSERT_EQ(execution.Rethrow(retained), ExecutionStatus::DivisionByZero);
-  for (std::size_t index = 1; index < frames.size(); ++index) {
-    execution.MaterializeFrame(frames[index], 0);
-  }
-  EXPECT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.current_frame(), &frames.back());
-  while (execution.current_frame() != nullptr) { execution.Exit(); }
-  ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-  EXPECT_FALSE(execution.HasException());
-  EXPECT_EQ(execution.current_frame(), nullptr);
+  ExpectStackLimitAndRetry(BOOL_ENTRY, execution, arguments, std::span(frames).subspan(1),
+                          {.payload = 0, .kind = NativeValueKind::Boolean});
 }
 
 TEST(NativeHostTest, FloatingValuesPreserveNanInfinityAndSignedZero) {
@@ -331,6 +420,16 @@ TEST(NativeHostTest, FloatingValuesPreserveNanInfinityAndSignedZero) {
   ASSERT_EQ(Execute(FLOAT_ENTRY, execution, nan, result), ExecutionStatus::Returned);
   const auto value = std::bit_cast<double>(result.payload);
   EXPECT_NE(value, value);
+}
+
+TEST(NativeHostTest, BoundedLeafCallsKeepTheCalleeDepthLimitAndRestoreTheCaller) {
+  Isolate isolate;
+  const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  std::array<NativeTraceFrame, vela::kMaxCallFrames - 1> frames;
+  const std::array arguments{Integer(0), Integer(6), Integer(7)};
+  ExpectStackLimitAndRetry(INTEGER_ENTRY, execution, arguments, frames, Integer(42));
 }
 
 TEST(NativeHostTest, BooleanAndNullableResultsUseExplicitShapes) {
@@ -761,6 +860,14 @@ class NativeObjectTest(CommandTestCase):
         self.assertNotRegex(symbols, r"\bvela_aot_[a-f0-9]+_entry_[0-9]+\b")
         manifest = json.loads(Path(str(object_file) + ".aot.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["format_version"], 1)
+        self.assertEqual(manifest["function_metrics_scope"], {
+            "shadow_slots": "generic_entry",
+            "root_stores": "generic_entry",
+            "frame_bytes": "maximum_generated_body",
+        })
+        for function in manifest["functions"]:
+            for metric in manifest["function_metrics_scope"]:
+                self.assertIsInstance(function[metric], int)
         self.assertEqual(manifest["image"], images[0])
         self.assertEqual({entry["name"] for entry in manifest["exports"]}, set(exports))
         self.assertIn(manifest["exports"][0]["symbol"], symbols)
@@ -1214,8 +1321,10 @@ export async func calculate(): Future<int> {
         fixtures["FIELD_LOOP_ENTRY"] = FIELD_LOOP_SOURCE
         fixtures["REPEATED_FIELD_ENTRY"] = REPEATED_FIELD_SOURCE
         fixtures["MAP_LOOKUP_ENTRY"] = MAP_LOOKUP_SOURCE
+        fixtures["STRING_APPEND_ENTRY"] = STRING_APPEND_SOURCE
         fixtures["BINDING_ENTRY"] = BINDING_SOURCE
         fixtures["RECURSIVE_ENTRY"] = RECURSIVE_SOURCE
+        fixtures["RANGE_ENTRY"] = RANGE_SOURCE
         fixtures["GLOBAL_STORAGE_ENTRY"] = GLOBAL_STORAGE_SOURCE
         fixtures["GLOBAL_LEAF_ENTRY"] = GLOBAL_LEAF_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
@@ -1223,7 +1332,8 @@ export async func calculate(): Future<int> {
         host = (HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS + MAP_LITERAL_TESTS
                 + NUMERIC_TESTS + CALLBACK_TESTS + CLASS_TESTS
                 + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS + BINDING_TESTS
-                + RECURSIVE_TESTS + REPEATED_FIELD_TESTS + MAP_LOOKUP_TESTS)
+                + RECURSIVE_TESTS + RANGE_TESTS + REPEATED_FIELD_TESTS + MAP_LOOKUP_TESTS
+                + STRING_APPEND_TESTS)
         loop_lines = [index for index, line in enumerate(INTEGER_LOOP_SOURCE.splitlines(), 1)
                       if "for (let index" in line][:5]
         host = host.replace("INTEGER_LOOP_TRACE_LINES", ", ".join(map(str, loop_lines)))
@@ -1290,7 +1400,7 @@ export async func calculate(): Future<int> {
             c_flags[c_flags.index(str(executable))] = str(c_executable)
             self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 64 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 75 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

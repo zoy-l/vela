@@ -9,6 +9,7 @@
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
+#include "runtime/heap/mutable_string_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_control.h"
@@ -47,6 +48,10 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
   static constexpr auto kContextHandles = offsetof(NativeContext, handles_);
   static constexpr auto kBorrowedStringViewBytes = sizeof(std::string_view);
+  static constexpr auto kMutableStringData =
+      sizeof(HeapObject) + offsetof(internal::MutableStringStorage, data);
+  static constexpr auto kMutableStringCapacity =
+      sizeof(HeapObject) + offsetof(internal::MutableStringStorage, capacity);
   static constexpr auto kMapLookupBytes = sizeof(Heap::MapLookup);
   static constexpr auto kMapLookupIntegerValue = offsetof(Heap::MapLookup, integer_value);
   static constexpr auto kExecutionControlState = offsetof(NativeExecution, control_state_);
@@ -78,6 +83,7 @@ static_assert(std::is_standard_layout_v<GcBarrierState>);
 static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
 static_assert(sizeof(std::atomic<std::uint8_t>) == sizeof(std::uint8_t));
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);
+static_assert(std::is_standard_layout_v<internal::MutableStringStorage>);
 static_assert(std::is_standard_layout_v<NativeFrameAccess>);
 static_assert(std::is_standard_layout_v<NativeTraceFrame>);
 static_assert(std::is_standard_layout_v<NativeStackRoots>);

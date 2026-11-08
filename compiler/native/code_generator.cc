@@ -30,7 +30,6 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
-#include <llvm/Support/Casting.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/SmallVectorMemoryBuffer.h>
@@ -41,7 +40,6 @@
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
-#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
@@ -55,8 +53,10 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/global_analysis.h"
 #include "compiler/native/integer_bit_optimizer.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/local_ssa.h"
 #include "compiler/native/native_image_data.h"
 #include "compiler/native/native_image_emitter.h"
 #include "compiler/native/native_roots.h"
@@ -68,10 +68,11 @@ namespace vela::compiler::native {
 namespace {
 
 constexpr std::size_t kMaximumInlineInstructions = 64;
+constexpr std::size_t kMaximumRecursiveCalls = 2;
 
 bool CanInlineSmallFunction(const ir::Function& function) {
   // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
-  if (function.is_async || !function.handlers.empty() ||
+  if (!ir::CanAnalyzeSynchronousFunction(function) ||
       function.parameter_count > kMaximumInlineInstructions ||
       function.instructions.size() > kMaximumInlineInstructions) {
     return false;
@@ -82,24 +83,28 @@ bool CanInlineSmallFunction(const ir::Function& function) {
   });
 }
 
-bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index) {
-  constexpr std::size_t kMaximumRecursiveCalls = 2;
-  if (function.is_async || !function.handlers.empty() ||
-      function.parameter_count > kMaximumInlineInstructions ||
-      function.instructions.size() > kMaximumInlineInstructions ||
-      !IsScalar(function.return_type) || !std::ranges::all_of(function.value_types, IsScalar)) {
+bool HasUnrollableRecursion(const ir::Function& function, std::size_t function_index) {
+  if (!ir::CanAnalyzeSynchronousFunction(function) ||
+      function.instructions.size() > kMaximumInlineInstructions) {
     return false;
   }
-  std::size_t calls = 0;
-  for (const auto& instruction : function.instructions) {
-    if (instruction.opcode == Opcode::Call && instruction.index == function_index) {
-      ++calls;
-    } else if (instruction.opcode != Opcode::Return &&
-               ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
-      return false;
-    }
+  const auto calls = std::ranges::count_if(function.instructions, [&](const auto& instruction) {
+    return instruction.opcode == Opcode::Call && instruction.index == function_index;
+  });
+  return calls > 0 && std::cmp_less_equal(calls, kMaximumRecursiveCalls);
+}
+
+bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index) {
+  if (!HasUnrollableRecursion(function, function_index) ||
+      function.parameter_count > kMaximumInlineInstructions || !IsScalar(function.return_type) ||
+      !std::ranges::all_of(function.value_types, IsScalar)) {
+    return false;
   }
-  return calls != 0 && calls <= kMaximumRecursiveCalls;
+  return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
+    return instruction.opcode == Opcode::Return ||
+           (instruction.opcode == Opcode::Call && instruction.index == function_index) ||
+           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+  });
 }
 
 bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_index) {
@@ -121,7 +126,7 @@ bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_inde
     }
     const auto effects = ir::AnalyzeEffects(instruction);
     if (effects.reads_state || effects.writes_state || effects.may_suspend ||
-        effects.changes_control || effects.MayCollectOnSuccess()) {
+        effects.changes_control) {
       return false;
     }
   }
@@ -131,16 +136,12 @@ bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_inde
 bool CanUnrollManagedRecursion(const ir::Function& function,
                                std::size_t function_index,
                                const NativeFunctionMetrics& metrics) {
-  // 仅复制完整入口，不省略根、错误位置或逻辑深度。限制单个自调用和帧大小，
+  // 仅复制完整入口，不省略根、错误位置或逻辑深度。限制自调用数量和帧大小，
   // 由已有 LLVM 指令预算约束展开后的代码体积。
   constexpr std::size_t kMaximumExpandedFrameBytes = kMaximumNativeStackBytes / 8;
-  return !function.is_async && function.handlers.empty() &&
-         function.instructions.size() <= kMaximumInlineInstructions &&
+  return HasUnrollableRecursion(function, function_index) &&
          function.register_count <= kMaximumInlineInstructions &&
-         metrics.frame_bytes <= kMaximumExpandedFrameBytes &&
-         std::ranges::count_if(function.instructions, [&](const auto& instruction) {
-           return instruction.opcode == Opcode::Call && instruction.index == function_index;
-         }) == 1;
+         metrics.frame_bytes <= kMaximumExpandedFrameBytes;
 }
 
 bool CanExpandRecursion(const ir::Program& program,
@@ -158,7 +159,7 @@ bool CanExpandRecursion(const ir::Program& program,
 }
 
 bool CanUseBoundedLeaf(const ir::Function& function) {
-  if (!function.native_symbol.empty() || !IsScalar(function.return_type)) {
+  if (!ir::CanAnalyzeSynchronousFunction(function) || !IsScalar(function.return_type)) {
     return false;
   }
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
@@ -187,8 +188,7 @@ bool IsReadonlyKernelInstruction(const ir::Instruction& instruction, const ir::F
     return true;
   }
   const auto effects = ir::AnalyzeEffects(instruction);
-  const auto array_length = instruction.opcode == Opcode::BuiltinCall &&
-                            instruction.index == static_cast<std::uint32_t>(Builtin::ArrayLength);
+  const auto array_length = ir::IsBuiltinCall(instruction, Builtin::ArrayLength);
   if (effects.MayCollectOnSuccess() || effects.writes_state ||
       (effects.reads_state && instruction.opcode != Opcode::GetIndex && !array_length)) {
     return false;
@@ -206,8 +206,8 @@ bool IsReadonlyKernelInstruction(const ir::Instruction& instruction, const ir::F
 
 bool CanUseGuardedLeaf(const ir::Function& function) {
   constexpr std::size_t kMaximumKernelInstructions = 128;
-  if (!function.native_symbol.empty() || function.is_async || !function.handlers.empty() ||
-      !IsScalar(function.return_type) || function.parameter_count > kMaximumKernelInstructions ||
+  if (!ir::CanAnalyzeSynchronousFunction(function) || !IsScalar(function.return_type) ||
+      function.parameter_count > kMaximumKernelInstructions ||
       function.instructions.size() > kMaximumKernelInstructions) {
     return false;
   }
@@ -383,7 +383,12 @@ llvm::Function* AddResumeEntry(llvm::Module& module,
 struct FunctionDeclarations final {
   std::vector<GeneratedFunction> baseline;
   std::vector<GeneratedFunction> optimized;
+  std::vector<GeneratedFunction> specialized;
   std::vector<std::optional<ir::ClassId>> borrowable;
+
+  [[nodiscard]] bool HasRangeSpecialization(std::size_t index) const {
+    return !specialized.empty() && specialized[index].body != optimized[index].body;
+  }
 };
 
 void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source) {
@@ -391,6 +396,8 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
     if (entry == nullptr) {
       continue;
     }
+    // 类型化内部调用的结果独占调用者暂存槽，不与执行状态或托管实参重叠。
+    entry->addParamAttr(static_cast<unsigned>(entry->arg_size() - 1), llvm::Attribute::NoAlias);
     for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
       const auto& type = source.value_types.at(parameter);
       if (IsReferenceKind(type.kind) && !type.nullable) {
@@ -564,14 +571,68 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
   return declarations;
 }
 
+void DeclareRangeSpecializations(llvm::Module& module,
+                                 const ir::Program& program,
+                                 const ClosedArrayAccessFacts& facts,
+                                 FunctionDeclarations& declarations) {
+  if (facts.functions.empty()) {
+    return;
+  }
+  declarations.specialized = declarations.optimized;
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    if (facts.roots[index] != 0 || facts.reachable[index] == 0) {
+      continue;
+    }
+    const auto& source = program.functions[index];
+    const auto& ranges = facts.functions[index];
+    bool constrained = false;
+    for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
+      const auto& type = source.value_types[parameter];
+      constrained |= (type.kind == Kind::Int && !type.nullable &&
+                      !facts.parameters[index][parameter].isFullSet()) ||
+                     (type.kind == Kind::Array &&
+                      (ranges.fixed_storage[parameter] != 0 ||
+                       ranges.element_bits[parameter] != kUnknownArrayElementBits));
+    }
+    if (!constrained) {
+      continue;
+    }
+    auto& target = declarations.specialized[index];
+    const auto create = [&](llvm::Function* source) {
+      if (source == nullptr) {
+        return source;
+      }
+      auto* result =
+          llvm::Function::Create(source->getFunctionType(), llvm::GlobalValue::InternalLinkage,
+                                 source->getName() + "_range", module);
+      result->copyAttributesFrom(source);
+      return result;
+    };
+    // 受约束版本不进入 NativeImage；运行时索引和 callable 仍只引用通用入口。
+    target.body = create(target.body);
+    target.leaf = create(target.leaf);
+    target.leaf_guard = create(target.leaf_guard);
+  }
+}
+
 std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
-                                         const GeneratedFunction& optimized) {
+                                         const GeneratedFunction& optimized,
+                                         const GeneratedFunction* specialized) {
   std::vector<std::string> symbols;
   const std::array functions{
-      baseline.body,        baseline.entry,           baseline.resume,
-      baseline.recovery,    baseline.resume_recovery, baseline.borrowed,
-      optimized.body,       optimized.resume,         optimized.leaf,
+      baseline.body,
+      baseline.entry,
+      baseline.resume,
+      baseline.recovery,
+      baseline.resume_recovery,
+      baseline.borrowed,
+      optimized.body,
+      optimized.resume,
+      optimized.leaf,
       optimized.leaf_guard,
+      specialized == nullptr ? nullptr : specialized->body,
+      specialized == nullptr ? nullptr : specialized->leaf,
+      specialized == nullptr ? nullptr : specialized->leaf_guard,
   };
   for (const auto* function : functions) {
     if (function == nullptr) {
@@ -590,7 +651,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
-    std::span<const std::uint64_t> array_element_bits,
+    const ArrayAccessFacts& array_access,
+    const ClosedArrayAccessFacts& closed_access,
+    const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t index,
     const FunctionDeclarations& declarations,
@@ -604,20 +667,44 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
   const auto& optimized = declarations.optimized;
   const auto& function = program.functions.at(index);
   const auto& target = optimized.at(index);
-  const auto emission_entries = tier == NativeCodeTier::Optimized && target.baseline_body == nullptr
-                                    ? std::span<const GeneratedFunction>(optimized)
-                                    : std::span<const GeneratedFunction>(generated);
+  auto emission_entries = tier == NativeCodeTier::Optimized && target.baseline_body == nullptr
+                              ? std::span<const GeneratedFunction>(optimized)
+                              : std::span<const GeneratedFunction>(generated);
   const auto emission_tier = target.baseline_body == nullptr ? tier : NativeCodeTier::Baseline;
-  auto emitted = EmitFunction(module, program, calls, field_targets, array_element_bits, image,
-                              index, emission_entries, body_dependencies, debugging, placement,
-                              emission_tier, escape, declarations.borrowable);
+  const auto has_closed_access = !closed_access.functions.empty();
+  const auto has_range_specialization = declarations.HasRangeSpecialization(index);
+  const auto range_root =
+      has_closed_access && !has_range_specialization && closed_access.reachable[index] != 0;
+  const auto generic_access = array_access.emission();
+  auto range_access =
+      has_closed_access ? closed_access.functions[index].emission() : ArrayEmissionFacts{};
+  // 范围证明不扩大参数数组缓存，叶入口继续使用通用入口的物理帧预算。
+  range_access.fixed_storage = generic_access.fixed_storage;
+  range_access.reserved_pushes = generic_access.reserved_pushes;
+  const auto root_access = range_root ? range_access : generic_access;
+  if (range_root) {
+    emission_entries = declarations.specialized;
+  }
+  auto emitted = EmitFunction(module, program, calls, field_targets, root_access, global_access,
+                              image, index, emission_entries, body_dependencies, debugging,
+                              placement, emission_tier, escape, declarations.borrowable);
   if (!emitted) {
     return emitted;
   }
+  if (has_range_specialization) {
+    const auto specialized =
+        EmitFunction(module, program, calls, field_targets, range_access, global_access, image,
+                     index, declarations.specialized, body_dependencies, debugging, placement,
+                     emission_tier, escape, declarations.borrowable);
+    if (!specialized) {
+      return specialized;
+    }
+    emitted->frame_bytes = std::max(emitted->frame_bytes, specialized->frame_bytes);
+  }
   if (const auto& borrow = borrows[index]) {
     const auto borrowed =
-        EmitBorrowedFunction(module, program, calls, field_targets, array_element_bits, image,
-                             index, borrow->plan, generated, debugging, placement);
+        EmitBorrowedFunction(module, program, calls, field_targets, generic_access, global_access,
+                             image, index, borrow->plan, generated, debugging, placement);
     if (!borrowed) {
       return std::unexpected(borrowed.error());
     }
@@ -626,9 +713,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     emitted->borrowed_root_stores = borrowed->root_stores;
   }
   if (target.baseline_body != nullptr) {
-    auto optimized_metrics = EmitFunction(module, program, calls, field_targets, array_element_bits,
-                                          image, index, optimized, body_dependencies, debugging,
-                                          placement, NativeCodeTier::Optimized, escape);
+    auto optimized_metrics = EmitFunction(module, program, calls, field_targets, generic_access,
+                                          global_access, image, index, optimized, body_dependencies,
+                                          debugging, placement, NativeCodeTier::Optimized, escape);
     if (!optimized_metrics) {
       return optimized_metrics;
     }
@@ -653,6 +740,27 @@ void BindDynamicEntries(NativeModule& output,
     if (entry != nullptr) {
       entry->setLinkage(llvm::GlobalValue::ExternalLinkage);
     }
+  }
+}
+
+void PlanRecursiveExpansion(NativeModule& output,
+                            const ir::Program& program,
+                            std::size_t index,
+                            const NativeFunctionMetrics& metrics,
+                            const FunctionDeclarations& declarations,
+                            NativeCodePlacement placement,
+                            NativeCodeTier tier) {
+  if (!CanExpandRecursion(program, index, metrics, placement, tier)) {
+    return;
+  }
+  const auto add = [&](const GeneratedFunction& function) {
+    output.recursive_functions.push_back(function.budgeted_recursion ? function.leaf
+                                                                     : function.body);
+  };
+  const auto& function = declarations.optimized[index];
+  add(function);
+  if (declarations.HasRangeSpecialization(index)) {
+    add(declarations.specialized[index]);
   }
 }
 
@@ -722,12 +830,20 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   const auto borrows = escape == EscapeOptimization::Enabled
                            ? PlanBorrows(program)
                            : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
-  const auto declarations =
-      DeclareFunctions(module, program, module_name, tier, debugging, placement, borrows,
-                       NeededFunctions(program, tier, reused));
+  auto declarations = DeclareFunctions(module, program, module_name, tier, debugging, placement,
+                                       borrows, NeededFunctions(program, tier, reused));
   if (!declarations) {
     return std::unexpected(declarations.error());
   }
+  auto array_mode = ArrayAnalysisMode::Elements;
+  if (IsClosedLinkedProgram(program.native_mode, placement)) {
+    array_mode = debugging == NativeDebugging::Safepoints ? ArrayAnalysisMode::Ranges
+                                                          : ArrayAnalysisMode::FixedStorage;
+  }
+  // 在逃逸改写前分析一次规范程序，同一调用域的所有入口共享不可变事实。
+  const auto array_access = AnalyzeArrayAccess(program, array_mode);
+  const auto& closed_access = array_access.closed;
+  DeclareRangeSpecializations(module, program, closed_access, *declarations);
   const auto& generated = declarations->baseline;
   const auto& optimized = declarations->optimized;
   std::vector<llvm::Function*> entries;
@@ -751,19 +867,21 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     image = emitted->data;
   }
   std::vector<NativeFunctionMetrics> metrics;
-  // 在逃逸改写前分析一次规范程序，所有入口和代码层级共享同一组写入事实。
-  const auto array_element_bits = FindArrayElementBits(program);
+  const auto global_access = AnalyzeGlobalAccess(program, placement);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    output.function_symbols.push_back(FunctionSymbols(generated.at(index), optimized.at(index)));
+    output.function_symbols.push_back(FunctionSymbols(
+        generated.at(index), optimized.at(index),
+        declarations->specialized.empty() ? nullptr : &declarations->specialized[index]));
     if (!reused.empty() && reused[index] != 0) {
       metrics.emplace_back();
       continue;
     }
     const auto& function = program.functions.at(index);
     auto& dependencies = output.body_dependencies.at(index);
-    auto emitted = EmitDeclaredFunction(module, program, calls, field_targets,
-                                        array_element_bits.at(index), image, index, *declarations,
-                                        dependencies, debugging, tier, escape, placement, borrows);
+    auto emitted =
+        EmitDeclaredFunction(module, program, calls, field_targets, array_access.generic.at(index),
+                             closed_access, global_access, image, index, *declarations,
+                             dependencies, debugging, tier, escape, placement, borrows);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
@@ -773,11 +891,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     dependencies.erase(duplicates.begin(), duplicates.end());
     // 恢复布局由只读描述共享；优化 JIT 与封闭代码采用相同的有界展开预算，
     // 各逻辑帧仍保留独立的恢复位置和活跃值，不展开基线动态分派。
-    if (CanExpandRecursion(program, index, *emitted, placement, tier)) {
-      const auto& function_entries = optimized.at(index);
-      output.recursive_functions.push_back(
-          function_entries.budgeted_recursion ? function_entries.leaf : function_entries.body);
-    }
+    PlanRecursiveExpansion(output, program, index, *emitted, *declarations, placement, tier);
   }
   output.function_metrics = std::move(metrics);
   for (auto& function : module) {
@@ -811,15 +925,8 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
       if (function.isDeclaration()) {
         continue;
       }
-      llvm::SmallVector<llvm::AllocaInst*, 0> locals;
-      for (auto& instruction : function.getEntryBlock()) {
-        auto* local = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
-        if (local != nullptr && llvm::isAllocaPromotable(local)) {
-          locals.push_back(local);
-        }
-      }
       llvm::DominatorTree dominators(function);
-      llvm::PromoteMemToReg(locals, dominators);
+      PromoteLocalAllocations(function, dominators);
     }
   }
   if (llvm::verifyModule(module, &verifier)) {

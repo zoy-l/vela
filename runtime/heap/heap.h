@@ -249,9 +249,10 @@ class Heap final {
     std::int64_t* integer_value;
   };
   // 位置只在编译器证明 map / key 未改变、期间不分配或调用用户代码的片段内借用。
-  [[nodiscard]] static Value ResolveMapValue(HeapObject& object,
-                                             Value key,
-                                             MapLookup& lookup) noexcept;
+  // AOT 字符串键路径已验证非空 string 键；值仍按 Map 的真实可空布局读取。
+  [[nodiscard]] static Value ResolveStringMapValue(HeapObject& object,
+                                                   StringObject* key,
+                                                   MapLookup& lookup) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> StoreMapValue(HeapObject& object,
                                                                    Value key,
                                                                    Value value,

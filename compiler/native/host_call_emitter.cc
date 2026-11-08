@@ -12,7 +12,6 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
-#include <llvm/Support/Alignment.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/ModRef.h>
 
@@ -56,7 +55,7 @@ bool IsHostParameter(const layout::Program& layouts,
 }  // namespace
 
 void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
-  if (host_execution_borrowed_) {
+  if (host_trace_active_ != nullptr) {
     return;
   }
   auto* control = ControlState();
@@ -82,14 +81,14 @@ void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
 }
 
 void FunctionEmitter::BorrowHostExecution() {
-  if (placement_ != NativeCodePlacement::Linked ||
-      program_.native_mode != NativeProgramMode::Closed || source_.is_async ||
-      !source_.native_symbol.empty() || !source_.handlers.empty() ||
-      !IsScalar(source_.return_type) || import_frame_ == nullptr || !roots_.bounded_polls) {
+  if (!IsClosedLinkedProgram(program_.native_mode, placement_) ||
+      !ir::CanAnalyzeSynchronousFunction(source_) || !IsScalar(source_.return_type) ||
+      import_frame_ == nullptr || !roots_.bounded_polls) {
     return;
   }
   for (const auto& instruction : source_.instructions) {
-    if (instruction.opcode == Opcode::LoadString || instruction.opcode == Opcode::Return) {
+    if (instruction.opcode == Opcode::LoadString || instruction.opcode == Opcode::Return ||
+        instruction.opcode == Opcode::GetGlobal) {
       continue;
     }
     if (instruction.opcode == Opcode::Call) {
@@ -100,14 +99,55 @@ void FunctionEmitter::BorrowHostExecution() {
       return;
     }
   }
-  // 片段内只有宿主调用可执行用户代码。同步重入会恢复 host_execution；其余指令
-  // 只做纯计算或直接失败退出，因此整个函数可共享同一次执行借用。
+  // 宿主调用和惰性全局初始化都沿用当前执行，嵌套借用在返回前恢复 host_execution。
+  // 其余指令只做纯计算或直接失败退出，因此整个函数可共享同一次执行借用。
   auto* active = ByteAddress(ControlState(), offsetof(runtime::NativeControlState, host_execution));
   auto* previous = builder_.CreateLoad(builder_.getPtrTy(), active);
   builder_.CreateStore(body_->getArg(0), active);
   Builder cleanup(cleanup_->getTerminator());
   cleanup.CreateStore(previous, active);
-  host_execution_borrowed_ = true;
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  host_trace_active_ = allocation.CreateAlloca(builder_.getInt1Ty(), nullptr, "host.trace.active");
+  builder_.CreateStore(builder_.getFalse(), host_trace_active_);
+}
+
+void FunctionEmitter::EnterHostFrame(llvm::Value* depth) {
+  llvm::BasicBlock* ready = nullptr;
+  if (host_trace_active_ != nullptr) {
+    auto* enter = llvm::BasicBlock::Create(module_.getContext(), "host.trace.enter", body_);
+    ready = llvm::BasicBlock::Create(module_.getContext(), "host.trace.ready", body_);
+    builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), host_trace_active_), ready,
+                          enter);
+    builder_.SetInsertPoint(enter);
+  }
+  auto* next_depth = builder_.CreateAdd(depth, builder_.getInt64(1));
+  StoreExecutionState(builder_, import_frame_, next_depth);
+  if (ready != nullptr) {
+    builder_.CreateStore(builder_.getTrue(), host_trace_active_);
+    builder_.CreateBr(ready);
+    builder_.SetInsertPoint(ready);
+  }
+}
+
+void FunctionEmitter::ReleaseBorrowedHostFrame() {
+  if (host_trace_active_ == nullptr) {
+    return;
+  }
+  auto* release = llvm::BasicBlock::Create(module_.getContext(), "host.trace.release", body_);
+  auto* ready = llvm::BasicBlock::Create(module_.getContext(), "host.trace.released", body_);
+  builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), host_trace_active_), release,
+                        ready);
+  builder_.SetInsertPoint(release);
+  // 连续的宿主调用共用同一逻辑帧；真正的脚本观察边界恢复调用者，错误回溯不携带旧宿主帧。
+  RestoreHostFrame();
+  builder_.CreateStore(builder_.getFalse(), host_trace_active_);
+  builder_.CreateBr(ready);
+  builder_.SetInsertPoint(ready);
+}
+
+void FunctionEmitter::RestoreHostFrame() {
+  auto* restored_depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(1));
+  StoreExecutionState(builder_, trace_frame_, restored_depth);
 }
 
 llvm::Value* FunctionEmitter::EmitHostPointer(llvm::Value* wrapper, const SourceType& type) {
@@ -156,10 +196,16 @@ void FunctionEmitter::InitializeNativeStringView(llvm::Value* string, llvm::Valu
 }
 
 void FunctionEmitter::CacheNativeStringViews() {
+  if (native_view_constants_.empty()) {
+    return;
+  }
+  auto* opaque = llvm::FixedVectorType::get(builder_.getInt8Ty(),
+                                            runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
   for (const auto constant : native_view_constants_) {
     auto* storage = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
     InitializeNativeStringView(constants_.at(constant), storage);
-    constant_string_views_.emplace(constant, storage);
+    auto* view = builder_.CreateLoad(opaque, storage);
+    constant_string_views_.emplace(constant, view);
   }
 }
 
@@ -179,9 +225,7 @@ llvm::Value* FunctionEmitter::EmitNativeStringArgument(llvm::Value* string,
       if (const auto found = constant_string_views_.find(*constant);
           found != constant_string_views_.end()) {
         auto* copy = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
-        const llvm::Align alignment(runtime::kNativeFrameAlignment);
-        builder_.CreateMemCpy(copy, alignment, found->second, alignment,
-                              runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+        builder_.CreateStore(found->second, copy);
         view = copy;
       }
     }
@@ -347,8 +391,6 @@ llvm::BasicBlock* FunctionEmitter::EmitInlineImportCall(const ir::Instruction& i
                             builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::Checked))),
       direct, checked, llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(direct);
-  auto* execution = body_->getArg(0);
-  auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
   // 调用者逻辑帧已经物化；嵌套调用返回时恢复深度，因此复用本次入口保存的值。
   auto* depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(1));
   Check(HasStackBudget(depth), ExecutionStatus::StackOverflow);
@@ -360,15 +402,15 @@ llvm::BasicBlock* FunctionEmitter::EmitInlineImportCall(const ir::Instruction& i
       builder_.getInt32(0),
       ByteAddress(import_frame_, offsetof(NativeTraceFrame, position) +
                                      offsetof(runtime::TracePosition, instruction)));
-  auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
-  builder_.CreateStore(import_frame_, frame_address);
-  builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt64(1)), depth_address);
+  EnterHostFrame(depth);
   auto* result = EmitDirectHostCall(callee, entries, arguments.subspan(1, callee.parameter_count));
-  builder_.CreateStore(trace_frame_, frame_address);
-  builder_.CreateStore(depth, depth_address);
+  if (host_trace_active_ == nullptr) {
+    RestoreHostFrame();
+  }
   Store(instruction.dst, result, callee.return_type);
   builder_.CreateBr(done);
   builder_.SetInsertPoint(checked);
+  ReleaseBorrowedHostFrame();
   return done;
 }
 

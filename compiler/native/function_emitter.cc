@@ -1,10 +1,12 @@
 #include "compiler/native/function_emitter.h"
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
+#include "compiler/native/array_analysis.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/global_analysis.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
@@ -50,14 +52,14 @@ namespace vela::compiler::native {
 bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
   const auto& instruction = source_.instructions.at(index);
   const auto target = CallTarget(index);
-  if (instruction.opcode == Opcode::BuiltinCall &&
-      instruction.index == static_cast<std::uint32_t>(Builtin::MapSet) && !map_lookups_.empty() &&
+  if (ir::IsBuiltinCall(instruction, Builtin::MapSet) && !map_lookups_.empty() &&
       map_lookups_[index] != nullptr) {
     return true;
   }
   return (instruction.opcode == Opcode::GetField && instruction.field_declaration.has_value()) ||
-         (instruction.opcode == Opcode::BuiltinCall &&
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush)) ||
+         ir::IsBuiltinCall(instruction, Builtin::ArrayPush) ||
+         (placement_ == NativeCodePlacement::Linked &&
+          ir::IsBuiltinCall(instruction, Builtin::MutableStringAppendCodePoint)) ||
          instruction.opcode == Opcode::GetGlobal ||
          (target && (generated_[target->function].leaf != nullptr ||
                      generated_[target->function].square_root));
@@ -70,6 +72,24 @@ llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
     return DecodeValue(builder_, value, type);
   }
   return builder_.CreateLoad(ValueType(module_.getContext(), type), slots_.at(reg));
+}
+
+bool FunctionEmitter::HasRangeProof(std::span<const std::uint8_t> proofs) const {
+  if (proofs.empty()) {
+    return false;
+  }
+  const auto origin = origins_[instruction_index_];
+  const auto& canonical = CanonicalInstruction(origin);
+  const auto& instruction = source_.instructions[instruction_index_];
+  // 逃逸改写可能在同一源位置插入其他操作，不能借用原指令的数值证明。
+  return proofs[origin] != 0 && canonical.opcode == instruction.opcode &&
+         canonical.dst == instruction.dst && canonical.lhs == instruction.lhs &&
+         canonical.rhs == instruction.rhs && canonical.index == instruction.index &&
+         canonical.array_type == instruction.array_type;
+}
+
+const ir::Instruction& FunctionEmitter::CanonicalInstruction(std::size_t origin) const {
+  return program_.functions[function_index_].instructions[origin];
 }
 
 llvm::Value* FunctionEmitter::Payload(ir::RegisterId reg) {
@@ -86,6 +106,7 @@ void FunctionEmitter::Store(ir::RegisterId reg, llvm::Value* value, const Source
   auto* converted = Convert(builder_, value, type, target);
   builder_.CreateStore(IsRecovering() ? EncodeValue(builder_, converted, target) : converted,
                        slots_.at(reg));
+  StoreFixedArrayStorage(reg, converted);
 }
 
 void FunctionEmitter::Finish(llvm::Value* status) {
@@ -120,6 +141,12 @@ void FunctionEmitter::PrepareRuntimeCall() {
 }
 
 void FunctionEmitter::PrepareObservableCall() {
+  if (host_trace_active_ != nullptr) {
+    const auto target = CallTarget(instruction_index_);
+    if (!target || !CanInlineImportCall(program_.functions[target->function])) {
+      ReleaseBorrowedHostFrame();
+    }
+  }
   SetPosition();
   StoreRoots(instruction_index_);
   PrepareCallCheckpoint();
@@ -196,6 +223,7 @@ void FunctionEmitter::Poll() {
     branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(process);
+  ReleaseBorrowedHostFrame();
   SetPosition();
   if (source_.native_symbol.empty()) {
     StoreRoots(instruction_index_);
@@ -245,6 +273,7 @@ void FunctionEmitter::PollAfterRuntimeCall() {
 }
 
 void FunctionEmitter::Fail(llvm::Value* status) {
+  ReleaseBorrowedHostFrame();
   AbortConstructions();
   if (kind_ == NativeEntryKind::Leaf) {
     // 内部叶入口的失败结果复用 ABI 暂存槽保存源位置；此处禁止分配和进入运行时。
@@ -252,22 +281,33 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     Finish(status);
     return;
   }
-  if (leaf_entry_) {
+  if (leaf_entry_ || deferred_roots_) {
+    if (!leaf_entry_) {
+      SetPosition();
+    }
     const auto& live = roots_.stores.at(instruction_index_);
     for (std::size_t index = 0; index < live.size(); ++index) {
       WriteHeapValue(RootAddress(index), live.at(index), MemoryRegion::Roots);
     }
-    auto failure = module_.getOrInsertFunction(
-        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
-    Finish(builder_.CreateCall(failure, {
-                                            body_->getArg(0),
-                                            builder_.getInt64(TracePosition()),
-                                            status,
-                                            roots,
-                                            builder_.getInt64(live.size()),
-                                        }));
+    if (leaf_entry_) {
+      auto failure = module_.getOrInsertFunction(
+          runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+          builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+      Finish(builder_.CreateCall(failure, {
+                                              body_->getArg(0),
+                                              builder_.getInt64(TracePosition()),
+                                              status,
+                                              roots,
+                                              builder_.getInt64(live.size()),
+                                          }));
+    } else {
+      auto failure = module_.getOrInsertFunction(
+          runtime::kNativeUnrootedFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+          builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+      Finish(builder_.CreateCall(
+          failure, {body_->getArg(0), status, roots, builder_.getInt64(live.size())}));
+    }
     return;
   }
   SetPosition();
@@ -533,31 +573,6 @@ void FunctionEmitter::PrepareFrame() {
   }
 }
 
-bool FunctionEmitter::CanUseLeafEntry() const {
-  if (roots_.debug_values ||
-      (program_.native_mode == NativeProgramMode::Reloadable && kind_ != NativeEntryKind::Leaf) ||
-      source_.is_async || !source_.native_symbol.empty() || !source_.handlers.empty() ||
-      frame_bytes_ > kMaximumNativeStackBytes || !IsScalar(source_.return_type)) {
-    return false;
-  }
-  return std::ranges::all_of(source_.instructions, [&](const ir::Instruction& instruction) {
-    // 标量 return 不装箱；字段和数组读写可保留副作用，但不能进入用户代码或分配。
-    if (instruction.opcode == Opcode::Return) {
-      return true;
-    }
-    if (kind_ == NativeEntryKind::Leaf && generated_[function_index_].budgeted_recursion &&
-        instruction.opcode == Opcode::Call && instruction.index == function_index_) {
-      return true;
-    }
-    if (instruction.opcode == Opcode::GetGlobal) {
-      // 惰性初始化器可能 GC；仅在没有活动引用时沿用延迟逻辑帧入口。
-      return roots_.count == 0;
-    }
-    const auto effects = ir::AnalyzeEffects(instruction);
-    return !effects.MayCollectOnSuccess();
-  });
-}
-
 void FunctionEmitter::BindFrameStorage() {
   if (IsRecovering()) {
     frame_storage_ = builder_.CreateLoad(
@@ -694,6 +709,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   GuardResume();
   PrepareFrame();
   leaf_entry_ = CanUseLeafEntry();
+  deferred_roots_ = CanDeferRoots();
   EmitFrameEntry();
   BindFrameStorage();
   InitializeCheckpoint();
@@ -702,6 +718,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   CacheConstants();
   CacheNativeStringViews();
   CacheMapLookups();
+  CacheFixedArrayStorage();
   CacheGlobals();
   CacheFields();
   BindArguments();
@@ -788,7 +805,8 @@ NativeRootPlan EscapeRoots(const ir::Program& program,
 
 FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
                                         const FieldTargets& field_targets,
-                                        std::span<const std::uint64_t> array_element_bits,
+                                        ArrayEmissionFacts array_access,
+                                        const GlobalAccessFacts& global_access,
                                         std::size_t function_index,
                                         const EscapePlan& escape,
                                         const NativeRootPlan& roots,
@@ -801,11 +819,17 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
       .field_accesses = {},
       .field_kind_writes = FindFieldKindWrites(escape.function.get(), program, roots.safepoints),
       .direct_calls = {},
-      .array_element_bits = {},
+      .arrays = {},
+      .global_access = &global_access,
   };
   const auto& canonical = program.functions.at(function_index);
   if (roots.bounded_polls) {
-    facts.array_element_bits = array_element_bits;
+    if (IsClosedLinkedProgram(program.native_mode, placement) && !canonical.is_async) {
+      // 同步帧内的存储描述随引用一起传播；挂起帧仍只保存语言层寄存器。
+      facts.arrays = array_access;
+    } else {
+      facts.arrays.element_bits = array_access.element_bits;
+    }
   }
   if (tier == NativeCodeTier::Optimized) {
     facts.direct_calls = FindDirectCalls(escape.function.get(), program);
@@ -851,7 +875,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
-    std::span<const std::uint64_t> array_element_bits,
+    ArrayEmissionFacts array_access,
+    const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
@@ -866,8 +891,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   const auto& function = generated[function_index];
   const auto frame_recovery =
       function.HasRecovery(tier) ? NativeFrameRecovery::Required : NativeFrameRecovery::None;
-  const auto facts = PlanEmissionFacts(program, field_targets, array_element_bits, function_index,
-                                       escape, roots, tier, placement);
+  const auto facts = PlanEmissionFacts(program, field_targets, array_access, global_access,
+                                       function_index, escape, roots, tier, placement);
   FunctionEmitter initial(module, program, calls, image, function_index, escape, generated, roots,
                           facts, NativeEntryKind::Initial, tier);
   if (std::ranges::any_of(escape.allocations, &AllocationSite::stack_record)) {
@@ -876,7 +901,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
                                        facts.direct_calls, initial.PlanAuxiliaryStorage());
     if (frame.bytes > kMaximumNativeStackBytes) {
       // 在 LLVM body 发射前完成表示选择；超预算记录使用普通调用所需的堆物化。
-      return EmitFunction(module, program, calls, field_targets, array_element_bits, image,
+      return EmitFunction(module, program, calls, field_targets, array_access, global_access, image,
                           function_index, generated, body_dependencies, debugging, placement, tier,
                           EscapeOptimization::ScalarReplacement);
     }
@@ -928,7 +953,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     const ir::Program& program,
     const NativeCallPlan& calls,
     const FieldTargets& field_targets,
-    std::span<const std::uint64_t> array_element_bits,
+    ArrayEmissionFacts array_access,
+    const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,
@@ -943,8 +969,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
                       {.values = required, .safepoints = {}},
                       placement == NativeCodePlacement::Linked ? NativeConstantRoots::Instance
                                                                : NativeConstantRoots::Local);
-  const auto facts = PlanEmissionFacts(program, field_targets, array_element_bits, function_index,
-                                       plan, roots, NativeCodeTier::Baseline, placement);
+  const auto facts =
+      PlanEmissionFacts(program, field_targets, array_access, global_access, function_index, plan,
+                        roots, NativeCodeTier::Baseline, placement);
   FunctionEmitter borrowed(module, program, calls, image, function_index, plan, generated, roots,
                            facts, NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
   if (const auto emitted = borrowed.Emit(); !emitted) {

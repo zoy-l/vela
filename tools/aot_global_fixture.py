@@ -11,6 +11,16 @@ let text = 'ready';
 let erased: dynamic = 42;
 let item: Box? = Box(value: 7);
 let choice = Choice.second;
+let stable = Box(value: 39);
+let starts = 0;
+let late = initializeLate();
+func initializeLate(): Box { starts++; collect(); return Box(value: 42); }
+func readLate(): int { return late.value; }
+func prepareRecursive(depth: int): void {
+  if (depth == 0) { optional = 39; item = Box(value: 3); return; }
+  if (depth % 2 == 0) { prepareRecursive(depth - 1); optional = (optional ?? 0) + 1; }
+  else { prepareRecursive(depth - 1); const box = item; if (box != null) { box.value++; } }
+}
 export func calculate(operation: int): int {
   if (operation == 0) {
     const label = text;
@@ -34,6 +44,20 @@ export func calculate(operation: int): int {
     if (!enabled && fraction == -2.5 && optional == 41 && erased == 'changed' &&
         text == 'changed' && item?.value == 8 && choice == Choice.first) { return 42; }
     return 0;
+  }
+  if (operation == 4) {
+    stable.value = 39;
+    for (let index = 0; index < 3; index++) { stable.value++; collect(); }
+    return stable.value;
+  }
+  if (operation == 5) { return starts; }
+  if (operation == 6) { return late.value; }
+  if (operation == 7) { return starts == 1 ? 42 : 0; }
+  if (operation == 8) {
+    const answer = readLate(); collect(); return late.value == answer ? answer : 0;
+  }
+  if (operation == 9) {
+    prepareRecursive(4); collect(); return (optional ?? 0) + (item?.value ?? 0) - 4;
   }
   optional = null;
   erased = null;
@@ -60,15 +84,12 @@ export func calculate(operation: int): int {
 HOST_TESTS = r'''
 extern "C" const NativeImage* GLOBAL_STORAGE_IMAGE() noexcept;
 extern "C" const NativeImage* GLOBAL_LEAF_IMAGE() noexcept;
+using NativeGlobalStorageTest = CollectingImageTest<GLOBAL_STORAGE_IMAGE>;
 
-TEST(NativeGlobalTest, ReadyLoadsObserveMutationsNullsAndManagedValuesAcrossCollection) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *GLOBAL_STORAGE_IMAGE());
-  const auto second = NativeInstance::Instantiate(isolate, *GLOBAL_STORAGE_IMAGE());
-  ASSERT_TRUE(instance.has_value());
+TEST_F(NativeGlobalStorageTest, ReadyLoadsObserveMutationsNullsAndManagedValuesAcrossCollection) {
+  const auto second = NativeInstance::Instantiate(isolate, *image);
   ASSERT_TRUE(second.has_value());
-  NativeExecution execution(**instance);
+  NativeExecution execution(*instance);
   NativeExecution other(**second);
   NativeValue output;
   for (const auto operation : {0, 0, 1, 2, 2, 3, 3}) {
@@ -133,15 +154,23 @@ TEST(NativeGlobalTest, ScalarLazyInitializationKeepsFailureTracesRetryAndDepthLi
   });
   ASSERT_NE(calculate, functions.end());
   const auto function_index = static_cast<std::uint32_t>(calculate - functions.begin());
-  for (auto& frame : frames) {
-    nested.MaterializeFrame(frame, function_index);
-  }
   const std::array divisor{Integer(1)};
-  EXPECT_EQ(Execute(GLOBAL_LEAF_ENTRY, nested, divisor, output), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(nested.current_frame(), &frames.back());
-  while (nested.current_frame() != nullptr) { nested.Exit(); }
-  ASSERT_EQ(Execute(GLOBAL_LEAF_ENTRY, nested, divisor, output), ExecutionStatus::Returned);
+  ExpectStackLimitAndRetry(GLOBAL_LEAF_ENTRY, nested, divisor, frames, Integer(0), function_index);
+}
+
+TEST_F(NativeGlobalStorageTest, ReadonlySlotsKeepLazyInitializationAndMutableObjectContents) {
+  NativeExecution execution(*instance);
+  NativeValue output;
+  const std::array initial{Integer(5)};
+  ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, initial, output), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 0);
-  EXPECT_FALSE(nested.HasException());
+  ExpectIntegerOperations(GLOBAL_STORAGE_ENTRY, execution, {6, 7, 4, 4, 9});
+  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
+}
+
+TEST_F(NativeGlobalStorageTest, CalleeInitializationRefreshesTheCallersReadonlyCache) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(GLOBAL_STORAGE_ENTRY, execution, {8, 7});
+  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
 }
 '''

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -17,6 +18,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/AsmParser/Parser.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
@@ -24,6 +26,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/SourceMgr.h>
 
@@ -41,11 +44,49 @@
 #include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/native/native_image.h"
+#include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::aot {
 namespace {
 
 using ir::test::Prepare;
+
+std::expected<native::NativeModule, frontend::Diagnostics> GenerateForTest(
+    const ir::Program& program,
+    const std::string& name,
+    NativeCodePlacement placement) {
+  const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Optimized);
+  const auto fields = native::FindFieldTargets(program);
+  return native::Generate(program, calls, fields, name, native::NativeDebugging::Safepoints,
+                          NativeCodeTier::Optimized, native::EscapeOptimization::Enabled,
+                          placement);
+}
+
+struct RangeSpecializationCase final {
+  std::string_view source;
+  std::string_view module_name;
+  std::string_view function_name;
+};
+
+template <typename Verify>
+void WithGeneratedRangeFunctions(const RangeSpecializationCase& scenario, Verify verify) {
+  const auto prepared = Prepare(scenario.source);
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& functions = prepared.program.functions;
+  const auto found = std::ranges::find(functions, scenario.function_name, &ir::Function::name);
+  ASSERT_NE(found, functions.end());
+  const auto name =
+      std::string(scenario.module_name) + "_body_" + std::to_string(found - functions.begin());
+  const auto generated = GenerateForTest(prepared.program, std::string(scenario.module_name),
+                                         NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto* generic = module.getFunction(name);
+  const auto* specialized = module.getFunction(name + "_range");
+  ASSERT_NE(generic, nullptr);
+  ASSERT_NE(specialized, nullptr);
+  verify(prepared.program, *generic, *specialized, name);
+}
 
 TEST(NativeCompilerTest, ConvertsCachedStringConstantsToDynamicFieldRegisters) {
   const auto prepared = Prepare(R"(
@@ -92,6 +133,83 @@ export func main(): int {
   EXPECT_NE(result->header.find("VelaAotStatus vela_aot_export_1"), std::string::npos);
   EXPECT_NE(result->header.find("Call_main"), std::string::npos);
   EXPECT_EQ(result->instantiate_symbol, "vela_aot_instantiate");
+}
+
+TEST(NativeCompilerTest, RestrictsRangeSpecializationsToLinkedAotBodies) {
+  WithGeneratedRangeFunctions(
+      {
+          .source = R"(
+func read(values: int[], index: int): int { return values[index] + 1; }
+export func run(): int { return read([1, 2, 3], 2); }
+)",
+          .module_name = "ranges",
+          .function_name = "read",
+      },
+      [](const auto& program, const auto& generic, const auto& specialized, const auto& name) {
+        const auto checked_adds = [](const llvm::Function& function) {
+          return std::ranges::count_if(llvm::instructions(function), [](const auto& instruction) {
+            const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            const auto* callee = call == nullptr ? nullptr : call->getCalledFunction();
+            return callee != nullptr && callee->getName().starts_with("llvm.sadd.with.overflow");
+          });
+        };
+        EXPECT_EQ(checked_adds(generic), 1);
+        EXPECT_EQ(checked_adds(specialized), 0);
+        const auto dynamic = GenerateForTest(program, "ranges", NativeCodePlacement::Dynamic);
+        ASSERT_TRUE(dynamic) << frontend::DiagnosticsText(dynamic.error());
+        EXPECT_EQ(dynamic->module->getFunction(name + "_range"), nullptr);
+      });
+}
+
+TEST(NativeCompilerTest, ProvenMutableGlobalAccessesDoNotAllocateReadinessSlots) {
+  const auto prepared = Prepare(R"(
+let value = 0;
+export func run(input: int): int { value = input; return value; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto generated = GenerateForTest(prepared.program, "globals", NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  for (const auto& function : *generated->module) {
+    for (const auto& instruction : llvm::instructions(function)) {
+      EXPECT_FALSE(instruction.getName().starts_with("global.is_ready"));
+    }
+  }
+}
+
+TEST(NativeCompilerTest, FixedArrayLengthsKeepBoundsProofsOutsideTheGenericEntry) {
+  WithGeneratedRangeFunctions(
+      {
+          .source = R"(
+func read(values: int[]): int { return values[0]; }
+export func run(): int { return read([-9223372036854775808, 9223372036854775807]); }
+)",
+          .module_name = "lengths",
+          .function_name = "read",
+      },
+      [](const auto&, const auto& generic, const auto& specialized, const auto&) {
+        const auto bounds_checks = [](const llvm::Function& function) {
+          return std::ranges::count_if(llvm::instructions(function), [](const auto& instruction) {
+            const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+            if (comparison == nullptr || comparison->getPredicate() != llvm::CmpInst::ICMP_ULT) {
+              return false;
+            }
+            const auto* length = llvm::dyn_cast<llvm::ZExtInst>(comparison->getOperand(1));
+            return length != nullptr &&
+                   length->getSrcTy()->isIntegerTy(std::numeric_limits<std::uint32_t>::digits);
+          });
+        };
+        EXPECT_EQ(bounds_checks(generic), 1);
+        EXPECT_EQ(bounds_checks(specialized), 0);
+        const auto null_checks = [](const llvm::Function& function) {
+          return std::ranges::count_if(llvm::instructions(function), [](const auto& instruction) {
+            const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+            return comparison != nullptr && comparison->getPredicate() == llvm::CmpInst::ICMP_NE &&
+                   comparison->getOperand(0)->getType()->isPointerTy() &&
+                   llvm::isa<llvm::ConstantPointerNull>(comparison->getOperand(1));
+          });
+        };
+        EXPECT_GT(null_checks(generic), null_checks(specialized));
+      });
 }
 
 TEST(NativeCompilerTest, EmitsConcreteGenericMethodsAndInterfaceSelectors) {
@@ -356,40 +474,56 @@ export func update(points: Particle[]): void {
 }
 
 TEST(NativeCompilerTest, FoldsRepeatedIndependentFieldTraversalsWithoutReassociatingAdds) {
-  const auto prepared = Prepare(R"(
+  for (const std::string_view source : {
+           R"(
 export class Point { x: double; dx: double; }
 export func update(points: Point[]): void {
   for (let round = 0; round < 10; round++) {
     for (const point in points) { point.x += point.dx; }
   }
 }
-)");
-  ASSERT_TRUE(prepared.Succeeded());
-  const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
-  ASSERT_TRUE(result) << result.error().front().message;
-  llvm::LLVMContext context;
-  const auto module = ParseModule(result->llvm_ir, context);
-  ASSERT_NE(module, nullptr);
-  std::size_t additions = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
+)",
+           R"(
+class Point { x: double; y: double; z: double; dx: double; dy: double; dz: double; }
+let points: Point[] = [];
+export func update(): void {
+  for (let round = 0; round < 10; round++) {
+    for (const point in points) {
+      point.x += point.dx; point.y += point.dy; point.z += point.dz;
     }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
-    for (const auto* loop : loops.getLoopsInPreorder()) {
-      EXPECT_TRUE(loop->getSubLoops().empty());
-      for (const auto* block : loop->blocks()) {
-        for (const auto& instruction : *block) {
-          if (instruction.getOpcode() == llvm::Instruction::FAdd) {
-            EXPECT_FALSE(instruction.getFastMathFlags().any());
-            ++additions;
+  }
+}
+)",
+       }) {
+    SCOPED_TRACE(source);
+    const auto prepared = Prepare(source);
+    ASSERT_TRUE(prepared.Succeeded());
+    const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
+    ASSERT_TRUE(result) << result.error().front().message;
+    llvm::LLVMContext context;
+    const auto module = ParseModule(result->llvm_ir, context);
+    ASSERT_NE(module, nullptr);
+    std::size_t additions = 0;
+    for (auto& function : *module) {
+      if (function.isDeclaration()) {
+        continue;
+      }
+      llvm::DominatorTree dominators(function);
+      const llvm::LoopInfo loops(dominators);
+      for (const auto* loop : loops.getLoopsInPreorder()) {
+        EXPECT_TRUE(loop->getSubLoops().empty());
+        for (const auto* block : loop->blocks()) {
+          for (const auto& instruction : *block) {
+            if (instruction.getOpcode() == llvm::Instruction::FAdd) {
+              EXPECT_FALSE(instruction.getFastMathFlags().any());
+              ++additions;
+            }
           }
         }
       }
     }
+    EXPECT_GE(additions, 10U);
   }
-  EXPECT_GE(additions, 10U);
 }
 
 struct LoopHostCalls {
@@ -397,6 +531,52 @@ struct LoopHostCalls {
   std::vector<const llvm::StoreInst*> frame_stores;
   bool has_checked = false;
 };
+
+TEST(NativeCompilerTest, ExecutionFrameAndDepthStoresShareAliasMetadataAcrossHostCalls) {
+  const auto prepared = Prepare(R"(
+external func step(value: int): int;
+export func calculate(count: int): int {
+  let result = 0;
+  for (let index = 0; index < count; index++) { result = step(result); }
+  return result;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto generated = GenerateForTest(prepared.program, "frames", NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  std::size_t frame_stores = 0;
+  std::size_t depth_stores = 0;
+  for (const auto& function : module) {
+    if (function.isDeclaration() || function.arg_empty()) {
+      continue;
+    }
+    for (const auto& instruction : llvm::instructions(function)) {
+      const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+      if (store == nullptr) {
+        continue;
+      }
+      std::int64_t offset = 0;
+      const auto* base = llvm::GetPointerBaseWithConstantOffset(store->getPointerOperand(), offset,
+                                                                module.getDataLayout());
+      if (base != function.getArg(0)) {
+        continue;
+      }
+      using runtime::NativeMemoryLayout;
+      if (std::cmp_equal(offset, NativeMemoryLayout::kExecutionFrame)) {
+        ++frame_stores;
+      } else if (std::cmp_equal(offset, NativeMemoryLayout::kExecutionDepth)) {
+        ++depth_stores;
+      } else {
+        continue;
+      }
+      EXPECT_NE(store->getMetadata(llvm::LLVMContext::MD_tbaa), nullptr)
+          << function.getName().str();
+    }
+  }
+  EXPECT_GE(frame_stores, 4U);
+  EXPECT_EQ(frame_stores, depth_stores);
+}
 
 LoopHostCalls CollectHostCalls(const llvm::Loop& loop) {
   LoopHostCalls calls;

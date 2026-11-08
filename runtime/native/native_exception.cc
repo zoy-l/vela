@@ -4,6 +4,8 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -153,7 +155,9 @@ void NativeExecution::SetException(Value exception) noexcept {
   exception_root_.Attach(isolate().heap(), &pending_exception_, 1);
 }
 
-ExecutionStatus NativeExecution::HandleFailure(ExecutionStatus status, std::string_view message) {
+ExecutionStatus NativeExecution::HandleFailure(ExecutionStatus status,
+                                               std::string_view message,
+                                               std::span<const Value> roots) {
   if (status == ExecutionStatus::ExecutionStopped) {
     return status;
   }
@@ -162,6 +166,11 @@ ExecutionStatus NativeExecution::HandleFailure(ExecutionStatus status, std::stri
   }
   if (HasException()) {
     return ExceptionData::From(*pending_exception_.AsObject()).status;
+  }
+  // 只有首次构造异常才追踪延迟根；传播和停止路径的祖先局部引用可能已被 GC 回收。
+  RootRange retained(std::nullopt);
+  if (!roots.empty()) {
+    retained.Attach(isolate().heap(), roots.data(), roots.size());
   }
   if (message.empty()) {
     message = ExecutionStatusName(status);

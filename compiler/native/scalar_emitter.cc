@@ -23,6 +23,7 @@ namespace vela::compiler::native {
 namespace {
 constexpr unsigned kIntegerShiftMask = 63;
 constexpr double kIntegerMagnitudeLimit = 0x1p63;
+
 }  // namespace
 
 bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts) {
@@ -64,10 +65,12 @@ void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
   llvm::Value* result = nullptr;
   const auto opcode = instruction.opcode;
   if (opcode == Opcode::NegInt) {
-    Check(builder_.CreateICmpNE(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
-                                          std::numeric_limits<std::int64_t>::min()))),
-          ExecutionStatus::IntegerOverflow);
-    result = builder_.CreateNeg(left);
+    if (!HasRangeProof(array_access_.no_overflow)) {
+      Check(builder_.CreateICmpNE(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
+                                            std::numeric_limits<std::int64_t>::min()))),
+            ExecutionStatus::IntegerOverflow);
+    }
+    result = builder_.CreateNSWNeg(left);
   } else if (opcode == Opcode::BitNotInt) {
     result = builder_.CreateNot(left);
   } else {
@@ -76,6 +79,16 @@ void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
       case Opcode::AddInt:
       case Opcode::SubInt:
       case Opcode::MulInt: {
+        if (HasRangeProof(array_access_.no_overflow)) {
+          if (opcode == Opcode::AddInt) {
+            result = builder_.CreateNSWAdd(left, right);
+          } else if (opcode == Opcode::SubInt) {
+            result = builder_.CreateNSWSub(left, right);
+          } else {
+            result = builder_.CreateNSWMul(left, right);
+          }
+          break;
+        }
         auto intrinsic = llvm::Intrinsic::sadd_with_overflow;
         if (opcode == Opcode::SubInt) {
           intrinsic = llvm::Intrinsic::ssub_with_overflow;
@@ -182,26 +195,17 @@ void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
   auto* left = Payload(instruction.lhs);
   auto* right = Payload(instruction.rhs);
   llvm::Value* result = nullptr;
+  if (const auto predicate = IntegerComparison(instruction.opcode)) {
+    result = builder_.CreateICmp(*predicate, left, right);
+    Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
+    return;
+  }
   switch (instruction.opcode) {
-    case Opcode::EqualInt:
     case Opcode::EqualBool:
       result = builder_.CreateICmpEQ(left, right);
       break;
-    case Opcode::NotEqualInt:
     case Opcode::NotEqualBool:
       result = builder_.CreateICmpNE(left, right);
-      break;
-    case Opcode::LessInt:
-      result = builder_.CreateICmpSLT(left, right);
-      break;
-    case Opcode::LessEqualInt:
-      result = builder_.CreateICmpSLE(left, right);
-      break;
-    case Opcode::GreaterInt:
-      result = builder_.CreateICmpSGT(left, right);
-      break;
-    case Opcode::GreaterEqualInt:
-      result = builder_.CreateICmpSGE(left, right);
       break;
     case Opcode::EqualDouble:
       result = builder_.CreateFCmpOEQ(left, right);

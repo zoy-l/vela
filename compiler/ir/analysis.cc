@@ -16,6 +16,86 @@
 
 namespace vela::ir {
 
+bool CanAnalyzeSynchronousFunction(const Function& function) {
+  return function.native_symbol.empty() && !function.is_async && function.handlers.empty();
+}
+
+std::vector<RegisterAccess> AnalyzeRegisterAccesses(const Function& function,
+                                                    std::span<const Function> functions) {
+  std::vector<RegisterAccess> accesses;
+  accesses.reserve(function.instructions.size());
+  for (const auto& instruction : function.instructions) {
+    accesses.push_back(AnalyzeRegisters(instruction, functions));
+  }
+  return accesses;
+}
+
+std::vector<RegisterDefinition> FindRegisterDefinitions(const Function& function,
+                                                        std::span<const RegisterAccess> accesses) {
+  std::vector<RegisterDefinition> definitions(function.register_count);
+  for (RegisterId reg = 0; reg < function.parameter_count; ++reg) {
+    definitions[reg].count = 1;
+  }
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    if (!accesses[index].defines_value) {
+      continue;
+    }
+    auto& definition = definitions[function.instructions[index].dst];
+    if (!definition.first) {
+      definition.first = index;
+    }
+    definition.last = index;
+    ++definition.count;
+  }
+  return definitions;
+}
+
+namespace {
+
+std::vector<std::optional<RegisterId>> FindRegisterOrigins(
+    const Function& function,
+    std::span<const RegisterDefinition> definitions) {
+  std::vector<std::optional<RegisterId>> origins(function.register_count);
+  std::vector<std::vector<RegisterId>> copies(function.register_count);
+  std::vector<RegisterId> pending;
+  for (RegisterId reg = 0; reg < function.register_count; ++reg) {
+    const auto& definition = definitions[reg];
+    if (definition.count != 1) {
+      continue;
+    }
+    const auto* instruction = definition.last ? &function.instructions[*definition.last] : nullptr;
+    if (instruction != nullptr && instruction->opcode == Opcode::Move) {
+      copies[instruction->lhs].push_back(reg);
+    } else {
+      origins[reg] = reg;
+      pending.push_back(reg);
+    }
+  }
+  while (!pending.empty()) {
+    const auto reg = pending.back();
+    pending.pop_back();
+    for (const auto copy : copies[reg]) {
+      origins[copy] = origins[reg];
+      pending.push_back(copy);
+    }
+  }
+  return origins;
+}
+
+}  // namespace
+
+RegisterFlow AnalyzeRegisterFlow(const Function& function,
+                                 std::span<const RegisterAccess> accesses) {
+  auto definitions = FindRegisterDefinitions(function, accesses);
+  auto origins = FindRegisterOrigins(function, definitions);
+  return {.definitions = std::move(definitions), .origins = std::move(origins)};
+}
+
+std::optional<std::size_t> RegisterFlow::OriginDefinition(RegisterId reg) const {
+  const auto origin = origins[reg];
+  return origin ? definitions[*origin].last : std::nullopt;
+}
+
 RegisterAccess AnalyzeRegisters(const Instruction& instruction,
                                 std::span<const Function> functions) {
   using Field = Operand;
@@ -233,6 +313,26 @@ FlowGraph BuildFlowGraph(const Function& function) {
     }
   }
   return graph;
+}
+
+std::vector<std::uint8_t> FindReachableBlocks(const FlowGraph& graph) {
+  std::vector<std::uint8_t> reachable(graph.blocks.size());
+  if (graph.blocks.empty()) {
+    return reachable;
+  }
+  std::vector<std::size_t> work{0};
+  reachable.front() = 1;
+  while (!work.empty()) {
+    const auto index = work.back();
+    work.pop_back();
+    for (const auto successor : graph.blocks[index].successors) {
+      if (reachable[successor] == 0) {
+        reachable[successor] = 1;
+        work.push_back(successor);
+      }
+    }
+  }
+  return reachable;
 }
 
 namespace {

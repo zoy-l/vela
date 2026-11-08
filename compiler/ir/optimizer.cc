@@ -287,19 +287,7 @@ FlowGraph RemoveUnreachable(Function& function, std::vector<std::size_t>* origin
   if (graph.blocks.empty()) {
     return graph;
   }
-  std::vector<std::uint8_t> reached(graph.blocks.size(), 0);
-  std::vector<std::size_t> work = {0};
-  reached.front() = 1;
-  while (!work.empty()) {
-    const auto index = work.back();
-    work.pop_back();
-    for (const auto successor : graph.blocks.at(index).successors) {
-      if (reached.at(successor) == 0) {
-        reached.at(successor) = 1;
-        work.push_back(successor);
-      }
-    }
-  }
+  const auto reached = FindReachableBlocks(graph);
   if (std::ranges::all_of(reached, [](auto value) { return value != 0; })) {
     return graph;
   }
@@ -348,9 +336,8 @@ bool CanMeasureScalarText(const frontend::TypeDescriptor& input) {
 }
 
 bool IsTemporaryString(const Instruction& instruction) {
-  return instruction.opcode == Opcode::BuiltinCall &&
-         (instruction.index == static_cast<std::uint32_t>(Builtin::ScalarToString) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringIndex));
+  return IsBuiltinCall(instruction, Builtin::ScalarToString) ||
+         IsBuiltinCall(instruction, Builtin::StringIndex);
 }
 
 enum class TemporaryStringFusion : std::uint8_t { None, Integer };
