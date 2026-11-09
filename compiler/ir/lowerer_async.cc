@@ -39,9 +39,7 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
     signature.optional_parameters.insert(std::string(member->parameters.at(0)));
   }
   auto function = CreateMemberFunction(receiver, name, signature);
-  current_function_ = &function;
-  current_handler_.reset();
-  next_register_ = function.parameter_count;
+  BeginGeneratedBody(function);
   const auto empty = EmitTemporary({.opcode = Opcode::LoadNull, .location = {}});
   const auto selector = EmitTemporary({
       .opcode = Opcode::LoadInt,

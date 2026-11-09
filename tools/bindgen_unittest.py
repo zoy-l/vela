@@ -48,10 +48,14 @@ class BindingCollectorTest(CommandTestCase):
                 extra: list[str] | None = None) -> subprocess.CompletedProcess:
         self.header.write_text('#pragma once\n#include <vela/bindings.h>\n' + source,
                                encoding="utf-8", newline="\n")
+        output_arguments = extra or []
+        if not any(argument.startswith("--output-directory=") for argument in output_arguments):
+            output_arguments = ["--output-directory=" + str(self.directory / "collected"),
+                                *output_arguments]
         result = subprocess.run([
             str(self.collector), "--module=app", "--database=" + str(self.database),
             "--source=" + str(self.source), "--header=" + str(self.header),
-            "--resource-dir=" + str(self.resource), *(extra or [])],
+            "--resource-dir=" + str(self.resource), *output_arguments],
             cwd=self.directory, capture_output=True, text=True, encoding="utf-8", timeout=60,
             check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)

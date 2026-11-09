@@ -184,6 +184,13 @@ std::expected<void, std::string> InvokeTool(const std::filesystem::path& tool,
 
 }  // namespace
 
+bool HasNativeArtifactIdentity(const yyjson_val* root, std::string_view toolchain_identity) {
+  return yyjson_get_uint(GetJsonField(root, "format_version")) == 1 &&
+         GetJsonString(root, "target") == runtime::NativeTargetIdentity() &&
+         GetJsonString(root, "runtime_abi") == runtime::NativeRuntimeAbiIdentity() &&
+         GetJsonString(root, "toolchain_build") == toolchain_identity;
+}
+
 std::filesystem::path DefaultTargetSupportPath() {
   return Utf8Path(llvm::sys::fs::getMainExecutable("vela", nullptr)).parent_path().parent_path() /
          "share" / "vela" / "target.json";
@@ -202,11 +209,7 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
     return std::unexpected("invalid target support JSON: " + parsed.error().message);
   }
   const auto* root = parsed->root();
-  if (yyjson_get_uint(GetJsonField(root, "format_version")) != 1 ||
-      GetJsonString(root, "target") != runtime::NativeTargetIdentity() ||
-      GetJsonString(root, "runtime_abi") != runtime::NativeRuntimeAbiIdentity() ||
-      GetJsonString(root, "toolchain_build") !=
-          NativeToolchainBuildIdentity(NativeOptimization::Release)) {
+  if (!HasNativeArtifactIdentity(root, NativeToolchainBuildIdentity(NativeOptimization::Release))) {
     return std::unexpected("target support target or runtime ABI does not match this compiler");
   }
   std::error_code error;

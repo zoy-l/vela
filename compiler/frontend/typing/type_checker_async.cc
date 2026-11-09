@@ -38,11 +38,6 @@ std::optional<std::size_t> Argument(const Expression& expression,
   return std::nullopt;
 }
 
-bool IsThrowable(const Type& type) {
-  return type.kind == Kind::Dynamic ||
-         (!type.nullable && (type.kind == Kind::Class || type.kind == Kind::Interface));
-}
-
 }  // namespace
 
 TypeChecker::Type TypeChecker::RegisterAsyncCall(const Expression& expression,
@@ -94,6 +89,29 @@ TypeChecker::Type TypeChecker::CheckAsyncCallback(const Expression& expression,
     context.AddParameter(std::to_string(context.parameters.size()), type);
   }
   return CheckCallback(expression, std::move(context), CallbackArity::Exact, presence, contract);
+}
+
+std::optional<TypeChecker::Type> TypeChecker::CheckOptionalAsyncCallback(
+    const Expression& expression,
+    std::string_view name,
+    std::size_t position,
+    std::span<const Type> parameters,
+    std::vector<std::optional<Type>>& checked,
+    CallbackParameters contract) {
+  const auto input = Argument(expression, name, position);
+  if (!input) {
+    return std::nullopt;
+  }
+  const auto& value = *expression.arguments.at(*input).value;
+  if (value.kind == Expression::Kind::NullLiteral) {
+    return std::nullopt;
+  }
+  const auto type = CheckAsyncCallback(value, parameters, CallbackPresence::Optional, contract);
+  if (!IsValid(type)) {
+    return std::nullopt;
+  }
+  checked.at(*input) = type;
+  return type;
 }
 
 TypeChecker::Type TypeChecker::CheckFutureCall(const Expression& expression, const Type* expected) {
@@ -191,26 +209,19 @@ void TypeChecker::AddFutureCleanup(const Expression& expression,
     context.AddParameter("value", element);
   }
   auto callback_type = NullableType(FunctionType(context));
-  const auto input = Argument(expression, "cleanUp", 2);
-  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
-    const std::array<Type, 1> parameters{element};
-    auto type = CheckAsyncCallback(
-        *expression.arguments.at(*input).value,
-        std::span<const Type>(parameters).first(element.kind == Kind::Void ? 0 : 1),
-        CallbackPresence::Optional);
-    if (IsValid(type)) {
-      const auto& callback = function_types_.at(NonNullable(type).name);
-      if (callback.parameters.size() == 1 &&
-          !CanAssign(callback.parameters.front().type, element)) {
-        AddDiagnostic(expression.location, "cleanUp parameter must accept the input element type");
-      }
-      if (callback.return_type.kind != Kind::Void &&
-          !IsSameType(callback.return_type, MakeFutureType(expression, kVoid))) {
-        AddDiagnostic(expression.location, "cleanUp must return void or Future<void>");
-      }
-      callback_type = NullableType(type);
-      checked.at(*input) = type;
+  const std::array parameters{element};
+  if (const auto type = CheckOptionalAsyncCallback(
+          expression, "cleanUp", 2,
+          std::span<const Type>(parameters).first(element.kind == Kind::Void ? 0 : 1), checked)) {
+    const auto& callback = function_types_.at(NonNullable(*type).name);
+    if (callback.parameters.size() == 1 && !CanAssign(callback.parameters.front().type, element)) {
+      AddDiagnostic(expression.location, "cleanUp parameter must accept the input element type");
     }
+    if (callback.return_type.kind != Kind::Void &&
+        !IsSameType(callback.return_type, MakeFutureType(expression, kVoid))) {
+      AddDiagnostic(expression.location, "cleanUp must return void or Future<void>");
+    }
+    callback_type = NullableType(*type);
   }
   signature = MakeAsyncSignature(
       *FindAsyncMember(Kind::Future, MemberStorage::Static, "wait"), signature.return_type,
@@ -410,22 +421,17 @@ TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
   context.return_type = generic_arguments_.at(signature.return_type.name).front();
   context.AddParameter("error", error_type);
   auto callback = NullableType(FunctionType(context));
-  const auto input = Argument(expression, "onError", 1);
-  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
-    const std::array<Type, 1> parameters{error_type};
-    auto type = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters,
-                                   CallbackPresence::Optional, CallbackParameters::ExceptionFilter);
-    if (IsValid(type)) {
-      const auto& actual = function_types_.at(NonNullable(type).name);
-      if (actual.parameters.size() == 1) {
-        error_type = actual.parameters.front().type;
-      }
-      if (!CanAssign(signature.return_type, MakeFutureType(expression, actual.return_type))) {
-        AddDiagnostic(expression.location, "then onError result must match onValue");
-      }
-      callback = NullableType(type);
-      checked.at(*input) = type;
+  const std::array parameters{error_type};
+  if (const auto type = CheckOptionalAsyncCallback(expression, "onError", 1, parameters, checked,
+                                                   CallbackParameters::ExceptionFilter)) {
+    const auto& actual = function_types_.at(NonNullable(*type).name);
+    if (actual.parameters.size() == 1) {
+      error_type = actual.parameters.front().type;
     }
+    if (!CanAssign(signature.return_type, MakeFutureType(expression, actual.return_type))) {
+      AddDiagnostic(expression.location, "then onError result must match onValue");
+    }
+    callback = NullableType(*type);
   }
   signature = MakeAsyncSignature(*FindAsyncMember(Kind::Future, MemberStorage::Instance, "then"),
                                  signature.return_type,
@@ -519,19 +525,13 @@ TypeChecker::Type TypeChecker::CheckFutureTimeout(const Expression& expression,
   context.return_type = element;
   auto callback = NullableType(FunctionType(context));
   std::vector<std::optional<Type>> checked(expression.arguments.size());
-  const auto input = Argument(expression, "onTimeout", 1);
-  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
-    const auto type =
-        CheckAsyncCallback(*expression.arguments.at(*input).value, {}, CallbackPresence::Optional);
-    if (IsValid(type)) {
-      const auto output =
-          MakeFutureType(expression, function_types_.at(NonNullable(type).name).return_type);
-      if (!CanAssign(receiver, output)) {
-        AddDiagnostic(expression.location, "onTimeout must return the Future value type");
-      }
-      callback = NullableType(type);
-      checked.at(*input) = type;
+  if (const auto type = CheckOptionalAsyncCallback(expression, "onTimeout", 1, {}, checked)) {
+    const auto output =
+        MakeFutureType(expression, function_types_.at(NonNullable(*type).name).return_type);
+    if (!CanAssign(receiver, output)) {
+      AddDiagnostic(expression.location, "onTimeout must return the Future value type");
     }
+    callback = NullableType(*type);
   }
   signature =
       MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, "timeout"),

@@ -169,10 +169,19 @@ std::expected<ReplSourceCandidate, ReplSourceError> ReplSource::Prepare(
     ++current.first_line;
   }
   current.last_line = next_line_ + static_cast<std::uint32_t>(std::ranges::count(addition, '\n'));
-  auto parsed = frontend::ParseSource(addition);
-  for (auto& diagnostic : parsed.diagnostics) {
+  auto addition_tokens = frontend::Lexer(addition).Tokenize();
+  for (auto& token : addition_tokens.tokens) {
+    token.location.line += next_line_ - 1;
+  }
+  for (auto& diagnostic : addition_tokens.diagnostics) {
     diagnostic.location.line += next_line_ - 1;
   }
+  auto parsed = addition_tokens.diagnostics.empty()
+                    ? frontend::Parser(addition_tokens.tokens).Parse()
+                    : frontend::ParseResult{
+                          .program = {},
+                          .diagnostics = std::move(addition_tokens.diagnostics),
+                      };
   if (!parsed.diagnostics.empty()) {
     // EOF 缺少函数体、参数或表达式时允许继续输入，内部语法错误立即报告。
     const auto eof_line = current.last_line - (body.declaration ? 2U : 1U);
@@ -187,8 +196,7 @@ std::expected<ReplSourceCandidate, ReplSourceError> ReplSource::Prepare(
         SubmissionFailure(SubmissionStatus::Rejected, std::move(parsed.diagnostics)));
   }
   parsed.program.standard_names = frontend::CollectStandardNames(lexed.tokens);
-  auto accepted = std::make_shared<frontend::Program>(
-      frontend::CloneProgram(parsed.program, {.line = next_line_}));
+  auto accepted = std::make_shared<frontend::Program>(std::move(parsed.program));
   frontend::Program candidate;
   for (const auto& fragment : syntax_) {
     frontend::AppendProgram(candidate, frontend::CloneProgram(*fragment, {}));

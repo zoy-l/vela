@@ -98,8 +98,7 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
       (builtin == Builtin::ArrayPush && expression.arguments.size() != 1)) {
     return LowerArrayMutation(expression);
   }
-  if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
-      builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
+  if (SnapshotCountBuiltin(builtin)) {
     return LowerSnapshotArray(expression);
   }
   const auto arity = BuiltinArity(builtin);
@@ -131,21 +130,28 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
   } else {
     LowerArguments(expression, static_cast<RegisterId>(base + receiver_count));
   }
-  if (HasRegExpArrayLayout(builtin)) {
-    auto type = result_type;
-    type.name = frontend::NonNullableTypeName(type);
-    type.nullable = false;
-    Emit({
-        .opcode = Opcode::LoadInt,
-        .dst = static_cast<RegisterId>(base + arity - 1),
-        .immediate = static_cast<std::int64_t>(RegisterArrayType(type)),
-        .location = expression.location,
-    });
-  }
+  EmitRegExpLayoutArgument(builtin, base, result_type, expression.location);
   const auto result = AllocateRegister(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   FinishNullSafe(null_jump, result, expression.location);
   return {.reg = result, .type = result_type};
+}
+
+void Lowerer::EmitRegExpLayoutArgument(Builtin builtin,
+                                       RegisterId base,
+                                       frontend::TypeDescriptor type,
+                                       frontend::SourceLocation location) {
+  if (!HasRegExpArrayLayout(builtin)) {
+    return;
+  }
+  type.name = frontend::NonNullableTypeName(type);
+  type.nullable = false;
+  Emit({
+      .opcode = Opcode::LoadInt,
+      .dst = static_cast<RegisterId>(base + BuiltinArity(builtin) - 1),
+      .immediate = RegisterArrayType(type),
+      .location = location,
+  });
 }
 
 void Lowerer::LowerBuiltinDefaults(Builtin builtin,

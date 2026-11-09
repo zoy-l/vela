@@ -96,6 +96,23 @@ std::optional<std::size_t> RegisterFlow::OriginDefinition(RegisterId reg) const 
   return origin ? definitions[*origin].last : std::nullopt;
 }
 
+std::uint32_t CallArgumentCount(const Instruction& instruction) {
+  switch (instruction.opcode) {
+    case Opcode::CallIndirect:
+      return instruction.index;
+    case Opcode::CallInterface:
+      return static_cast<std::uint32_t>(instruction.immediate);
+    case Opcode::BuiltinCall:
+      return static_cast<std::uint32_t>(BuiltinArity(static_cast<Builtin>(instruction.index)));
+    case Opcode::AsyncCall:
+      return static_cast<std::uint32_t>(AsyncArity(static_cast<AsyncOperation>(instruction.index)));
+    case Opcode::StringInterpolate:
+      return instruction.rhs;
+    default:
+      return 0;
+  }
+}
+
 RegisterAccess AnalyzeRegisters(const Instruction& instruction,
                                 std::span<const Function> functions) {
   using Field = Operand;
@@ -150,27 +167,13 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
           .defines_value = true,
           .uses = {Field::Right},
           .use_count = 1,
-          .argument_count = instruction.index,
+          .argument_count = CallArgumentCount(instruction),
       };
     case Opcode::CallInterface:
-      return {
-          .defines_value = true,
-          .argument_count = static_cast<std::uint32_t>(instruction.immediate),
-      };
     case Opcode::BuiltinCall:
-      return {
-          .defines_value = true,
-          .argument_count =
-              static_cast<std::uint32_t>(BuiltinArity(static_cast<Builtin>(instruction.index))),
-      };
     case Opcode::AsyncCall:
-      return {
-          .defines_value = true,
-          .argument_count = static_cast<std::uint32_t>(
-              AsyncArity(static_cast<AsyncOperation>(instruction.index))),
-      };
     case Opcode::StringInterpolate:
-      return {.defines_value = true, .argument_count = instruction.rhs};
+      return {.defines_value = true, .argument_count = CallArgumentCount(instruction)};
     case Opcode::AddInt:
     case Opcode::SubInt:
     case Opcode::MulInt:

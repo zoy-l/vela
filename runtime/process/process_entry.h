@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <iosfwd>
 
 #include "runtime/async/future.h"
@@ -8,11 +9,17 @@
 namespace vela::runtime {
 
 class Isolate;
+class NativeInstance;
 struct TypeConstraint;
 
 // 仅独立程序启动时调用；嵌入调用不改变宿主进程的信号处理。
 void InitializeProcessOutput();
 void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagnostic);
+enum class ProcessStopDiagnostic : std::uint8_t { Report, Suppress };
+[[nodiscard]] int RunProcessEntry(NativeInstance& instance,
+                                  std::uint32_t function,
+                                  std::ostream& errors,
+                                  ProcessStopDiagnostic stop_diagnostic);
 
 // 在脚本首段执行前安装错误观察；拥有本次进程入口的调度收尾与诊断。
 class ProcessEntry final {

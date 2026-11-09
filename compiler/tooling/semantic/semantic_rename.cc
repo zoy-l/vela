@@ -46,11 +46,7 @@ std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
   const auto& source = sources_.front();
   return Definition{
       .path = source.path,
-      .range =
-          {
-              .start = source.lines.PositionAt(source.text, token.offset, encoding),
-              .end = source.lines.PositionAt(source.text, token.offset + token.length, encoding),
-          },
+      .range = source.lines.RangeAt(source.text, token.offset, token.length, encoding),
   };
 }
 
@@ -140,11 +136,7 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
     const auto& source = sources_[source_id];
     edits.push_back({
         .path = source.path,
-        .range =
-            {
-                .start = source.lines.PositionAt(source.text, position, encoding),
-                .end = source.lines.PositionAt(source.text, position + symbol.length, encoding),
-            },
+        .range = source.lines.RangeAt(source.text, position, symbol.length, encoding),
     });
   }
   return edits;

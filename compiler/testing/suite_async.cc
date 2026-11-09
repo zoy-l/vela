@@ -192,14 +192,17 @@ runtime::ExecutionResult Suite::Await(runtime::ExecutionResult result,
   return result;
 }
 
-std::expected<runtime::ExecutionContext, std::string> Suite::ExecutingContext() {
+std::expected<runtime::ExecutionContext, std::string> Suite::ExecutingContext(ScopeUse use) {
+  const bool cleanup = use == ScopeUse::Cleanup;
   const auto context = isolate_->scheduler().context();
   if (!context || state_ != State::Running) {
-    return std::unexpected("asynchronous expectations require an executing test or hook");
+    return std::unexpected(cleanup ? "addTearDown requires an executing test or setup scope"
+                                   : "asynchronous expectations require an executing test or hook");
   }
   auto* scope = scopes_.at(context->scope);
   if (scope->closed) {
-    return std::unexpected("the test execution scope has already closed");
+    return std::unexpected(cleanup ? "the cleanup scope has already closed"
+                                   : "the test execution scope has already closed");
   }
   return *context;
 }
@@ -208,7 +211,7 @@ std::expected<runtime::Value, std::string> Suite::TrackExpectation(
     runtime::Value value,
     std::vector<runtime::FutureTraceFrame> trace,
     ExpectationKind kind) {
-  const auto executing = ExecutingContext();
+  const auto executing = ExecutingContext(ScopeUse::Expectation);
   if (!executing) {
     return std::unexpected(executing.error());
   }
@@ -252,7 +255,7 @@ std::expected<runtime::Value, std::string> Suite::TrackExpectation(
 std::expected<runtime::Value, std::string> Suite::RegisterCallback(
     std::span<const runtime::Value> arguments,
     std::vector<runtime::FutureTraceFrame> trace) {
-  const auto executing = ExecutingContext();
+  const auto executing = ExecutingContext(ScopeUse::Expectation);
   if (!executing) {
     return std::unexpected(executing.error());
   }

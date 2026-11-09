@@ -174,25 +174,27 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   };
 }
 
+RegisterId Lowerer::EmitPlanValidation(const ArrayAlgorithmRegisters& inputs,
+                                       RegisterId value,
+                                       std::optional<frontend::TypeDescriptor> type,
+                                       frontend::SourceLocation location) {
+  if (!inputs.validation_plan) {
+    return value;
+  }
+  const std::array arguments{*inputs.validation_plan, value};
+  const auto result = AllocateRegister(location);
+  if (type) {
+    RecordValueType(result, *type);
+  }
+  EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
+  return result;
+}
+
 RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
                                              const ArrayAlgorithmRegisters& inputs,
                                              ArrayAlgorithm algorithm,
                                              const frontend::TypeDescriptor& result_type,
                                              frontend::SourceLocation location) {
-  if (inputs.validation_plan) {
-    const std::array checked{*inputs.validation_plan, value};
-    const auto validated = AllocateRegister(location);
-    if (algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
-      RecordValueType(validated, algorithm == ArrayAlgorithm::Reduce
-                                     ? result_type
-                                     : frontend::TypeDescriptor{
-                                           .kind = frontend::TypeDescriptor::Kind::Bool,
-                                           .name = frontend::kBoolTypeName,
-                                       });
-    }
-    EmitBuiltinCall(Builtin::DynamicArrayValidate, validated, checked, location);
-    value = validated;
-  }
   const auto& callback_result = inputs.signature->return_type;
   const auto expected_result = algorithm == ArrayAlgorithm::Reduce
                                    ? result_type
@@ -200,6 +202,12 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
                                          .kind = frontend::TypeDescriptor::Kind::Bool,
                                          .name = frontend::kBoolTypeName,
                                      };
+  value =
+      EmitPlanValidation(inputs, value,
+                         algorithm == ArrayAlgorithm::Map || algorithm == ArrayAlgorithm::ForEach
+                             ? std::nullopt
+                             : std::optional(expected_result),
+                         location);
   if (!inputs.validation_plan && callback_result.kind == frontend::TypeDescriptor::Kind::Dynamic &&
       algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
     value = LowerConversion({.reg = value, .type = callback_result}, expected_result, location).reg;
@@ -332,14 +340,12 @@ RegisterId Lowerer::EmitArrayValueLess(const ArrayAlgorithmRegisters& inputs,
   auto comparison =
       EmitArrayCallback(inputs.callback, std::span(values).first(inputs.callback_arity),
                         *inputs.signature, types, inputs.guard, location);
-  if (inputs.validation_plan) {
-    const std::array arguments{*inputs.validation_plan, comparison};
-    const auto result = AllocateRegister(location);
-    RecordValueType(result,
-                    {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-    EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
-    comparison = result;
-  }
+  comparison = EmitPlanValidation(inputs, comparison,
+                                  frontend::TypeDescriptor{
+                                      .kind = frontend::TypeDescriptor::Kind::Int,
+                                      .name = frontend::kIntTypeName,
+                                  },
+                                  location);
   using Comparison = ArrayAlgorithmRegisters::Comparison;
   const bool floating = inputs.comparison == Comparison::Double;
   const auto zero = floating ? EmitDoubleConstant(0, location).reg

@@ -400,7 +400,7 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
   }
   auto& settings = *configured_settings;
   command->Apply(settings);
-  const auto paths = DiscoverSuites(*configuration, directory, command->paths);
+  const auto paths = DiscoverSuites(*configuration, settings, directory, command->paths);
   if (!paths) {
     PrintConfigurationError(errors, paths.error());
     return paths.error().exit_code;

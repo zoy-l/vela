@@ -60,9 +60,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
     case Statement::Kind::Throw: {
       auto type = CheckExpression(*statement.expression, nullptr);
       type = ParameterCapability(type, statement.expression->location);
-      if (type.kind != Type::Kind::Dynamic &&
-          ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) ||
-           type.nullable)) {
+      if (!IsThrowable(type)) {
         AddDiagnostic(statement.location, "throw requires a non-null class or interface value");
       }
       flow.can_fall_through = false;

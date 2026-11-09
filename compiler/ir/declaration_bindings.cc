@@ -105,6 +105,8 @@ class DeclarationBinder final {
                        DeclarationId definition);
   void BindFunction(const frontend::Function& function, DeclarationId identity);
   void BindExpression(const frontend::Expression* expression, DeclarationId identity);
+  template <typename Node>
+  void RegisterLambdas(const Node& node, DeclarationId identity);
   void BindClass(const frontend::Class& owner);
   void BindInterface(const frontend::Interface& interface);
   void InheritFields();
@@ -213,14 +215,10 @@ DeclarationId DeclarationBinder::Method(DeclarationId owner,
       source == DeclarationId{} ? declaration : source);
 }
 
-void DeclarationBinder::BindFunction(const frontend::Function& function, DeclarationId identity) {
-  result_.functions.emplace(
-      &function, FunctionIdentity{.declaration = identity, .revision = result_.revision});
-  if (function.body == nullptr) {
-    return;
-  }
+template <typename Node>
+void DeclarationBinder::RegisterLambdas(const Node& node, DeclarationId identity) {
   std::uint32_t local = 0;
-  frontend::VisitLambdas(*function.body, [&](const frontend::Expression& expression) {
+  frontend::VisitLambdas(node, [&](const frontend::Expression& expression) {
     result_.functions.emplace(expression.function.get(), FunctionIdentity{
                                                              .declaration = identity,
                                                              .revision = result_.revision,
@@ -229,19 +227,20 @@ void DeclarationBinder::BindFunction(const frontend::Function& function, Declara
   });
 }
 
+void DeclarationBinder::BindFunction(const frontend::Function& function, DeclarationId identity) {
+  result_.functions.emplace(
+      &function, FunctionIdentity{.declaration = identity, .revision = result_.revision});
+  if (function.body != nullptr) {
+    RegisterLambdas(*function.body, identity);
+  }
+}
+
 void DeclarationBinder::BindExpression(const frontend::Expression* expression,
                                        DeclarationId identity) {
   if (expression == nullptr) {
     return;
   }
-  std::uint32_t local = 0;
-  frontend::VisitLambdas(*expression, [&](const frontend::Expression& lambda) {
-    result_.functions.emplace(lambda.function.get(), FunctionIdentity{
-                                                         .declaration = identity,
-                                                         .revision = result_.revision,
-                                                         .local = ++local,
-                                                     });
-  });
+  RegisterLambdas(*expression, identity);
 }
 
 void DeclarationBinder::BindClass(const frontend::Class& owner) {

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <ostream>
 #include <ranges>
 #include <span>
 #include <string>
@@ -561,6 +562,16 @@ std::expected<frontend::DiagnosticOptions, ConfigurationError> LoadSourceDiagnos
     return std::unexpected(configuration.error());
   }
   return configuration->diagnostics;
+}
+
+std::expected<frontend::DiagnosticOptions, ConfigurationError> ReadSourceDiagnosticOptions(
+    const std::filesystem::path& source,
+    std::ostream& errors) {
+  auto options = LoadSourceDiagnosticOptions(source);
+  if (!options) {
+    frontend::WriteDiagnostic(errors, ConfigurationDiagnostic(options.error()));
+  }
+  return options;
 }
 
 frontend::Diagnostic ConfigurationDiagnostic(const ConfigurationError& error) {

@@ -464,28 +464,21 @@ Diagnostics AddStandardEnvironment(Program& program) {
     }
     auto parsed = CloneProgram(syntax->program, {.source_id = source_id});
     const auto module_uri = std::string(kStandardSourcePrefix) + std::string(name);
-    for (const auto& owner : parsed.classes) {
-      parsed.origins.emplace(owner.name, DeclarationOrigin{
-                                             .module_uri = module_uri,
-                                             .name = owner.name,
-                                             .kind = DeclarationKind::Class,
-                                             .arguments = {},
-                                             .type_parameters = {},
-                                             .members = {},
-                                             .generic_signature = {},
-                                         });
-    }
-    for (const auto& enumeration : parsed.enums) {
-      parsed.origins.emplace(enumeration.name, DeclarationOrigin{
-                                                   .module_uri = module_uri,
-                                                   .name = enumeration.name,
-                                                   .kind = DeclarationKind::Enum,
-                                                   .arguments = {},
-                                                   .type_parameters = {},
-                                                   .members = {},
-                                                   .generic_signature = {},
-                                               });
-    }
+    const auto register_origins = [&](const auto& declarations, DeclarationKind kind) {
+      for (const auto& declaration : declarations) {
+        parsed.origins.emplace(declaration.name, DeclarationOrigin{
+                                                     .module_uri = module_uri,
+                                                     .name = declaration.name,
+                                                     .kind = kind,
+                                                     .arguments = {},
+                                                     .type_parameters = {},
+                                                     .members = {},
+                                                     .generic_signature = {},
+                                                 });
+      }
+    };
+    register_origins(parsed.classes, DeclarationKind::Class);
+    register_origins(parsed.enums, DeclarationKind::Enum);
     AppendProgram(program, std::move(parsed));
     program.sources.push_back({
         .path = module_uri,

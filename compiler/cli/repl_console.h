@@ -1,17 +1,11 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
-#include <iosfwd>
+
+#include "base/streams.h"
 
 namespace vela::tooling {
 
-struct ReplStreams final {
-  std::reference_wrapper<std::istream> input;
-  std::reference_wrapper<std::ostream> output;
-  std::reference_wrapper<std::ostream> errors;
-};
-
-[[nodiscard]] int RunRepl(const std::filesystem::path& directory, ReplStreams streams);
+[[nodiscard]] int RunRepl(const std::filesystem::path& directory, Streams streams);
 
 }  // namespace vela::tooling

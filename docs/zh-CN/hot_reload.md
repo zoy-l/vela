@@ -10,7 +10,7 @@ JIT 与可重载能力由宿主选择，不由 C++ 的 Debug/Release 构建配�
 
 开发控制台使用 `vela dev app.vela`；`--optimized` 选择具有去优化恢复能力的优化层，`--code-cache=DIR` 启用可重定位目标文件缓存。控制台默认监视导入图；`.hot`、`.reload` 和 `.load FILE` 分别发起三种事务，`.status` 显示版本、阶段耗时和代码资源，`.cancel` 取消未提交请求。文件 Hot Reload 不回放交互语句；`.reset` 读取当前文件快照、移除交互历史并重建运行。`.break`、`.stack`、`.source` 和 `.continue` 使用具体版本的源码与帧。
 
-嵌入宿主通过 [`DevelopmentSession`](../../compiler/development/development_session.h) 调用 `Prepare`、`Submit` 和 `Pump`，以 `Invoke` 进入当前导出声明；后台准备后的候选可以通过 `Post` 投递到 Isolate 线程。会话固定 binding 快照；刷新回调和外部根释放仍由宿主接入。`DevelopmentResult` 区分源码错误、需要 Reload、安全点等待、外部句柄等待、过期、取消和提交后刷新失败，并携带声明及冲突依赖。
+嵌入宿主通过 [`DevelopmentSession`](../../compiler/development/development_session.h) 调用 `Prepare`、`Submit` 和 `Pump`，以 `Invoke` 进入当前导出声明；后台准备后的候选通过 `safepoint_endpoint().Post` 投递回调，在 Isolate 线程调用 `Submit`。会话固定 binding 快照；刷新回调和外部根释放仍由宿主接入。`DevelopmentResult` 区分源码错误、需要 Reload、安全点等待、外部句柄等待、过期、取消和提交后刷新失败，并携带声明及冲突依赖。
 
 ## 1. 使用方式与操作边界
 

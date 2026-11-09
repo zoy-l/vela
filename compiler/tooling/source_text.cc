@@ -128,6 +128,16 @@ TextPosition SourceLineIndex::PositionAt(std::string_view text,
   return PositionAt(text, begin + bytes, encoding);
 }
 
+TextRange SourceLineIndex::RangeAt(std::string_view text,
+                                   std::size_t offset,
+                                   std::size_t length,
+                                   PositionEncoding encoding) const {
+  return {
+      .start = PositionAt(text, offset, encoding),
+      .end = PositionAt(text, offset + length, encoding),
+  };
+}
+
 std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition position,
                                                              PositionEncoding encoding) const {
   return index_.OffsetAt(text_, position, encoding);

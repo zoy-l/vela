@@ -1179,8 +1179,7 @@ void EmitBoundedLeafGuard(const GeneratedFunction& function) {
   }
   auto* distance =
       counted->direction == 1 ? builder.CreateSub(bound, start) : builder.CreateSub(start, bound);
-  const auto limit =
-      std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
+  const auto limit = PollBudget(instructions);
   builder.CreateRet(builder.CreateICmpULE(distance, builder.getInt64(limit)));
 }
 

@@ -65,7 +65,6 @@ struct DevelopmentTimings final {
 };
 
 struct DevelopmentChanges final {
-  std::vector<std::string> modules;
   std::size_t compiled_functions = 0;
 };
 
@@ -95,9 +94,6 @@ struct DevelopmentEntry final {
 };
 
 class DevelopmentCandidate final {
- public:
-  [[nodiscard]] const DevelopmentResult& result() const noexcept { return result_; }
-
  private:
   friend class DevelopmentSession;
   DevelopmentCandidate(std::shared_ptr<const DevelopmentSessionIdentity> session,
@@ -145,9 +141,6 @@ class DevelopmentSession final {
       SourceUpdate update,
       DevelopmentOperation operation);
   [[nodiscard]] DevelopmentResult Submit(DevelopmentCandidate candidate);
-  [[nodiscard]] std::expected<void, runtime::NativeSafepointError> Post(
-      DevelopmentCandidate candidate,
-      std::function<void(const DevelopmentResult&)> submitted = {});
   [[nodiscard]] runtime::NativeSafepointEndpoint safepoint_endpoint() const;
   void SetDebugger(runtime::NativeDebugger* debugger) noexcept;
   [[nodiscard]] DevelopmentResult Pump();

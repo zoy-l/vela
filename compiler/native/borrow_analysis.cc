@@ -58,15 +58,15 @@ std::optional<ir::ClassId> BorrowedType(
 bool IsBorrowedUse(const EscapePlan& plan,
                    const ir::Program& program,
                    const ir::Instruction& instruction,
+                   const ir::RegisterAccess& access,
                    const State& values) {
   bool has_alias = false;
   bool ambiguous = false;
-  ir::ForEachUse(instruction, ir::AnalyzeRegisters(instruction, program.functions),
-                 [&](ir::RegisterId reg) {
-                   const auto& value = values.at(reg);
-                   has_alias = has_alias || value.objects != 0;
-                   ambiguous = ambiguous || (value.objects != 0 && !Object(value));
-                 });
+  ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
+    const auto& value = values.at(reg);
+    has_alias = has_alias || value.objects != 0;
+    ambiguous = ambiguous || (value.objects != 0 && !Object(value));
+  });
   if (!has_alias) {
     return true;
   }
@@ -116,8 +116,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
   const auto& fields = program.classes.at(type).field_types;
   const auto state_size = source.register_count + fields.size() + 2;
   const auto graph = ir::BuildFlowGraph(source);
-  constexpr std::size_t kMaximumBorrowStateCells = std::size_t{1024} * 1024;
-  if (state_size * graph.blocks.size() > kMaximumBorrowStateCells) {
+  if (state_size * graph.blocks.size() > kMaximumStateCells) {
     return std::nullopt;
   }
   plan.allocations.push_back({
@@ -134,7 +133,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
   const auto marker = static_cast<ir::RegisterId>(source.register_count + fields.size());
   std::vector<std::pair<std::size_t, ir::Instruction>> changes;
   const std::vector<std::optional<std::size_t>> allocations(source.instructions.size());
-  const auto accesses = RegisterAccesses(source, program);
+  const auto accesses = ir::AnalyzeRegisterAccesses(source, program.functions);
   const auto states =
       Solve(source, program, graph, accesses, allocations, plan, state_size, std::move(entry));
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
@@ -142,7 +141,8 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
     const auto& block = graph.blocks.at(index);
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& original = source.instructions.at(position);
-      if (!IsBorrowedUse(plan, program, original, values)) {
+      const auto& access = accesses[position];
+      if (!IsBorrowedUse(plan, program, original, access, values)) {
         return std::nullopt;
       }
       const auto replacement = BorrowedInstruction(plan, program, original, values, marker);
@@ -150,8 +150,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
           replacement.lhs != original.lhs) {
         changes.emplace_back(position, replacement);
       }
-      Transfer(original, ir::AnalyzeRegisters(original, program.functions), std::nullopt, plan,
-               program, values);
+      Transfer(original, access, std::nullopt, plan, program, values);
     }
   }
   auto& rewritten = plan.function.Rewrite();

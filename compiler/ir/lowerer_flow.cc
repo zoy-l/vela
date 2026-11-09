@@ -145,15 +145,8 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
     Emit(
         {.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
     const auto keys_array = base + 1;
-    const auto length = AllocateRegister(statement.location);
-    EmitBuiltinCall(Builtin::CollectionSize, length, base, statement.location);
-    Emit({
-        .opcode = Opcode::NewDynamicArray,
-        .dst = keys_array,
-        .lhs = length,
-        .index = RegisterArrayType(frontend::MakeArrayType(element_type)),
-        .location = statement.location,
-    });
+    EmitSnapshotArray(Builtin::CollectionKeys, base, frontend::MakeArrayType(element_type),
+                      statement.location);
     EmitBuiltinCall(Builtin::CollectionKeys, AllocateRegister(statement.location), base,
                     statement.location);
     values_array = keys_array;

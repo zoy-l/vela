@@ -35,6 +35,18 @@ INSTANTIATE_TEST_SUITE_P(ProductionPaths,
                          DynamicArrayExecutionTest,
                          testing::Values(
                              R"(func main(): int {
+  const typed = [1, 2, 3];
+  const values: dynamic = typed;
+  const splice = values.splice;
+  if (values.splice().length != 0 || typed.length != 3) { return 0; }
+  if (splice().length != 0 || typed.length != 3) { return 0; }
+  if (values.splice(1).join() != '2,3' || typed.join() != '1') { return 0; }
+  typed.push(2, 3);
+  if (splice(1, 0, 42).length != 0 || typed.join() != '1,42,2,3') { return 0; }
+  if (splice(2, 1).join() != '2' || typed.join() != '1,42,3') { return 0; }
+  return typed[1];
+})",
+                             R"(func main(): int {
   const values: int[] = []; const alias = values;
   values.reserve(4096);
   for (let i = 0; i < 4096; i = i + 1) { values.push(i); }

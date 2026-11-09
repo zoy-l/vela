@@ -64,7 +64,7 @@ struct Settings final {
   std::string filename = "*_test.vela";
   Timeout timeout;
   Timeout suite_load_timeout{.kind = TimeoutKind::None};
-  std::uint32_t concurrency = 1;
+  std::uint32_t concurrency;
 #ifdef _WIN32
   Reporter reporter = Reporter::Expanded;
 #else

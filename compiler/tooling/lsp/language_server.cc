@@ -12,6 +12,7 @@
 #include <yyjson.h>
 
 #include "base/json.h"
+#include "base/streams.h"
 #include "compiler/build_info.h"
 #include "compiler/tooling/lsp/json_rpc.h"
 #include "compiler/tooling/lsp/language_server_internal.h"
@@ -296,7 +297,7 @@ int LanguageServer::Run() {
 }  // namespace vela::tooling::internal
 
 namespace vela::tooling {
-int RunLanguageServer(LanguageServerStreams streams) {
+int RunLanguageServer(Streams streams) {
   return internal::LanguageServer(streams).Run();
 }
 }  // namespace vela::tooling

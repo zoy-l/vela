@@ -42,7 +42,8 @@ struct Options final {
   llvm::cl::opt<std::string> database{"database", llvm::cl::Required, llvm::cl::cat(category)};
   llvm::cl::opt<std::string> source{"source", llvm::cl::Required, llvm::cl::cat(category)};
   llvm::cl::opt<std::string> resource{"resource-dir", llvm::cl::Required, llvm::cl::cat(category)};
-  llvm::cl::opt<std::string> output{"output-directory", llvm::cl::cat(category)};
+  llvm::cl::opt<std::string> output{"output-directory", llvm::cl::Required,
+                                    llvm::cl::cat(category)};
   llvm::cl::list<std::string> headers{"header", llvm::cl::OneOrMore, llvm::cl::cat(category)};
   llvm::cl::list<std::string> dependencies{"dependency", llvm::cl::ZeroOrMore,
                                            llvm::cl::cat(category)};
@@ -229,19 +230,13 @@ int Collect(const Options& options) {
     return 1;
   }
   collection.module.input_fingerprints = files->fingerprints();
-  std::optional<llvm::json::Object> emitted;
-  if (!options.output.getValue().empty()) {
-    auto products = Emit(collection.module, collection.headers, options.output.getValue());
-    if (!products) {
-      llvm::errs() << products.error() << '\n';
-      return 1;
-    }
-    emitted = std::move(*products);
+  auto products = Emit(collection.module, collection.headers, options.output.getValue());
+  if (!products) {
+    llvm::errs() << products.error() << '\n';
+    return 1;
   }
   auto serialized = Serialize(collection.module);
-  if (emitted) {
-    serialized["products"] = std::move(*emitted);
-  }
+  serialized["products"] = std::move(*products);
   llvm::outs() << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(serialized)));
   return 0;
 }

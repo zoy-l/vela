@@ -39,6 +39,30 @@ TEST(ParserTest, RejectsDestructuredCollectionBindings) {
   }
 }
 
+TEST(ParserTest, PreservesSoftKeywordNamesAndVoidSignatures) {
+  const auto parsed = ParseSource(R"(
+external class Host = 'test.Host' {
+  constructor();
+  get(): void;
+  set(value: int): void;
+  match(): int;
+}
+func get(): void { print(1); }
+func use(host: Host): void { host.get(); host.set(-1); print(host.match()); }
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto& host = parsed.program.classes.front();
+  ASSERT_NE(host.constructor, nullptr);
+  EXPECT_EQ(host.constructor->return_type.ToString(), "void");
+  EXPECT_EQ(CanonicalTypeText(host.constructor->return_type), "void");
+  ASSERT_EQ(host.methods.size(), 3U);
+  EXPECT_EQ(host.methods[0].name, "get");
+  EXPECT_EQ(host.methods[1].name, "set");
+  EXPECT_EQ(host.methods[2].name, "match");
+  EXPECT_EQ(parsed.program.functions.front().name, "get");
+  EXPECT_EQ(parsed.program.functions.front().return_type.ToString(), "void");
+}
+
 TEST(ParserTest, ParsesRadixIntegersWithSignedBoundsAndPreservesSpelling) {
   constexpr auto kLiterals = std::to_array<std::pair<std::string_view, std::int64_t>>({
       {"0x2a", 42},

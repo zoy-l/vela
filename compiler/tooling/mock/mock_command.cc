@@ -105,6 +105,11 @@ int DiagnosticExit(const frontend::Diagnostics& diagnostics) {
   return kSourceErrorExitCode;
 }
 
+int ReportFsError(std::ostream& errors, const std::error_code& error) {
+  errors << "vela mock: " << error.message() << '\n';
+  return kIoErrorExitCode;
+}
+
 int Publish(const std::filesystem::path& path,
             std::string_view content,
             const MockOptions& options,
@@ -113,8 +118,7 @@ int Publish(const std::filesystem::path& path,
   std::error_code error;
   const bool exists = std::filesystem::exists(path, error);
   if (error) {
-    errors << "vela mock: " << error.message() << '\n';
-    return kIoErrorExitCode;
+    return ReportFsError(errors, error);
   }
   if (exists) {
     const auto existing = ReadBinaryFile(path);
@@ -152,13 +156,11 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
   std::error_code error;
   const auto absolute = std::filesystem::absolute(Utf8Path(options->output), error);
   if (error) {
-    errors << "vela mock: " << error.message() << '\n';
-    return kIoErrorExitCode;
+    return ReportFsError(errors, error);
   }
   const auto destination = std::filesystem::weakly_canonical(absolute, error);
   if (error) {
-    errors << "vela mock: " << error.message() << '\n';
-    return kIoErrorExitCode;
+    return ReportFsError(errors, error);
   }
   frontend::ModuleCache cache;
   auto parsed = frontend::LoadProgram(options->input, cache, {});
@@ -169,8 +171,7 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
   const auto& program = parsed.program;
   const bool output_exists = std::filesystem::exists(destination, error);
   if (error) {
-    errors << "vela mock: " << error.message() << '\n';
-    return kIoErrorExitCode;
+    return ReportFsError(errors, error);
   }
   for (const auto& source : program.sources) {
     if (source.path.starts_with(frontend::kSdkSourcePrefix) ||
@@ -180,8 +181,7 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     const bool same =
         output_exists && std::filesystem::equivalent(Utf8Path(source.path), destination, error);
     if (error) {
-      errors << "vela mock: " << error.message() << '\n';
-      return kIoErrorExitCode;
+      return ReportFsError(errors, error);
     }
     if (same || Utf8Path(source.path) == destination) {
       errors << "vela mock: output cannot replace the API file or its dependencies\n";
@@ -189,9 +189,8 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     }
   }
   // 同一个不可变模块缓存分别提供检查用 AST 和保留公开别名的生成用 AST。
-  const auto diagnostics = compiler::LoadSourceDiagnosticOptions(Utf8Path(options->input));
+  const auto diagnostics = compiler::ReadSourceDiagnosticOptions(Utf8Path(options->input), errors);
   if (!diagnostics) {
-    frontend::WriteDiagnostic(errors, compiler::ConfigurationDiagnostic(diagnostics.error()));
     return diagnostics.error().exit_code;
   }
   const auto checked =

@@ -6,7 +6,10 @@
 #include <filesystem>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+struct yyjson_val;
 
 namespace vela::compiler::aot {
 
@@ -20,6 +23,9 @@ struct TargetSupport final {
   std::vector<std::string> archive_arguments;
   std::vector<std::string> link_arguments;
 };
+
+[[nodiscard]] bool HasNativeArtifactIdentity(const yyjson_val* root,
+                                             std::string_view toolchain_identity);
 
 // 清单及其 SDK 输入在编译前验证；工具始终使用包内绝对路径，不搜索 PATH。
 [[nodiscard]] std::expected<TargetSupport, std::string> LoadTargetSupport(

@@ -122,6 +122,8 @@ class Specializer final : public AstCloneTransform {
   void ExpandFunction(Pending<Function>& pending);
   void ExpandClass(Pending<Class>& pending);
   void ExpandInterface(Pending<Interface>& pending);
+  template <typename T, typename Clone>
+  void CloneNominal(Pending<T>& pending, T& target, const Clone& clone);
   void CollectDeclarations();
   void CollectAliases();
   void CollectFunctionTemplates();
@@ -134,6 +136,8 @@ class Specializer final : public AstCloneTransform {
   std::string DescribeFunctionContract(const Function& function);
   void NormalizeAliases();
   void Error(SourceLocation location, std::string message);
+  void ReportNestingLimit(SourceLocation location);
+  [[nodiscard]] static std::string ExpansionLimitMessage();
   TypeSubstitutions Bind(std::span<const TypeParameter> parameters,
                          std::span<const TypeName> arguments,
                          SourceLocation location);

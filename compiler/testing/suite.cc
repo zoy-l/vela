@@ -258,14 +258,11 @@ std::expected<void, std::string> Suite::RegisterHook(
     return std::unexpected(std::move(callback.error()));
   }
   if (registration.operation == runtime::TestOperation::AddTearDown) {
-    const auto context = isolate_->scheduler().context();
-    if (!context || state_ != State::Running) {
-      return std::unexpected("addTearDown requires an executing test or setup scope");
+    const auto context = ExecutingContext(ScopeUse::Cleanup);
+    if (!context) {
+      return std::unexpected(context.error());
     }
     auto* scope = scopes_.at(context->scope);
-    if (scope->closed) {
-      return std::unexpected("the cleanup scope has already closed");
-    }
     scope->cleanup.push_back(std::move(*callback));
     return {};
   }

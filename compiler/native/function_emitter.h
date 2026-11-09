@@ -151,6 +151,14 @@ class FunctionEmitter final {
   llvm::Value* Reference(ir::RegisterId reg);
   void Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type);
   void Check(llvm::Value* condition, ExecutionStatus failure);
+  void CheckReference(llvm::Value* reference);
+  struct LeafFailure final {
+    llvm::Value* status;
+    llvm::Value* position;
+    llvm::Value* roots;
+    std::size_t count;
+  };
+  llvm::Value* EmitLeafFailure(LeafFailure failure);
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void PrepareTraceFrame();
@@ -311,6 +319,8 @@ class FunctionEmitter final {
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
   void PrepareFrame();
+  template <typename Address>
+  void BindFrameSlots(const Address& address);
   std::size_t PlanAuxiliaryStorage();
   [[nodiscard]] bool CanUseLeafEntry() const;
   [[nodiscard]] bool CanUseSynchronousStackFrame() const;
@@ -425,6 +435,20 @@ class FunctionEmitter final {
   const NativeRootPlan& roots_;
 };
 
+struct NativeFunctionAnalysis final {
+  EscapePlan escape;
+  NativeRootPlan roots;
+};
+
+[[nodiscard]] NativeFunctionAnalysis PlanFunctionAnalysis(
+    const ir::Program& program,
+    std::size_t function_index,
+    NativeDebugging debugging,
+    NativeCodeTier tier,
+    EscapeOptimization optimization,
+    std::span<const std::uint8_t> readonly_globals,
+    std::span<const std::optional<ir::ClassId>> borrowable);
+
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
@@ -434,13 +458,12 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
+    const NativeFunctionAnalysis& analysis,
     std::span<const GeneratedFunction> generated,
     std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
     NativeCodePlacement placement,
-    NativeCodeTier tier = NativeCodeTier::Baseline,
-    EscapeOptimization optimization = EscapeOptimization::Enabled,
-    std::span<const std::optional<ir::ClassId>> borrowable = {});
+    NativeCodeTier tier);
 
 std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     llvm::Module& module,

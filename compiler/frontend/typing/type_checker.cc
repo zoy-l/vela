@@ -1038,6 +1038,15 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   return operand;
 }
 
+TypeChecker::Type TypeChecker::RecordDynamicOperands(const Expression& expression,
+                                                     const Type& left,
+                                                     const Type& right) {
+  const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
+  RecordConversion(*expression.left, dynamic, left);
+  RecordConversion(*expression.right, dynamic, right);
+  return dynamic;
+}
+
 TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
                                                 const Type* expected) {
   const auto condition = CheckExpression(*expression.operand, nullptr);
@@ -1054,10 +1063,7 @@ TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
   refinements_.Apply(true_facts);
   if ((when_true.kind == Type::Kind::Dynamic || when_false.kind == Type::Kind::Dynamic) &&
       when_true.kind != Type::Kind::Void && when_false.kind != Type::Kind::Void) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
-    RecordConversion(*expression.left, dynamic, when_true);
-    RecordConversion(*expression.right, dynamic, when_false);
-    return dynamic;
+    return RecordDynamicOperands(expression, when_true, when_false);
   }
   if (CanAssign(when_true, when_false)) {
     return when_true;
@@ -1175,9 +1181,7 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     return CheckBoundBinaryTypes(expression, left, right);
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
-    RecordConversion(*expression.left, dynamic, left);
-    RecordConversion(*expression.right, dynamic, right);
+    static_cast<void>(RecordDynamicOperands(expression, left, right));
     return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
   if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
@@ -1211,9 +1215,7 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   }
   if ((left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) &&
       left.kind != Type::Kind::Void && right.kind != Type::Kind::Void) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
-    RecordConversion(*expression.left, dynamic, left);
-    RecordConversion(*expression.right, dynamic, right);
+    const auto dynamic = RecordDynamicOperands(expression, left, right);
     const bool comparison = expression.operation == TokenKind::Less ||
                             expression.operation == TokenKind::LessEqual ||
                             expression.operation == TokenKind::Greater ||
@@ -1276,10 +1278,7 @@ TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
     AddDiagnostic(expression.left->location, "left operand of coalesce must be nullable");
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
-    RecordConversion(*expression.left, dynamic, left);
-    RecordConversion(*expression.right, dynamic, right);
-    return dynamic;
+    return RecordDynamicOperands(expression, left, right);
   }
   if (CanAssign(source, right)) {
     return right;

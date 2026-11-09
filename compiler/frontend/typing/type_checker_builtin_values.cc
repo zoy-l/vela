@@ -1,10 +1,10 @@
 #include "base/builtin.h"
+#include "base/member.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -15,7 +15,6 @@
 #include "compiler/frontend/builtins/async_builtins.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 namespace {
@@ -65,21 +64,15 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferBuiltinMethod(const T
 
 std::optional<TypeChecker::FunctionInfo> TypeChecker::InferAsyncMethod(const Type& receiver,
                                                                        std::string_view name) {
-  FunctionInfo signature;
-  signature.return_type = {.kind = Type::Kind::Void, .name = kVoidTypeName};
-  if ((receiver.kind == Type::Kind::Timer || receiver.kind == Type::Kind::CancellationToken) &&
-      name == "cancel") {
-    return MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, name),
-                              signature.return_type, {});
+  if (receiver.kind == Type::Kind::Future) {
+    return std::nullopt;
   }
-  if (receiver.kind == Type::Kind::Completer && (name == "complete" || name == "completeError")) {
-    const auto element = name == "completeError" ? types_.at(kErrorTypeName)
-                                                 : generic_arguments_.at(receiver.name).front();
-    if (element.kind != Type::Kind::Void) {
-      return MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, name),
-                                signature.return_type, std::array{element});
-    }
-    return signature;
+  const auto* member = FindAsyncMember(receiver.kind, MemberStorage::Instance, name);
+  if (member != nullptr && member->kind == MemberKind::Method) {
+    const auto element = receiver.kind == Type::Kind::Completer
+                             ? generic_arguments_.at(receiver.name).front()
+                             : Type{};
+    return DescribeAsyncMember(*member, element);
   }
   return std::nullopt;
 }

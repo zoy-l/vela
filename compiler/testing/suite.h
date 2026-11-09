@@ -153,7 +153,9 @@ class Suite final : public runtime::TestBridge {
   void WaitExpectations(Node& scope, TestPhase phase, std::vector<TestError>& errors);
   void AbandonExpectations(Node& scope);
   [[nodiscard]] runtime::ExecutionResult WaitFailure(WaitStatus status) const;
-  [[nodiscard]] std::expected<runtime::ExecutionContext, std::string> ExecutingContext();
+  enum class ScopeUse : std::uint8_t { Cleanup, Expectation };
+  [[nodiscard]] std::expected<runtime::ExecutionContext, std::string> ExecutingContext(
+      ScopeUse use);
   std::expected<runtime::Value, std::string> TrackExpectation(
       runtime::Value value,
       std::vector<runtime::FutureTraceFrame> trace,

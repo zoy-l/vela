@@ -350,17 +350,15 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
   if (origin_ == SourceOrigin::Memory && overlay == overlays_.end()) {
     return std::unexpected("source module was not supplied: '" + key + "'");
   }
+  const auto supplied =
+      overlay == overlays_.end() ? std::nullopt : std::optional<std::string_view>(overlay->second);
   if (retention_ == SyntaxRetention::Cache) {
-    const auto text = overlay == overlays_.end() ? std::nullopt
-                                                 : std::optional<std::string_view>(overlay->second);
-    const auto parsed = ReadCachedSource(path, key, text, *cache_, origin_);
+    const auto parsed = ReadCachedSource(path, key, supplied, *cache_, origin_);
     if (!parsed) {
       return std::unexpected(parsed.error());
     }
     return instantiate(**parsed);
   }
-  const auto supplied =
-      overlay == overlays_.end() ? std::nullopt : std::optional<std::string_view>(overlay->second);
   auto text = ReadSourceText(path, supplied, origin_);
   if (!text) {
     return std::unexpected(text.error());

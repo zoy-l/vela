@@ -117,6 +117,24 @@ Opcode Lowerer::SelectBinaryOpcode(TokenKind operation, const frontend::TypeDesc
   return SelectIntegerOpcode(operation);
 }
 
+Opcode Lowerer::SelectEqualityOpcode(const frontend::TypeDescriptor& type) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  if (!type.nullable) {
+    switch (type.kind) {
+      case Kind::Int:
+      case Kind::Enum:
+        return Opcode::EqualInt;
+      case Kind::Bool:
+        return Opcode::EqualBool;
+      case Kind::String:
+        return Opcode::EqualString;
+      default:
+        break;
+    }
+  }
+  return Opcode::EqualValue;
+}
+
 LoweringResult Lowerer::Lower() && {
   program_.native_mode = native_mode_;
   BuildFunctionTable();
@@ -207,9 +225,7 @@ void Lowerer::BuildInterfaceSelectors() {
   for (const auto& interface : source_.interfaces) {
     for (const auto& method : interface.methods) {
       const auto key = interface.name + "." + method.name;
-      const auto selector = persistent_ != nullptr
-                                ? persistent_->selectors.Get(key)
-                                : static_cast<std::uint32_t>(interface_method_ids_.size());
+      const auto selector = static_cast<std::uint32_t>(interface_method_ids_.size());
       interface_method_ids_.emplace(key, selector);
     }
   }
@@ -304,32 +320,24 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
   return output_class;
 }
 
-std::uint32_t Lowerer::AddFunctionId(const std::string& name, frontend::Function::Role role) {
-  const auto& identity = role == frontend::Function::Role::InteractiveEntry ? "$entry" : name;
-  const auto target = persistent_ == nullptr ? static_cast<std::uint32_t>(function_ids_.size())
-                                             : persistent_->functions.Get(identity);
+std::uint32_t Lowerer::AddFunctionId(const std::string& name) {
+  const auto target = static_cast<std::uint32_t>(function_ids_.size());
   function_ids_.emplace(name, target);
-  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                   : persistent_->functions.size());
+  program_.functions.resize(function_ids_.size());
   return target;
 }
 
 void Lowerer::AddGlobalId(const std::string& name, InitializerKind kind) {
-  const auto slot = persistent_ == nullptr
-                        ? static_cast<std::uint32_t>(program_.global_initializers.size())
-                        : persistent_->globals.Get(name);
+  const auto slot = static_cast<std::uint32_t>(program_.global_initializers.size());
   global_ids_.emplace(name, slot);
   const auto initializer = InitializerKey(kind, name);
   const auto function = AddFunctionId(initializer);
-  if (program_.global_initializers.size() <= slot) {
-    program_.global_initializers.resize(static_cast<std::size_t>(slot) + 1);
-  }
-  program_.global_initializers.at(slot) = function;
+  program_.global_initializers.push_back(function);
 }
 
 void Lowerer::BuildFunctionTable() {
   for (const auto& function : source_.functions) {
-    static_cast<void>(AddFunctionId(function.name, function.role));
+    static_cast<void>(AddFunctionId(function.name));
   }
   for (const frontend::Class& owner : source_.classes) {
     for (const frontend::Function& method : owner.methods) {
@@ -338,8 +346,7 @@ void Lowerer::BuildFunctionTable() {
     }
     const auto name = MethodKey(owner.name, DeclarationKind::Method, frontend::kConstructorName);
     if (owner.constructor_kind != frontend::ConstructorKind::Unavailable &&
-        (native_mode_ == NativeProgramMode::Reloadable ||
-         (persistent_ != nullptr && persistent_->functions.Has(name)))) {
+        native_mode_ == NativeProgramMode::Reloadable) {
       static_cast<void>(AddFunctionId(name));
       pending_constructors_.push_back(&owner);
     }
@@ -364,15 +371,12 @@ void Lowerer::BuildFunctionTable() {
   for (const auto& generated : model_.generated_functions) {
     static_cast<void>(AddFunctionId(generated.declaration->name));
   }
-  for (const auto& lambda : model_.lambdas) {
-    const auto target = persistent_ == nullptr
-                            ? static_cast<std::uint32_t>(function_ids_.size())
-                            : persistent_->functions.Get(lambda.expression->function->name);
+  for (std::size_t index = 0; index < model_.lambdas.size(); ++index) {
+    const auto target = static_cast<std::uint32_t>(function_ids_.size());
     lambda_ids_.push_back(target);
     function_ids_.emplace("$lambda" + std::to_string(target), target);
   }
-  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                   : persistent_->functions.size());
+  program_.functions.resize(function_ids_.size());
 }
 
 void Lowerer::BeginFunctionBody(Function& function, const frontend::Class* owner) {
@@ -982,21 +986,10 @@ Lowerer::LoweredValue Lowerer::LowerMemberAssignment(const frontend::Expression&
   const auto& class_info = model_.classes.at(object.type.name);
   const auto method = class_info.methods.find(left.text);
   if (method != class_info.methods.end() && method->second.is_setter) {
-    const auto base = AllocateRegister(left.location);
-    const auto argument = AllocateRegister(left.location);
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = left.location});
     const auto value = LowerExpression(right);
-    Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value.reg, .location = right.location});
-    const auto ignored = AllocateRegister(left.location);
     const auto& method_owner = method->second.member_owner;
-    Emit({
-        .opcode = Opcode::Call,
-        .dst = ignored,
-        .lhs = base,
-        .index = function_ids_.at(MethodKey(method_owner, DeclarationKind::Setter, left.text)),
-        .location = left.location,
-        .binding_receiver = ReceiverDeclaration(object.type),
-    });
+    EmitSetterCall(function_ids_.at(MethodKey(method_owner, DeclarationKind::Setter, left.text)),
+                   object, value.reg, left.location);
     return {.reg = value.reg, .type = method->second.setter_parameter_type.value_or(value.type)};
   }
   const auto& field = class_info.fields.at(left.text);
@@ -1322,9 +1315,7 @@ std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& ret
   auto* previous_function = current_function_;
   const auto previous_register = next_register_;
   const auto previous_handler = current_handler_;
-  current_function_ = &function;
-  current_handler_.reset();
-  next_register_ = function.parameter_count;
+  BeginGeneratedBody(function);
   const auto& payload = model_.generic_arguments.at(return_type.name).front();
   const auto result = AllocateRegister({});
   RecordValueType(result, payload);
@@ -1746,6 +1737,24 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
   std::unreachable();
 }
 
+void Lowerer::EmitSetterCall(std::uint32_t target,
+                             const LoweredValue& receiver,
+                             RegisterId value,
+                             frontend::SourceLocation location) {
+  const auto base = AllocateRegisterWindow(2, location);
+  Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
+  Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = value, .location = location});
+  const auto ignored = AllocateRegister(location);
+  Emit({
+      .opcode = Opcode::Call,
+      .dst = ignored,
+      .lhs = base,
+      .index = target,
+      .location = location,
+      .binding_receiver = ReceiverDeclaration(receiver.type),
+  });
+}
+
 void Lowerer::StoreMutationTarget(const MutationTarget& destination,
                                   RegisterId value,
                                   frontend::SourceLocation location) {
@@ -1759,27 +1768,9 @@ void Lowerer::StoreMutationTarget(const MutationTarget& destination,
           .location = location,
       });
       return;
-    case MutationTarget::Kind::Setter: {
-      const auto base = AllocateRegister(location);
-      const auto argument = AllocateRegister(location);
-      Emit({
-          .opcode = Opcode::Move,
-          .dst = base,
-          .lhs = receiver.reg,
-          .location = location,
-      });
-      Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value, .location = location});
-      const auto ignored = AllocateRegister(location);
-      Emit({
-          .opcode = Opcode::Call,
-          .dst = ignored,
-          .lhs = base,
-          .index = destination.slot,
-          .location = location,
-          .binding_receiver = ReceiverDeclaration(receiver.type),
-      });
+    case MutationTarget::Kind::Setter:
+      EmitSetterCall(destination.slot, receiver, value, location);
       return;
-    }
     case MutationTarget::Kind::Local:
       Emit({
           .opcode = Opcode::Move,

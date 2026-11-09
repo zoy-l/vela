@@ -83,6 +83,16 @@ void Specializer::Error(SourceLocation location, std::string message) {
   });
 }
 
+void Specializer::ReportNestingLimit(SourceLocation location) {
+  Error(location, "type nesting exceeds the limit of " + std::to_string(kMaxTypeNesting) +
+                      "; check expanding generic recursion");
+}
+
+std::string Specializer::ExpansionLimitMessage() {
+  return "generic expansion depth exceeds the limit of " +
+         std::to_string(kMaxGenericExpansionDepth) + "; check expanding recursion";
+}
+
 TypeSubstitutions Specializer::Bind(std::span<const TypeParameter> parameters,
                                     std::span<const TypeName> arguments,
                                     SourceLocation location) {
@@ -142,7 +152,7 @@ std::string Specializer::Instantiate(const std::string& name,
   RecordApplication(name, arguments, location);
   // 限制单条依赖链的展开深度，不限制项目中彼此独立的具体特化数量。
   if (expansion_depth_ >= kMaxGenericExpansionDepth) {
-    Error(location, "generic expansion depth exceeds the limit of 128; check expanding recursion");
+    Error(location, ExpansionLimitMessage());
     return key;
   }
   const bool abstract = std::ranges::any_of(arguments, HasTypeParameters);
@@ -245,15 +255,13 @@ bool Specializer::IsGenericDeclaration(std::string_view name) const {
 
 void Specializer::Normalize(TypeName& type, const TypeSubstitutions& substitutions) {
   if (type_depth_ >= kMaxTypeNesting) {
-    Error(type.location,
-          "type nesting exceeds the limit of 128; check expanding generic recursion");
+    ReportNestingLimit(type.location);
     return;
   }
   ++type_depth_;
   NormalizeType(type, substitutions);
   if (type_depth_ == 1 && diagnostics_.empty() && !IsTypeWithinLimit(type)) {
-    Error(type.location,
-          "type nesting exceeds the limit of 128; check expanding generic recursion");
+    ReportNestingLimit(type.location);
   }
   --type_depth_;
 }
@@ -312,8 +320,7 @@ void Specializer::NormalizeTypeHead(TypeName& type) {
 TypeName Specializer::CloneNormalizedType(const TypeName& source,
                                           const TypeSubstitutions& substitutions) {
   if (type_depth_ >= kMaxTypeNesting) {
-    Error(source.location,
-          "type nesting exceeds the limit of 128; check expanding generic recursion");
+    ReportNestingLimit(source.location);
     return source;
   }
   ++type_depth_;
@@ -340,8 +347,7 @@ TypeName Specializer::CloneNormalizedType(const TypeName& source,
     }
   }
   if (type_depth_ == 1 && diagnostics_.empty() && !IsTypeWithinLimit(result)) {
-    Error(result.location,
-          "type nesting exceeds the limit of 128; check expanding generic recursion");
+    ReportNestingLimit(result.location);
   }
   --type_depth_;
   return result;
@@ -364,9 +370,7 @@ void Specializer::EndScope() {
 }
 
 void Specializer::Declare(const std::string& name) {
-  if (!scopes_.empty()) {
-    scopes_.back().insert(name);
-  }
+  scopes_.back().insert(name);
 }
 
 void Specializer::NormalizeExpressionHead(Expression& expression,
@@ -486,7 +490,7 @@ void Specializer::Normalize(Statement* statement, const TypeSubstitutions& subst
     Normalize(branch.label.get(), substitutions);
     Normalize(branch.body.get(), substitutions);
   }
-  if (statement->kind == Statement::Kind::VariableDeclaration && !scopes_.empty()) {
+  if (statement->kind == Statement::Kind::VariableDeclaration) {
     scopes_.back().insert(statement->name);
   }
   if (has_scope) {
@@ -738,6 +742,17 @@ void Specializer::ExpandFunction(Pending<Function>& pending) {
   pending.declaration.application = std::move(application);
 }
 
+template <typename T, typename Clone>
+void Specializer::CloneNominal(Pending<T>& pending, T& target, const Clone& clone) {
+  const auto name = target.name;
+  clone_substitutions_ = &pending.substitutions;
+  target = clone(*pending.source);
+  clone_substitutions_ = nullptr;
+  target.name = name;
+  target.type_parameters.clear();
+  AssignMethodParameters(target.method_templates, name);
+}
+
 void Specializer::ExpandClass(Pending<Class>& pending) {
   expansion_depth_ = pending.expansion_depth;
   auto& target = pending.abstract != nullptr ? *pending.abstract : pending.declaration;
@@ -746,15 +761,11 @@ void Specializer::ExpandClass(Pending<Class>& pending) {
     Normalize(target, pending.substitutions);
     return;
   }
-  const auto name = target.name;
-  clone_substitutions_ = &pending.substitutions;
   // 抽象应用只提供成员签名；方法体由模板自身的定义检查覆盖，不复制以免重复诊断。
-  target = pending.abstract != nullptr ? CloneClassDeclaration(*pending.source, *this)
-                                       : CloneClass(*pending.source, *this);
-  clone_substitutions_ = nullptr;
-  target.name = name;
-  target.type_parameters.clear();
-  AssignMethodParameters(target.method_templates, name);
+  CloneNominal(pending, target, [&](const Class& source) {
+    return pending.abstract != nullptr ? CloneClassDeclaration(source, *this)
+                                       : CloneClass(source, *this);
+  });
 }
 
 void Specializer::ExpandInterface(Pending<Interface>& pending) {
@@ -762,13 +773,8 @@ void Specializer::ExpandInterface(Pending<Interface>& pending) {
   auto& target = pending.abstract != nullptr ? *pending.abstract : pending.declaration;
   interface_declarations_.insert_or_assign(target.name, &target);
   if (pending.source != nullptr) {
-    const auto name = target.name;
-    clone_substitutions_ = &pending.substitutions;
-    target = CloneInterface(*pending.source, *this);
-    clone_substitutions_ = nullptr;
-    target.name = name;
-    target.type_parameters.clear();
-    AssignMethodParameters(target.method_templates, name);
+    CloneNominal(pending, target,
+                 [&](const Interface& source) { return CloneInterface(source, *this); });
     return;
   }
   for (auto& method : target.methods) {

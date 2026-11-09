@@ -9,6 +9,11 @@
 
 namespace vela::frontend {
 
+bool TypeChecker::IsThrowable(const Type& type) {
+  return type.kind == Type::Kind::Dynamic ||
+         (!type.nullable && (type.kind == Type::Kind::Class || type.kind == Type::Kind::Interface));
+}
+
 StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& return_type) {
   auto flow = CheckScopedStatement(*statement.then_branch, return_type);
   absl::flat_hash_set<std::string> caught;
@@ -22,9 +27,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
     BeginScope();
     if (!clause.name.empty()) {
       const auto type = ResolveType(clause.type, VoidTypePolicy::Forbidden);
-      if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface &&
-           type.kind != Type::Kind::Dynamic) ||
-          type.nullable) {
+      if (!IsThrowable(type)) {
         AddDiagnostic(clause.location,
                       "catch type must be a non-null class, interface, or dynamic");
       }

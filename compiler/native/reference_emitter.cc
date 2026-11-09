@@ -30,6 +30,15 @@
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
+namespace {
+
+void MarkHeapAllocation(llvm::Function& function) {
+  function.addRetAttr(llvm::Attribute::NoAlias);
+  function.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
+      function.getContext(), sizeof(runtime::HeapObject)));
+}
+
+}  // namespace
 
 std::size_t FunctionEmitter::PlanMapLookupStorage() {
   if (program_.native_mode != NativeProgramMode::Closed || !roots_.bounded_polls) {
@@ -173,7 +182,7 @@ void FunctionEmitter::ClearRoot(std::size_t slot) {
 void FunctionEmitter::EmitStringCodePointAt(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* string = Reference(instruction.lhs);
-  Check(builder_.CreateIsNotNull(string), ExecutionStatus::TypeError);
+  CheckReference(string);
   auto* index = Payload(instruction.lhs + 1);
   auto* length =
       LoadMemory(builder_.getInt32Ty(), ByteAddress(string, NativeMemoryLayout::kStringLength),
@@ -261,7 +270,7 @@ void FunctionEmitter::EmitLocatedMapBuiltin(const ir::Instruction& instruction,
 
 void FunctionEmitter::EmitMapBuiltin(const ir::Instruction& instruction, Builtin builtin) {
   auto* map = Reference(instruction.lhs);
-  Check(builder_.CreateIsNotNull(map), ExecutionStatus::TypeError);
+  CheckReference(map);
   if (!map_lookups_.empty() && map_lookups_[instruction_index_] != nullptr) {
     EmitLocatedMapBuiltin(instruction, builtin, map);
     return;
@@ -294,7 +303,7 @@ void FunctionEmitter::EmitAppendCodePoint(const ir::Instruction& instruction) {
   constexpr std::uint64_t kAsciiLimit = 0x80;
   auto* output = Reference(instruction.lhs);
   auto* point = Payload(instruction.lhs + 1);
-  Check(builder_.CreateIsNotNull(output), ExecutionStatus::TypeError);
+  CheckReference(output);
   auto* length_address = ByteAddress(output, NativeMemoryLayout::kObjectLength);
   auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
   auto* capacity = LoadMemory(builder_.getInt64Ty(),
@@ -377,7 +386,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
   }
   if (builtin == Builtin::StringLength || builtin == Builtin::StringByteLength) {
     auto* string = Reference(instruction.lhs);
-    Check(builder_.CreateIsNotNull(string), ExecutionStatus::TypeError);
+    CheckReference(string);
     const auto offset = builtin == Builtin::StringLength
                             ? runtime::NativeMemoryLayout::kStringLength
                             : runtime::NativeMemoryLayout::kObjectLength;
@@ -393,7 +402,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
   if (builtin == Builtin::ArrayReserve) {
     using runtime::NativeMemoryLayout;
     auto* array = Reference(instruction.lhs);
-    Check(builder_.CreateIsNotNull(array), ExecutionStatus::TypeError);
+    CheckReference(array);
     auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
     auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
     auto* requested = Payload(instruction.lhs + 1);
@@ -444,9 +453,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
             module_.getOrInsertFunction(runtime::kNativeNewObjectSymbol, pointer, pointer, word);
         auto& allocation = *module_.getFunction(runtime::kNativeNewObjectSymbol);
         // 普通实例一定是新分配的对象；可调用值的版本绑定和潜在身份复用单独处理。
-        allocation.addRetAttr(llvm::Attribute::NoAlias);
-        allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
-            module_.getContext(), sizeof(runtime::HeapObject)));
+        MarkHeapAllocation(allocation);
         auto* object = builder_.CreateCall(helper, {context, index});
         Check(builder_.CreateIsNotNull(object), ExecutionStatus::OutOfMemory);
         if (program_.native_mode == NativeProgramMode::Closed) {
@@ -473,14 +480,14 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       auto* length = instruction.opcode == Opcode::NewArray
                          ? builder_.getInt64(std::bit_cast<std::uint64_t>(instruction.immediate))
                          : Payload(instruction.lhs);
-      Check(builder_.CreateICmpSGE(length, builder_.getInt64(0)),
-            ExecutionStatus::IndexOutOfBounds);
+      if (instruction.opcode == Opcode::NewDynamicArray) {
+        Check(builder_.CreateICmpSGE(length, builder_.getInt64(0)),
+              ExecutionStatus::IndexOutOfBounds);
+      }
       auto helper = module_.getOrInsertFunction(runtime::kNativeNewArraySymbol, pointer, pointer,
                                                 word, builder_.getInt64Ty());
       auto& allocation = *module_.getFunction(runtime::kNativeNewArraySymbol);
-      allocation.addRetAttr(llvm::Attribute::NoAlias);
-      allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
-          module_.getContext(), sizeof(runtime::HeapObject)));
+      MarkHeapAllocation(allocation);
       auto* array = builder_.CreateCall(helper, {context, index, length});
       Check(builder_.CreateIsNotNull(array), ExecutionStatus::OutOfMemory);
       const auto& type = source_.value_types.at(instruction.dst);

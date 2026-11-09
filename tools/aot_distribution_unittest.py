@@ -153,6 +153,21 @@ class NativeDistributionTest(unittest.TestCase):
                 run([compiler, "build", "--verify-manifest=" + str(manifest)])
                 libraries.append(library)
                 manifests.append(json.loads(manifest.read_text(encoding="utf-8")))
+            checked_manifest = Path(str(libraries[0]) + ".aot.json")
+            original_manifest = checked_manifest.read_text(encoding="utf-8")
+            for field, value, diagnostic in [
+                ("format_version", 2, "identity mismatch"),
+                ("target", "wrong", "identity mismatch"),
+                ("runtime_abi", "wrong", "identity mismatch"),
+                ("toolchain_build", "wrong", "identity mismatch"),
+                ("optimization", "none", "unsupported native library optimization settings"),
+            ]:
+                with self.subTest(manifest_field=field):
+                    checked_manifest.write_text(json.dumps(dict(manifests[0], **{field: value})),
+                                                encoding="utf-8", newline="\n")
+                    rejected = run([compiler, "build", "--verify-manifest=" + str(checked_manifest)], 65)
+                    self.assertIn(diagnostic, rejected.stderr)
+            checked_manifest.write_text(original_manifest, encoding="utf-8", newline="\n")
             tools = toolchain_tools()
             host_source = work / "embedding.cc"
             namespaces = [manifest["image"].removesuffix("_image") for manifest in manifests]

@@ -26,7 +26,6 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/persistent_ids.h"
 
 namespace vela::ir {
 
@@ -41,14 +40,9 @@ class Lowerer final {
  public:
   Lowerer(const frontend::Program& source,
           const frontend::SemanticModel& model,
-          PersistentIds* persistent,
           const DeclarationBindings* declarations,
           NativeProgramMode native_mode) noexcept
-      : source_(source),
-        model_(model),
-        persistent_(persistent),
-        declarations_(declarations),
-        native_mode_(native_mode) {}
+      : source_(source), model_(model), declarations_(declarations), native_mode_(native_mode) {}
 
   // lowering 状态借用固定的 AST 和语义模型；执行上下文不允许复制或迁移。
   ~Lowerer() = default;
@@ -103,8 +97,7 @@ class Lowerer final {
   void BuildNativeClassContracts();
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
-  std::uint32_t AddFunctionId(const std::string& name,
-                              frontend::Function::Role role = frontend::Function::Role::Ordinary);
+  std::uint32_t AddFunctionId(const std::string& name);
   void AddGlobalId(const std::string& name, InitializerKind kind);
   std::uint32_t ConstructorTarget(const frontend::ClassDescriptor& owner);
   void StoreFunction(Function function);
@@ -219,6 +212,7 @@ class Lowerer final {
   Function CreateMemberFunction(const frontend::TypeDescriptor& receiver,
                                 std::string_view name,
                                 const frontend::FunctionDescriptor& signature);
+  void BeginGeneratedBody(Function& function);
   void PublishMemberFunction(const frontend::TypeDescriptor& receiver,
                              std::string_view name,
                              MemberKind kind,
@@ -309,18 +303,31 @@ class Lowerer final {
                       RegisterId value,
                       frontend::SourceLocation location);
   void LowerBuiltinDefaults(Builtin builtin, RegisterId base, frontend::SourceLocation location);
+  void EmitRegExpLayoutArgument(Builtin builtin,
+                                RegisterId base,
+                                frontend::TypeDescriptor type,
+                                frontend::SourceLocation location);
   LoweredValue LowerAsyncCall(const frontend::Expression& expression);
   void LowerAsyncArguments(const frontend::Expression& expression,
                            AsyncOperation operation,
                            RegisterId base,
                            const std::optional<LoweredValue>& receiver);
   LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
+  [[nodiscard]] static std::optional<Builtin> SnapshotCountBuiltin(Builtin builtin);
+  void EmitSnapshotArray(Builtin builtin,
+                         RegisterId base,
+                         const frontend::TypeDescriptor& type,
+                         frontend::SourceLocation location);
   LoweredValue LowerCollectionConstruction(const frontend::Expression& expression);
   std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);
 
   LoweredValue LowerArrayLiteral(const frontend::Expression& expression);
   LoweredValue LowerMapLiteral(const frontend::Expression& expression);
   LoweredValue LowerArrayMutation(const frontend::Expression& expression);
+  Builtin PrepareArrayMutation(Builtin builtin,
+                               RegisterId base,
+                               std::int64_t delete_count,
+                               frontend::SourceLocation location);
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
   RegisterId EmitArrayCallback(RegisterId callback,
                                std::span<const RegisterId> arguments,
@@ -354,6 +361,10 @@ class Lowerer final {
                                       ArrayAlgorithm algorithm,
                                       const frontend::TypeDescriptor& result_type,
                                       frontend::SourceLocation location);
+  RegisterId EmitPlanValidation(const ArrayAlgorithmRegisters& inputs,
+                                RegisterId value,
+                                std::optional<frontend::TypeDescriptor> type,
+                                frontend::SourceLocation location);
   RegisterId EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
                            std::pair<RegisterId, RegisterId> indices,
                            frontend::SourceLocation location);
@@ -392,6 +403,11 @@ class Lowerer final {
   void StoreMutationTarget(const MutationTarget& destination,
                            RegisterId value,
                            frontend::SourceLocation location);
+  void EmitSetterCall(std::uint32_t target,
+                      const LoweredValue& receiver,
+                      RegisterId value,
+                      frontend::SourceLocation location);
+  [[nodiscard]] static Opcode SelectEqualityOpcode(const frontend::TypeDescriptor& type);
 
   [[nodiscard]] bool HasAssignments(const frontend::Expression& expression);
   LoweredValue LowerBinary(const frontend::Expression& expression);
@@ -436,7 +452,6 @@ class Lowerer final {
 
   const frontend::Program& source_;
   const frontend::SemanticModel& model_;
-  PersistentIds* persistent_;
   const DeclarationBindings* declarations_;
   NativeProgramMode native_mode_;
   Program program_;

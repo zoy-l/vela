@@ -69,6 +69,35 @@ std::string DisplaySymbolName(std::string_view name) {
   return text;
 }
 
+void AppendClosingDelimiters(std::string& text,
+                             std::span<const frontend::TokenKind> closing,
+                             CompletionBrace brace) {
+  for (const auto kind : std::views::reverse(closing)) {
+    switch (kind) {
+      case frontend::TokenKind::RightBrace:
+        text += brace == CompletionBrace::TerminateStatement ? ";}" : "}";
+        break;
+      case frontend::TokenKind::RightBracket:
+        text += ']';
+        break;
+      case frontend::TokenKind::RightParen:
+        text += ')';
+        break;
+      default:
+        std::unreachable();
+    }
+  }
+}
+
+std::optional<std::size_t> TokenIndexAt(std::span<const frontend::Token> tokens,
+                                        std::size_t offset) {
+  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
+  if (after == tokens.begin()) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(after - tokens.begin() - 1);
+}
+
 namespace {
 
 using frontend::Expression;
@@ -81,21 +110,7 @@ void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Toke
   for (const auto& token : tokens) {
     TrackDelimiter(closing, token.kind, ClosingDelimiter(token.kind));
   }
-  for (const auto kind : std::views::reverse(closing)) {
-    switch (kind) {
-      case TokenKind::RightBrace:
-        text += '}';
-        break;
-      case TokenKind::RightBracket:
-        text += ']';
-        break;
-      case TokenKind::RightParen:
-        text += ')';
-        break;
-      default:
-        std::unreachable();
-    }
-  }
+  AppendClosingDelimiters(text, closing, CompletionBrace::Close);
 }
 
 }  // namespace
@@ -111,11 +126,11 @@ bool IsCompletionExcluded(const frontend::SourceSnapshot& snapshot, std::size_t 
     return true;
   }
   const auto& tokens = snapshot.tokens;
-  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
-  if (after == tokens.begin()) {
+  const auto index = TokenIndexAt(tokens, offset);
+  if (!index) {
     return false;
   }
-  const auto& token = *std::prev(after);
+  const auto& token = tokens[*index];
   return offset > token.offset && offset < token.offset + token.length &&
          frontend::IsStringToken(token.kind);
 }
@@ -758,12 +773,7 @@ std::vector<ImportLink> SemanticIndex::ImportLinks(PositionEncoding encoding) co
     }
     result.push_back({
         .path = sources_[target->second].path,
-        .range =
-            {
-                .start = source.lines.PositionAt(source.text, token.offset + 1, encoding),
-                .end =
-                    source.lines.PositionAt(source.text, token.offset + token.length - 1, encoding),
-            },
+        .range = source.lines.RangeAt(source.text, token.offset + 1, token.length - 2, encoding),
     });
   }
   return result;
@@ -774,11 +784,11 @@ const frontend::Token* SemanticIndex::QueryToken(std::size_t offset) const {
     return nullptr;
   }
   const auto& tokens = sources_.front().tokens;
-  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
-  if (after == tokens.begin()) {
+  const auto index = TokenIndexAt(tokens, offset);
+  if (!index) {
     return nullptr;
   }
-  auto selected = std::prev(after);
+  auto selected = tokens.begin() + static_cast<std::ptrdiff_t>(*index);
   // 编辑器的光标可停在单词末尾，此时当前位置可能已经属于紧接着的 '(' 或 '.'。
   if (selected->offset == offset && !frontend::IsMemberName(selected->kind) &&
       selected->kind != TokenKind::Print && selected != tokens.begin()) {
@@ -820,12 +830,7 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
   }
   return Definition{
       .path = source.path,
-      .range =
-          {
-              .start = source.lines.PositionAt(source.text, symbol.key.second, encoding),
-              .end =
-                  source.lines.PositionAt(source.text, symbol.key.second + symbol.length, encoding),
-          },
+      .range = source.lines.RangeAt(source.text, symbol.key.second, symbol.length, encoding),
   };
 }
 

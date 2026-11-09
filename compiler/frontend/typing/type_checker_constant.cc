@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -141,19 +140,32 @@ std::optional<ConstantValue> TypeChecker::EvaluateConstant(const Expression& exp
       return std::nullopt;
     }
     case Kind::Member:
-      if (expression.object->kind == Kind::Name &&
-          LookupLocal(expression.object->text) == nullptr) {
-        const auto type = types_.find(expression.object->text);
-        const auto name = type == types_.end() ? expression.object->text : type->second.name;
-        const auto found = enum_values_.find(std::string(name) + "." + expression.text);
-        if (found != enum_values_.end()) {
-          return found->second;
-        }
+      if (const auto member = ResolveUnqualifiedEnumMember(expression);
+          member && member->constant) {
+        return *member->constant;
       }
       return std::nullopt;
     default:
       return std::nullopt;
   }
+}
+
+std::optional<TypeChecker::EnumMember> TypeChecker::ResolveUnqualifiedEnumMember(
+    const Expression& expression) const {
+  const auto& object = *expression.object;
+  if (object.kind != Expression::Kind::Name || LookupLocal(object.text) != nullptr) {
+    return std::nullopt;
+  }
+  const auto found = types_.find(object.text);
+  if (found == types_.end() || found->second.kind != Type::Kind::Enum) {
+    return std::nullopt;
+  }
+  const auto& type = found->second;
+  const auto member = enum_values_.find(std::string(type.name) + "." + expression.text);
+  return EnumMember{
+      .type = type,
+      .constant = member == enum_values_.end() ? std::nullopt : std::optional(member->second),
+  };
 }
 
 }  // namespace vela::frontend

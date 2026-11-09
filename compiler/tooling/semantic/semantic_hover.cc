@@ -103,11 +103,7 @@ std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncodi
   return Hover{
       .signature = HoverSignature(completion, owner, role),
       .documentation = std::move(completion.documentation),
-      .range =
-          {
-              .start = source.lines.PositionAt(source.text, token->offset, encoding),
-              .end = source.lines.PositionAt(source.text, token->offset + token->length, encoding),
-          },
+      .range = source.lines.RangeAt(source.text, token->offset, token->length, encoding),
   };
 }
 

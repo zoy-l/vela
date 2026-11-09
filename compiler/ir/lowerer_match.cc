@@ -32,20 +32,9 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
       } else {
         label = LowerConstantLabel(*arm.pattern);
       }
-      auto opcode = Opcode::EqualValue;
-      using Kind = frontend::TypeDescriptor::Kind;
-      if (!original.type.nullable && original.type.kind != Kind::Null) {
-        if (original.type.kind == Kind::Int || original.type.kind == Kind::Enum) {
-          opcode = Opcode::EqualInt;
-        } else if (original.type.kind == Kind::Bool) {
-          opcode = Opcode::EqualBool;
-        } else if (original.type.kind == Kind::String) {
-          opcode = Opcode::EqualString;
-        }
-      }
       const auto matches = AllocateRegister(arm.location);
       Emit({
-          .opcode = opcode,
+          .opcode = SelectEqualityOpcode(original.type),
           .dst = matches,
           .lhs = selector,
           .rhs = label,

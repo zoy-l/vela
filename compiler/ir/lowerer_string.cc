@@ -1,6 +1,7 @@
 #include "compiler/ir/lowerer.h"
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "base/builtin.h"
@@ -44,28 +45,42 @@ Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expressi
   };
 }
 
+std::optional<Builtin> Lowerer::SnapshotCountBuiltin(Builtin builtin) {
+  switch (builtin) {
+    case Builtin::StringCodePoints:
+      return Builtin::StringLength;
+    case Builtin::StringGraphemes:
+      return Builtin::StringGraphemeLength;
+    case Builtin::CollectionKeys:
+    case Builtin::CollectionValues:
+      return Builtin::CollectionSize;
+    default:
+      return std::nullopt;
+  }
+}
+
+void Lowerer::EmitSnapshotArray(Builtin builtin,
+                                RegisterId base,
+                                const frontend::TypeDescriptor& type,
+                                frontend::SourceLocation location) {
+  const auto count = AllocateRegister(location);
+  EmitBuiltinCall(*SnapshotCountBuiltin(builtin), count, base, location);
+  Emit({
+      .opcode = Opcode::NewDynamicArray,
+      .dst = base + 1,
+      .lhs = count,
+      .index = RegisterArrayType(type),
+      .location = location,
+  });
+}
+
 Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& expression) {
   const auto builtin = model_.builtin_calls.at(&expression);
   const auto receiver = LowerExpression(*expression.callee->object);
-  const auto base = AllocateRegister(expression.location);
-  const auto array_slot = AllocateRegister(expression.location);
+  const auto base = AllocateRegisterWindow(2, expression.location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = expression.location});
-  auto count_builtin = Builtin::CollectionSize;
-  if (builtin == Builtin::StringCodePoints) {
-    count_builtin = Builtin::StringLength;
-  } else if (builtin == Builtin::StringGraphemes) {
-    count_builtin = Builtin::StringGraphemeLength;
-  }
-  const auto count = AllocateRegister(expression.location);
-  EmitBuiltinCall(count_builtin, count, base, expression.location);
   const auto& type = model_.expression_types.at(&expression);
-  Emit({
-      .opcode = Opcode::NewDynamicArray,
-      .dst = array_slot,
-      .lhs = count,
-      .index = RegisterArrayType(type),
-      .location = expression.location,
-  });
+  EmitSnapshotArray(builtin, base, type, expression.location);
   const auto result = AllocateRegister(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   return {.reg = result, .type = type};

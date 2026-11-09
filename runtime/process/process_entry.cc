@@ -1,5 +1,6 @@
 #include "runtime/process/process_entry.h"
 
+#include <cstdint>
 #include <functional>
 #include <ostream>
 #include <string_view>
@@ -18,6 +19,8 @@
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
@@ -66,6 +69,28 @@ void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagno
     WriteError(output, origin.source_path, {.line = origin.line, .column = origin.column}, message);
   }
   WriteTrace(output, diagnostic);
+}
+
+int RunProcessEntry(NativeInstance& instance,
+                    std::uint32_t function,
+                    std::ostream& errors,
+                    ProcessStopDiagnostic stop_diagnostic) {
+  ProcessEntry process(instance.isolate(), errors);
+  const auto result = ExecuteNativeFunction(instance, function);
+  if (!result.Succeeded()) {
+    if (result.status != ExecutionStatus::ExecutionStopped ||
+        stop_diagnostic == ProcessStopDiagnostic::Report) {
+      WriteRuntimeDiagnostic(errors, {
+                                         .message = result.message,
+                                         .stack_trace = result.stack_trace,
+                                         .status = result.status,
+                                         .origin = result.origin,
+                                     });
+    }
+    return kProgramFailureExitCode;
+  }
+  const auto type = instance.call_signature(function).result;
+  return process.Finish(result.value, type ? &instance.layouts().types[*type] : nullptr);
 }
 
 ProcessEntry::ProcessEntry(Isolate& isolate, std::ostream& errors)

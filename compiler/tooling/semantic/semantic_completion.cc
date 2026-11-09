@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -80,10 +79,8 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind, std::string_view pr
       if (!type.starts_with(prefix)) {
         continue;
       }
-      const auto detail = BuiltinTypeDetail(type);
-      if (detail.empty()) {
-        continue;
-      }
+      const auto described = BuiltinTypeDetail(type);
+      const auto detail = described.empty() ? std::string_view("type") : described;
       result.push_back({
           .label = std::string(type),
           .detail = std::string(detail),
@@ -345,25 +342,36 @@ absl::flat_hash_map<std::string, Completion> SemanticIndex::VisibleLocals(
   return selected;
 }
 
-std::vector<Completion> SemanticIndex::QualifiedCompletions(
-    std::size_t token_index,
-    const absl::flat_hash_map<std::string, Completion>& locals) const {
+std::vector<Completion> SemanticIndex::QualifiedCompletions(std::size_t token_index,
+                                                            std::string_view prefix,
+                                                            std::size_t offset) const {
   const auto& tokens = sources_.front().tokens;
   const auto& token = tokens[token_index];
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
-    return MemberCompletions(receiver->second);
+    return MemberCompletions(receiver->second, prefix);
   }
   if (token_index < 2 || tokens[token_index - 2].kind != frontend::TokenKind::Identifier) {
     return {};
   }
   const auto& name = tokens[token_index - 2].lexeme;
   const auto imported = prefixes_.find(name);
-  if (imported == prefixes_.end() || locals.contains(name)) {
+  if (imported == prefixes_.end()) {
+    return {};
+  }
+  const auto shadowed = std::ranges::any_of(locals_, [&](const Local& local) {
+    const auto& scope = local.scope;
+    return scope.source == 0 && offset >= local.available && offset >= scope.begin &&
+           offset < scope.end && symbols_[local.symbol].completion.label == name;
+  });
+  if (shadowed) {
     return {};
   }
   std::vector<Completion> result;
   for (const auto symbol_id : exports_.at(imported->second)) {
-    result.push_back(symbols_[symbol_id].completion);
+    const auto& completion = symbols_[symbol_id].completion;
+    if (completion.label.starts_with(prefix)) {
+      result.push_back(completion);
+    }
   }
   return result;
 }
@@ -404,18 +412,6 @@ std::vector<Completion> SemanticIndex::ScopeCompletions(std::size_t offset,
         .documentation = {},
     });
   }
-  for (const auto type : frontend::kBuiltinTypeNames) {
-    if (type.starts_with(prefix)) {
-      selected.try_emplace(
-          std::string(type),
-          Completion{
-              .label = std::string(type),
-              .detail = "type",
-              .kind = CompletionKind::Type,
-              .documentation = std::string(BuiltinDocumentation(Kind::Invalid, type)),
-          });
-    }
-  }
   for (auto& [name, completion] : selected) {
     result.push_back(std::move(completion));
   }
@@ -431,9 +427,7 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
     return {};
   }
   const auto& tokens = source.tokens;
-  const auto after = std::ranges::upper_bound(tokens, offset, {}, &frontend::Token::offset);
-  const auto current =
-      after == tokens.begin() ? 0 : static_cast<std::size_t>(std::prev(after) - tokens.begin());
+  const auto current = TokenIndexAt(tokens, offset).value_or(0);
   const auto& token = tokens[current];
   const auto prefix = frontend::IsMemberName(token.kind) && offset >= token.offset
                           ? source.text.substr(token.offset, offset - token.offset)
@@ -445,13 +439,10 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
   const auto dot = current > 0 && (tokens[current - 1].kind == frontend::TokenKind::Dot ||
                                    tokens[current - 1].kind == frontend::TokenKind::QuestionDot);
   if (dot) {
-    result = QualifiedCompletions(current, VisibleLocals(offset, {}));
+    result = QualifiedCompletions(current, prefix, offset);
   } else {
     result = ScopeCompletions(offset, prefix);
   }
-  std::erase_if(result, [prefix](const Completion& completion) -> bool {
-    return !completion.label.starts_with(prefix);
-  });
   std::ranges::sort(result, {}, &Completion::label);
   const auto duplicates = std::ranges::unique(result, {}, &Completion::label);
   result.erase(duplicates.begin(), duplicates.end());

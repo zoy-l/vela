@@ -172,17 +172,12 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   } else {
     PrepareObservableCall();
     auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result);
-    auto failure = module_.getOrInsertFunction(
-        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
-    auto* materialized =
-        builder_.CreateCall(failure, {
-                                         body_->getArg(0),
-                                         position,
-                                         computed,
-                                         llvm::ConstantPointerNull::get(builder_.getPtrTy()),
-                                         builder_.getInt64(0),
-                                     });
+    auto* materialized = EmitLeafFailure({
+        .status = computed,
+        .position = position,
+        .roots = llvm::ConstantPointerNull::get(builder_.getPtrTy()),
+        .count = 0,
+    });
     Fail(materialized);
   }
   builder_.SetInsertPoint(returned);

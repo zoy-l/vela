@@ -1,7 +1,10 @@
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <string>
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -13,9 +16,16 @@
 
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/preparation.h"
+#include "compiler/native/borrow_analysis.h"
 #include "compiler/native/call_targets.h"
+#include "compiler/native/code_generator.h"
+#include "compiler/native/escape_analysis.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/recursive_inliner.h"
 
 namespace vela::benchmarks {
@@ -60,6 +70,61 @@ void RepeatedLeafPlanning(benchmark::State& state) {
 }
 
 enum class IneligibleRecursion : std::uint8_t { Nonrecursive, OverBudget };
+
+enum class AnalysisPass : std::uint8_t { Escapes, Borrows, Generation };
+
+void ObjectAnalysis(benchmark::State& state, AnalysisPass pass) {
+  const auto count = state.range(0);
+  std::string updates;
+  for (std::int64_t index = 0; index < count; ++index) {
+    updates += "box.value = box.value + value;";
+  }
+  const auto source =
+      "class Box { value: int; add(value: int): int { const box = this;" + updates +
+      "return box.value; } } func kernel(value: int): int { const box = Box(value: value);" +
+      updates + "return box.value; } export func main(): int { return kernel(1); }";
+  const frontend::SourceInput input{.path = "analysis.vela", .text = source};
+  const auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  if (!prepared.Succeeded()) {
+    state.SkipWithError(frontend::DiagnosticsText(prepared.diagnostics));
+    return;
+  }
+  const auto& program = prepared.program;
+  const auto found = std::ranges::find(program.functions, "kernel", &ir::Function::name);
+  const auto function = static_cast<std::size_t>(found - program.functions.begin());
+  const auto calls = compiler::native::PlanNativeCalls(program, NativeCodeTier::Baseline);
+  const auto fields = compiler::native::FindFieldTargets(program);
+  for (auto iteration : state) {
+    if (pass == AnalysisPass::Escapes) {
+      auto plan = compiler::native::PlanEscapes(program, function);
+      if (plan.allocations.empty() || !plan.allocations.front().can_scalar_replace) {
+        state.SkipWithError("Object did not undergo scalar replacement");
+        return;
+      }
+      benchmark::DoNotOptimize(plan);
+    } else if (pass == AnalysisPass::Borrows) {
+      auto plans = compiler::native::PlanBorrows(program);
+      if (std::ranges::none_of(plans, [](const auto& plan) { return plan.has_value(); })) {
+        state.SkipWithError("Object method did not acquire a borrowed entry");
+        return;
+      }
+      benchmark::DoNotOptimize(plans);
+    } else {
+      auto generated = compiler::native::Generate(program, calls, fields, "analysis");
+      if (!generated) {
+        state.SkipWithError(frontend::DiagnosticsText(generated.error()));
+        return;
+      }
+      if (std::ranges::none_of(*generated->module, [](const llvm::Function& body) {
+            return body.getName().ends_with("_range");
+          })) {
+        state.SkipWithError("Object kernel did not acquire a range specialization");
+        return;
+      }
+      benchmark::DoNotOptimize(generated);
+    }
+  }
+}
 
 void MixedComponentPlanning(benchmark::State& state) {
   constexpr std::size_t kComponentFunctions = 32;
@@ -141,6 +206,15 @@ BENCHMARK(RepeatedLeafPlanning)
     ->Args({1, 1})
     ->Args({256, 1})
     ->Args({1, 128});
+BENCHMARK_CAPTURE(ObjectAnalysis, Escapes, AnalysisPass::Escapes)
+    ->Name("compile/native/escape_rewrite")
+    ->Arg(256);
+BENCHMARK_CAPTURE(ObjectAnalysis, Borrows, AnalysisPass::Borrows)
+    ->Name("compile/native/borrow_rewrite")
+    ->Arg(256);
+BENCHMARK_CAPTURE(ObjectAnalysis, Generation, AnalysisPass::Generation)
+    ->Name("compile/native/range_generation")
+    ->Arg(256);
 BENCHMARK(MixedComponentPlanning)->Name("compile/native/mixed_component");
 BENCHMARK_CAPTURE(IneligibleRecursiveAnalysis, Nonrecursive, IneligibleRecursion::Nonrecursive)
     ->Name("compile/native/nonrecursive");

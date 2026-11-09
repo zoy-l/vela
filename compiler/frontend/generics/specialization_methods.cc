@@ -26,7 +26,7 @@ std::expected<std::size_t, Diagnostic> Specializer::SpecializeMethod(MethodReque
   if (depth >= kMaxGenericExpansionDepth) {
     return std::unexpected(Diagnostic{
         .location = request.location,
-        .message = "generic expansion depth exceeds the limit of 128; check expanding recursion",
+        .message = ExpansionLimitMessage(),
         .source_path = {},
     });
   }

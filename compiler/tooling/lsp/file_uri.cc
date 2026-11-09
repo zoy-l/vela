@@ -10,8 +10,14 @@
 
 #include "base/path.h"
 #include "base/utf8.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
 
 namespace vela::tooling {
+
+std::string SourceUri(std::string_view path) {
+  return path.starts_with(frontend::kSdkSourcePrefix) ? std::string(path) : FileUri(Utf8Path(path));
+}
+
 namespace {
 
 constexpr int kHexLetterOffset = 10;

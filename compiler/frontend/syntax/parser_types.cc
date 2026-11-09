@@ -316,11 +316,9 @@ bool Parser::MatchTypeGreater() {
   token.type_closing_length = remainder.offset - token.offset + 1;
   previous_split_ = remainder;
   previous_split_->kind = TokenKind::Greater;
-  previous_split_->lexeme = ">";
   previous_split_->length = 1;
   previous_index_ = current_;
   remainder.kind = suffix;
-  remainder.lexeme.erase(0, 1);
   ++remainder.offset;
   ++remainder.location.column;
   --remainder.length;

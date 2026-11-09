@@ -173,21 +173,28 @@ std::expected<void, std::string> LanguageServer::Close(const yyjson_val* params)
   return {};
 }
 
-void LanguageServer::Format(RpcCall call) {
-  const auto* request_id = call.identity;
-  const auto* params = call.params;
+std::optional<LanguageServer::OpenedDocument> LanguageServer::RequireDocument(RpcCall call) {
   const auto uri =
-      JsonText(GetJsonField(GetJsonField(params, protocol::kTextDocument), protocol::kUri));
+      JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
   if (!uri) {
-    Error(request_id, kInvalidParams, "formatting requires a document URI");
-    return;
+    Error(call.identity, kInvalidParams, "request requires a document URI");
+    return std::nullopt;
   }
   const auto found = documents_.find(*uri);
   if (found == documents_.end()) {
-    Error(request_id, kInvalidParams, "document is not open");
+    Error(call.identity, kInvalidParams, "document is not open");
+    return std::nullopt;
+  }
+  return OpenedDocument{.uri = found->first, .document = &found->second};
+}
+
+void LanguageServer::Format(RpcCall call) {
+  const auto* request_id = call.identity;
+  const auto opened = RequireDocument(call);
+  if (!opened) {
     return;
   }
-  const auto& source = found->second.source;
+  const auto& source = opened->document->source;
   const auto formatted = FormatSource(source.text());
   if (!formatted) {
     Error(request_id, kRequestFailed, formatted.error().front().message);

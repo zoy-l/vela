@@ -13,7 +13,6 @@
 #include <yyjson.h>
 
 #include "base/json.h"
-#include "base/path.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/tooling/lsp/file_uri.h"
@@ -25,10 +24,6 @@ namespace vela::tooling::internal {
 namespace {
 
 using protocol::kInvalidParams;
-
-std::string SourceUri(std::string_view path) {
-  return path.starts_with(frontend::kSdkSourcePrefix) ? std::string(path) : FileUri(Utf8Path(path));
-}
 
 yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
   auto* value = yyjson_mut_obj(document);
@@ -87,32 +82,33 @@ yyjson_mut_val* JsonHover(yyjson_mut_doc* document, const std::optional<Hover>& 
 
 }  // namespace
 
+std::vector<frontend::SourceInput> LanguageServer::OverlaysFor(
+    std::string_view uri,
+    std::optional<std::string_view> text) const {
+  std::vector<frontend::SourceInput> overlays;
+  overlays.reserve(documents_.size());
+  for (const auto& [open_uri, document] : documents_) {
+    overlays.push_back(
+        {.path = document.path, .text = text && open_uri == uri ? *text : document.source.text()});
+  }
+  return overlays;
+}
+
 SemanticIndex& LanguageServer::IndexFor(std::string_view uri, const ServerDocument& opened) {
   if (const auto found = semantic_indices_.find(uri); found != semantic_indices_.end()) {
     return found->second;
   }
-  std::vector<frontend::SourceInput> overlays;
-  overlays.reserve(documents_.size());
-  for (const auto& [open_uri, document] : documents_) {
-    overlays.push_back({.path = document.path, .text = document.source.text()});
-  }
+  const auto overlays = OverlaysFor(uri);
   return semantic_indices_.try_emplace(std::string(uri), opened.path, modules_, overlays)
       .first->second;
 }
 
 void LanguageServer::DocumentLinks(RpcCall call) {
-  const auto uri =
-      JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
-  if (!uri) {
-    Error(call.identity, kInvalidParams, "document links require a document URI");
+  const auto opened = RequireDocument(call);
+  if (!opened) {
     return;
   }
-  const auto found = documents_.find(*uri);
-  if (found == documents_.end()) {
-    Error(call.identity, kInvalidParams, "document is not open");
-    return;
-  }
-  const auto links = IndexFor(*uri, found->second).ImportLinks(encoding_);
+  const auto links = IndexFor(opened->uri, *opened->document).ImportLinks(encoding_);
   auto response = Response(call.identity);
   auto* document = response.document();
   auto* result = yyjson_mut_arr(document);
@@ -147,14 +143,7 @@ std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
     if (cached != completion_indices_.end()) {
       completion_indices_.erase(cached);
     }
-    std::vector<frontend::SourceInput> overlays;
-    overlays.reserve(documents_.size());
-    for (const auto& [open_uri, opened_document] : documents_) {
-      overlays.push_back({
-          .path = opened_document.path,
-          .text = open_uri == uri ? completion_text : opened_document.source.text(),
-      });
-    }
+    const auto overlays = OverlaysFor(uri, completion_text);
     // 占位符只更新本次查询的模块快照；真实文档缓存仍供诊断与其它语义请求复用。
     auto query_modules = modules_;
     cached = completion_indices_
@@ -179,18 +168,11 @@ std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
 }
 
 void LanguageServer::SemanticTokens(RpcCall call) {
-  const auto uri =
-      JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
-  if (!uri) {
-    Error(call.identity, kInvalidParams, "semantic tokens require a document URI");
+  const auto opened = RequireDocument(call);
+  if (!opened) {
     return;
   }
-  const auto found = documents_.find(*uri);
-  if (found == documents_.end()) {
-    Error(call.identity, kInvalidParams, "document is not open");
-    return;
-  }
-  const auto tokens = IndexFor(*uri, found->second).SemanticTokens(encoding_);
+  const auto tokens = IndexFor(opened->uri, *opened->document).SemanticTokens(encoding_);
   auto response = Response(call.identity);
   auto* document = response.document();
   auto* result = yyjson_mut_obj(document);
@@ -213,19 +195,17 @@ void LanguageServer::SemanticTokens(RpcCall call) {
 }
 
 void LanguageServer::Query(RpcCall call, SymbolQuery query) {
-  const auto uri =
-      JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
+  const auto requested = RequireDocument(call);
+  if (!requested) {
+    return;
+  }
+  const auto uri = requested->uri;
   const auto position = ReadTextPosition(GetJsonField(call.params, protocol::kPosition));
-  if (!uri || !position) {
+  if (!position) {
     Error(call.identity, kInvalidParams, "symbol query requires a document URI and position");
     return;
   }
-  const auto found = documents_.find(*uri);
-  if (found == documents_.end()) {
-    Error(call.identity, kInvalidParams, "document is not open");
-    return;
-  }
-  const auto& opened = found->second;
+  const auto& opened = *requested->document;
   const auto& source = opened.source;
   const auto offset = source.OffsetAt(*position, encoding_);
   if (!offset) {
@@ -233,14 +213,14 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     return;
   }
   if (query == SymbolQuery::Rename) {
-    Rename(call, IndexFor(*uri, opened), *offset);
+    Rename(call, IndexFor(uri, opened), *offset);
     return;
   }
   auto response = Response(call.identity);
   auto* document = response.document();
   auto* result = yyjson_mut_null(document);
   if (query == SymbolQuery::Completion) {
-    const auto completions = CompletionsFor(*uri, opened, *offset);
+    const auto completions = CompletionsFor(uri, opened, *offset);
     auto begin = *offset;
     auto end = *offset;
     const auto text = source.text();
@@ -260,7 +240,7 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     }
   } else {
     // 同版本的跳转与悬停复用 AST/语义索引；文档或磁盘依赖变化时统一失效。
-    auto& index = IndexFor(*uri, opened);
+    auto& index = IndexFor(uri, opened);
     if (query == SymbolQuery::PrepareRename) {
       if (const auto declaration = index.PrepareRename(*offset, encoding_)) {
         result = JsonRange(document, declaration->range);

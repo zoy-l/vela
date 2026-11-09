@@ -26,6 +26,7 @@
 #include "base/native_program_mode.h"
 #include "base/path.h"
 #include "base/process_exit.h"
+#include "base/streams.h"
 #include "compiler/cli/development_debugger.h"
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_repl.h"
@@ -108,9 +109,7 @@ bool IsWaiting(DevelopmentStatus status) {
 
 class DevelopmentConsole final {
  public:
-  DevelopmentConsole(std::string entry,
-                     DevelopmentStreams streams,
-                     compiler::jit::CompileOptions compilation)
+  DevelopmentConsole(std::string entry, Streams streams, compiler::jit::CompileOptions compilation)
       : files_(std::move(entry)), streams_(streams), compilation_(std::move(compilation)) {}
   int Run();
 
@@ -135,7 +134,7 @@ class DevelopmentConsole final {
   void PollPaused();
 
   compiler::DevelopmentFiles files_;
-  DevelopmentStreams streams_;
+  Streams streams_;
   compiler::jit::CompileOptions compilation_;
   std::unique_ptr<DevelopmentSession> session_;
   std::unique_ptr<DevelopmentDebugger> debugger_;
@@ -510,10 +509,9 @@ int DevelopmentConsole::Run() {
     return kSourceErrorExitCode;
   }
   compiler::DevelopmentOptions options;
-  const auto diagnostics = compiler::LoadSourceDiagnosticOptions(Utf8Path(files_.entry()));
+  const auto diagnostics =
+      compiler::ReadSourceDiagnosticOptions(Utf8Path(files_.entry()), streams_.errors.get());
   if (!diagnostics) {
-    frontend::WriteDiagnostic(streams_.errors.get(),
-                              compiler::ConfigurationDiagnostic(diagnostics.error()));
     return diagnostics.error().exit_code;
   }
   options.diagnostics = *diagnostics;
@@ -602,7 +600,7 @@ void DevelopmentConsole::PollPaused() {
 }  // namespace
 
 int RunDevelopmentConsole(std::string entry,
-                          DevelopmentStreams streams,
+                          Streams streams,
                           compiler::jit::CompileOptions compilation) {
   return DevelopmentConsole(std::move(entry), streams, std::move(compilation)).Run();
 }

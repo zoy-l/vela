@@ -244,7 +244,7 @@ class SemanticIndex final {
                                           std::size_t available);
   [[nodiscard]] Receiver ReceiverFor(const frontend::Expression& expression) const;
   [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver,
-                                                          std::string_view prefix = {}) const;
+                                                          std::string_view prefix) const;
   void AddAsyncCompletions(std::vector<Completion>& result,
                            const frontend::TypeDescriptor& type,
                            frontend::MemberStorage storage,
@@ -255,9 +255,9 @@ class SemanticIndex final {
   [[nodiscard]] absl::flat_hash_map<std::string, Completion> VisibleLocals(
       std::size_t offset,
       std::string_view prefix) const;
-  [[nodiscard]] std::vector<Completion> QualifiedCompletions(
-      std::size_t token,
-      const absl::flat_hash_map<std::string, Completion>& locals) const;
+  [[nodiscard]] std::vector<Completion> QualifiedCompletions(std::size_t token,
+                                                             std::string_view prefix,
+                                                             std::size_t offset) const;
   void IndexExpression(const frontend::Expression& expression);
   void IndexMemberExpression(const frontend::Expression& expression);
   void VisitCallArguments(const frontend::Expression& expression, const Scope& scope);

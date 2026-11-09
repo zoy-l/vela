@@ -61,6 +61,8 @@ class Parser final {
   [[nodiscard]] bool Check(TokenKind kind) const;
   bool Match(TokenKind kind);
   const Token* TakeName();
+  enum class SignatureContext : std::uint8_t { Function, Interface };
+  std::optional<Function> ParseSignature(Function function, SignatureContext context);
   const Token* Expect(TokenKind kind, std::string message);
   void AnnotatePrevious(TokenRole role);
   void AddDiagnostic(SourceLocation location, std::string message);
@@ -137,6 +139,8 @@ class Parser final {
   PostfixStatus ParsePostfixCall(std::unique_ptr<Expression>& expression);
   PostfixStatus ParsePostfixMember(std::unique_ptr<Expression>& expression);
   PostfixStatus ParsePostfixIndex(std::unique_ptr<Expression>& expression);
+  enum class IndexAccess : std::uint8_t { Ordinary, NullSafe };
+  PostfixStatus ParseBracketIndex(std::unique_ptr<Expression>& expression, IndexAccess access);
   PostfixStatus ParsePostfixIncrement(std::unique_ptr<Expression>& expression);
   std::unique_ptr<Expression> ParsePrimary();
   [[nodiscard]] bool IsLambda() const;

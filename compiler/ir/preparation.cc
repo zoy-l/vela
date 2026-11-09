@@ -207,9 +207,8 @@ LoweringResult PrepareProgram(const frontend::Program& source,
   if (options.declarations != nullptr) {
     declarations = BindDeclarations(source, model, *options.declarations, options.revision);
   }
-  auto lowered = Lowerer(source, model, options.persistent_slots,
-                         declarations ? &*declarations : nullptr, options.native_mode)
-                     .Lower();
+  auto lowered =
+      Lowerer(source, model, declarations ? &*declarations : nullptr, options.native_mode).Lower();
   if (!lowered.Succeeded()) {
     return lowered;
   }

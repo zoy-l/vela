@@ -34,9 +34,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   auto callback =
       CreateMemberFunction(receiver, std::string(name) + ".callback", callback_signature);
   const auto callback_target = function_ids_.at(callback.name);
-  current_function_ = &callback;
-  current_handler_.reset();
-  next_register_ = callback.parameter_count;
+  BeginGeneratedBody(callback);
   const auto context = EmitTemporary({.opcode = Opcode::GetField, .lhs = 0, .location = {}});
   RecordValueType(context, dynamic);
   const auto empty = EmitTemporary({.opcode = Opcode::LoadNull, .location = {}});
@@ -64,9 +62,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
     signature.return_type = dynamic;
   }
   auto function = CreateMemberFunction(receiver, name, signature);
-  current_function_ = &function;
-  current_handler_.reset();
-  next_register_ = function.parameter_count;
+  BeginGeneratedBody(function);
   std::optional<std::size_t> default_sort;
   if (algorithm == ArrayAlgorithm::Sort) {
     default_sort = function.instructions.size();

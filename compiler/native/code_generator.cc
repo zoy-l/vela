@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -449,17 +450,23 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     if (!body_type) {
       return std::unexpected(MakeDiagnostics(program, body_type.error(), &function));
     }
+    const auto ordinal = std::to_string(index);
+    const auto symbol = [&](std::string_view role) {
+      auto name = module_name;
+      name.append(role);
+      name.append(ordinal);
+      return name;
+    };
+    const auto prefix = symbol("_");
     auto* body = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                        module_name + "_body_" + std::to_string(index), module);
+                                        symbol("_body_"), module);
     auto* pointer = llvm::PointerType::getUnqual(context);
     auto* wrapper_type = llvm::FunctionType::get(
         llvm::Type::getInt8Ty(context),
         {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
-    const auto symbol = module_name + "_entry_" + std::to_string(index);
-    auto* entry =
-        llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage, symbol, module);
-    auto* resume =
-        AddResumeEntry(module, function, module_name + "_resume_" + std::to_string(index));
+    auto* entry = llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage,
+                                         symbol("_entry_"), module);
+    auto* resume = AddResumeEntry(module, function, symbol("_resume_"));
     GeneratedFunction baseline{
         .body = body,
         .entry = entry,
@@ -471,14 +478,13 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         function.native_symbol.empty()) {
       // 仅可重载映像存在版本失效；封闭映像的调用目标和字段布局在实例期内固定。
       if (HasVersionAssumptions(function, program)) {
-        current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+        current = AddRecoveryEntries(module, prefix, baseline);
       }
     }
     const auto inlining =
         PlanInlining(function, index, program.native_mode, debugging, placement, tier);
     if (inlining.leaf != LeafKind::None) {
-      AddLeafEntry(module, module_name + '_' + std::to_string(index), function, inlining.leaf,
-                   current);
+      AddLeafEntry(module, prefix, function, inlining.leaf, current);
       baseline.leaf = current.leaf;
       baseline.leaf_guard = current.leaf_guard;
       baseline.budgeted_recursion = current.budgeted_recursion;
@@ -488,9 +494,8 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       current.body->addFnAttr(llvm::Attribute::AlwaysInline);
     }
     if (const auto& borrow = borrows[index]) {
-      baseline.borrowed =
-          llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                 module_name + "_borrowed_" + std::to_string(index), module);
+      baseline.borrowed = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
+                                                 symbol("_borrowed_"), module);
       borrowable.at(index) = borrow->type;
       current.borrowed = baseline.borrowed;
     }
@@ -616,17 +621,18 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
   if (range_root) {
     emission_entries = declarations.specialized;
   }
+  const auto analysis = PlanFunctionAnalysis(program, index, debugging, emission_tier, escape,
+                                             global_access.readonly_slots, declarations.borrowable);
   auto emitted = EmitFunction(module, program, calls, field_targets, root_access, global_access,
-                              image, index, emission_entries, body_dependencies, debugging,
-                              placement, emission_tier, escape, declarations.borrowable);
+                              image, index, analysis, emission_entries, body_dependencies,
+                              debugging, placement, emission_tier);
   if (!emitted) {
     return emitted;
   }
   if (has_range_specialization) {
-    const auto specialized =
-        EmitFunction(module, program, calls, field_targets, range_access, global_access, image,
-                     index, declarations.specialized, body_dependencies, debugging, placement,
-                     emission_tier, escape, declarations.borrowable);
+    const auto specialized = EmitFunction(
+        module, program, calls, field_targets, range_access, global_access, image, index, analysis,
+        declarations.specialized, body_dependencies, debugging, placement, emission_tier);
     if (!specialized) {
       return specialized;
     }
@@ -644,9 +650,13 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     emitted->borrowed_root_stores = borrowed->root_stores;
   }
   if (target.baseline_body != nullptr) {
-    auto optimized_metrics = EmitFunction(module, program, calls, field_targets, generic_access,
-                                          global_access, image, index, optimized, body_dependencies,
-                                          debugging, placement, NativeCodeTier::Optimized, escape);
+    const auto optimized_analysis =
+        PlanFunctionAnalysis(program, index, debugging, NativeCodeTier::Optimized, escape,
+                             global_access.readonly_slots, {});
+    auto optimized_metrics =
+        EmitFunction(module, program, calls, field_targets, generic_access, global_access, image,
+                     index, optimized_analysis, optimized, body_dependencies, debugging, placement,
+                     NativeCodeTier::Optimized);
     if (!optimized_metrics) {
       return optimized_metrics;
     }

@@ -668,10 +668,14 @@ void Lexer::ScanUnicodeEscape(std::string& value, SourceLocation escape_location
 }
 
 void Lexer::AddToken(TokenKind kind, std::size_t start) {
+  const auto length = current_ - start;
+  const bool stores_text = IsMemberName(kind) || IsStringToken(kind) || kind == TokenKind::Void ||
+                           kind == TokenKind::Print || kind == TokenKind::Super ||
+                           kind == TokenKind::IntegerLiteral || kind == TokenKind::DoubleLiteral;
   tokens_.push_back({
-      .lexeme = std::string(source_.substr(start, current_ - start)),
+      .lexeme = stores_text ? std::string(source_.substr(start, length)) : std::string(),
       .offset = start,
-      .length = current_ - start,
+      .length = length,
       .location = token_location_,
       .kind = kind,
   });

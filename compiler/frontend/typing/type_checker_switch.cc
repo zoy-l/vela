@@ -1,34 +1,44 @@
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::frontend {
 
-void TypeChecker::CheckCaseLabel(const Expression& label,
-                                 const Type& selector_type,
-                                 absl::flat_hash_set<std::string>& labels) {
+std::optional<ConstantValue> TypeChecker::CheckConstantLabel(
+    const Expression& label,
+    const Type& selector_type,
+    absl::flat_hash_set<std::string>& labels,
+    SourceLocation location,
+    ConstantLabelKind kind) {
+  const bool match = kind == ConstantLabelKind::Match;
   const auto actual = CheckExpression(label, &selector_type);
   if (IsValid(actual) && !IsSameType(selector_type, actual)) {
-    AddDiagnostic(label.location, "case label type must match switch value type");
+    AddDiagnostic(location, match ? "match pattern type must equal the selector type"
+                                  : "case label type must match switch value type");
   }
-  const auto constant = EvaluateConstant(label);
+  auto constant = EvaluateConstant(label);
   if (!constant) {
-    AddDiagnostic(label.location, "case label must be a compile-time constant");
-    return;
+    AddDiagnostic(location, match ? "match pattern must be a compile-time constant"
+                                  : "case label must be a compile-time constant");
+    return std::nullopt;
   }
   const auto key = ConstantKey(*constant);
   if (!labels.insert(key).second) {
-    AddDiagnostic(label.location, "duplicate case label");
+    AddDiagnostic(location, match ? "duplicate match pattern" : "duplicate case label");
   }
   facts_.case_values.insert_or_assign(&label, *constant);
+  return constant;
 }
 
 StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type) {
@@ -47,7 +57,8 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
     const auto& branch = cases.at(index);
     const auto checkpoint = refinements_.BeginBranch();
     if (branch.label) {
-      CheckCaseLabel(*branch.label, type, labels);
+      static_cast<void>(CheckConstantLabel(*branch.label, type, labels, branch.label->location,
+                                           ConstantLabelKind::Switch));
     } else if (has_default) {
       AddDiagnostic(branch.location, "duplicate default label");
     } else {

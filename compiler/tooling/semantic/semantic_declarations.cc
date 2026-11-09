@@ -250,7 +250,8 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
     case Expression::Kind::NullLiteral:
       return std::string(source.text.substr(token.offset, token.length));
     case Expression::Kind::Unary:
-      return token.lexeme + DefaultValue(*expression.operand);
+      return std::string(source.text.substr(token.offset, token.length)) +
+             DefaultValue(*expression.operand);
     default:
       return "…";
   }

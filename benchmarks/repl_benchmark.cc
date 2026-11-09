@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <sstream>
+#include <string>
 
 #include "benchmark/benchmark.h"
 
@@ -77,6 +78,36 @@ void SessionSubmission(benchmark::State& state) {
     state.ResumeTiming();
   }
 }
+
+void PrepareSource(benchmark::State& state) {
+  constexpr std::uint32_t kHistoryDeclarations = 128;
+  compiler::ReplSource source;
+  for (std::uint32_t index = 0; index < kHistoryDeclarations; ++index) {
+    auto candidate = source.Prepare("const previous" + std::to_string(index) + " = 1;");
+    if (!candidate) {
+      state.SkipWithError("cannot populate REPL declaration history");
+      return;
+    }
+    source.Commit(*candidate);
+  }
+  std::string submission = "func submitted(): int { let value = 0;";
+  for (std::int64_t index = 0; index < state.range(0); ++index) {
+    submission += "value = value + 1;";
+  }
+  submission += "return value; }";
+  for (auto iteration : state) {
+    auto candidate = source.Prepare(submission);
+    if (!candidate || candidate->entry.submission != kHistoryDeclarations + 1 ||
+        candidate->parsed.program.globals.size() != kHistoryDeclarations ||
+        candidate->parsed.program.functions.size() != 2) {
+      state.SkipWithError("REPL candidate lost its independent declarations or entry");
+      return;
+    }
+    benchmark::DoNotOptimize(candidate);
+  }
+}
+
+BENCHMARK(PrepareSource)->Name("repl/source_prepare")->Arg(256);
 
 BENCHMARK(SessionSubmission)
     ->Name("repl/submission")

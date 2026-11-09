@@ -94,6 +94,8 @@ void RemapJumpTargets(Function& function, std::span<const std::uint32_t> targets
 
 [[nodiscard]] RegisterAccess AnalyzeRegisters(const Instruction& instruction,
                                               std::span<const Function> functions);
+// 直接 Call 的实参数量属于目标函数；这里只读取指令中编码的调用窗口。
+[[nodiscard]] std::uint32_t CallArgumentCount(const Instruction& instruction);
 [[nodiscard]] std::vector<RegisterAccess> AnalyzeRegisterAccesses(
     const Function& function,
     std::span<const Function> functions);

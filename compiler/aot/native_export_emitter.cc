@@ -17,6 +17,7 @@
 #include <llvm/IR/Module.h>
 
 #include "compiler/aot/native_compiler.h"
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/host_header.h"
 #include "compiler/native/native_values.h"
@@ -27,13 +28,8 @@ namespace {
 using native::Builder;
 
 bool IsCIdentifier(std::string_view name) {
-  const auto letter = [](char value) {
-    return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z');
-  };
-  return !name.empty() && (letter(name.front()) || name.front() == '_') &&
-         std::ranges::all_of(name, [letter](char value) {
-           return letter(value) || value == '_' || (value >= '0' && value <= '9');
-         });
+  return !name.empty() && frontend::IsIdentifierStart(name.front()) &&
+         std::ranges::all_of(name, frontend::IsIdentifierPart);
 }
 
 void EmitExport(llvm::Module& module,

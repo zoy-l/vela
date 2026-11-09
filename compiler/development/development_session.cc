@@ -95,14 +95,6 @@ std::expected<runtime::NativePublicationTimings, runtime::NativePublicationError
   return dispatch.Publish(std::move(*candidate));
 }
 
-DevelopmentChanges Changes(const SourceUpdate& update) {
-  DevelopmentChanges changes;
-  for (const auto& module : update.changes) {
-    changes.modules.push_back(module.path);
-  }
-  return changes;
-}
-
 SourceUpdate FullUpdate(const CompiledSourceSnapshot& previous, const SourceUpdate& update) {
   absl::flat_hash_map<std::string, SourceChange> sources;
   for (const auto& [path, text] : previous.sources) {
@@ -276,7 +268,6 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   result.timings.native = code->timings;
   result.diagnostics = source->snapshot().diagnostics;
   result.timings.frontend = source->snapshot().timings;
-  result.changes = Changes(update);
   result.changes.compiled_functions = code->compiled_functions;
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),
                               std::move(replacement), std::move(result));
@@ -352,18 +343,6 @@ runtime::NativeSafepointEndpoint DevelopmentSession::safepoint_endpoint() const 
 void DevelopmentSession::SetDebugger(runtime::NativeDebugger* debugger) noexcept {
   options_.debugger = debugger;
   isolate_->native_control().SetDebugger(debugger);
-}
-
-std::expected<void, runtime::NativeSafepointError> DevelopmentSession::Post(
-    DevelopmentCandidate candidate,
-    std::function<void(const DevelopmentResult&)> submitted) {
-  return safepoint_endpoint().Post(
-      [this, candidate = std::move(candidate), submitted = std::move(submitted)]() mutable {
-        const auto result = Submit(std::move(candidate));
-        if (submitted) {
-          submitted(result);
-        }
-      });
 }
 
 void DevelopmentSession::AtSafepoint() {

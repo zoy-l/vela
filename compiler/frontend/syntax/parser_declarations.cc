@@ -310,28 +310,49 @@ std::optional<Function> Parser::ParseInterfaceMethod() {
   Function method;
   method.name = member.lexeme;
   method.location = member.location;
-  auto type_parameters = ParseTypeParameters();
-  if (!type_parameters ||
-      (Expect(TokenKind::LeftParen, "expected '(' after interface method name") == nullptr)) {
+  auto signature = ParseSignature(std::move(method), SignatureContext::Interface);
+  if (!signature ||
+      Expect(TokenKind::Semicolon, "expected ';' after interface method") == nullptr) {
     return std::nullopt;
   }
-  method.type_parameters = std::move(*type_parameters);
+  return signature;
+}
+
+std::optional<Function> Parser::ParseSignature(Function function, SignatureContext context) {
+  const bool interface = context == SignatureContext::Interface;
+  auto type_parameters = ParseTypeParameters();
+  if (!type_parameters ||
+      Expect(TokenKind::LeftParen, interface ? "expected '(' after interface method name"
+                                             : "expected '(' after function name") == nullptr) {
+    return std::nullopt;
+  }
+  function.type_parameters = std::move(*type_parameters);
+  if (function.is_async && !function.native_symbol.empty()) {
+    AddDiagnostic(function.location, "external functions cannot be async");
+    return std::nullopt;
+  }
+  if (!function.native_symbol.empty() && !function.type_parameters.empty() &&
+      context_ != SyntaxContext::Standard) {
+    AddDiagnostic(function.location, "external functions cannot declare generic parameters");
+    return std::nullopt;
+  }
   auto parameters = ParseParameters();
   if (!parameters) {
     return std::nullopt;
   }
-  method.parameters = std::move(*parameters);
-  if ((Expect(TokenKind::RightParen, "expected ')' after interface parameters") == nullptr) ||
-      (Expect(TokenKind::Colon, "expected ':' before interface return type") == nullptr)) {
+  function.parameters = std::move(*parameters);
+  if (Expect(TokenKind::RightParen, interface ? "expected ')' after interface parameters"
+                                              : "expected ')' after parameters") == nullptr ||
+      Expect(TokenKind::Colon, interface ? "expected ':' before interface return type"
+                                         : "expected ':' before return type") == nullptr) {
     return std::nullopt;
   }
   auto returned = ParseType();
-  if (!returned ||
-      (Expect(TokenKind::Semicolon, "expected ';' after interface method") == nullptr)) {
+  if (!returned) {
     return std::nullopt;
   }
-  method.return_type = std::move(*returned);
-  return method;
+  function.return_type = std::move(*returned);
+  return function;
 }
 
 std::optional<Function> Parser::ParseFunction() {
@@ -351,40 +372,16 @@ std::optional<Function> Parser::ParseFunction() {
 std::optional<Function> Parser::ParseFunctionBody(const Token& name,
                                                   std::string native_symbol,
                                                   bool is_async) {
-  auto type_parameters = ParseTypeParameters();
-  if (!type_parameters ||
-      (Expect(TokenKind::LeftParen, "expected '(' after function name") == nullptr)) {
+  Function declaration;
+  declaration.name = name.lexeme;
+  declaration.location = name.location;
+  declaration.native_symbol = std::move(native_symbol);
+  declaration.is_async = is_async;
+  auto signature = ParseSignature(std::move(declaration), SignatureContext::Function);
+  if (!signature) {
     return std::nullopt;
   }
-  Function function;
-  function.name = name.lexeme;
-  function.location = name.location;
-  function.type_parameters = std::move(*type_parameters);
-  function.native_symbol = std::move(native_symbol);
-  function.is_async = is_async;
-  if (function.is_async && !function.native_symbol.empty()) {
-    AddDiagnostic(name.location, "external functions cannot be async");
-    return std::nullopt;
-  }
-  if (!function.native_symbol.empty() && !function.type_parameters.empty() &&
-      context_ != SyntaxContext::Standard) {
-    AddDiagnostic(name.location, "external functions cannot declare generic parameters");
-    return std::nullopt;
-  }
-  auto parameters = ParseParameters();
-  if (!parameters) {
-    return std::nullopt;
-  }
-  function.parameters = std::move(*parameters);
-  if ((Expect(TokenKind::RightParen, "expected ')' after parameters") == nullptr) ||
-      (Expect(TokenKind::Colon, "expected ':' before return type") == nullptr)) {
-    return std::nullopt;
-  }
-  auto type = ParseType();
-  if (!type) {
-    return std::nullopt;
-  }
-  function.return_type = std::move(*type);
+  auto& function = *signature;
   if (!function.native_symbol.empty()) {
     if (Match(TokenKind::Equal)) {
       const auto* const symbol = Expect(TokenKind::StringLiteral, "expected native symbol string");

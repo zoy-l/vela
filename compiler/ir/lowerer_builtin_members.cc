@@ -18,7 +18,6 @@
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/member.h"
-#include "base/regexp.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -150,27 +149,34 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
   return function;
 }
 
+void Lowerer::BeginGeneratedBody(Function& function) {
+  current_function_ = &function;
+  current_handler_.reset();
+  next_register_ = function.parameter_count;
+}
+
 void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
                                     std::string_view name,
                                     Builtin builtin,
                                     const frontend::FunctionDescriptor& signature,
                                     MemberKind kind) {
   auto function = CreateMemberFunction(receiver, name, signature);
-  current_function_ = &function;
-  current_handler_.reset();
-  next_register_ = function.parameter_count;
+  BeginGeneratedBody(function);
   const auto arity = BuiltinArity(builtin);
   const auto base = AllocateRegisterWindow(arity, {});
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = 0, .location = {}});
   LowerBuiltinDefaults(builtin, base, {});
+  builtin = PrepareArrayMutation(builtin, base, 0, {});
   if (builtin == Builtin::ArraySplice) {
-    Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = {}});
+    const auto missing_start = function.instructions.size();
+    Emit({.opcode = Opcode::JumpIfNull, .lhs = 1, .location = {}});
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = base + 2,
         .immediate = std::numeric_limits<std::int64_t>::max(),
         .location = {},
     });
+    BindJump(missing_start);
   }
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
     const auto& parameter = signature.parameters.at(index);
@@ -190,40 +196,10 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
           static_cast<std::uint32_t>(function.instructions.size());
     }
   }
-  if (builtin == Builtin::ArrayPush) {
-    builtin = Builtin::ArrayPushMany;
+  if (SnapshotCountBuiltin(builtin)) {
+    EmitSnapshotArray(builtin, base, function.return_type, {});
   }
-  if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
-      builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
-    auto count_builtin = Builtin::CollectionSize;
-    if (builtin == Builtin::StringCodePoints) {
-      count_builtin = Builtin::StringLength;
-    } else if (builtin == Builtin::StringGraphemes) {
-      count_builtin = Builtin::StringGraphemeLength;
-    }
-    const auto count = AllocateRegister({});
-    EmitBuiltinCall(count_builtin, count, base, {});
-    Emit({
-        .opcode = Opcode::NewDynamicArray,
-        .dst = base + 1,
-        .lhs = count,
-        .index = RegisterArrayType(function.return_type),
-        .location = {},
-    });
-  }
-  if (HasRegExpArrayLayout(builtin)) {
-    auto type = function.return_type;
-    if (type.nullable) {
-      type.name = frontend::NonNullableTypeName(type);
-      type.nullable = false;
-    }
-    Emit({
-        .opcode = Opcode::LoadInt,
-        .dst = static_cast<RegisterId>(base + arity - 1),
-        .immediate = RegisterArrayType(type),
-        .location = {},
-    });
-  }
+  EmitRegExpLayoutArgument(builtin, base, function.return_type, {});
   const auto result = AllocateRegister({});
   EmitBuiltinCall(builtin, result, base, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});

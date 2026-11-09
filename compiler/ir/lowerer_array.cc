@@ -3,12 +3,29 @@
 #include <limits>
 #include <vector>
 #include "base/builtin.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
 namespace vela::ir {
+
+Builtin Lowerer::PrepareArrayMutation(Builtin builtin,
+                                      RegisterId base,
+                                      std::int64_t delete_count,
+                                      frontend::SourceLocation location) {
+  if (builtin == Builtin::ArraySplice) {
+    Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = location});
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = base + 2,
+        .immediate = delete_count,
+        .location = location,
+    });
+  }
+  return builtin == Builtin::ArrayPush ? Builtin::ArrayPushMany : builtin;
+}
 
 Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& expression) {
   const auto& result_type = model_.expression_types.at(&expression);
@@ -23,15 +40,9 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
     EmitBuiltinCall(Builtin::ArrayLength, result, base, location);
     return {.reg = result, .type = result_type};
   }
-  if (splice) {
-    Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = location});
-    Emit({
-        .opcode = Opcode::LoadInt,
-        .dst = base + 2,
-        .immediate = expression.arguments.empty() ? 0 : std::numeric_limits<std::int64_t>::max(),
-        .location = location,
-    });
-  }
+  builtin = PrepareArrayMutation(
+      builtin, base, expression.arguments.empty() ? 0 : std::numeric_limits<std::int64_t>::max(),
+      location);
   const auto& order = model_.argument_order.at(&expression);
   std::vector<RegisterId> items;
   for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
@@ -69,9 +80,6 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
         .rhs = items.at(index),
         .location = location,
     });
-  }
-  if (builtin == Builtin::ArrayPush) {
-    builtin = Builtin::ArrayPushMany;
   }
   const auto result = AllocateRegister(location);
   EmitBuiltinCall(builtin, result, base, location);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -18,76 +19,98 @@
 namespace vela::testing {
 namespace {
 
-struct Option final {
-  std::string_view name;
-  std::string_view value;
+enum class OptionKind : std::uint8_t {
+  Config,
+  Timeout,
+  Reporter,
+  Concurrency,
+  Name,
+  PlainName,
+  Tags,
+  ExcludeTags,
 };
-std::expected<void, std::string> ReadRunnerOption(TestCommandOptions& options, Option option) {
-  const auto [name, value] = option;
-  if (name == "--config") {
-    if (value.empty()) {
-      return std::unexpected("--config requires a nonempty path");
-    }
-    options.config = Utf8Path(value);
-  } else if (name == "--timeout") {
-    const auto timeout = ParseTimeout(value);
-    if (!timeout) {
-      return std::unexpected(timeout.error());
-    }
-    options.timeout = *timeout;
-  } else if (name == "--reporter") {
-    const auto reporter = ParseReporter(value);
-    if (!reporter) {
-      return std::unexpected(reporter.error());
-    }
-    options.reporter = *reporter;
-  } else if (name == "--concurrency") {
-    const auto count = ParseUint32(value);
-    if (!count || *count == 0) {
-      return std::unexpected("--concurrency must be a positive integer");
-    }
-    options.concurrency = *count;
-  }
-  return {};
-}
 
-std::expected<void, std::string> ReadFilterOption(TestCommandOptions& options, Option option) {
-  const auto [name, value] = option;
-  if (name == "--name") {
-    auto pattern = Pattern::Regex(value);
-    if (!pattern) {
-      return std::unexpected("invalid --name expression: " + pattern.error());
+std::expected<void, std::string> ReadOption(TestCommandOptions& options,
+                                            OptionKind kind,
+                                            std::string_view value) {
+  switch (kind) {
+    case OptionKind::Config:
+      if (value.empty()) {
+        return std::unexpected("--config requires a nonempty path");
+      }
+      options.config = Utf8Path(value);
+      return {};
+    case OptionKind::Timeout: {
+      const auto timeout = ParseTimeout(value);
+      if (!timeout) {
+        return std::unexpected(timeout.error());
+      }
+      options.timeout = *timeout;
+      return {};
     }
-    options.names.push_back(std::move(*pattern));
-  } else if (name == "--plain-name") {
-    options.plain_names.emplace_back(value);
-  } else {
-    auto selector = TagSelector::Parse(value);
-    if (!selector) {
-      return std::unexpected(selector.error());
+    case OptionKind::Reporter: {
+      const auto reporter = ParseReporter(value);
+      if (!reporter) {
+        return std::unexpected(reporter.error());
+      }
+      options.reporter = *reporter;
+      return {};
     }
-    if (name == "--tags") {
-      options.include_tags = std::move(*selector);
-    } else {
-      options.exclude_tags = std::move(*selector);
+    case OptionKind::Concurrency: {
+      const auto count = ParseUint32(value);
+      if (!count || *count == 0) {
+        return std::unexpected("--concurrency must be a positive integer");
+      }
+      options.concurrency = *count;
+      return {};
+    }
+    case OptionKind::Name: {
+      auto pattern = Pattern::Regex(value);
+      if (!pattern) {
+        return std::unexpected("invalid --name expression: " + pattern.error());
+      }
+      options.names.push_back(std::move(*pattern));
+      return {};
+    }
+    case OptionKind::PlainName:
+      options.plain_names.emplace_back(value);
+      return {};
+    case OptionKind::Tags:
+    case OptionKind::ExcludeTags: {
+      auto selector = TagSelector::Parse(value);
+      if (!selector) {
+        return std::unexpected(selector.error());
+      }
+      if (kind == OptionKind::Tags) {
+        options.include_tags = std::move(*selector);
+      } else {
+        options.exclude_tags = std::move(*selector);
+      }
+      return {};
     }
   }
-  return {};
+  std::unreachable();
 }
 
 std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
                                                  std::span<const std::string_view> arguments,
                                                  std::size_t& index) {
-  constexpr auto kRunnerOptions =
-      std::to_array<std::string_view>({"--config", "--timeout", "--reporter", "--concurrency"});
-  constexpr auto kFilterOptions =
-      std::to_array<std::string_view>({"--name", "--plain-name", "--tags", "--exclude-tags"});
+  using NamedOption = std::pair<std::string_view, OptionKind>;
+  constexpr auto kOptions = std::to_array<NamedOption>({
+      {"--config", OptionKind::Config},
+      {"--timeout", OptionKind::Timeout},
+      {"--reporter", OptionKind::Reporter},
+      {"--concurrency", OptionKind::Concurrency},
+      {"--name", OptionKind::Name},
+      {"--plain-name", OptionKind::PlainName},
+      {"--tags", OptionKind::Tags},
+      {"--exclude-tags", OptionKind::ExcludeTags},
+  });
   const auto argument = arguments[index];
   const auto separator = argument.find('=');
   const auto name = argument.substr(0, separator);
-  const bool runner = std::ranges::find(kRunnerOptions, name) != kRunnerOptions.end();
-  const bool filter = std::ranges::find(kFilterOptions, name) != kFilterOptions.end();
-  if (!runner && !filter) {
+  const auto found = std::ranges::find(kOptions, name, &NamedOption::first);
+  if (found == kOptions.end()) {
     return std::unexpected("unknown test option: " + std::string(name));
   }
   std::string_view value;
@@ -99,8 +122,7 @@ std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
     }
     value = arguments[index];
   }
-  return runner ? ReadRunnerOption(options, {.name = name, .value = value})
-                : ReadFilterOption(options, {.name = name, .value = value});
+  return ReadOption(options, found->second, value);
 }
 
 }  // namespace

@@ -8,6 +8,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
 namespace vela::compiler::native::internal {
+inline constexpr std::size_t kMaximumStateCells = std::size_t{1024} * 1024;
 struct Provenance final {
   std::uint64_t objects = 0;
   bool other = true;
@@ -15,8 +16,6 @@ struct Provenance final {
   bool operator==(const Provenance&) const = default;
 };
 using State = std::vector<Provenance>;
-std::vector<ir::RegisterAccess> RegisterAccesses(const ir::Function& function,
-                                                 const ir::Program& program);
 struct BlockState final {
   State values;
   bool reached = false;
@@ -57,6 +56,7 @@ std::vector<BlockState> Solve(const ir::Function& function,
                               State entry = {});
 void RewriteEscapes(EscapePlan& plan,
                     const ir::Program& program,
+                    std::span<const ir::RegisterAccess> accesses,
                     std::span<const std::vector<ir::RegisterId>> live,
                     const ir::FlowGraph& graph,
                     std::span<const BlockState> blocks,

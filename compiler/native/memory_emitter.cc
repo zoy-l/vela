@@ -289,7 +289,7 @@ void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
-  Check(builder_.CreateIsNotNull(object), ExecutionStatus::TypeError);
+  CheckReference(object);
   if (instruction.field_declaration) {
     EmitReloadableField(instruction, object);
     return;
@@ -598,7 +598,7 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
   auto* array = Reference(array_reg);
   auto* index = Payload(reading ? instruction.rhs : instruction.lhs);
   if (!HasRangeProof(array_access_.in_bounds)) {
-    Check(builder_.CreateIsNotNull(array), ExecutionStatus::TypeError);
+    CheckReference(array);
     auto* length = ReadArrayStorage(array, array_reg, ArrayStorageField::Length);
     // 无符号比较同时拒绝负数与超过 uint32 长度域的索引，保留精确失败位置。
     Check(builder_.CreateICmpULT(index, builder_.CreateZExt(length, builder_.getInt64Ty())),
@@ -663,7 +663,7 @@ void FunctionEmitter::WriteElement(llvm::Value* address,
 void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin) {
   using runtime::NativeMemoryLayout;
   auto* array = Reference(instruction.lhs);
-  Check(builder_.CreateIsNotNull(array), ExecutionStatus::TypeError);
+  CheckReference(array);
   if (builtin == Builtin::ArrayCheckMutation) {
     auto* mutation = ReadArrayStorage(array, instruction.lhs, ArrayStorageField::Mutation);
     Check(builder_.CreateICmpEQ(mutation, Payload(instruction.lhs + 1)),

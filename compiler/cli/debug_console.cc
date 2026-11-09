@@ -21,11 +21,9 @@
 #include <yyjson.h>
 
 #include "base/execution_limits.h"
-#include "base/execution_status.h"
 #include "base/integer_parse.h"
 #include "base/json.h"
 #include "base/path.h"
-#include "base/process_exit.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
@@ -603,20 +601,8 @@ int RunDebugConsole(runtime::NativeInstance& instance,
   ConsoleDebugger debugger(instance.image(), input, output);
   auto& control = instance.isolate().native_control();
   control.SetDebugger(&debugger);
-  runtime::ProcessEntry process(instance.isolate(), output);
-  const auto result = runtime::ExecuteNativeFunction(instance, function);
-  int code = kProgramFailureExitCode;
-  if (result.Succeeded()) {
-    const auto type = instance.call_signature(function).result;
-    code = process.Finish(result.value, type ? &instance.layouts().types[*type] : nullptr);
-  } else if (result.status != ExecutionStatus::ExecutionStopped) {
-    runtime::WriteRuntimeDiagnostic(output, {
-                                                .message = result.message,
-                                                .stack_trace = result.stack_trace,
-                                                .status = result.status,
-                                                .origin = result.origin,
-                                            });
-  }
+  int code = runtime::RunProcessEntry(instance, function, output,
+                                      runtime::ProcessStopDiagnostic::Suppress);
   if (control.IsStopRequested()) {
     output << "debugger stopped\n";
     code = 0;

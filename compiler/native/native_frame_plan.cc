@@ -8,10 +8,9 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "base/async_operation.h"
-#include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
@@ -25,15 +24,12 @@ namespace {
 std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::CallIndirect:
-      return static_cast<std::size_t>(instruction.index) + 2;
+      return static_cast<std::size_t>(ir::CallArgumentCount(instruction)) + 2;
     case Opcode::CallInterface:
-      return static_cast<std::size_t>(instruction.immediate);
     case Opcode::BuiltinCall:
-      return BuiltinArity(static_cast<Builtin>(instruction.index));
     case Opcode::AsyncCall:
-      return AsyncArity(static_cast<AsyncOperation>(instruction.index));
     case Opcode::StringInterpolate:
-      return instruction.rhs;
+      return ir::CallArgumentCount(instruction);
     case Opcode::StringConcat:
     case Opcode::EqualString:
     case Opcode::NotEqualString:

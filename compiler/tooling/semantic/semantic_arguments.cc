@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -109,15 +108,7 @@ std::string ArgumentSource(const frontend::SourceSnapshot& snapshot,
       TrackDelimiter(closing, token.kind, ArgumentClosing(token));
     }
   }
-  for (const auto kind : std::views::reverse(closing)) {
-    if (kind == TokenKind::RightBrace) {
-      text += ";}";
-    } else if (kind == TokenKind::RightParen) {
-      text += ')';
-    } else if (kind == TokenKind::RightBracket) {
-      text += ']';
-    }
-  }
+  AppendClosingDelimiters(text, closing, CompletionBrace::TerminateStatement);
   return text;
 }
 

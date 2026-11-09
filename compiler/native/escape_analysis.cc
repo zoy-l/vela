@@ -26,7 +26,6 @@ namespace internal {
 
 // 预算限制优化工作量，超出预算的合法程序仍使用普通实例存储。
 constexpr std::size_t kMaximumObjects = std::numeric_limits<std::uint64_t>::digits;
-constexpr std::size_t kMaximumStateCells = std::size_t{1024} * 1024;
 
 std::uint64_t MayHeap(const State& state) {
   return state.at(state.size() - 2).objects;
@@ -257,16 +256,6 @@ State BeforeFailure(const EscapePlan& plan,
     exceptional.at(exceptional.size() - 2).objects |= Reachable(plan, values, published);
   }
   return exceptional;
-}
-
-std::vector<ir::RegisterAccess> RegisterAccesses(const ir::Function& function,
-                                                 const ir::Program& program) {
-  std::vector<ir::RegisterAccess> result;
-  result.reserve(function.instructions.size());
-  for (const auto& instruction : function.instructions) {
-    result.push_back(ir::AnalyzeRegisters(instruction, program.functions));
-  }
-  return result;
 }
 
 std::vector<BlockState> Solve(const ir::Function& function,
@@ -594,7 +583,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
     preserve();
     return plan;
   }
-  const auto accesses = RegisterAccesses(function, program);
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, program.functions);
   const auto live = LiveBefore(function, program, graph, accesses);
   std::vector<BlockState> states;
   auto eligible = EligibleCount(plan);
@@ -604,7 +593,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
     Inspect(plan, program, graph, accesses, states, allocations, live);
     eligible = EligibleCount(plan);
     if (eligible == previous_count) {
-      RewriteEscapes(plan, program, live, graph, states, allocations);
+      RewriteEscapes(plan, program, accesses, live, graph, states, allocations);
       if (program.native_mode == NativeProgramMode::Closed &&
           std::ranges::none_of(plan.allocations, &AllocationSite::stack_record)) {
         // 标量替换暴露了原来经过字段的长度消费；没有借用记录或恢复快照时可消除文本。

@@ -217,6 +217,11 @@ class TypeChecker final : private InferenceTypeRelations {
                                                SourceLocation location,
                                                const Type* expected,
                                                std::span<const TypeName> explicit_arguments);
+  void ConstrainInferenceContext(TypeInference& inference,
+                                 const TypeName& result,
+                                 const Type* expected);
+  Type RecordDynamicOperands(const Expression& expression, const Type& left, const Type& right);
+  [[nodiscard]] static bool IsThrowable(const Type& type);
   Type InferFutureResult(const Expression& expression,
                          TypeInference& inference,
                          const Type* actual);
@@ -364,6 +369,13 @@ class TypeChecker final : private InferenceTypeRelations {
                           std::span<const Type> parameters,
                           CallbackPresence presence = CallbackPresence::Required,
                           CallbackParameters contract = CallbackParameters::Assignable);
+  std::optional<Type> CheckOptionalAsyncCallback(
+      const Expression& expression,
+      std::string_view name,
+      std::size_t position,
+      std::span<const Type> parameters,
+      std::vector<std::optional<Type>>& checked,
+      CallbackParameters contract = CallbackParameters::Assignable);
   Type RegisterAsyncCall(const Expression& expression,
                          AsyncCallDescriptor descriptor,
                          std::span<const std::optional<Type>> checked = {});
@@ -489,9 +501,18 @@ class TypeChecker final : private InferenceTypeRelations {
   [[nodiscard]] std::optional<ConstantValue> EvaluateBinaryConstant(
       const Expression& expression) const;
   [[nodiscard]] static std::string ConstantKey(const ConstantValue& value);
-  void CheckCaseLabel(const Expression& label,
-                      const Type& selector_type,
-                      absl::flat_hash_set<std::string>& labels);
+  struct EnumMember final {
+    Type type;
+    std::optional<std::int64_t> constant;
+  };
+  [[nodiscard]] std::optional<EnumMember> ResolveUnqualifiedEnumMember(
+      const Expression& expression) const;
+  enum class ConstantLabelKind : std::uint8_t { Switch, Match };
+  std::optional<ConstantValue> CheckConstantLabel(const Expression& label,
+                                                  const Type& selector_type,
+                                                  absl::flat_hash_set<std::string>& labels,
+                                                  SourceLocation location,
+                                                  ConstantLabelKind kind);
 
   Type CheckIntegerLiteral(const Expression& expression);
 

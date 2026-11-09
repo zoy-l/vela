@@ -48,15 +48,8 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
     }
     const auto label = LowerConstantLabel(*branch.label);
     const auto equal = AllocateRegister(branch.location);
-    const auto kind = value.type.kind;
-    auto opcode = Opcode::EqualInt;
-    if (kind == frontend::TypeDescriptor::Kind::String) {
-      opcode = Opcode::EqualString;
-    } else if (kind == frontend::TypeDescriptor::Kind::Bool) {
-      opcode = Opcode::EqualBool;
-    }
     Emit({
-        .opcode = opcode,
+        .opcode = SelectEqualityOpcode(value.type),
         .dst = equal,
         .lhs = value.reg,
         .rhs = label,

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <iosfwd>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -45,6 +46,8 @@ enum class ConfigurationRequirement : std::uint8_t { Required, Optional };
 
 [[nodiscard]] std::expected<frontend::DiagnosticOptions, ConfigurationError>
 LoadSourceDiagnosticOptions(const std::filesystem::path& source);
+[[nodiscard]] std::expected<frontend::DiagnosticOptions, ConfigurationError>
+ReadSourceDiagnosticOptions(const std::filesystem::path& source, std::ostream& errors);
 [[nodiscard]] frontend::Diagnostic ConfigurationDiagnostic(const ConfigurationError& error);
 
 }  // namespace vela::compiler

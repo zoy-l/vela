@@ -338,16 +338,12 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
   if (expression.object->kind == Expression::Kind::Name && expression.object->text == kSuperName) {
     return CheckSuperMember(expression, expected);
   }
-  if (expression.object->kind == Expression::Kind::Name &&
-      LookupLocal(expression.object->text) == nullptr) {
-    const auto enumeration = types_.find(expression.object->text);
-    if (enumeration != types_.end() && enumeration->second.kind == Type::Kind::Enum) {
-      if (enum_values_.contains(std::string(enumeration->second.name) + "." + expression.text)) {
-        return enumeration->second;
-      }
-      AddDiagnostic(expression.location, "unknown enum member '" + expression.text + "'");
-      return InvalidType();
+  if (const auto member = ResolveUnqualifiedEnumMember(expression)) {
+    if (member->constant) {
+      return member->type;
     }
+    AddDiagnostic(expression.location, "unknown enum member '" + expression.text + "'");
+    return InvalidType();
   }
 
   auto object = CheckExpression(*expression.object, nullptr);

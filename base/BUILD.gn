@@ -37,6 +37,7 @@ source_set("base") {
     "source_lines.cc",
     "source_lines.h",
     "source_location.h",
+    "streams.h",
     "test_operation.h",
     "test_protocol.h",
     "utf8.cc",

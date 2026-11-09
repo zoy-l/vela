@@ -54,8 +54,6 @@ struct CodeReusePlan final {
   std::vector<ReuseFunction> functions;
   // 从规划开始就固定弱索引命中的资源，覆盖后台生成期间旧候选被释放的窗口。
   std::vector<std::shared_ptr<void>> retained;
-  // 新机器码真正直接引用的旧代码。映像表中的入口指针另由映像所有者统一保活。
-  std::vector<std::shared_ptr<void>> dependencies;
   std::size_t compiled_functions = 0;
 };
 

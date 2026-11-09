@@ -89,7 +89,6 @@ struct CodeBatch final {
   llvm::orc::ResourceTrackerSP tracker;
   std::shared_ptr<CodeResourceCounters> counters;
   std::size_t functions;
-  std::vector<std::shared_ptr<void>> dependencies;
 };
 
 struct ImageOwnership final {
@@ -450,7 +449,6 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   }
   library->addToLinkOrder(jit_->getMainJITDylib());
   auto resource = std::make_shared<CodeBatch>(jit_, *library, counters_, compiled_functions);
-  resource->dependencies = std::move(reuse_plan.dependencies);
   BatchSymbols interned(*jit_);
   if (auto error = DefineReusedSymbols(interned, *library, *generated, reuse_plan)) {
     return std::unexpected(Diagnostic(llvm::toString(std::move(error))));

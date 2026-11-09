@@ -7,11 +7,13 @@
 #include <vector>
 
 #include "compiler/project/project_config.h"
+#include "compiler/testing/settings.h"
 
 namespace vela::testing {
 
 [[nodiscard]] std::expected<std::vector<std::filesystem::path>, compiler::ConfigurationError>
 DiscoverSuites(const compiler::ProjectConfiguration& configuration,
+               const Settings& settings,
                const std::filesystem::path& working_directory,
                std::span<const std::string> explicit_paths);
 

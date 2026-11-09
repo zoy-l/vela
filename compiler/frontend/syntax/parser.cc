@@ -819,16 +819,7 @@ Parser::PostfixStatus Parser::ParsePostfixMember(std::unique_ptr<Expression>& ex
     return PostfixStatus::Unmatched;
   }
   if (null_safe && Match(TokenKind::LeftBracket)) {
-    auto index = MakeExpression(Expression::Kind::Index, Previous().location);
-    index->object = std::move(expression);
-    index->index = ParseExpression();
-    if (!index->index || (Expect(TokenKind::RightBracket, "expected ']' after '?.['") == nullptr)) {
-      expression.reset();
-      return PostfixStatus::Failed;
-    }
-    index->null_safe = true;
-    expression = std::move(index);
-    return PostfixStatus::Parsed;
+    return ParseBracketIndex(expression, IndexAccess::NullSafe);
   }
   std::optional<Token> member;
   if (IsMemberName(Peek().kind)) {
@@ -853,10 +844,18 @@ Parser::PostfixStatus Parser::ParsePostfixIndex(std::unique_ptr<Expression>& exp
   if (!Match(TokenKind::LeftBracket)) {
     return PostfixStatus::Unmatched;
   }
+  return ParseBracketIndex(expression, IndexAccess::Ordinary);
+}
+
+Parser::PostfixStatus Parser::ParseBracketIndex(std::unique_ptr<Expression>& expression,
+                                                IndexAccess access) {
   auto index = MakeExpression(Expression::Kind::Index, Previous().location);
   index->object = std::move(expression);
+  index->null_safe = access == IndexAccess::NullSafe;
   index->index = ParseExpression();
-  if (!index->index || (Expect(TokenKind::RightBracket, "expected ']' after index") == nullptr)) {
+  if (!index->index ||
+      Expect(TokenKind::RightBracket, index->null_safe ? "expected ']' after '?.['"
+                                                       : "expected ']' after index") == nullptr) {
     expression.reset();
     return PostfixStatus::Failed;
   }

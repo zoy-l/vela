@@ -11,6 +11,7 @@
 #include "base/execution_status.h"
 #include "base/path.h"
 #include "base/process_exit.h"
+#include "base/streams.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
 #include "compiler/frontend/diagnostic.h"
@@ -28,7 +29,7 @@ enum class CommandResult : std::uint8_t { Continue, Quit };
 CommandResult Command(std::string_view line,
                       compiler::DevelopmentSession& session,
                       compiler::DevelopmentRepl& repl,
-                      ReplStreams streams) {
+                      Streams streams) {
   auto& errors = streams.errors.get();
   if (line == ".quit") {
     return CommandResult::Quit;
@@ -80,7 +81,7 @@ void ReportSubmission(const compiler::DevelopmentSubmission& result, std::ostrea
 
 int ReadSubmissions(compiler::DevelopmentSession& session,
                     compiler::DevelopmentRepl& repl,
-                    ReplStreams streams) {
+                    Streams streams) {
   auto& input = streams.input.get();
   auto& errors = streams.errors.get();
   errors << "Vela REPL (.help for commands)\n";
@@ -114,11 +115,11 @@ int ReadSubmissions(compiler::DevelopmentSession& session,
 
 }  // namespace
 
-int RunRepl(const std::filesystem::path& directory, ReplStreams streams) {
+int RunRepl(const std::filesystem::path& directory, Streams streams) {
   auto& errors = streams.errors.get();
-  const auto options = compiler::LoadSourceDiagnosticOptions(directory / "__vela_repl__.vela");
+  const auto options =
+      compiler::ReadSourceDiagnosticOptions(directory / "__vela_repl__.vela", errors);
   if (!options) {
-    frontend::WriteDiagnostic(errors, compiler::ConfigurationDiagnostic(options.error()));
     return options.error().exit_code;
   }
   compiler::DevelopmentOptions development;

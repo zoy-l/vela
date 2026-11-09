@@ -34,6 +34,13 @@ TEST(FileUriTest, AcceptsLocalhostAndCaseInsensitiveScheme) {
   EXPECT_EQ(*local, path);
 }
 
+TEST(FileUriTest, SourceUrisPreserveSdkIdentityAndEncodeDiskPaths) {
+  EXPECT_EQ(SourceUri("sdk:test"), "sdk:test");
+  EXPECT_EQ(SourceUri("sdk:mock"), "sdk:mock");
+  const auto path = std::string(kRoot) + "module name.vela";
+  EXPECT_EQ(SourceUri(path), FileUri(Utf8Path(path)));
+}
+
 class InvalidFileUriTest : public testing::TestWithParam<std::string_view> {};
 TEST_P(InvalidFileUriTest, RejectsMalformedOrNonFileIdentifiers) {
   EXPECT_FALSE(FileUriPath(GetParam()));

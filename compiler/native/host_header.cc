@@ -365,18 +365,53 @@ std::expected<std::string, std::string> SignatureLogicalType(const layout::Progr
   return *result + ")>";
 }
 
-void EmitTypeTags(std::ostringstream& output, const ir::Program& program) {
+struct ExportedNominal final {
+  layout::Type type;
+  std::string_view name;
+  std::string_view alias;
+  std::string_view native_key;
+};
+
+std::vector<ExportedNominal> ExportedNominals(const ir::Program& program) {
+  std::vector<ExportedNominal> result;
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
     const auto& type = program.classes.at(index);
     const auto& name = program.layouts.classes.at(index).name;
     if (IsSourceClass(type) && IsExported(program.layouts, name)) {
-      output << "struct Type_" << HostIdentifier(name) << "Tag final {};\n";
+      result.push_back({
+          .type =
+              {
+                  .kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
+                                                             : layout::Type::Kind::Instance,
+                  .index = static_cast<std::uint32_t>(index),
+              },
+          .name = name,
+          .alias = type.name,
+          .native_key = type.native_key,
+      });
     }
   }
-  for (const auto& name : program.layouts.interfaces) {
+  for (std::size_t index = 0; index < program.layouts.interfaces.size(); ++index) {
+    const auto& name = program.layouts.interfaces[index];
     if (IsExported(program.layouts, name)) {
-      output << "struct Type_" << HostIdentifier(name) << "Tag final {};\n";
+      result.push_back({
+          .type =
+              {
+                  .kind = layout::Type::Kind::Interface,
+                  .index = static_cast<std::uint32_t>(index),
+              },
+          .name = name,
+          .alias = name,
+          .native_key = {},
+      });
     }
+  }
+  return result;
+}
+
+void EmitTypeTags(std::ostringstream& output, std::span<const ExportedNominal> nominals) {
+  for (const auto& nominal : nominals) {
+    output << "struct Type_" << HostIdentifier(nominal.name) << "Tag final {};\n";
   }
 }
 
@@ -416,27 +451,13 @@ std::expected<void, std::string> EmitNominalTraits(std::ostringstream& output,
 
 std::expected<void, std::string> EmitTypeTraits(std::ostringstream& output,
                                                 const ir::Program& program,
-                                                std::string_view name_space) {
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    const auto& type = program.classes.at(index);
-    const auto& name = program.layouts.classes.at(index).name;
-    if (IsSourceClass(type) && IsExported(program.layouts, name)) {
-      const auto kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
-                                                           : layout::Type::Kind::Instance;
-      const auto emitted =
-          EmitNominalTraits(output, program, name_space, name, kind, type.native_key);
-      if (!emitted) {
-        return std::unexpected(emitted.error());
-      }
-    }
-  }
-  for (const auto& name : program.layouts.interfaces) {
-    if (IsExported(program.layouts, name)) {
-      const auto emitted =
-          EmitNominalTraits(output, program, name_space, name, layout::Type::Kind::Interface, {});
-      if (!emitted) {
-        return std::unexpected(emitted.error());
-      }
+                                                std::string_view name_space,
+                                                std::span<const ExportedNominal> nominals) {
+  for (const auto& nominal : nominals) {
+    const auto emitted = EmitNominalTraits(output, program, name_space, nominal.name,
+                                           nominal.type.kind, nominal.native_key);
+    if (!emitted) {
+      return std::unexpected(emitted.error());
     }
   }
   return {};
@@ -444,7 +465,8 @@ std::expected<void, std::string> EmitTypeTraits(std::ostringstream& output,
 
 std::expected<void, std::string> EmitAliases(std::ostringstream& output,
                                              const ir::Program& program,
-                                             std::string_view name_space) {
+                                             std::string_view name_space,
+                                             std::span<const ExportedNominal> nominals) {
   absl::flat_hash_map<std::pair<layout::Type::Kind, std::uint32_t>,
                       std::vector<const MemberDefinition*>>
       members_by_receiver;
@@ -454,40 +476,14 @@ std::expected<void, std::string> EmitAliases(std::ostringstream& output,
       members_by_receiver[{type.kind, type.index}].push_back(&member);
     }
   }
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    const auto& type = program.classes[index];
-    if (!IsSourceClass(type) ||
-        !IsExported(program.layouts, program.layouts.classes.at(index).name)) {
-      continue;
-    }
-    const layout::Type receiver{
-        .kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
-                                                   : layout::Type::Kind::Instance,
-        .index = static_cast<std::uint32_t>(index),
-    };
+  for (const auto& nominal : nominals) {
+    const auto receiver = nominal.type;
     const auto logical = HostLogicalType(program.layouts, receiver, name_space);
     if (!logical) {
       return std::unexpected(logical.error());
     }
-    output << "using Type_" << HostIdentifier(type.name) << " = " << *logical << ";\n";
-    const auto members = EmitMembers(output, program, name_space, receiver, type.name,
-                                     members_by_receiver[{receiver.kind, receiver.index}]);
-    if (!members) {
-      return std::unexpected(members.error());
-    }
-  }
-  for (std::size_t index = 0; index < program.layouts.interfaces.size(); ++index) {
-    const auto& name = program.layouts.interfaces[index];
-    if (!IsExported(program.layouts, name)) {
-      continue;
-    }
-    const layout::Type receiver{
-        .kind = layout::Type::Kind::Interface,
-        .index = static_cast<std::uint32_t>(index),
-    };
-    output << "using Type_" << HostIdentifier(name) << " = vela::Object<" << Tag(name, name_space)
-           << ">;\n";
-    const auto members = EmitMembers(output, program, name_space, receiver, name,
+    output << "using Type_" << HostIdentifier(nominal.alias) << " = " << *logical << ";\n";
+    const auto members = EmitMembers(output, program, name_space, receiver, nominal.alias,
                                      members_by_receiver[{receiver.kind, receiver.index}]);
     if (!members) {
       return std::unexpected(members.error());
@@ -597,14 +593,15 @@ std::expected<std::string, std::string> EmitHostDeclarations(const ir::Program& 
   std::ostringstream output;
   output << "#pragma once\n#include <tuple>\n#include <vela/host.h>\nnamespace " << name_space
          << " {\n";
-  EmitTypeTags(output, program);
+  const auto nominals = ExportedNominals(program);
+  EmitTypeTags(output, nominals);
   output << "}\nnamespace vela {\n";
-  const auto traits = EmitTypeTraits(output, program, name_space);
+  const auto traits = EmitTypeTraits(output, program, name_space, nominals);
   if (!traits) {
     return std::unexpected(traits.error());
   }
   output << "}\nnamespace " << name_space << " {\n";
-  const auto aliases = EmitAliases(output, program, name_space);
+  const auto aliases = EmitAliases(output, program, name_space, nominals);
   if (!aliases) {
     return std::unexpected(aliases.error());
   }

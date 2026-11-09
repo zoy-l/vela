@@ -13,9 +13,9 @@
 #include <yyjson.h>
 
 #include "base/json.h"
+#include "base/streams.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/tooling/lsp/language_server.h"
 #include "compiler/tooling/semantic/semantic_index.h"
 #include "compiler/tooling/source_text.h"
 
@@ -81,7 +81,7 @@ struct PublishedDiagnostics final {
 
 class LanguageServer final {
  public:
-  explicit LanguageServer(LanguageServerStreams streams)
+  explicit LanguageServer(Streams streams)
       : input_(&streams.input.get()),
         output_(&streams.output.get()),
         errors_(&streams.errors.get()) {}
@@ -101,6 +101,14 @@ class LanguageServer final {
   [[nodiscard]] std::expected<void, std::string> Open(const yyjson_val* params);
   [[nodiscard]] std::expected<void, std::string> Change(const yyjson_val* params);
   [[nodiscard]] std::expected<void, std::string> Close(const yyjson_val* params);
+  struct OpenedDocument final {
+    std::string_view uri;
+    const ServerDocument* document;
+  };
+  [[nodiscard]] std::optional<OpenedDocument> RequireDocument(RpcCall call);
+  [[nodiscard]] std::vector<frontend::SourceInput> OverlaysFor(
+      std::string_view uri,
+      std::optional<std::string_view> text = std::nullopt) const;
   void Format(RpcCall call);
   void Query(RpcCall call, SymbolQuery query);
   void Rename(RpcCall call, SemanticIndex& index, std::size_t offset);

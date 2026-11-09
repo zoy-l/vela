@@ -21,19 +21,10 @@ bool TypeChecker::IsMatchComplete(const Type& selector, const MatchCoverage& cov
 void TypeChecker::CheckMatchConstant(const MatchArm& arm,
                                      const Type& base,
                                      MatchCoverage& coverage) {
-  const auto actual = CheckExpression(*arm.pattern, &base);
-  if (IsValid(actual) && !IsSameType(base, actual)) {
-    AddDiagnostic(arm.location, "match pattern type must equal the selector type");
-  }
-  const auto constant = EvaluateConstant(*arm.pattern);
-  if (!constant) {
-    AddDiagnostic(arm.location, "match pattern must be a compile-time constant");
+  if (!CheckConstantLabel(*arm.pattern, base, coverage.labels, arm.location,
+                          ConstantLabelKind::Match)) {
     return;
   }
-  if (!coverage.labels.insert(ConstantKey(*constant)).second) {
-    AddDiagnostic(arm.location, "duplicate match pattern");
-  }
-  facts_.case_values.insert_or_assign(arm.pattern.get(), *constant);
   if (base.kind == Type::Kind::Bool) {
     coverage.values = coverage.labels.size() == 2;
   } else if (base.kind == Type::Kind::Enum) {

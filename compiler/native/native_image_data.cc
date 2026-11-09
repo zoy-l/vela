@@ -38,6 +38,12 @@ runtime::NativeTypeDescription Describe(const layout::Type& type) {
   };
 }
 
+template <typename Parameter>
+std::uint32_t ParameterFlags(const Parameter& parameter) {
+  return (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
+         (parameter.rest ? runtime::kNativeRestParameter : 0U);
+}
+
 std::optional<DeclarationId> BindingTarget(const ir::Program& program,
                                            const ir::Instruction& instruction) {
   if (instruction.opcode == Opcode::CallInterface) {
@@ -176,8 +182,7 @@ runtime::NativeSignatureDescription NativeImageBuilder::Signature(const layout::
   for (const auto& parameter : source.parameters) {
     parameters.push_back({
         .type = Describe(parameter.type),
-        .flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
-                 (parameter.rest ? runtime::kNativeRestParameter : 0U),
+        .flags = ParameterFlags(parameter),
     });
   }
   return {
@@ -315,8 +320,7 @@ runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Functi
       parameters.push_back({
           .name = Text(parameter.name),
           .type = parameter.type,
-          .flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
-                   (parameter.rest ? runtime::kNativeRestParameter : 0U),
+          .flags = ParameterFlags(parameter),
       });
     }
     result.parameters = Copy(parameters);

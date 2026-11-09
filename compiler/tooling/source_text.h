@@ -40,6 +40,10 @@ class SourceLineIndex final {
   [[nodiscard]] TextPosition PositionAt(std::string_view text,
                                         SourceLocation location,
                                         PositionEncoding encoding) const;
+  [[nodiscard]] TextRange RangeAt(std::string_view text,
+                                  std::size_t offset,
+                                  std::size_t length,
+                                  PositionEncoding encoding) const;
 
  private:
   [[nodiscard]] std::size_t LineEnd(std::string_view text, std::size_t line) const;

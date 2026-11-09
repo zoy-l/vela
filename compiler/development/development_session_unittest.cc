@@ -107,7 +107,6 @@ TEST(DevelopmentSessionTest, LoadDoesNotRunEntryAndHotReloadPreservesInitialized
   EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 43);
   EXPECT_EQ(session.snapshot()->revision, 2U);
   EXPECT_EQ(session.isolate().native_dispatch().revision(), 2U);
-  EXPECT_EQ(result.changes.modules, std::vector<std::string>{"main.vela"});
 }
 
 TEST(DevelopmentSessionTest, EntryLookupPreservesModuleScopeArityAndCurrentRevision) {
@@ -516,8 +515,9 @@ TEST(DevelopmentSessionTest, NewlyRequiredGenericSpecializationsRecompileWithinT
                            "export func invoke(value: () => int): int { return value(); }"),
                       DevelopmentOperation::HotReload);
   ASSERT_TRUE(candidate);
-  const auto request = candidate->result().request;
-  ASSERT_EQ(session.Submit(std::move(*candidate)).status, DevelopmentStatus::WaitingForSafepoint);
+  const auto submitted = session.Submit(std::move(*candidate));
+  const auto request = submitted.request;
+  ASSERT_EQ(submitted.status, DevelopmentStatus::WaitingForSafepoint);
   EXPECT_EQ(session.Pump().status, DevelopmentStatus::WaitingForSafepoint);
   EXPECT_EQ(session.snapshot()->revision, 1U);
   const auto result = session.Pump();

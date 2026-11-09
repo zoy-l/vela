@@ -279,6 +279,23 @@ void FunctionEmitter::PollAfterRuntimeCall() {
   instruction_index_ = previous;
 }
 
+void FunctionEmitter::CheckReference(llvm::Value* reference) {
+  Check(builder_.CreateIsNotNull(reference), ExecutionStatus::TypeError);
+}
+
+llvm::Value* FunctionEmitter::EmitLeafFailure(LeafFailure failure) {
+  auto helper = module_.getOrInsertFunction(
+      runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+      builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+  return builder_.CreateCall(helper, {
+                                         body_->getArg(0),
+                                         failure.position,
+                                         failure.status,
+                                         failure.roots,
+                                         builder_.getInt64(failure.count),
+                                     });
+}
+
 void FunctionEmitter::Fail(llvm::Value* status) {
   ReleaseBorrowedHostFrame();
   AbortConstructions();
@@ -298,16 +315,12 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     }
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
     if (leaf_entry_) {
-      auto failure = module_.getOrInsertFunction(
-          runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
-          builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
-      Finish(builder_.CreateCall(failure, {
-                                              body_->getArg(0),
-                                              builder_.getInt64(TracePosition()),
-                                              status,
-                                              roots,
-                                              builder_.getInt64(live.size()),
-                                          }));
+      Finish(EmitLeafFailure({
+          .status = status,
+          .position = builder_.getInt64(TracePosition()),
+          .roots = roots,
+          .count = live.size(),
+      }));
     } else {
       auto failure = module_.getOrInsertFunction(
           runtime::kNativeUnrootedFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
@@ -529,6 +542,33 @@ const NativeFrameLayout& FunctionEmitter::PlanFrame() {
   return *frame_plan_;
 }
 
+template <typename Address>
+void FunctionEmitter::BindFrameSlots(const Address& address) {
+  arguments_ = address(temporary_field_, "", std::nullopt);
+  result_ = address(temporary_field_ + 1, "", std::nullopt);
+  if (auxiliary_field_) {
+    auxiliary_storage_ = address(*auxiliary_field_, "", std::nullopt);
+  }
+  if (leaf_result_field_) {
+    leaf_result_ = address(*leaf_result_field_, "leaf.result", std::nullopt);
+  }
+  if (roots_.debug_values) {
+    debug_values_ =
+        address(frame_type_->getNumElements() - 1, "", alignof(runtime::NativeDebugValue));
+  }
+  if (HasRecovery()) {
+    checkpoint_ = address(temporary_field_ + 2, "", alignof(runtime::NativeCheckpoint));
+    checkpoint_values_ = address(temporary_field_ + 3, "", std::nullopt);
+    recovery_storage_ = address(temporary_field_ + 4, "", std::nullopt);
+    if (!escape_.checkpoints.empty()) {
+      virtual_references_ =
+          address(temporary_field_ + kVirtualReferenceFieldIndex, "", std::nullopt);
+      virtual_state_ = address(temporary_field_ + kVirtualStateFieldIndex, "",
+                               alignof(runtime::NativeVirtualState));
+    }
+  }
+}
+
 void FunctionEmitter::PrepareFrame() {
   // PromotePass 只处理入口块中的 alloca；可重载映像的有效性分支不能把局部槽
   // 放到后继块，否则前置范围分析看到的仍是内存寄存器文件。
@@ -546,7 +586,6 @@ void FunctionEmitter::PrepareFrame() {
   temporary_field_ = frame.temporary_field;
   leaf_result_field_ = frame.leaf_result_field;
   auxiliary_field_ = frame.auxiliary_field;
-  const std::vector<llvm::Type*> fields(frame_type_->element_begin(), frame_type_->element_end());
   storage_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
   frame_bytes_ = frame.bytes;
   const auto on_stack = frame_bytes_ <= kMaximumNativeStackBytes;
@@ -561,36 +600,14 @@ void FunctionEmitter::PrepareFrame() {
     }
   }
   if (!IsRecovering() && on_stack) {
-    arguments_ = allocation.CreateAlloca(fields.at(temporary_field_));
-    result_ = allocation.CreateAlloca(fields.at(temporary_field_ + 1));
-    if (auxiliary_field_) {
-      auxiliary_storage_ = allocation.CreateAlloca(fields.at(*auxiliary_field_));
-    }
-    if (leaf_result_field_) {
-      // 纯计算结果不与会传入运行时的 ABI 暂存槽共享地址，内联后可提升为 SSA。
-      leaf_result_ =
-          allocation.CreateAlloca(fields.at(*leaf_result_field_), nullptr, "leaf.result");
-    }
-    if (roots_.debug_values) {
-      auto* values = allocation.CreateAlloca(fields.back());
-      values->setAlignment(llvm::Align(alignof(runtime::NativeDebugValue)));
-      debug_values_ = values;
-    }
-    if (HasRecovery()) {
-      auto* checkpoint = allocation.CreateAlloca(fields.at(temporary_field_ + 2));
-      checkpoint->setAlignment(llvm::Align(alignof(runtime::NativeCheckpoint)));
-      checkpoint_ = checkpoint;
-      checkpoint_values_ = allocation.CreateAlloca(fields.at(temporary_field_ + 3));
-      recovery_storage_ = allocation.CreateAlloca(fields.at(temporary_field_ + 4));
-      if (!escape_.checkpoints.empty()) {
-        virtual_references_ =
-            allocation.CreateAlloca(fields.at(temporary_field_ + kVirtualReferenceFieldIndex));
-        auto* state =
-            allocation.CreateAlloca(fields.at(temporary_field_ + kVirtualStateFieldIndex));
-        state->setAlignment(llvm::Align(alignof(runtime::NativeVirtualState)));
-        virtual_state_ = state;
+    // 纯计算结果独占 alloca；不与传入运行时的 ABI 暂存槽共享地址，以便提升为 SSA。
+    BindFrameSlots([&](unsigned field, const char* name, std::optional<std::size_t> alignment) {
+      auto* slot = allocation.CreateAlloca(frame_type_->getElementType(field), nullptr, name);
+      if (alignment) {
+        slot->setAlignment(llvm::Align(*alignment));
       }
-    }
+      return slot;
+    });
   }
 }
 
@@ -623,30 +640,9 @@ void FunctionEmitter::BindFrameStorage() {
       slots_.at(index) = builder_.CreateStructGEP(frame_type_, frame_storage_, *field);
     }
   }
-  const auto scratch = temporary_field_;
-  arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch);
-  result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 1);
-  if (auxiliary_field_) {
-    auxiliary_storage_ = builder_.CreateStructGEP(frame_type_, frame_storage_, *auxiliary_field_);
-  }
-  if (leaf_result_field_) {
-    leaf_result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, *leaf_result_field_);
-  }
-  if (roots_.debug_values) {
-    debug_values_ =
-        builder_.CreateStructGEP(frame_type_, frame_storage_, frame_type_->getNumElements() - 1);
-  }
-  if (HasRecovery()) {
-    checkpoint_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 2);
-    checkpoint_values_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 3);
-    recovery_storage_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 4);
-    if (!escape_.checkpoints.empty()) {
-      virtual_references_ = builder_.CreateStructGEP(frame_type_, frame_storage_,
-                                                     scratch + kVirtualReferenceFieldIndex);
-      virtual_state_ =
-          builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + kVirtualStateFieldIndex);
-    }
-  }
+  BindFrameSlots([&](unsigned field, const char*, std::optional<std::size_t>) {
+    return builder_.CreateStructGEP(frame_type_, frame_storage_, field);
+  });
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size_t index) {
@@ -901,6 +897,19 @@ void AccumulateMetrics(NativeFunctionMetrics& metrics,
 
 }  // namespace
 
+NativeFunctionAnalysis PlanFunctionAnalysis(
+    const ir::Program& program,
+    std::size_t function_index,
+    NativeDebugging debugging,
+    NativeCodeTier tier,
+    EscapeOptimization optimization,
+    std::span<const std::uint8_t> readonly_globals,
+    std::span<const std::optional<ir::ClassId>> borrowable) {
+  auto escape = PlanEscapes(program, function_index, optimization, tier, borrowable);
+  auto roots = EscapeRoots(program, function_index, escape, debugging, readonly_globals);
+  return {.escape = std::move(escape), .roots = std::move(roots)};
+}
+
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
@@ -910,16 +919,14 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const GlobalAccessFacts& global_access,
     llvm::Constant* image,
     std::size_t function_index,
+    const NativeFunctionAnalysis& analysis,
     std::span<const GeneratedFunction> generated,
     std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
     NativeCodePlacement placement,
-    NativeCodeTier tier,
-    EscapeOptimization optimization,
-    std::span<const std::optional<ir::ClassId>> borrowable) {
-  const auto escape = PlanEscapes(program, function_index, optimization, tier, borrowable);
-  const auto roots =
-      EscapeRoots(program, function_index, escape, debugging, global_access.readonly_slots);
+    NativeCodeTier tier) {
+  const auto& escape = analysis.escape;
+  const auto& roots = analysis.roots;
   const auto& function = generated[function_index];
   const auto facts = PlanEmissionFacts(program, calls, field_targets, array_access, global_access,
                                        function_index, escape, roots, tier, placement);
@@ -929,9 +936,12 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const auto& frame = initial.PlanFrame();
     if (frame.bytes > kMaximumNativeStackBytes) {
       // 在 LLVM body 发射前完成表示选择；超预算记录使用普通调用所需的堆物化。
+      const auto scalar = PlanFunctionAnalysis(program, function_index, debugging, tier,
+                                               EscapeOptimization::ScalarReplacement,
+                                               global_access.readonly_slots, {});
       return EmitFunction(module, program, calls, field_targets, array_access, global_access, image,
-                          function_index, generated, body_dependencies, debugging, placement, tier,
-                          EscapeOptimization::ScalarReplacement);
+                          function_index, scalar, generated, body_dependencies, debugging,
+                          placement, tier);
     }
   }
   body_dependencies.insert(body_dependencies.end(), escape.body_dependencies.begin(),

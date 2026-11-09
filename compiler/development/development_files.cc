@@ -39,6 +39,17 @@ bool IsDiskSource(const CompiledSourceSnapshot& source, const std::string& path)
          !path.starts_with(frontend::kSdkSourcePrefix);
 }
 
+void InsertDiskImports(const std::string& path,
+                       const frontend::Program& syntax,
+                       absl::flat_hash_set<std::string>& paths) {
+  const auto module = Utf8Path(path);
+  for (const auto& imported : syntax.imports) {
+    if (!imported.path.starts_with(frontend::kSdkSourcePrefix)) {
+      paths.insert(PathText(frontend::ResolveImportPath(module, Utf8Path(imported.path))));
+    }
+  }
+}
+
 std::vector<std::string> ChangedPaths(const CompiledSourceSnapshot& previous,
                                       const CompiledSourceSnapshot& next) {
   if (previous.session == next.session) {
@@ -244,12 +255,7 @@ frontend::Diagnostics DevelopmentFiles::AdoptSource(const CompiledSourceSnapshot
   }
   const auto syntax = snapshot.modules.sources.find(path);
   if (snapshot.sources.contains(path) && syntax != snapshot.modules.sources.end()) {
-    for (const auto& imported : syntax->second->program.imports) {
-      if (!imported.path.starts_with(frontend::kSdkSourcePrefix)) {
-        paths.insert(
-            PathText(frontend::ResolveImportPath(Utf8Path(path), Utf8Path(imported.path))));
-      }
-    }
+    InsertDiskImports(path, syntax->second->program, paths);
   }
   auto& previous = accepted_sources_.try_emplace(path).first->second;
   frontend::Diagnostics diagnostics;
@@ -376,12 +382,7 @@ std::expected<DevelopmentFiles::GraphTracking, frontend::Diagnostics> Developmen
     if (syntax == cache_.sources.end()) {
       continue;
     }
-    for (const auto& imported : syntax->second->program.imports) {
-      if (!imported.path.starts_with(frontend::kSdkSourcePrefix)) {
-        paths.insert(
-            PathText(frontend::ResolveImportPath(Utf8Path(source.path), Utf8Path(imported.path))));
-      }
-    }
+    InsertDiskImports(source.path, syntax->second->program, paths);
   }
   for (const auto& resolution : graph.file_resolutions) {
     if (resolution.requested_path != resolution.canonical_path) {

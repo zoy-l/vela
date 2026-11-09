@@ -42,7 +42,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/process/process_entry.h"
-#include "runtime/value/value.h"
 
 namespace {
 
@@ -80,19 +79,9 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   }
 }
 
-std::expected<vela::frontend::DiagnosticOptions, vela::compiler::ConfigurationError>
-ReadDiagnosticOptions(std::string_view path) {
-  auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
-  if (!options) {
-    vela::frontend::WriteDiagnostic(std::cerr,
-                                    vela::compiler::ConfigurationDiagnostic(options.error()));
-  }
-  return options;
-}
-
 int CheckFile(std::string_view path_text) {
   const std::string path(path_text);
-  const auto options = ReadDiagnosticOptions(path);
+  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }
@@ -107,8 +96,9 @@ int CheckFile(std::string_view path_text) {
 
 enum class ExecutionMode : std::uint8_t { Run, Debug };
 
-int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
-  const auto diagnostics = ReadDiagnosticOptions(path);
+int RunFile(std::string_view path, ExecutionMode mode) {
+  const auto diagnostics =
+      vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
   if (!diagnostics) {
     return diagnostics.error().exit_code;
   }
@@ -155,19 +145,8 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
                             : vela::testing::TerminalMode::Plain,
         });
   }
-  vela::runtime::ProcessEntry process(isolate, std::cerr);
-  const auto result = vela::runtime::ExecuteNativeFunction(program, *main);
-  if (!result.Succeeded()) {
-    vela::runtime::WriteRuntimeDiagnostic(std::cerr, {
-                                                         .message = result.message,
-                                                         .stack_trace = result.stack_trace,
-                                                         .status = result.status,
-                                                         .origin = result.origin,
-                                                     });
-    return kProgramFailureExitCode;
-  }
-  const auto type = program.call_signature(*main).result;
-  return process.Finish(result.value, type ? &program.layouts().types[*type] : nullptr);
+  return vela::runtime::RunProcessEntry(program, *main, std::cerr,
+                                        vela::runtime::ProcessStopDiagnostic::Report);
 }
 
 enum class FormatMode : std::uint8_t { Output, Write, Check };
@@ -182,7 +161,7 @@ int PublishTextArtifact(const std::filesystem::path& path, std::string_view text
 }
 
 int DocumentFile(std::string_view path, const std::filesystem::path& output) {
-  const auto options = ReadDiagnosticOptions(path);
+  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }
@@ -229,7 +208,7 @@ int HostHeaderCommand(std::span<char*> arguments) {
     return kUsageExitCode;
   }
   const std::string_view path = arguments.front();
-  const auto options = ReadDiagnosticOptions(path);
+  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }

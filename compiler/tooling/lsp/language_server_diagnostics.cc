@@ -143,8 +143,8 @@ void DiagnosticCollection::CollectDiagnostics(std::span<const frontend::Diagnost
       continue;
     }
     const auto found = open_sources_.find(source_path);
-    const auto uri = found == open_sources_.end() ? FileUri(Utf8Path(source_path))
-                                                  : std::string(found->second.uri);
+    const auto uri =
+        found == open_sources_.end() ? SourceUri(source_path) : std::string(found->second.uri);
     TextPosition position;
     if (found != open_sources_.end()) {
       position = found->second.source->PositionAt(diagnostic.location, encoding_);

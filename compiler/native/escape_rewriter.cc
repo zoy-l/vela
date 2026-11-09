@@ -69,6 +69,7 @@ class ScalarRewriter final {
 
   void Run(const ir::FlowGraph& graph,
            std::span<const BlockState> blocks,
+           std::span<const ir::RegisterAccess> accesses,
            std::span<const std::optional<std::size_t>> allocations) {
     for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
       const auto& state = blocks[index];
@@ -79,13 +80,13 @@ class ScalarRewriter final {
         targets_.at(position) = function_->instructions.size();
         const auto& instruction = original_.at(position);
         RecordCheckpoint(values);
-        RewriteInstruction(instruction, allocations[position], values);
+        const auto& access = accesses[position];
+        RewriteInstruction(instruction, access, allocations[position], values);
         if (!plan_->checkpoints.empty() &&
             function_->instructions.size() == targets_.at(position)) {
           Emit({.opcode = Opcode::LoadNull, .dst = marker_, .location = {}});
         }
-        Transfer(instruction, ir::AnalyzeRegisters(instruction, program_->functions),
-                 allocations[position], *plan_, *program_, values);
+        Transfer(instruction, access, allocations[position], *plan_, *program_, values);
       }
     }
     targets_.back() = function_->instructions.size();
@@ -288,6 +289,7 @@ class ScalarRewriter final {
   }
 
   void RewriteInstruction(ir::Instruction instruction,
+                          const ir::RegisterAccess& access,
                           std::optional<std::size_t> allocation,
                           const State& values) {
     const auto left = ScalarObject(*plan_, values.at(instruction.lhs));
@@ -346,7 +348,6 @@ class ScalarRewriter final {
       Emit(instruction);
       return;
     }
-    const auto access = ir::AnalyzeRegisters(instruction, program_->functions);
     ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) { Spill(reg, values); });
     if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
         instruction.opcode == Opcode::JumpIfNull) {
@@ -369,10 +370,11 @@ class ScalarRewriter final {
 }  // namespace
 void RewriteEscapes(EscapePlan& plan,
                     const ir::Program& program,
+                    std::span<const ir::RegisterAccess> accesses,
                     std::span<const std::vector<ir::RegisterId>> live,
                     const ir::FlowGraph& graph,
                     std::span<const BlockState> blocks,
                     std::span<const std::optional<std::size_t>> allocations) {
-  ScalarRewriter(plan, program, live).Run(graph, blocks, allocations);
+  ScalarRewriter(plan, program, live).Run(graph, blocks, accesses, allocations);
 }
 }  // namespace vela::compiler::native::internal

@@ -116,9 +116,8 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   }
   auto& options = arguments.options;
   options.module_name += '_' + ContentFingerprint(identity.bytes()).Hex();
-  const auto diagnostics = LoadSourceDiagnosticOptions(Utf8Path(arguments.source));
+  const auto diagnostics = ReadSourceDiagnosticOptions(Utf8Path(arguments.source), errors);
   if (!diagnostics) {
-    frontend::WriteDiagnostic(errors, ConfigurationDiagnostic(diagnostics.error()));
     return diagnostics.error().exit_code;
   }
   auto prepared = ir::PrepareParsed(std::move(parsed), *diagnostics);

@@ -164,7 +164,7 @@ enum class TokenRole : std::uint8_t {
 }
 
 struct Token final {
-  // 字符串 token 保存已解码的 UTF-8 内容，其他 token 保存源码文本。
+  // 字符串保存解码内容，名字和数值保存源码文本；其余 token 通过 offset/length 取原文。
   std::string lexeme;
   // 原始源码的字节范围，字符串转义解码后仍能准确定位原文。
   std::size_t offset = 0;

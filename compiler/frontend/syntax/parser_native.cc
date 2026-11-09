@@ -34,6 +34,7 @@ Parser::MemberParseResult Parser::ParseNativeConstructor(Class& declaration) {
   constructor->return_type = {
       .name = std::string(kVoidTypeName),
       .location = location,
+      .kind = TypeName::Kind::Named,
       .arguments = {},
       .parameter = {},
   };

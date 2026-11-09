@@ -7,7 +7,6 @@
 #include <vector>
 #include "compiler/jit/code_inputs.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalValue.h>
@@ -27,25 +26,6 @@ void InvalidateCallers(const std::vector<std::vector<std::size_t>>& callers,
       if (plan.reused[caller] != 0) {
         plan.reused[caller] = 0;
         changed.push_back(caller);
-      }
-    }
-  }
-}
-
-void RetainCallDependencies(const CodeReuseCache& cache,
-                            const std::vector<std::vector<std::string>>& symbols,
-                            std::size_t index,
-                            absl::flat_hash_set<const void*>& retained,
-                            CodeReusePlan& plan) {
-  for (const auto callee : plan.inputs[index].dependencies) {
-    if (plan.reused[callee] == 0) {
-      continue;
-    }
-    for (const auto& symbol : symbols[callee]) {
-      const auto& cached = cache.functions.at(symbol);
-      auto resource = cached.resource.lock();
-      if (retained.insert(resource.get()).second) {
-        plan.dependencies.push_back(std::move(resource));
       }
     }
   }
@@ -97,12 +77,10 @@ void BindReusableCode(llvm::Module& module,
                       const std::vector<std::vector<std::string>>& symbols,
                       std::uint64_t batch,
                       CodeReusePlan& plan) {
-  absl::flat_hash_set<const void*> retained;
   for (std::size_t index = 0; index < symbols.size(); ++index) {
     const auto reused = plan.reused[index] != 0;
     if (!reused) {
       ++plan.compiled_functions;
-      RetainCallDependencies(cache, symbols, index, retained, plan);
     }
     for (const auto& name : symbols[index]) {
       ReuseFunction entry{.name = name, .symbol = {}, .resource = {}};

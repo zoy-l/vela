@@ -116,19 +116,15 @@ std::vector<std::filesystem::path> Discovery::Finish(const std::filesystem::path
 
 std::expected<std::vector<std::filesystem::path>, compiler::ConfigurationError> DiscoverSuites(
     const compiler::ProjectConfiguration& configuration,
+    const Settings& settings,
     const std::filesystem::path& working_directory,
     std::span<const std::string> explicit_paths) {
-  const auto& test = configuration.test;
-  if (!test) {
-    return std::unexpected(
-        Error::FileError(configuration.file, "test configuration is required", kUsageExitCode));
-  }
-  auto filename = Pattern::Glob(test->filename);
+  auto filename = Pattern::Glob(settings.filename);
   if (!filename) {
     return std::unexpected(Error::FileError(configuration.file, filename.error(), kUsageExitCode));
   }
   Discovery discovery(std::move(*filename));
-  const auto paths = explicit_paths.empty() ? std::span(test->paths) : explicit_paths;
+  const auto paths = explicit_paths.empty() ? std::span(settings.paths) : explicit_paths;
   const auto& base = explicit_paths.empty() ? configuration.root : working_directory;
   if (paths.empty()) {
     return std::unexpected(Error::FileError(

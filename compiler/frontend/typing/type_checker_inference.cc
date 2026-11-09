@@ -116,6 +116,14 @@ TypeChecker::Type TypeChecker::ResolveInferenceContext(const TypeName& pattern,
   return FunctionType(context);
 }
 
+void TypeChecker::ConstrainInferenceContext(TypeInference& inference,
+                                            const TypeName& result,
+                                            const Type* expected) {
+  if (expected != nullptr && IsValid(*expected) && expected->kind != Type::Kind::Dynamic) {
+    inference.Constrain(result, DescribeType(*expected), TypeInference::Evidence::Context);
+  }
+}
+
 bool TypeChecker::CanInferInvocation(const Expression& expression, const Type* expected) {
   const auto& callee = *expression.callee;
   if (!callee.type_arguments.empty()) {
@@ -131,10 +139,7 @@ bool TypeChecker::CanInferInvocation(const Expression& expression, const Type* e
     return true;
   }
   auto inference = MakeInference(source->type_parameters);
-  if (expected != nullptr) {
-    inference.Constrain(source->return_type, DescribeType(*expected),
-                        TypeInference::Evidence::Context);
-  }
+  ConstrainInferenceContext(inference, source->return_type, expected);
   std::vector<TypeName> inputs;
   std::size_t positional = 0;
   for (const auto& argument : expression.arguments) {
@@ -281,10 +286,7 @@ std::optional<TypeInference> TypeChecker::CreateInference(
     inference.Constrain(ParameterTypeName(source.type_parameters.at(index), location),
                         DescribeType(type), TypeInference::Evidence::Explicit);
   }
-  if (expected != nullptr && IsValid(*expected) && expected->kind != Type::Kind::Dynamic) {
-    inference.Constrain(source.return_type, DescribeType(*expected),
-                        TypeInference::Evidence::Context);
-  }
+  ConstrainInferenceContext(inference, source.return_type, expected);
   return inference;
 }
 

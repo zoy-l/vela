@@ -19,6 +19,7 @@ enum class NativeEntryMode : std::uint8_t { Library, Executable };
 
 struct NativeOptions final {
   std::string module_name = "vela_aot";
+  // None 保留生成阶段的 LLVM IR，供布局和失败边检查；发布命令固定使用 Release。
   NativeOptimization optimization = NativeOptimization::Release;
   std::vector<std::string> exports;
   NativeEntryMode entry_mode = NativeEntryMode::Library;
