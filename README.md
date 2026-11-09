@@ -68,7 +68,7 @@ Vela draws design and implementation insights from:
 - **Wren / Lua**: Minimalist embedding boundaries and self-contained runtime philosophies.
 
 Some benchmark workloads are adapted from the
-[daScript benchmark suite](https://api.github.com/repositories/1166763612).
+[daScript benchmark suite](https://github.com/borisbat/dasProfile).
 
 ## License
 

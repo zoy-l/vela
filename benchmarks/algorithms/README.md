@@ -1,7 +1,7 @@
 # Algorithm Benchmarks: Vela AOT, JIT and C++
 
 This directory contains 16 workloads adapted from
-[the upstream sources](https://api.github.com/repositories/1166763612),
+[the upstream sources](https://github.com/borisbat/dasProfile),
 revision `436d58d2840ff839550d44d32f98e10a15b57bf2`. It runs Vela AOT, reloadable JIT and C++ with
 matching inputs and checked results. The sources, adapters and build rules are
 self-contained in this repository.
