@@ -398,7 +398,7 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   const auto batch = next_module_.fetch_add(1);
   std::unique_lock<std::mutex> reuse_lock;
   CodeReusePlan reuse_plan;
-  const auto calls = native::PlanNativeCalls(program, options.tier);
+  const auto calls = native::PlanNativeCalls(program, options.tier, options.debugging);
   const auto fields = native::FindFieldTargets(program);
   auto compiled_functions = program.functions.size();
   if (reuse != nullptr) {

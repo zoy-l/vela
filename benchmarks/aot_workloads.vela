@@ -83,7 +83,7 @@ export func host(): int {
   return sum;
 }
 
-export func gc(): int {
+export func temporaryObjects(): int {
   const size = count;
   let sum = 0;
   for (let index = 0; index < size; index ++) {

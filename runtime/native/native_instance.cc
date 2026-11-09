@@ -358,10 +358,6 @@ NativeInstance NativeInstance::Borrow(HeapObject& state) {
   return {Heap::NativeProgram(state), Value::Object(&state), std::nullopt};
 }
 
-Value NativeInstance::constant(std::size_t index) const noexcept {
-  return Heap::ValueSlots(*data_->values[NativeProgramState::kConstants].AsObject())[index];
-}
-
 std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index) {
   auto& state = data_->global_state(index);

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
@@ -33,6 +32,7 @@ struct NativeControlState final {
   const std::atomic<std::uint8_t>* requests = nullptr;
   std::uint64_t host_borrows = 0;
   NativeExecution* host_execution = nullptr;
+  std::uint64_t initializations = 0;
 };
 
 // 跨线程只拥有队列控制状态；关闭后投递不会访问已退休的 Isolate。
@@ -64,7 +64,6 @@ class NativeControl final {
   void RequestStop() const noexcept;
   void EnterInitialization() noexcept;
   void ExitInitialization() noexcept;
-  void ExitInitializations(std::uint32_t count) noexcept;
   [[nodiscard]] ExecutionStatus Poll() const noexcept;
   [[nodiscard]] bool HasHostBorrow() const noexcept;
   [[nodiscard]] bool IsStopRequested() const noexcept;
@@ -80,7 +79,6 @@ class NativeControl final {
  private:
   std::shared_ptr<NativeSafepointQueue> queue_;
   NativeControlState state_;
-  std::size_t initializations_ = 0;
   absl::AnyInvocable<void()> pending_;
   bool processing_ = false;
   NativeDebugger* debugger_ = nullptr;
@@ -102,8 +100,5 @@ class NativeInitializationScope final {
 };
 
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept;
-extern "C" void vela_native_v3_initialization_enter(NativeExecution* execution) noexcept;
-extern "C" void vela_native_v3_initialization_exit(NativeExecution* execution,
-                                                   std::uint32_t count) noexcept;
 
 }  // namespace vela::runtime

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <optional>
 #include <queue>
 #include <span>
 #include <utility>
@@ -24,6 +23,87 @@ namespace {
 bool HasManagedValue(const ir::Function& function, ir::RegisterId reg) {
   const auto kind = function.value_types.at(reg).kind;
   return kind == Kind::Dynamic || IsReferenceKind(kind);
+}
+
+void PropagateCopies(std::span<const std::vector<ir::RegisterId>> copies,
+                     std::vector<std::uint8_t>& values) {
+  std::vector<ir::RegisterId> pending;
+  for (ir::RegisterId reg = 0; reg < values.size(); ++reg) {
+    if (values[reg] != 0) {
+      pending.push_back(reg);
+    }
+  }
+  while (!pending.empty()) {
+    const auto reg = pending.back();
+    pending.pop_back();
+    for (const auto copy : copies[reg]) {
+      if (values[copy] == 0) {
+        values[copy] = 1;
+        pending.push_back(copy);
+      }
+    }
+  }
+}
+
+std::vector<std::uint8_t> FindInstanceRootedValues(const ir::Function& function,
+                                                   std::span<const ir::Function> functions,
+                                                   std::span<const std::uint8_t> readonly_globals,
+                                                   std::span<const ir::RegisterId> materialized) {
+  const auto count = function.register_count;
+  std::vector<std::uint8_t> rooted(count);
+  if (function.is_async) {
+    return rooted;
+  }
+  std::vector<std::uint8_t> unknown(count);
+  std::vector<std::uint8_t> defined(count);
+  std::vector<std::vector<ir::RegisterId>> copies(count);
+  for (ir::RegisterId reg = 0; reg < function.parameter_count; ++reg) {
+    unknown[reg] = 1;
+    defined[reg] = 1;
+  }
+  for (const auto reg : materialized) {
+    unknown[reg] = 1;
+  }
+  for (const auto& instruction : function.instructions) {
+    if (!ir::AnalyzeRegisters(instruction, functions).defines_value) {
+      continue;
+    }
+    const auto reg = instruction.dst;
+    defined[reg] = 1;
+    switch (instruction.opcode) {
+      case Opcode::LoadNull:
+      case Opcode::LoadString:
+        rooted[reg] = 1;
+        break;
+      case Opcode::GetGlobal:
+        if (!readonly_globals.empty() && readonly_globals[instruction.index] != 0) {
+          rooted[reg] = 1;
+        } else {
+          unknown[reg] = 1;
+        }
+        break;
+      case Opcode::Move:
+        copies[instruction.lhs].push_back(reg);
+        break;
+      default:
+        unknown[reg] = 1;
+        break;
+    }
+  }
+  for (ir::RegisterId reg = 0; reg < count; ++reg) {
+    if (defined[reg] == 0) {
+      unknown[reg] = 1;
+    }
+  }
+  // 任一未知定义都会污染整个 Move 派生链；另外要求实际连接到实例根或 null，
+  // 无入口来源的循环 Move 不能凭自身证明存活。两次传播都按边线性处理。
+  PropagateCopies(copies, unknown);
+  PropagateCopies(copies, rooted);
+  for (ir::RegisterId reg = 0; reg < count; ++reg) {
+    auto& value = rooted[reg];
+    value = static_cast<std::uint8_t>(value != 0 && unknown[reg] == 0);
+  }
+  return rooted;
 }
 
 struct RootLifetime final {
@@ -89,10 +169,7 @@ void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function, NativeDe
   const auto& instructions = function.instructions;
   for (std::size_t index = 0; index < instructions.size(); ++index) {
     const auto& instruction = instructions.at(index);
-    const auto backward =
-        (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
-         instruction.opcode == Opcode::JumpIfNull) &&
-        instruction.index <= index;
+    const auto backward = ir::IsBackJump(instruction, index);
     const auto source_line =
         debugging == NativeDebugging::SourceLines &&
         (index == 0 || instruction.location.line != instructions.at(index - 1).location.line);
@@ -203,7 +280,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
                      std::size_t index,
                      const ir::RegisterAccess& access,
                      InstructionLiveness liveness,
-                     std::span<const std::optional<std::uint32_t>> instance_strings,
+                     std::span<const std::uint8_t> instance_roots,
                      std::span<RootLifetime> lifetimes) {
   const auto& instruction = function.instructions[index];
   auto& stores = plan.stores[index];
@@ -212,7 +289,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
       plan.safepoints[index] != 0 || ir::AnalyzeEffects(instruction).MayCollect();
   const auto& after = liveness.after.get();
   liveness.before.get().ForEach([&](ir::RegisterId reg) {
-    if (!HasManagedValue(function, reg) || (!instance_strings.empty() && instance_strings[reg])) {
+    if (!HasManagedValue(function, reg) || instance_roots[reg] != 0) {
       return;
     }
     lifetimes[reg].Include(index);
@@ -224,7 +301,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
     }
   });
   if (access.defines_value && HasManagedValue(function, instruction.dst) &&
-      (instance_strings.empty() || !instance_strings[instruction.dst])) {
+      instance_roots[instruction.dst] == 0) {
     clears.push_back(instruction.dst);
     // 逆向传递只会从成功后继删除 dst；其余 after 值已包含在 before 中。
     lifetimes[instruction.dst].Include(index);
@@ -241,17 +318,18 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
                                NativeProgramMode mode,
                                NativeDebugging debugging,
                                NativeRecoveryRequirements recovery,
-                               NativeConstantRoots constants) {
+                               std::span<const std::uint8_t> readonly_globals) {
   auto plan = InitializeRoots(function, mode, debugging, recovery);
   if (!function.native_symbol.empty()) {
     AssignImportRoots(plan, function);
     return plan;
   }
   const auto graph = ir::BuildFlowGraph(function);
-  const auto instance_strings = constants == NativeConstantRoots::Instance &&
-                                        mode == NativeProgramMode::Closed && !function.is_async
-                                    ? FindStringConstants(function, functions)
-                                    : std::vector<std::optional<std::uint32_t>>{};
+  if (mode != NativeProgramMode::Closed || debugging != NativeDebugging::Safepoints) {
+    readonly_globals = {};
+  }
+  const auto instance_roots =
+      FindInstanceRootedValues(function, functions, readonly_globals, recovery.materialized);
   const auto required = recovery.values;
   const auto blocks = ir::AnalyzeLiveness(function, graph, functions, required);
   std::vector<RootLifetime> lifetimes(function.register_count);
@@ -271,7 +349,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
         live.ForEach([&](ir::RegisterId reg) { plan.checkpoints[index].push_back(reg); });
       }
       RecordLiveRoots(plan, function, index, access, {.before = live, .after = after},
-                      instance_strings, lifetimes);
+                      instance_roots, lifetimes);
     }
   }
   AssignRootSlots(plan, lifetimes);

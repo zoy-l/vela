@@ -12,8 +12,6 @@
 namespace vela::compiler::native {
 
 enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines, Instructions };
-enum class NativeConstantRoots : std::uint8_t { Local, Instance };
-
 inline constexpr std::uint8_t kNativeSafepointBoundary = 1U << 0;
 inline constexpr std::uint8_t kNativeSafepointBeforeRuntime = 1U << 1;
 inline constexpr std::uint8_t kNativeSafepointAfterRuntime = 1U << 2;
@@ -39,6 +37,8 @@ struct NativeRootPlan final {
 struct NativeRecoveryRequirements final {
   std::span<const std::vector<ir::RegisterId>> values;
   std::span<const std::uint8_t> safepoints;
+  // 物化会绕过 IR 定义写入真实对象；其初始 null 及复制链不能证明可省略帧根。
+  std::span<const ir::RegisterId> materialized;
   std::size_t minimum_root_count = 0;
   std::size_t minimum_temporary_count = 0;
 };
@@ -58,12 +58,13 @@ struct NativeFunctionMetrics final {
   std::uint64_t borrowed_root_stores = 0;
 };
 
-[[nodiscard]] NativeRootPlan PlanNativeRoots(
-    const ir::Function& function,
-    std::span<const ir::Function> functions,
-    NativeProgramMode mode,
-    NativeDebugging debugging,
-    NativeRecoveryRequirements recovery = {},
-    NativeConstantRoots constants = NativeConstantRoots::Local);
+// readonly_globals 借用封闭链接程序的全局分析事实；仅同步 Safepoints 入口使用。
+// 常量池和只读全局已由实例持有根，其仅含 Move/null 的派生值无需重复的帧根。
+[[nodiscard]] NativeRootPlan PlanNativeRoots(const ir::Function& function,
+                                             std::span<const ir::Function> functions,
+                                             NativeProgramMode mode,
+                                             NativeDebugging debugging,
+                                             NativeRecoveryRequirements recovery = {},
+                                             std::span<const std::uint8_t> readonly_globals = {});
 
 }  // namespace vela::compiler::native

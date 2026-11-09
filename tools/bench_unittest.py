@@ -14,6 +14,7 @@ from unittest.mock import patch
 from tools.bench import parse_arguments, run
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 from tools.escape_benchmark_report import aggregate_escape_results
+from tools.gc_benchmark_report import gc_report
 from tools.native_class_benchmark_report import aggregate_native_class_results
 
 
@@ -114,6 +115,24 @@ def reloadable_samples(repetitions: int = 3) -> dict:
                                             "jit_prepared_suites": "2"}}
 
 
+def gc_samples(repetitions: int = 3) -> list[dict]:
+    rows = []
+    for old_objects, survivors in ((0, 64), (8192, 4096)):
+        for index in range(repetitions):
+            live_bytes = 1024 + survivors * 64
+            reclaimed_bytes = (4096 - survivors) * 64
+            rows.append(dict(
+                name=f"gc/cohort/{old_objects}/{survivors}/16/manual_time",
+                real_time=(index + 1) * 1000, cpu_time=999999, time_unit="ns",
+                repetitions=repetitions, repetition_index=index, old_objects=old_objects,
+                new_objects=4096, new_survivors=survivors, start_ns=50, p95_step_ns=100,
+                maximum_step_ns=(index + 1) * 200, steps_per_cycle=257,
+                heap_before_bytes=live_bytes + reclaimed_bytes, heap_live_bytes=live_bytes,
+                heap_committed_bytes=live_bytes + reclaimed_bytes,
+                reclaimed_bytes=reclaimed_bytes, reclaimed_objects=4096 - survivors))
+    return rows
+
+
 class BenchmarkReportTest(unittest.TestCase):
     def test_workload_manifests_have_unique_unqualified_names(self) -> None:
         root = Path(__file__).resolve().parent.parent / "benchmarks"
@@ -127,6 +146,8 @@ class BenchmarkReportTest(unittest.TestCase):
         algorithm_names = {case["name"] for case in algorithms}
         self.assertFalse(basic_names & algorithm_names)
         self.assertIn("spectralNormInt", basic_names)
+        self.assertIn("temporaryObjects", basic_names)
+        self.assertNotIn("gc", basic_names)
         self.assertIn("spectralNorm", algorithm_names)
         numeric = [case for case in basic if case["name"] == "arithmetic"]
         self.assertEqual([case["size"] for case in numeric], [1000, 4096, 65536])
@@ -137,6 +158,68 @@ class BenchmarkReportTest(unittest.TestCase):
                 seed = (seed * 1664525 + 1013904223) & 0x7fffffff
                 expected += (seed & 1023) ** 2
             self.assertEqual(case["expected"], expected)
+
+    def test_temporary_object_report_exposes_eliminated_allocations_in_both_comparisons(self) -> None:
+        report = reloadable_samples()
+        rows = report["benchmarks"]
+        for row in rows:
+            row["name"] = row["name"].replace("/queen/8/", "/temporaryObjects/1000/")
+            count = 1000 if "/optimized/" in row["name"] else 0
+            row.update(allocations_per_invocation=count, allocation_bytes_per_invocation=count * 64)
+        names = sorted({row["name"] for row in rows})
+        text = jit_comparison_report(report, names, 3)
+        self.assertIn("| temporaryObjects | 1000 | native | 0.0 | 0.0 |", text)
+        self.assertIn("| temporaryObjects | 1000 | optimized | 1000.0 | 64000.0 |", text)
+        self.assertIn("not collector-speed comparisons", text)
+        self.assertIn("final forced collection is excluded", text)
+        aot_rows = [row for row in rows if row["name"].startswith("aot/")]
+        aot_names = sorted({row["name"] for row in aot_rows})
+        self.assertIn("Managed allocations/invocation",
+                      aot_comparison_report({"benchmarks": aot_rows}, aot_names, 3))
+        rows[-1]["allocations_per_invocation"] = -1
+        with self.assertRaisesRegex(ValueError, "invalid allocations_per_invocation"):
+            jit_comparison_report(report, names, 3)
+
+    def test_gc_report_separates_cycle_time_steps_and_reclaimed_memory(self) -> None:
+        rows = gc_samples()
+        names = sorted({row["name"] for row in rows})
+        text = gc_report({"benchmarks": rows}, names, 3)
+        self.assertIn("| 0 | 4096 | 64 | 16 | 2.000 | 50.0% | 50.0 | 100.0 | 600.0 | 257.0 |", text)
+        self.assertIn("| 8192 | 4096 | 16 | 263168 | 263168 | 263168 | 0 | 0 |", text)
+        self.assertIn("Per-step clock reads", text)
+        self.assertIn("no C++ reference", text)
+        self.assertNotIn("/C++", text)
+
+    def test_gc_report_rejects_missing_failed_and_inconsistent_samples(self) -> None:
+        rows = gc_samples()
+        names = sorted({row["name"] for row in rows})
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            gc_report({"benchmarks": rows[:-1]}, names, 3)
+        for field, value, message in (("error_occurred", True, "benchmark failed"),
+                                       ("start_ns", float("nan"), "invalid start_ns"),
+                                       ("new_objects", 4096.5, "incorrect cohort counts"),
+                                       ("new_objects", 1, "incorrect cohort counts"),
+                                       ("reclaimed_objects", 1, "incorrect cohort counts"),
+                                       ("reclaimed_bytes", 1, "inconsistent heap accounting"),
+                                       ("heap_committed_bytes", 0, "inconsistent heap accounting"),
+                                       ("steps_per_cycle", 0, "invalid step measurements"),
+                                       ("maximum_step_ns", 0, "invalid step measurements")):
+            with self.subTest(field=field):
+                invalid = [dict(row) for row in rows]
+                invalid[-1][field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    gc_report({"benchmarks": invalid}, names, 3)
+        invalid_name = "aot/native/temporaryObjects/1000/real_time"
+        invalid = [dict(row, name=invalid_name) for row in rows[:3]]
+        with self.assertRaisesRegex(ValueError, "not a collector cycle"):
+            gc_report({"benchmarks": invalid}, [invalid_name], 3)
+        invalid = [dict(row, name=row["name"].replace("/16/", "/0/")) for row in rows]
+        with self.assertRaisesRegex(ValueError, "invalid step budget"):
+            gc_report({"benchmarks": invalid}, sorted({row["name"] for row in invalid}), 3)
+        fractional = [dict(row, new_objects=4096.5,
+                           reclaimed_objects=4096.5 - row["new_survivors"]) for row in rows]
+        with self.assertRaisesRegex(ValueError, "incorrect cohort counts"):
+            gc_report({"benchmarks": fractional}, names, 3)
 
     def test_unqualified_workloads_keep_distinct_preparation_suites(self) -> None:
         report = reloadable_samples(1)
@@ -432,7 +515,7 @@ class BenchmarkReportTest(unittest.TestCase):
     def test_comparison_options_preserve_google_benchmark_arguments(self) -> None:
         parsed = parse_arguments(["--compare", "--report", "out/test.json", "--",
                                   "--benchmark_repetitions=3"])
-        self.assertTrue(parsed.compare)
+        self.assertEqual(parsed.report_mode, "compare")
         self.assertEqual(parsed.variant, "release")
         self.assertEqual(parsed.benchmark_arguments, ["--benchmark_repetitions=3"])
 
@@ -456,7 +539,7 @@ class BenchmarkReportTest(unittest.TestCase):
             native_call_report({"benchmarks": rows}, names, 1)
         rows = native_samples()
         rows[-1]["end_heap_bytes"] = float("nan")
-        with self.assertRaisesRegex(ValueError, "invalid heap"):
+        with self.assertRaisesRegex(ValueError, "invalid end_heap_bytes"):
             native_call_report({"benchmarks": rows}, names, 1)
         rows = native_samples()
         incomplete = [row for row in rows if "/aot/" not in row["name"]]
@@ -505,6 +588,30 @@ class BenchmarkReportTest(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
             self.assertIn("Fresh-Isolate setup", report.with_suffix(".md").read_text(encoding="utf-8"))
+
+    def test_gc_runner_selects_collector_registry_and_writes_a_separate_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-gc-bench-") as temporary:
+            report = Path(temporary) / "gc.json"
+            parsed = parse_arguments(["--gc-report", "--report", str(report)])
+
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
+                self.assertEqual(Path(command[0]).stem, "vela_benchmarks")
+                self.assertIn("--benchmark_filter=^gc/cohort/", command)
+                rows = gc_samples(7)
+                if "--benchmark_list_tests=true" in command:
+                    names = sorted({row["name"] for row in rows})
+                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
+                self.assertIn("--benchmark_repetitions=7", command)
+                self.assertIn("--benchmark_enable_random_interleaving=true", command)
+                report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
+                with redirect_stdout(io.StringIO()):
+                    run(parsed)
+            text = report.with_suffix(".md").read_text(encoding="utf-8")
+            self.assertIn("Vela GC: complete incremental collection cycles", text)
+            self.assertNotIn("AOT/C++", text)
 
     def test_runner_rejects_benchmark_error_even_when_process_succeeds(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-bench-") as temporary:

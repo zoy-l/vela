@@ -11,9 +11,6 @@ namespace vela::runtime {
 class StringObject;
 
 // 全部指针与编号来自已实例化的映像；借用参数在整个 helper 调用期间由调用帧保根。
-extern "C" void vela_native_v1_constant(NativeExecution* execution,
-                                        std::uint32_t index,
-                                        NativeValue* result) noexcept;
 extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
                                                  std::uint32_t type,
                                                  const NativeValue* value) noexcept;

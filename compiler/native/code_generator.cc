@@ -41,7 +41,6 @@
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
-#include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
@@ -56,6 +55,7 @@
 #include "compiler/native/global_analysis.h"
 #include "compiler/native/integer_bit_optimizer.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/local_ssa.h"
 #include "compiler/native/native_image_data.h"
 #include "compiler/native/native_image_emitter.h"
@@ -67,21 +67,7 @@
 namespace vela::compiler::native {
 namespace {
 
-constexpr std::size_t kMaximumInlineInstructions = 64;
 constexpr std::size_t kMaximumRecursiveCalls = 2;
-
-bool CanInlineSmallFunction(const ir::Function& function) {
-  // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
-  if (!ir::CanAnalyzeSynchronousFunction(function) ||
-      function.parameter_count > kMaximumInlineInstructions ||
-      function.instructions.size() > kMaximumInlineInstructions) {
-    return false;
-  }
-  return std::ranges::all_of(function.instructions, [](const ir::Instruction& instruction) {
-    return instruction.opcode == Opcode::Return ||
-           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
-  });
-}
 
 bool HasUnrollableRecursion(const ir::Function& function, std::size_t function_index) {
   if (!ir::CanAnalyzeSynchronousFunction(function) ||
@@ -158,64 +144,6 @@ bool CanExpandRecursion(const ir::Program& program,
           CanUnrollManagedRecursion(function, index, metrics));
 }
 
-bool CanUseBoundedLeaf(const ir::Function& function) {
-  if (!ir::CanAnalyzeSynchronousFunction(function) || !IsScalar(function.return_type)) {
-    return false;
-  }
-  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-    const auto& instruction = function.instructions.at(index);
-    if (instruction.opcode == Opcode::Return) {
-      continue;
-    }
-    const auto effects = ir::AnalyzeEffects(instruction);
-    const auto access = ir::AnalyzeRegisters(instruction, {});
-    bool scalar = !access.defines_value || IsScalar(function.value_types.at(instruction.dst));
-    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-      scalar = scalar && IsScalar(function.value_types.at(reg));
-    });
-    if (!scalar || effects.reads_state || effects.writes_state ||
-        ((instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
-          instruction.opcode == Opcode::JumpIfNull) &&
-         instruction.index <= index)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool IsReadonlyKernelInstruction(const ir::Instruction& instruction, const ir::Function& function) {
-  if (instruction.opcode == Opcode::Return) {
-    return true;
-  }
-  const auto effects = ir::AnalyzeEffects(instruction);
-  const auto array_length = ir::IsBuiltinCall(instruction, Builtin::ArrayLength);
-  if (effects.MayCollectOnSuccess() || effects.writes_state ||
-      (effects.reads_state && instruction.opcode != Opcode::GetIndex && !array_length)) {
-    return false;
-  }
-  const auto access = ir::AnalyzeRegisters(instruction, {});
-  bool valid = true;
-  ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-    const auto& type = function.value_types.at(reg);
-    valid = valid && (IsScalar(type) || instruction.opcode == Opcode::Move ||
-                      (reg == instruction.lhs && type.kind == Kind::Array &&
-                       (instruction.opcode == Opcode::GetIndex || array_length)));
-  });
-  return valid;
-}
-
-bool CanUseGuardedLeaf(const ir::Function& function) {
-  constexpr std::size_t kMaximumKernelInstructions = 128;
-  if (!ir::CanAnalyzeSynchronousFunction(function) || !IsScalar(function.return_type) ||
-      function.parameter_count > kMaximumKernelInstructions ||
-      function.instructions.size() > kMaximumKernelInstructions) {
-    return false;
-  }
-  return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
-    return IsReadonlyKernelInstruction(instruction, function);
-  });
-}
-
 bool HasVersionAssumptions(const ir::Function& function, const ir::Program& program) {
   return std::ranges::any_of(function.instructions, [&](const auto& instruction) {
     switch (instruction.opcode) {
@@ -280,6 +208,7 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
       [](llvm::CGSCCPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         // 内联后、循环旋转前处理纯调用；旋转会把计数条件化简为退出相等判断。
         llvm::FunctionPassManager functions;
+        AddInvariantCallPasses(functions);
         AddBoundedPollPasses(functions);
         pipeline.addPass(llvm::createCGSCCToFunctionPassAdaptor(std::move(functions)));
       });
@@ -292,6 +221,7 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   passes.registerScalarOptimizerLateEPCallback(
       [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         AddIntegerLoopPasses(pipeline);
+        AddInvariantCallPasses(pipeline);
       });
   passes.registerModuleAnalyses(modules);
   passes.registerCGSCCAnalyses(calls);
@@ -300,6 +230,7 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   passes.crossRegisterProxies(loops, functions, calls, modules);
   llvm::FunctionPassManager integer_loops;
   AddIntegerLoopPasses(integer_loops);
+  AddInvariantCallPasses(integer_loops);
   llvm::ModulePassManager preparation;
   preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
   preparation.run(module, modules);
@@ -408,8 +339,6 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
   }
 }
 
-enum class LeafKind : std::uint8_t { None, Bounded, Guarded, Recursive };
-
 struct InliningPlan final {
   bool enabled;
   LeafKind leaf;
@@ -419,26 +348,25 @@ InliningPlan PlanInlining(const ir::Function& function,
                           std::size_t function_index,
                           NativeProgramMode mode,
                           NativeDebugging debugging,
-                          NativeCodePlacement placement) {
+                          NativeCodePlacement placement,
+                          NativeCodeTier tier) {
   const auto small = CanInlineSmallFunction(function);
-  const auto guarded = CanUseGuardedLeaf(function);
   auto leaf = LeafKind::None;
-  if (function.native_symbol.empty() && debugging == NativeDebugging::Safepoints &&
-      mode == NativeProgramMode::Closed) {
-    if (small && CanUseBoundedLeaf(function)) {
-      leaf = LeafKind::Bounded;
-    } else if (guarded) {
-      leaf = LeafKind::Guarded;
-    } else if (placement == NativeCodePlacement::Linked &&
-               CanUseRecursiveLeaf(function, function_index)) {
+  if (mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized) {
+    leaf = PlanNonrecursiveLeaf(function, debugging);
+    if (leaf == LeafKind::None && debugging == NativeDebugging::Safepoints &&
+        mode == NativeProgramMode::Closed && placement == NativeCodePlacement::Linked &&
+        CanUseRecursiveLeaf(function, function_index)) {
       leaf = LeafKind::Recursive;
     }
   }
-  return {.enabled = small || guarded, .leaf = leaf};
+  // Guarded 入口的完整函数体保留安全点与恢复状态，只强制内联独立的叶入口。
+  return {.enabled = small && leaf != LeafKind::Guarded, .leaf = leaf};
 }
 
 void AddLeafEntry(llvm::Module& module,
                   const std::string& prefix,
+                  const ir::Function& source,
                   LeafKind kind,
                   GeneratedFunction& function) {
   if (kind == LeafKind::None) {
@@ -446,12 +374,15 @@ void AddLeafEntry(llvm::Module& module,
   }
   // 直接调用已确认当前版本；守卫限制不轮询的工作量，失败交还调用者建立逻辑帧。
   auto* type = function.body->getFunctionType();
+  std::vector<llvm::Type*> parameters(type->param_begin(), type->param_end());
+  const LeafEntryLayout layout(source.parameter_count);
+  parameters.insert(parameters.begin() + layout.depth, llvm::Type::getInt64Ty(module.getContext()));
   if (kind == LeafKind::Recursive) {
-    std::vector<llvm::Type*> parameters(type->param_begin(), type->param_end());
-    parameters.insert(parameters.end() - 1, llvm::Type::getInt32Ty(module.getContext()));
-    type = llvm::FunctionType::get(type->getReturnType(), parameters, false);
+    parameters.insert(parameters.begin() + layout.budget,
+                      llvm::Type::getInt32Ty(module.getContext()));
     function.budgeted_recursion = true;
   }
+  type = llvm::FunctionType::get(type->getReturnType(), parameters, false);
   function.leaf =
       llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, prefix + "_leaf", module);
   function.leaf->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -465,7 +396,7 @@ void AddLeafEntry(llvm::Module& module,
 }
 
 std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
-                                          NativeCodeTier tier,
+                                          const NativeCallPlan& calls,
                                           std::span<const std::uint8_t> reused) {
   const auto count = program.functions.size();
   std::vector<std::uint8_t> needed(count, reused.empty() ? 1 : 0);
@@ -480,11 +411,9 @@ std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
         needed.at(instruction.index) = 1;
       }
     }
-    if (tier == NativeCodeTier::Optimized) {
-      for (const auto& target : FindDirectCalls(function, program)) {
-        if (target) {
-          needed.at(target->function) = 1;
-        }
+    for (const auto& target : calls.direct_calls[index]) {
+      if (target) {
+        needed.at(target->function) = 1;
       }
     }
   }
@@ -545,9 +474,11 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
       }
     }
-    const auto inlining = PlanInlining(function, index, program.native_mode, debugging, placement);
+    const auto inlining =
+        PlanInlining(function, index, program.native_mode, debugging, placement, tier);
     if (inlining.leaf != LeafKind::None) {
-      AddLeafEntry(module, module_name + '_' + std::to_string(index), inlining.leaf, current);
+      AddLeafEntry(module, module_name + '_' + std::to_string(index), function, inlining.leaf,
+                   current);
       baseline.leaf = current.leaf;
       baseline.leaf_guard = current.leaf_guard;
       baseline.budgeted_recursion = current.budgeted_recursion;
@@ -831,7 +762,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                            ? PlanBorrows(program)
                            : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
   auto declarations = DeclareFunctions(module, program, module_name, tier, debugging, placement,
-                                       borrows, NeededFunctions(program, tier, reused));
+                                       borrows, NeededFunctions(program, calls, reused));
   if (!declarations) {
     return std::unexpected(declarations.error());
   }

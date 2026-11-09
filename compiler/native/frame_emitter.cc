@@ -26,6 +26,7 @@
 #include "compiler/native/native_values.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
 
@@ -165,8 +166,13 @@ void FunctionEmitter::EmitFrameEntry() {
   }
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
-  auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  auto* depth = LoadMemory(word, depth_address, MemoryRegion::Execution);
+  llvm::Value* depth = nullptr;
+  if (kind_ == NativeEntryKind::Leaf) {
+    depth = body_->getArg(LeafEntryLayout(source_.parameter_count).depth);
+  } else {
+    depth = LoadMemory(word, ByteAddress(execution, NativeMemoryLayout::kExecutionDepth),
+                       MemoryRegion::Execution);
+  }
   entry_depth_ = depth;
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
@@ -197,7 +203,7 @@ void FunctionEmitter::EmitFrameEntry() {
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
   } else if (on_stack && roots_.count != 0) {
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
-    if (IsClosedLinkedProgram(program_.native_mode, placement_)) {
+    if (!source_.is_async) {
       using runtime::NativeStackRoots;
       auto* frame = allocate(sizeof(NativeStackRoots), alignof(NativeStackRoots));
       auto* head = builder_.CreateLoad(
@@ -205,7 +211,8 @@ void FunctionEmitter::EmitFrameEntry() {
       MarkInvariant(*head);
       stack_roots_head = head;
       previous_stack_roots = LoadMemory(pointer, head, MemoryRegion::StackRoots);
-      // 先发布空槽，再由安全点根计划写入活动引用；登记时即使正处于 Sweep 也没有待追踪值。
+      // 同步帧和重载恢复严格按栈序退出，共用 Heap 的 LIFO 根链；异步帧仍单独登记。
+      // 根槽清零后统一挂链，避免每个 GC 边界重复检查登记状态。
       static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
       builder_.CreateMemSet(root_slots_, builder_.getInt8(0), roots_.count * sizeof(runtime::Value),
                             llvm::Align(alignof(runtime::Value)));
@@ -251,10 +258,7 @@ void FunctionEmitter::EmitFrameEntry() {
   Builder cleanup(cleanup_);
   status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
   if (construction_depth_ != nullptr) {
-    auto exit = module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol,
-                                            cleanup.getVoidTy(), pointer, cleanup.getInt32Ty());
-    cleanup.CreateCall(exit,
-                       {execution, cleanup.CreateLoad(cleanup.getInt32Ty(), construction_depth_)});
+    ExitInitializations(cleanup, cleanup.CreateLoad(cleanup.getInt32Ty(), construction_depth_));
   }
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
@@ -423,19 +427,28 @@ void FunctionEmitter::CacheFields() {
   }
 }
 
+llvm::Value* FunctionEmitter::InitializationsAddress(Builder& builder) {
+  return builder.CreateConstGEP1_64(builder.getInt8Ty(), ControlState(),
+                                    offsetof(runtime::NativeControlState, initializations));
+}
+
 void FunctionEmitter::BeginConstruction() {
-  auto enter = module_.getOrInsertFunction(runtime::kNativeInitializationEnterSymbol,
-                                           builder_.getVoidTy(), builder_.getPtrTy());
-  builder_.CreateCall(enter, {body_->getArg(0)});
+  auto* address = InitializationsAddress(builder_);
+  auto* active = builder_.CreateLoad(builder_.getInt64Ty(), address);
+  builder_.CreateStore(builder_.CreateAdd(active, builder_.getInt64(1)), address);
   auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
   builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt32(1)), construction_depth_);
 }
 
+void FunctionEmitter::ExitInitializations(Builder& builder, llvm::Value* count) {
+  auto* address = InitializationsAddress(builder);
+  auto* active = builder.CreateLoad(builder.getInt64Ty(), address);
+  builder.CreateStore(builder.CreateSub(active, builder.CreateZExt(count, builder.getInt64Ty())),
+                      address);
+}
+
 void FunctionEmitter::EndConstruction() {
-  auto exit =
-      module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol, builder_.getVoidTy(),
-                                  builder_.getPtrTy(), builder_.getInt32Ty());
-  builder_.CreateCall(exit, {body_->getArg(0), builder_.getInt32(1)});
+  ExitInitializations(builder_, builder_.getInt32(1));
   auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
   builder_.CreateStore(builder_.CreateSub(depth, builder_.getInt32(1)), construction_depth_);
 }
@@ -444,11 +457,7 @@ void FunctionEmitter::AbortConstructions() {
   if (construction_depth_ == nullptr) {
     return;
   }
-  auto exit =
-      module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol, builder_.getVoidTy(),
-                                  builder_.getPtrTy(), builder_.getInt32Ty());
-  builder_.CreateCall(
-      exit, {body_->getArg(0), builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_)});
+  ExitInitializations(builder_, builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_));
   builder_.CreateStore(builder_.getInt32(0), construction_depth_);
 }
 

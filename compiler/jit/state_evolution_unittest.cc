@@ -53,6 +53,13 @@ bool IsConstructing(runtime::NativeContext& context) noexcept {
   return context.isolate().native_control().IsInitializing();
 }
 
+std::int64_t StopConstruction(runtime::NativeContext& context) noexcept {
+  auto& control = context.isolate().native_control();
+  EXPECT_TRUE(control.IsInitializing());
+  control.RequestStop();
+  return 0;
+}
+
 std::int64_t FreezeMapHeap(runtime::NativeContext& context) noexcept {
   auto& heap = context.isolate().heap();
   heap.SetAllocationLimit(heap.allocated_bytes());
@@ -588,6 +595,21 @@ TEST_P(JitStateTest, AwaitingConstructorArgumentsDoesNotSuspendAnInitializationB
   const auto& result = *result_storage;
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
   ASSERT_TRUE(test::CompletesWithInteger(isolate_, result.value(), 42));
+  EXPECT_FALSE(isolate_.native_control().IsInitializing());
+}
+
+TEST_P(JitStateTest, StoppedConstructionReleasesItsBarrierOnTheCleanupPath) {
+  ASSERT_TRUE(isolate_.RegisterNative(
+      runtime::NativeFunction::Bind<&StopConstruction>("stopConstruction")));
+  const auto update = Update(R"(
+external func stopConstruction(): int;
+class Box { value: int = stopConstruction(); }
+export func main(): int { return Box().value; }
+)");
+  ASSERT_TRUE(update) << update.error();
+  const auto result = Entry("main").Invoke({});
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
 }
 

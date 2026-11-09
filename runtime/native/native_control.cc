@@ -92,15 +92,11 @@ bool NativeControl::HasHostBorrow() const noexcept {
 }
 
 void NativeControl::EnterInitialization() noexcept {
-  ++initializations_;
+  ++state_.initializations;
 }
 
 void NativeControl::ExitInitialization() noexcept {
-  --initializations_;
-}
-
-void NativeControl::ExitInitializations(std::uint32_t count) noexcept {
-  initializations_ -= count;
+  --state_.initializations;
 }
 
 bool NativeControl::CanPublish() const noexcept {
@@ -108,7 +104,7 @@ bool NativeControl::CanPublish() const noexcept {
 }
 
 bool NativeControl::IsInitializing() const noexcept {
-  return initializations_ != 0;
+  return state_.initializations != 0;
 }
 
 std::expected<void, NativeSafepointError> NativeControl::ScheduleSafepoint(
@@ -186,15 +182,6 @@ ExecutionStatus NativeControl::Poll() const noexcept {
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept {
   return static_cast<std::uint8_t>(
       execution->isolate().native_control().ProcessSafepoint(execution));
-}
-
-extern "C" void vela_native_v3_initialization_enter(NativeExecution* execution) noexcept {
-  execution->isolate().native_control().EnterInitialization();
-}
-
-extern "C" void vela_native_v3_initialization_exit(NativeExecution* execution,
-                                                   std::uint32_t count) noexcept {
-  execution->isolate().native_control().ExitInitializations(count);
 }
 
 }  // namespace vela::runtime

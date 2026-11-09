@@ -356,8 +356,12 @@ source_set("native") {
     "native/integer_loop_optimizer.h",
     "native/integer_range_analysis.cc",
     "native/integer_range_analysis.h",
+    "native/invariant_call_optimizer.cc",
+    "native/invariant_call_optimizer.h",
     "native/local_ssa.cc",
     "native/local_ssa.h",
+    "native/loop_cloning.cc",
+    "native/loop_cloning.h",
     "native/map_analysis.cc",
     "native/map_analysis.h",
     "native/materialization_emitter.cc",
@@ -550,6 +554,7 @@ executable("vela_aot_tests") {
     "aot/reachability_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/array_capacity_analysis_unittest.cc",
+    "native/call_targets_unittest.cc",
     "native/closed_array_analysis_unittest.cc",
     "native/escape_analysis_unittest.cc",
     "native/field_access_unittest.cc",
@@ -557,12 +562,15 @@ executable("vela_aot_tests") {
     "native/host_header_unittest.cc",
     "native/integer_bit_optimizer_unittest.cc",
     "native/integer_loop_optimizer_unittest.cc",
+    "native/invariant_call_optimizer_unittest.cc",
+    "native/loop_cloning_unittest.cc",
     "native/map_analysis_unittest.cc",
     "native/native_roots_unittest.cc",
     "native/recursive_inliner_unittest.cc",
   ]
   deps = [
     ":aot",
+    ":native_pass_test_support",
     ":preparation_test_support",
     ":test_sources",
     "//runtime",
@@ -628,6 +636,15 @@ source_set("preparation_test_support") {
   testonly = true
   sources = [ "test_support/preparation_test_support.h" ]
   public_deps = [ ":ir" ]
+}
+
+source_set("native_pass_test_support") {
+  testonly = true
+  sources = [
+    "test_support/native_pass_test_support.cc",
+    "test_support/native_pass_test_support.h",
+  ]
+  public_deps = [ "//third_party:llvm" ]
 }
 
 source_set("program_test_support") {
@@ -711,6 +728,7 @@ executable("vela_compiler_tests") {
     ":testing",
     "//base:test_directory",
     "//runtime",
+    "//runtime:native_test_support",
     "//third_party:gtest_main",
   ]
 }

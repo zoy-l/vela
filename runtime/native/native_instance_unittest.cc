@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "base/layout_description.h"
+#include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
@@ -121,10 +122,14 @@ TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {
   ASSERT_TRUE(second.has_value());
   EXPECT_EQ(isolate.layout_counts(), counts);
   EXPECT_EQ((*first)->layouts().classes.front(), (*second)->layouts().classes.front());
-  EXPECT_NE((*first)->constant(0).AsString(), (*second)->constant(0).AsString());
+  const auto first_constants = test::InstanceConstants(**first);
+  const auto second_constants = test::InstanceConstants(**second);
+  const auto* first_string = first_constants.front().AsString();
+  const auto* second_string = second_constants.front().AsString();
+  EXPECT_NE(first_string, second_string);
   isolate.heap().Collect();
-  EXPECT_EQ((*first)->constant(0).AsString()->value(), "rooted");
-  EXPECT_EQ((*second)->constant(0).AsString()->value(), "rooted");
+  EXPECT_EQ(first_string->value(), "rooted");
+  EXPECT_EQ(second_string->value(), "rooted");
   Isolate other(1);
   const auto third = NativeInstance::Instantiate(other, image);
   ASSERT_TRUE(third.has_value());

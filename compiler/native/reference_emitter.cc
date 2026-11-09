@@ -84,10 +84,6 @@ void FunctionEmitter::CacheMapLookups() {
 }
 
 void FunctionEmitter::CacheConstants() {
-  if (placement_ != NativeCodePlacement::Linked ||
-      program_.native_mode != NativeProgramMode::Closed) {
-    return;
-  }
   llvm::Value* storage = nullptr;
   for (const auto& instruction : source_.instructions) {
     if (instruction.opcode != Opcode::LoadString || constants_.contains(instruction.index)) {
@@ -101,6 +97,7 @@ void FunctionEmitter::CacheConstants() {
           builder_.getPtrTy(),
           ByteAddress(storage, runtime::NativeMemoryLayout::kObjectNativePayload));
     }
+    // 常量池属于当前执行借用的版本实例，发布不会改写旧池；重入返回后也恢复该实例。
     // 实例发布前已创建全部字符串常量；非移动 GC 和实例根保证整个调用期间可借用。
     const auto offset =
         (instruction.index * sizeof(runtime::Value)) + runtime::NativeMemoryLayout::kValuePayload;
@@ -438,14 +435,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
   llvm::Value* status = nullptr;
   switch (instruction.opcode) {
     case Opcode::LoadString: {
-      if (const auto constant = constants_.find(instruction.index); constant != constants_.end()) {
-        Store(instruction.dst, constant->second, {.kind = Kind::String, .name = {}});
-        return {};
-      }
-      auto helper = module_.getOrInsertFunction(runtime::kNativeConstantSymbol,
-                                                builder_.getVoidTy(), pointer, word, pointer);
-      builder_.CreateCall(helper, {context, index, result_});
-      Unpack(instruction.dst);
+      Store(instruction.dst, constants_.at(instruction.index), {.kind = Kind::String, .name = {}});
       return {};
     }
     case Opcode::NewInstance: {

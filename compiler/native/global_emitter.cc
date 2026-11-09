@@ -239,7 +239,8 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   // 局部标记由 LLVM 提升为 SSA，异常初始化不发布 Ready，恢复入口从未知状态重新开始。
   auto* established = builder_.CreateLoad(builder_.getInt1Ty(), known_ready);
   auto* inspect = llvm::BasicBlock::Create(module_.getContext(), "global.inspect", body_);
-  builder_.CreateCondBr(established, cached != nullptr ? cached : ready, inspect);
+  auto* branch = builder_.CreateCondBr(established, cached != nullptr ? cached : ready, inspect);
+  MarkClosedInvariantCall(*branch);
   builder_.SetInsertPoint(inspect);
   builder_.CreateCondBr(IsGlobalReady(ByteAddress(global_states_, instruction.index)), ready,
                         initialize,

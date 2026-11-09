@@ -141,7 +141,7 @@ class CapacityAnalysis final {
       const auto effects = ir::AnalyzeEffects(instruction);
       if (effects.MayCollectOnSuccess() || effects.writes_state ||
           (effects.changes_control &&
-           (!IsJumpOpcode(instruction.opcode) || instruction.index <= index ||
+           (!IsJumpOpcode(instruction.opcode) || ir::IsBackJump(instruction, index) ||
             (instruction.index > loop.step_begin && instruction.index <= loop.latch)))) {
         return std::nullopt;
       }

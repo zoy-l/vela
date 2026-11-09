@@ -4,6 +4,7 @@
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstrTypes.h>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -36,6 +37,15 @@ using Kind = SourceType::Kind;
 using Builder = llvm::IRBuilder<>;
 
 inline constexpr std::uint64_t kMaximumNativeStackBytes = 4096;
+
+// 叶入口的参数顺序为 execution、源参数、depth、可选递归 budget、result。
+struct LeafEntryLayout final {
+  explicit constexpr LeafEntryLayout(std::size_t parameter_count)
+      : depth(static_cast<unsigned>(parameter_count + 1)), budget(depth + 1) {}
+
+  unsigned depth;
+  unsigned budget;
+};
 
 // 只追踪单定义和 Move 链；返回的字符串常量由实例保根，不依赖函数栈根槽。
 std::vector<std::optional<std::uint32_t>> FindStringConstants(

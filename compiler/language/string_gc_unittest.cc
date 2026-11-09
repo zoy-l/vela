@@ -12,6 +12,7 @@
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"
+#include "runtime/native/native_image_test_support.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
@@ -42,10 +43,10 @@ TEST(CompilerStringGcTest, RootsConstantsDuringCompilationAndBetweenExecutions) 
     heap.Collect();
     const auto baseline = heap.object_count();
     const auto constants = compiled.instance->image().strings.values();
+    const auto values = runtime::test::InstanceConstants(*compiled.instance);
     ASSERT_EQ(constants.size(), kConstants);
     for (std::size_t index = 0; index < constants.size(); ++index) {
-      EXPECT_EQ(compiled.instance->constant(index).AsString()->value(),
-                constants.subspan(index).front().text());
+      EXPECT_EQ(values[index].AsString()->value(), constants.subspan(index).front().text());
     }
     const auto result = test::Execute(*compiled.instance);
     ExpectStringResult(result, "literal0literal39");

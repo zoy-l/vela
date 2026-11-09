@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 import json
 import math
 from pathlib import Path
@@ -22,6 +23,8 @@ LABELS = {"cpp": "C++", "jit": "Vela JIT", "luajit_interp": "Lua interpreter",
           "luajit": "LuaJIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
     r"^native/(cpp|cpp_indirect|jit|jit_control|aot|aot_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
+TEMPORARY_OBJECT_CASE = re.compile(
+    r"^(?:aot/(native)|hot/steady/(baseline|optimized))/temporaryObjects/(\d+)/real_time$")
 NATIVE_BASELINES = {
     "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
     "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
@@ -37,6 +40,15 @@ NATIVE_BASELINES = {
 
 def variation(values: list[float]) -> str:
     return f"{stdev(values) / mean(values):.1%}" if len(values) > 1 else "-"
+
+
+def median_cell(values: Iterable[float], precision: int, divisor: float = 1.0) -> str:
+    return f"{median(values) / divisor:.{precision}f}"
+
+
+def median_cells(entries: list[dict], fields: tuple[str, ...], precision: int,
+                 divisor: float = 1.0) -> list[str]:
+    return [median_cell((entry[field] for entry in entries), precision, divisor) for field in fields]
 
 
 def checked_result(name: str, entry: dict) -> float:
@@ -72,6 +84,40 @@ def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) ->
     return rows
 
 
+def validate_counters(name: str, entry: dict, fields: tuple[str, ...]) -> None:
+    for field in fields:
+        value = entry[field]
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name}: invalid {field}")
+
+
+def append_temporary_object_allocations(lines: list[str], rows: dict[str, list[dict]]) -> None:
+    fields = ("allocations_per_invocation", "allocation_bytes_per_invocation")
+    allocations = {}
+    for name, entries in rows.items():
+        match = TEMPORARY_OBJECT_CASE.fullmatch(name)
+        if not match:
+            continue
+        aot, jit, size = match.groups()
+        for entry in entries:
+            validate_counters(name, entry, fields)
+        allocations[int(size), aot or jit] = [median(entry[field] for entry in entries) for field in fields]
+    if not allocations:
+        return
+    lines.extend(["", "temporaryObjects measures temporary object construction, scalar formatting "
+                  "and length consumption. C++ uses local values with ordinary optimization; "
+                  "Vela may eliminate objects and strings. These are language-workload timings, "
+                  "not collector-speed comparisons. Automatic GC remains timed; final forced "
+                  "collection is excluded. Use vl bench --gc-report for collector measurements.",
+                  "Managed allocation counts and bytes are per complete timed invocation, include "
+                  "Heap-accounted external blocks, and exclude warm-up and final collection. "
+                  "They are independent of end-of-run live heap snapshots and do not count C++ allocations.", "",
+                  "| Workload | Size | Backend | Managed allocations/invocation | Allocation bytes/invocation |",
+                  "| --- | ---: | --- | ---: | ---: |"])
+    for (size, backend), values in sorted(allocations.items()):
+        lines.append(f"| temporaryObjects | {size} | {backend} | {values[0]:.1f} | {values[1]:.1f} |")
+
+
 def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
     pattern = re.compile(r"^aot/(native|cpp|first_native)/([^/]+)/(\d+)/real_time$")
     if not expected_cases or any(pattern.fullmatch(name) is None for name in expected_cases):
@@ -99,9 +145,8 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                   "suspended_frames", "saved_state_bytes", "remaining_suspended_frames", "remaining_saved_bytes")
         fields += ("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
         values = {field: [entry[field] for entry in entries] for field in fields}
-        if any(not math.isfinite(value) or value < 0 for numbers in values.values() for value in numbers):
-            raise ValueError(f"{name}: invalid memory or suspended-state counter")
         for entry in entries:
+            validate_counters(name, entry, fields)
             if (entry["baseline_bytes"] != entry["retained_bytes"] or
                     entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
                 raise ValueError(f"{name}: retained temporary state after completion and GC")
@@ -137,6 +182,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     if paired_ratios:
         geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
         lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
+    append_temporary_object_allocations(lines, rows)
     if any(workload in ALGORITHM_WORKLOADS for workload, _ in keys):
         lines.extend(["", "The algorithm workloads use the same source as the JIT comparisons. Input preparation is excluded; "
                       "each timed call checks its result, and particle positions advance between calls. "
@@ -146,7 +192,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     lines.extend(["", "| Workload | Size | Backend | Baseline bytes | End bytes | Retained bytes | Committed bytes | Suspended frames | Saved bytes |",
                   "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
     for (backend, workload, size), fields in sorted(counters.items()):
-        values = [f"{median(fields[field]):.0f}" for field in
+        values = [median_cell(fields[field], 0) for field in
                   ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "suspended_frames", "saved_state_bytes")]
         lines.append("| " + " | ".join([workload, str(size), backend, *values]) + " |")
     lines.extend(["", "Native frame storage is the declared LLVM frame aggregate before optimization; "
@@ -188,12 +234,9 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
                   if backend == "jit" else
                   ("baseline_bytes", "allocated_bytes", "retained_bytes", "warmup_calls",
                    "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes"))
-        values = {}
-        for field in fields:
-            numbers = [entry[field] for entry in entries]
-            if any(not math.isfinite(value) or value < 0 for value in numbers):
-                raise ValueError(f"{name}: invalid {field}")
-            values[field] = numbers
+        for entry in entries:
+            validate_counters(name, entry, fields)
+        values = {field: [entry[field] for entry in entries] for field in fields}
         if backend == "luajit" and any(value == 0 for value in values["warm_traces"]):
             raise ValueError(f"{name}: no compiled traces after warm-up")
         if backend == "luajit_interp" and any(
@@ -291,11 +334,9 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                             entry["compiled_functions"] != affected or
                             entry["released_code_images"] != 1):
                         raise ValueError(f"{name}: invalid incremental compilation or image retirement")
-                    for field in ("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
+                    validate_counters(name, entry, ("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
                                   "code_ns", "pause_ns", "llvm_lowering_ns",
-                                  "llvm_optimization_ns", "machine_compilation_ns", "linking_ns"):
-                        if not math.isfinite(entry[field]) or entry[field] < 0:
-                            raise ValueError(f"{name}: invalid {field}")
+                                  "llvm_optimization_ns", "machine_compilation_ns", "linking_ns"))
                 scaling[name] = entries
                 continue
             lifecycle_match = lifecycle_pattern.fullmatch(name)
@@ -307,15 +348,12 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                 if (lifecycle_match[2] == "virtual" and
                         entry["materialized_objects"] != (1 if lifecycle_match[1] == "optimized" else 0)):
                     raise ValueError(f"{name}: incorrect materialized object count")
-                for field in ("pause_ns", "pause_max_ns", "source_ns", "llvm_lowering_ns",
+                validate_counters(name, entry, ("pause_ns", "pause_max_ns", "source_ns", "llvm_lowering_ns",
                               "llvm_optimization_ns", "machine_compilation_ns", "linking_ns",
                               "instantiation_ns", "validation_ns", "state_preparation_ns",
                               "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
                               "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns",
-                              "materialization_ns", "materialized_objects"):
-                    value = entry[field]
-                    if not math.isfinite(value) or value < 0:
-                        raise ValueError(f"{name}: invalid {field}")
+                              "materialization_ns", "materialized_objects"))
             lifecycle[name] = entries
             continue
         aot_backend, jit_backend, workload, size_text = match.groups()
@@ -339,10 +377,8 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                     value = entry[field]
                     if not math.isfinite(value) or value <= 0:
                         raise ValueError(f"{name}: invalid {field}")
-                for field in ("code_read_only_bytes", "code_writable_bytes", "external_field_bytes"):
-                    value = entry[field]
-                    if not math.isfinite(value) or value < 0:
-                        raise ValueError(f"{name}: invalid {field}")
+                validate_counters(name, entry,
+                                  ("code_read_only_bytes", "code_writable_bytes", "external_field_bytes"))
     backends = ("cpp", "native", "baseline", "optimized")
     keys = sorted(checksums)
     for key in keys:
@@ -386,6 +422,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                 ratio = math.exp(mean(math.log(value) for value in selected))
                 lines.append(f"Geometric mean {backend} JIT/AOT excluding fields "
                              f"over {len(selected)} paired workloads: {ratio:.2f}x.")
+    append_temporary_object_allocations(lines, rows)
     suite_fields = ("suite_preparation_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns",
                     "code_total_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
                     "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns", "linking_ns")
@@ -394,9 +431,8 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         suite = "algorithms" if key[0] in ALGORITHM_WORKLOADS else "aot"
         for backend in ("baseline", "optimized"):
             for entry in counters[backend, *key]:
+                validate_counters(f"{suite}/{backend}", entry, suite_fields)
                 values = tuple(entry[field] for field in suite_fields)
-                if any(not math.isfinite(value) or value < 0 for value in values):
-                    raise ValueError(f"{suite}/{backend}: invalid suite preparation timings")
                 previous = suites.setdefault((suite, backend), values)
                 if previous != values:
                     raise ValueError(f"{suite}/{backend}: suite was compiled more than once")
@@ -423,7 +459,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     for key in keys:
         for backend in ("baseline", "optimized"):
             entries = counters[backend, *key]
-            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in startup_fields]
+            numbers = median_cells(entries, startup_fields, 3, 1000)
             lines.append("| " + " | ".join([key[0], backend, *numbers]) + " |")
     lines.extend(["", "Memory is reported separately from timing. Linked code/image counters count block "
                   "contents, excluding allocator page padding and OS debugger overhead. Read-only image "
@@ -446,7 +482,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     for key in keys:
         for backend in backends:
             entries = counters[backend, *key]
-            numbers = [f"{median(entry[field] for entry in entries):.0f}" if field in entries[0] else "-"
+            numbers = [median_cell((entry[field] for entry in entries), 0) if field in entries[0] else "-"
                        for field in fields]
             lines.append("| " + " | ".join([key[0], str(key[1]), backend, *numbers]) + " |")
     if lifecycle:
@@ -462,7 +498,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                       "| --- | ---: | --- | ---: | " + " | ".join("---:" for _ in fields) + " |"])
         for name, entries in sorted(lifecycle.items()):
             times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
-            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in fields]
+            numbers = median_cells(entries, fields, 3, 1000)
             materialized = median(entry["materialized_objects"] for entry in entries)
             lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times),
                                             f"{materialized:.3f}", *numbers]) + " |")
@@ -479,7 +515,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
             for phase in ("before", "retained", "released"):
                 if phase + "_heap_bytes" not in entries[0]:
                     continue
-                numbers = [f"{median(entry[phase + '_' + field] for entry in entries):.0f}" for field in fields]
+                numbers = median_cells(entries, tuple(phase + "_" + field for field in fields), 0)
                 lines.append("| " + " | ".join([name, phase, *numbers]) + " |")
     if scaling:
         fields = ("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
@@ -494,7 +530,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                       "| --- | ---: | --- | ---: | " + " | ".join("---:" for _ in fields) + " |"])
         for name, entries in sorted(scaling.items()):
             times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
-            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in fields]
+            numbers = median_cells(entries, fields, 3, 1000)
             compiled = median(entry["compiled_functions"] for entry in entries)
             lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times),
                                             f"{compiled:.0f}", *numbers]) + " |")
@@ -520,9 +556,8 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
             fields = ("baseline_heap_bytes", "end_heap_bytes", "baseline_heap_objects",
                       "end_heap_objects")
             values = {field: [entry[field] for entry in entries] for field in fields}
-            if any(not math.isfinite(value) or value < 0
-                   for numbers in values.values() for value in numbers):
-                raise ValueError(f"{name}: invalid heap counter")
+            for entry in entries:
+                validate_counters(name, entry, fields)
             heaps[backend, workload, count] = values
 
     backends = ("cpp", "cpp_indirect", "jit", "aot", "jit_control", "aot_control")

@@ -5,13 +5,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 #include "base/async_operation.h"
 #include "base/builtin.h"
-#include "base/callable.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
@@ -24,23 +22,6 @@
 #include "runtime/value/value.h"
 namespace vela::compiler::native {
 namespace {
-bool HasLeafCalls(const ir::Function& function,
-                  const ir::Program& program,
-                  std::span<const GeneratedFunction> generated,
-                  std::span<const std::optional<CallableTarget>> direct_calls) {
-  if (program.native_mode != NativeProgramMode::Closed) {
-    return false;
-  }
-  for (const auto& instruction : function.instructions) {
-    if (instruction.opcode == Opcode::Call && generated[instruction.index].leaf != nullptr) {
-      return true;
-    }
-  }
-  return std::ranges::any_of(direct_calls, [&](const auto& target) {
-    return target && generated[target->function].leaf != nullptr;
-  });
-}
-
 std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::CallIndirect:
@@ -107,14 +88,11 @@ std::size_t PlanTemporaryCount(const ir::Function& source,
 }
 
 NativeFrameLayout PlanNativeFrame(llvm::Module& module,
-                                  const ir::Program& program,
                                   const EscapePlan& escape,
                                   const NativeRootPlan& roots,
                                   std::size_t temporary_count,
-                                  NativeFrameRecovery recovery,
+                                  NativeFrameRequirements requirements,
                                   NativeEntryKind kind,
-                                  std::span<const GeneratedFunction> generated,
-                                  std::span<const std::optional<CallableTarget>> direct_calls,
                                   std::size_t auxiliary_bytes) {
   const auto& function = escape.function.get();
   const auto has_checkpoints = !escape.checkpoints.empty();
@@ -156,7 +134,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   if (roots.debug_values) {
     recovery_fields.push_back(debug_storage);
   }
-  if (recovery == NativeFrameRecovery::Required) {
+  if (requirements.recovery) {
     auto* recovery_storage = llvm::StructType::get(context, recovery_fields);
     fields.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(context), sizeof(runtime::NativeCheckpoint)));
@@ -183,7 +161,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
     }
   }
   std::optional<unsigned> leaf_result_field;
-  if (HasLeafCalls(function, program, generated, direct_calls)) {
+  if (requirements.leaf_calls) {
     leaf_result_field = static_cast<unsigned>(fields.size());
     fields.push_back(NativeRecordType(context));
   }

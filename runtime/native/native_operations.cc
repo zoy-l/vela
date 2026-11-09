@@ -80,12 +80,6 @@ std::expected<Value, ExecutionStatus> ExecuteNativeRegExp(NativeExecution& execu
 
 }  // namespace
 
-extern "C" void vela_native_v1_constant(NativeExecution* execution,
-                                        std::uint32_t index,
-                                        NativeValue* result) noexcept {
-  *result = EncodeNativeValue(execution->instance().constant(index));
-}
-
 extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
                                                  std::uint32_t type,
                                                  const NativeValue* value) noexcept {

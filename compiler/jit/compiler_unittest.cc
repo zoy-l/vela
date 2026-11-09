@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -51,6 +52,42 @@ namespace {
 
 using frontend::DiagnosticsText;
 using test::CompileText;
+
+struct RootedFailureCase final {
+  std::string_view call;
+  std::string_view error_code;
+};
+
+std::string RootedFailureSource(const RootedFailureCase& scenario) {
+  const std::string expression(scenario.call);
+  return "class Box { text: string; }\n"
+         "export func fail(): int { return " +
+         expression +
+         "; }\n"
+         "export func caught(): int { const box = Box(text: 42.toString()); "
+         "try { return " +
+         expression + "; } catch (error: Error) { return error.code == '" +
+         std::string(scenario.error_code) + "' ? box.text.length + 40 : 0; } }\n";
+}
+
+void ExpectRootedFailure(runtime::Isolate& isolate,
+                         ExecutionStatus status,
+                         std::initializer_list<std::string_view> frames) {
+  auto& dispatch = isolate.native_dispatch();
+  auto instance = runtime::NativeInstance::Borrow(dispatch.current_state());
+  const auto target = instance.FindFunction("fail");
+  ASSERT_TRUE(target);
+  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
+  EXPECT_EQ(failed.status, status);
+  ASSERT_EQ(failed.stack_trace.size(), frames.size());
+  std::size_t index = 0;
+  for (const auto frame : frames) {
+    EXPECT_EQ(failed.stack_trace[index++].function, frame);
+  }
+  const auto caught = dispatch.FindEntry("main.vela", "caught");
+  ASSERT_TRUE(caught);
+  ASSERT_TRUE(test::ReturnsInteger(*caught, 42));
+}
 
 TEST(JitCompilerTest, OptimizedFieldLoopsPreserveInvariantInputsAcrossClonedRecoveryExits) {
   auto compiler = Compiler::Create();
@@ -173,81 +210,106 @@ export func overflow(value: int): int {
 TEST(JitCompilerTest, TypedSlotCallsRetainFailureFramesAndCallerRoots) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-  const auto compiled = CompileText(**compiler, R"(
-class Box { text: string; }
+  const auto compiled = CompileText(
+      **compiler, RootedFailureSource({.call = "divide(0)", .error_code = "DivisionByZero"}) + R"(
 func divide(value: int): int { return 84 / value; }
-export func fail(): int { return divide(0); }
-export func caught(): int {
-  const box = Box(text: 42.toString());
-  try { return divide(0); }
-  catch (error: Error) { return error.code == 'DivisionByZero' ? box.text.length + 40 : 0; }
-}
 export func answer(): int { return divide(2); }
 )",
-                                    NativeCodeTier::Optimized, test::IRPreservation::Preserve);
+      NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   EXPECT_NE(compiled->llvm_ir.find("call.typed.entry"), std::string::npos);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
-  auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
-  const auto target = instance.FindFunction("fail");
-  if (!target) {
-    FAIL() << "missing fail entry";
+  ExpectRootedFailure(isolate, ExecutionStatus::DivisionByZero, {"divide", "fail"});
+  const auto answer = isolate.native_dispatch().FindEntry("main.vela", "answer");
+  ASSERT_TRUE(answer);
+  ASSERT_TRUE(test::ReturnsInteger(*answer, 42));
+}
+
+TEST(JitCompilerTest, RepeatedLeafCallsPreserveScalarAndVoidResults) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(**compiler, R"(
+func increment(value: int): int { return value + 1; }
+func fraction(value: int): double { return value.toDouble() + 0.5; }
+func even(value: int): bool { return value % 2 == 0; }
+func nothing(): void {}
+export func run(value: int): int {
+  let sum = 0;
+  for (let index = 0; index < 4; index++) {
+    nothing();
+    const next = increment(value + index);
+    const floating = fraction(next);
+    sum += even(next) && floating > 0.0 ? next : -next;
   }
-  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
-  EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
-  ASSERT_EQ(failed.stack_trace.size(), 2U);
-  EXPECT_EQ(failed.stack_trace.front().function, "divide");
-  EXPECT_EQ(failed.stack_trace.back().function, "fail");
-  for (const auto* const name : {"caught", "answer"}) {
-    const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+  return sum;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "run");
     ASSERT_TRUE(entry);
-    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+    const std::array arguments{runtime::Value::Integer(9)};
+    ASSERT_TRUE(test::ReturnsInteger(*entry, -2, arguments));
   }
+}
+
+TEST(JitCompilerTest, RepeatedLeafFailuresRetainFramesAndCallerRoots) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(
+      **compiler, RootedFailureSource({.call = "repeated(0)", .error_code = "DivisionByZero"}) + R"(
+func divide(value: int): int { return 84 / value; }
+func repeated(value: int): int {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) { sum += divide(value); }
+  return sum;
+}
+export func answer(): int { return repeated(6); }
+)",
+      NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  ExpectRootedFailure(isolate, ExecutionStatus::DivisionByZero, {"divide", "repeated", "fail"});
+  const auto answer = isolate.native_dispatch().FindEntry("main.vela", "answer");
+  ASSERT_TRUE(answer);
+  ASSERT_TRUE(test::ReturnsInteger(*answer, 42));
 }
 
 TEST(JitCompilerTest, GuardedReadonlyLeafLoopsPreserveFramesAndLargeInputs) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled = CompileText(**compiler, R"(
-class Box { text: string; }
+  const auto compiled = CompileText(
+      **compiler,
+      RootedFailureSource({.call = "repeat([1], 2)", .error_code = "IndexOutOfBounds"}) + R"(
 func sum(values: int[], count: int): int {
   let result = 0;
   for (let index = 0; index < count; index++) { result += values[index]; }
   return result;
 }
-export func fail(): int { return sum([1], 2); }
-export func caught(): int {
-  const box = Box(text: 42.toString());
-  try { return sum([1], 2); }
-  catch (error: Error) { return error.code == 'IndexOutOfBounds' ? box.text.length + 40 : 0; }
+func repeat(values: int[], count: int): int {
+  let result = 0;
+  for (let call = 0; call < 3; call++) { result = sum(values, count); }
+  return result;
 }
 export func run(count: int): int {
   const values: int[] = [];
   values.reserve(count);
   for (let index = 0; index < count; index++) { values.push(index); }
-  return sum(values, count);
+  return repeat(values, count);
 }
 )",
-                                    NativeCodeTier::Optimized);
+      NativeCodeTier::Optimized);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   runtime::Isolate isolate(1);
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
-  auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
-  const auto target = instance.FindFunction("fail");
-  if (!target) {
-    FAIL() << "missing fail entry";
-  }
-  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
-  EXPECT_EQ(failed.status, ExecutionStatus::IndexOutOfBounds);
-  ASSERT_EQ(failed.stack_trace.size(), 2U);
-  EXPECT_EQ(failed.stack_trace.front().function, "sum");
-  EXPECT_EQ(failed.stack_trace.back().function, "fail");
+  ExpectRootedFailure(isolate, ExecutionStatus::IndexOutOfBounds, {"sum", "repeat", "fail"});
   const auto run = isolate.native_dispatch().FindEntry("main.vela", "run");
-  const auto caught = isolate.native_dispatch().FindEntry("main.vela", "caught");
   ASSERT_TRUE(run);
-  ASSERT_TRUE(caught);
-  ASSERT_TRUE(test::ReturnsInteger(*caught, 42));
   for (const std::int64_t count : {0, 1, 31, 1024, 4096}) {
     const std::array arguments{runtime::Value::Integer(count)};
     ASSERT_TRUE(test::ReturnsInteger(*run, count * (count - 1) / 2, arguments));
@@ -1657,7 +1719,7 @@ export func main(count: int): int {
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
     ASSERT_TRUE(entry);
-    for (const auto count : {0, 1, 2, 3, 7, 16, 31, 32, 33, 129}) {
+    for (const auto count : {0, 1, 2, 3, 7, 16, 31, 32, 33, 63, 64, 65, 127, 128, 129}) {
       SCOPED_TRACE(count);
       const std::array arguments{runtime::Value::Integer(count)};
       ASSERT_TRUE(test::ReturnsInteger(*entry, 42, arguments));
@@ -1739,24 +1801,25 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
 }
 
 TEST(JitCompilerTest, CrossThreadStopExitsANonAllocatingLoopWithoutRunningFinally) {
+  std::string source = R"(
+external func entered(): void;
+external func finalized(): void;
+func step(value: int): int { return value ^ 42; }
+export func main(): void { entered(); try { while (true) {} } finally { finalized(); } }
+)";
+  for (const auto& [name, value] :
+       std::array{std::pair{"counted", "index"}, std::pair{"repeated", "step(index)"}}) {
+    source += "export func " + std::string(name) +
+              "(): void { const values = [0]; entered(); "
+              "try { for (let index = 0; index < 9223372036854775807; index++) { values[0] = " +
+              value + "; } } finally { finalized(); } }\n";
+  }
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();
     ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-    const auto compiled = CompileText(**compiler, R"(
-external func entered(): void;
-external func finalized(): void;
-export func main(): void { entered(); try { while (true) {} } finally { finalized(); } }
-export func counted(): void {
-  const values = [0];
-  entered();
-  try {
-    for (let index = 0; index < 9223372036854775807; index++) { values[0] = index; }
-  } finally { finalized(); }
-}
-)",
-                                      tier);
+    const auto compiled = CompileText(**compiler, source, tier);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    for (const auto* name : {"main", "counted"}) {
+    for (const auto* name : {"main", "counted", "repeated"}) {
       runtime::Isolate isolate;
       ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
       ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));

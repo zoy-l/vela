@@ -45,7 +45,6 @@
 #include <llvm/Transforms/Scalar/SROA.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/LCSSA.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
@@ -54,6 +53,7 @@
 
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/local_ssa.h"
+#include "compiler/native/loop_cloning.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
@@ -251,6 +251,11 @@ struct BoundedPoll final {
   unsigned ready_edge;
 };
 
+struct BoundedRegion final {
+  std::vector<BoundedPoll> polls;
+  std::uint64_t instructions = 0;
+};
+
 llvm::Constant* PollReadyValue(llvm::Value* value, const llvm::DataLayout& layout) {
   if (auto* constant = llvm::dyn_cast<llvm::Constant>(value)) {
     return constant;
@@ -276,10 +281,10 @@ llvm::Constant* PollReadyValue(llvm::Value* value, const llvm::DataLayout& layou
   return llvm::ConstantFoldInstOperands(instruction, operands, layout);
 }
 
-std::vector<BoundedPoll> BoundedPolls(const llvm::Loop& loop) {
-  std::vector<BoundedPoll> polls;
+BoundedRegion FindBoundedRegion(const llvm::Loop& loop) {
+  BoundedRegion region;
   if (!loop.getSubLoops().empty()) {
-    return polls;
+    return region;
   }
   llvm::SmallVector<llvm::BasicBlock*, kInlinePollBlocks> pending{loop.getHeader()};
   llvm::SmallPtrSet<llvm::BasicBlock*, kInlinePollBlocks> visited;
@@ -288,6 +293,8 @@ std::vector<BoundedPoll> BoundedPolls(const llvm::Loop& loop) {
     if (!loop.contains(block) || !visited.insert(block).second) {
       continue;
     }
+    // 只累计无请求路径可执行的块；冷恢复、物化和错误处理不消耗免轮询工作预算。
+    region.instructions += block->size();
     for (auto& instruction : *block) {
       const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
       if (call != nullptr && !llvm::isa<llvm::IntrinsicInst>(call)) {
@@ -302,14 +309,14 @@ std::vector<BoundedPoll> BoundedPolls(const llvm::Loop& loop) {
         return {};
       }
       const unsigned ready_edge = ready->isOne() ? 0 : 1;
-      polls.push_back({.branch = branch, .ready_edge = ready_edge});
+      region.polls.push_back({.branch = branch, .ready_edge = ready_edge});
       // 标记的慢边负责请求处理；纯叶调用的正常计算不包含那里的运行时调用。
       pending.push_back(branch->getSuccessor(ready_edge));
     } else {
       pending.append(llvm::succ_begin(block), llvm::succ_end(block));
     }
   }
-  return polls;
+  return region;
 }
 
 bool CanCopyPollCondition(llvm::Value* value,
@@ -372,11 +379,7 @@ void ErasePollCondition(llvm::Value* value) {
   }
 }
 
-std::uint64_t PollBudget(const llvm::Loop& loop) {
-  std::uint64_t instructions = 0;
-  for (const auto* block : loop.blocks()) {
-    instructions += block->size();
-  }
+std::uint64_t PollBudget(std::uint64_t instructions) {
   return std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
 }
 
@@ -401,33 +404,6 @@ llvm::Value* BoundedTripCount(llvm::Loop& loop,
   auto* distance = counted->direction == 1 ? guard.CreateSub(counted->bound, start)
                                            : guard.CreateSub(start, counted->bound);
   return guard.CreateICmpULE(distance, guard.getInt64(limit));
-}
-
-void CopyLoop(llvm::Loop& loop, llvm::ValueToValueMapTy& mapped) {
-  auto* function = loop.getHeader()->getParent();
-  llvm::SmallVector<llvm::BasicBlock*> clones;
-  for (auto* block : loop.blocks()) {
-    auto* cloned = llvm::CloneBasicBlock(block, mapped, ".bounded", function);
-    mapped.insert({block, cloned});
-    clones.push_back(cloned);
-  }
-  llvm::remapInstructionsInBlocks(clones, mapped);
-  for (auto* block : loop.blocks()) {
-    llvm::SmallPtrSet<llvm::BasicBlock*, 4> exits;
-    for (auto* successor : llvm::successors(block)) {
-      if (loop.contains(successor) || !exits.insert(successor).second) {
-        continue;
-      }
-      for (auto& phi : successor->phis()) {
-        auto* incoming = phi.getIncomingValueForBlock(block);
-        const auto found = mapped.find(incoming);
-        // 循环外的 SSA 值仍由原定义支配克隆；MapValue 对未映射的局部值返回空。
-        auto* cloned_incoming =
-            found == mapped.end() ? incoming : static_cast<llvm::Value*>(found->second);
-        phi.addIncoming(cloned_incoming, llvm::cast<llvm::BasicBlock>(mapped.lookup(block)));
-      }
-    }
-  }
 }
 
 void RemoveBoundedPolls(std::span<const BoundedPoll> polls, const llvm::ValueToValueMapTy& mapped) {
@@ -466,11 +442,8 @@ void VersionBoundedLoop(llvm::Loop& loop,
   auto* terminator = preheader->getTerminator();
   bounded = WithoutPendingPolls(loop, bounded, polls, terminator);
   llvm::ValueToValueMapTy mapped;
-  CopyLoop(loop, mapped);
+  VersionLoop(loop, *bounded, mapped, ".bounded");
   RemoveBoundedPolls(polls, mapped);
-  auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(loop.getHeader()));
-  llvm::BranchInst::Create(fast, loop.getHeader(), bounded, terminator->getIterator());
-  terminator->eraseFromParent();
 }
 
 bool CanStripMine(const CountedLoop& counted) {
@@ -494,7 +467,7 @@ void StripMineBoundedLoop(const CountedLoop& counted,
   auto* outer = llvm::BasicBlock::Create(context, "poll.chunk", function, header);
   auto* exit = llvm::BasicBlock::Create(context, "poll.chunk.exit", function);
   llvm::ValueToValueMapTy mapped;
-  CopyLoop(loop, mapped);
+  CloneLoopBody(loop, mapped, ".bounded");
   auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(header));
   llvm::IRBuilder<> guard(outer);
   llvm::Value* start = nullptr;
@@ -554,7 +527,8 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
     };
     std::vector<Plan> plans;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      const auto polls = BoundedPolls(*loop);
+      auto region = FindBoundedRegion(*loop);
+      auto& polls = region.polls;
       llvm::SmallPtrSet<llvm::Value*, 32> copied;
       if (polls.empty() || !std::ranges::all_of(polls, [&](const auto& poll) {
             return CanCopyPollCondition(poll.branch->getCondition(), *loop, copied);
@@ -562,10 +536,15 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
         continue;
       }
       const auto counted = MatchCountedLoop(*loop, dominators);
-      const auto limit = PollBudget(*loop);
+      const auto limit = PollBudget(region.instructions);
       if (counted && limit != 0 && CanStripMine(*counted)) {
-        plans.push_back(
-            {.loop = loop, .bounded = nullptr, .polls = polls, .counted = counted, .limit = limit});
+        plans.push_back({
+            .loop = loop,
+            .bounded = nullptr,
+            .polls = std::move(polls),
+            .counted = counted,
+            .limit = limit,
+        });
         continue;
       }
       auto* bounded = BoundedTripCount(*loop, evolution, dominators, limit);
@@ -573,7 +552,7 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
         plans.push_back({
             .loop = loop,
             .bounded = bounded,
-            .polls = polls,
+            .polls = std::move(polls),
             .counted = std::nullopt,
             .limit = limit,
         });

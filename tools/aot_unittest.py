@@ -61,6 +61,7 @@ HOST_TESTS = r'''
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_image_test_support.h"
 #include "runtime/native/native_function.h"
 
 using vela::ExecutionStatus;
@@ -491,7 +492,9 @@ TEST(NativeHostTest, ReferencesSurviveEveryAllocationAcrossCallsFieldsAndArrayGr
   ASSERT_TRUE(second.has_value());
   EXPECT_EQ(isolate.layout_counts(), layouts);
   ASSERT_NE(image->strings.size, 0U);
-  EXPECT_NE((*instance)->constant(0).AsString(), (*second)->constant(0).AsString());
+  const auto first_constants = test::InstanceConstants(**instance);
+  const auto second_constants = test::InstanceConstants(**second);
+  EXPECT_NE(first_constants.front().AsString(), second_constants.front().AsString());
   auto mismatch = *image;
   mismatch.abi_version++;
   const auto rejected = NativeInstance::Instantiate(isolate, mismatch);
@@ -1400,7 +1403,7 @@ export async func calculate(): Future<int> {
             c_flags[c_flags.index(str(executable))] = str(c_executable)
             self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 75 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 78 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

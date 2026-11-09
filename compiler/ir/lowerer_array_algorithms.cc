@@ -18,6 +18,12 @@
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
+namespace {
+
+// AOT sort/100000 的 8、16、32 元素分段实测中，32 元素减少归并及比较回调开销最多。
+constexpr std::int64_t kInsertionSortRun = 32;
+
+}  // namespace
 
 RegisterId Lowerer::EmitTemporary(Instruction instruction) {
   const auto result = AllocateRegister(instruction.location);
@@ -311,10 +317,18 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = left, .location = location});
   const auto right_value = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = right, .location = location});
-  RecordValueType(left_value, inputs.element_type);
-  RecordValueType(right_value, inputs.element_type);
-  const auto values = std::array{left_value, right_value};
-  const std::array types{inputs.element_type, inputs.element_type};
+  const auto& element_type = inputs.element_type;
+  RecordValueType(left_value, element_type);
+  RecordValueType(right_value, element_type);
+  return EmitArrayValueLess(inputs, {left_value, right_value}, location);
+}
+
+RegisterId Lowerer::EmitArrayValueLess(const ArrayAlgorithmRegisters& inputs,
+                                       std::pair<RegisterId, RegisterId> operands,
+                                       frontend::SourceLocation location) {
+  const auto values = std::array{operands.first, operands.second};
+  const auto& element_type = inputs.element_type;
+  const std::array types{element_type, element_type};
   auto comparison =
       EmitArrayCallback(inputs.callback, std::span(values).first(inputs.callback_arity),
                         *inputs.signature, types, inputs.guard, location);
@@ -327,11 +341,9 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
     comparison = result;
   }
   using Comparison = ArrayAlgorithmRegisters::Comparison;
-  auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
   const bool floating = inputs.comparison == Comparison::Double;
-  if (floating) {
-    zero = EmitDoubleConstant(0, location).reg;
-  }
+  const auto zero = floating ? EmitDoubleConstant(0, location).reg
+                             : EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
   const auto less = EmitTemporary({
       .opcode = floating ? Opcode::LessDouble : Opcode::LessInt,
       .lhs = comparison,
@@ -339,6 +351,87 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       .location = location,
   });
   return less;
+}
+
+RegisterId Lowerer::EmitArrayRunEnd(const ArrayAlgorithmRegisters& inputs,
+                                    std::pair<RegisterId, RegisterId> run,
+                                    frontend::SourceLocation location) {
+  const auto [begin, width] = run;
+  const auto length = inputs.length;
+  const auto end =
+      EmitTemporary({.opcode = Opcode::AddInt, .lhs = begin, .rhs = width, .location = location});
+  const auto exceeds = EmitTemporary(
+      {.opcode = Opcode::GreaterInt, .lhs = end, .rhs = length, .location = location});
+  const auto bounded = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = exceeds, .location = location});
+  Emit({.opcode = Opcode::Move, .dst = end, .lhs = length, .location = location});
+  BindJump(bounded);
+  return end;
+}
+
+void Lowerer::LowerArrayInsertionSort(const ArrayAlgorithmRegisters& inputs,
+                                      frontend::SourceLocation location) {
+  const auto array = inputs.array;
+  const auto length = inputs.length;
+  const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
+  const auto run = EmitTemporary(
+      {.opcode = Opcode::LoadInt, .immediate = kInsertionSortRun, .location = location});
+  const auto begin = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
+  const auto block = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto more =
+      EmitTemporary({.opcode = Opcode::LessInt, .lhs = begin, .rhs = length, .location = location});
+  const auto done = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = more, .location = location});
+  const auto end = EmitArrayRunEnd(inputs, {begin, run}, location);
+  const auto index =
+      EmitTemporary({.opcode = Opcode::AddInt, .lhs = begin, .rhs = one, .location = location});
+  const auto inserting = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto remaining =
+      EmitTemporary({.opcode = Opcode::LessInt, .lhs = index, .rhs = end, .location = location});
+  const auto inserted = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = remaining, .location = location});
+  const auto value =
+      EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = index, .location = location});
+  RecordValueType(value, inputs.element_type);
+  const auto cursor = EmitTemporary({.opcode = Opcode::Move, .lhs = index, .location = location});
+  const auto shifting = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto has_previous = EmitTemporary(
+      {.opcode = Opcode::GreaterInt, .lhs = cursor, .rhs = begin, .location = location});
+  const auto placed = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = has_previous, .location = location});
+  const auto previous =
+      EmitTemporary({.opcode = Opcode::SubInt, .lhs = cursor, .rhs = one, .location = location});
+  const auto before = EmitTemporary(
+      {.opcode = Opcode::GetIndex, .lhs = array, .rhs = previous, .location = location});
+  RecordValueType(before, inputs.element_type);
+  const auto less = EmitArrayValueLess(inputs, {value, before}, location);
+  const auto ordered = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = less, .location = location});
+  Emit({
+      .opcode = Opcode::SetIndex,
+      .dst = array,
+      .lhs = cursor,
+      .rhs = before,
+      .location = location,
+  });
+  Emit({.opcode = Opcode::Move, .dst = cursor, .lhs = previous, .location = location});
+  Emit({.opcode = Opcode::Jump, .index = shifting, .location = location});
+  BindJump(placed);
+  BindJump(ordered);
+  // 严格小于才移动已有元素；相等和 NaN 保留快照中已有元素的先后顺序。
+  Emit({
+      .opcode = Opcode::SetIndex,
+      .dst = array,
+      .lhs = cursor,
+      .rhs = value,
+      .location = location,
+  });
+  Emit({.opcode = Opcode::AddInt, .dst = index, .lhs = index, .rhs = one, .location = location});
+  Emit({.opcode = Opcode::Jump, .index = inserting, .location = location});
+  BindJump(inserted);
+  Emit({.opcode = Opcode::Move, .dst = begin, .lhs = end, .location = location});
+  Emit({.opcode = Opcode::Jump, .index = block, .location = location});
+  BindJump(done);
 }
 
 void Lowerer::LowerArrayMergePass(RegisterId output,
@@ -353,19 +446,8 @@ void Lowerer::LowerArrayMergePass(RegisterId output,
       EmitTemporary({.opcode = Opcode::LessInt, .lhs = begin, .rhs = length, .location = location});
   const auto done = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = more, .location = location});
-  const auto boundary = [&](RegisterId start) {
-    const auto end =
-        EmitTemporary({.opcode = Opcode::AddInt, .lhs = start, .rhs = width, .location = location});
-    const auto exceeds = EmitTemporary(
-        {.opcode = Opcode::GreaterInt, .lhs = end, .rhs = length, .location = location});
-    const auto bounded = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfFalse, .lhs = exceeds, .location = location});
-    Emit({.opcode = Opcode::Move, .dst = end, .lhs = length, .location = location});
-    BindJump(bounded);
-    return end;
-  };
-  const auto middle = boundary(begin);
-  const auto end = boundary(middle);
+  const auto middle = EmitArrayRunEnd(inputs, {begin, width}, location);
+  const auto end = EmitArrayRunEnd(inputs, {middle, width}, location);
   const auto left = EmitTemporary({.opcode = Opcode::Move, .lhs = begin, .location = location});
   const auto right = EmitTemporary({.opcode = Opcode::Move, .lhs = middle, .location = location});
   const auto destination =
@@ -431,8 +513,9 @@ void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
                              RegisterId scratch,
                              frontend::SourceLocation location) {
   const auto array = inputs.array;
-  const auto width =
-      EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
+  LowerArrayInsertionSort(inputs, location);
+  const auto width = EmitTemporary(
+      {.opcode = Opcode::LoadInt, .immediate = kInsertionSortRun, .location = location});
   const auto loop = static_cast<std::uint32_t>(current_function_->instructions.size());
   const auto more = EmitTemporary(
       {.opcode = Opcode::LessInt, .lhs = width, .rhs = inputs.length, .location = location});

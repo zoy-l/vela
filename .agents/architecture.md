@@ -158,8 +158,10 @@ restore the outer execution, and preserve the caller's logical frames.
 The execution registers its exception root when it publishes an exception envelope, and releases
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
 
-Linked AOT stack roots form a synchronous LIFO chain owned by the Heap. Generated frames initialize
-their root slots before linking and restore the previous head on every exit. Closed synchronous
+Synchronous native stack roots form a LIFO chain owned by the Heap, including reloadable frames
+and their synchronous recovery calls. Async frames retain independent root registration. Synchronous
+frames initialize their root slots and link them on entry so loop optimizations see a fixed root chain.
+Linked frames restore the previous head on every exit. Closed synchronous
 frames may defer roots when their complete successful path only performs inline scalar or field
 operations, initialized global access, and direct self-recursion using stack storage. These frames
 retain logical trace and depth bookkeeping. The first failure temporarily roots only its initialized
@@ -185,6 +187,29 @@ Specialized bodies remain outside the NativeImage entry table. Trusted host call
 functions retain the generic body and its full type-domain checks. Range proofs preserve access and
 failure order, logical frames, roots and physical stack budgets; they do not enlarge parameter-array
 caches or apply to dynamic JIT code.
+
+Reloadable optimized JIT may inline small pure scalar functions and readonly array kernels called
+inside loops. Scalar leaves are statically bounded; readonly kernels use the shared dynamic work
+guard and retain ordinary safepoints when that guard does not hold. Empty generated constructors
+also retain a direct leaf edge with their full stack and observation contracts.
+These direct edges retain body dependencies for code lifetime and invalidate their callers when a
+callee changes; other cross-component calls retain typed entry slots. Slot selection participates in
+the caller's code-reuse fingerprint. Leaf execution checks pending control requests and preserves
+stack budgets; requested observation enters the complete function, while arithmetic failure
+materializes its original source frame. Active callers retain baseline recovery and resume after
+completed calls without replaying their effects.
+
+String constants are borrowed from the current execution instance's immutable constant pool.
+Publication retains old pools with their instances, and host reentry restores the caller's instance.
+Synchronous frames need no duplicate root for values derived solely from that pool and null through
+copies. Closed linked AOT with safepoint-only observation also applies this ownership proof to global
+slots proven readonly by the shared global analysis. Every derivation must reach a known instance
+root or null; an unknown definition invalidates its entire copy chain. Parameters, mutable-global
+loads, field reads and recovery materialization do not acquire this proof, and async frames retain
+their ordinary roots.
+Initialization depth is owned by `NativeControlState`; generated construction boundaries and runtime
+scopes update that same counter, including failure cleanup, so publication cannot expose partial
+construction.
 
 Repeated field traversals may be folded only when every object receives identical independent
 updates, the increment fields remain immutable, and no failure can observe an enlarged update

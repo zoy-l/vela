@@ -14,6 +14,18 @@ let choice = Choice.second;
 let stable = Box(value: 39);
 let starts = 0;
 let late = initializeLate();
+let loopStarts = 0;
+let loopDivisor = 0;
+let loopTerms = initializeLoopTerms();
+func initializeLoopTerms(): int[] { loopStarts++; return [84 / loopDivisor]; }
+func rotate(value: int): int { return ((value >>> 7) | (value << 25)) & 4294967295; }
+func guardedLoop(count: int): int {
+  let value = 0;
+  for (let index = 0; index < count; index++) {
+    value = (rotate(value) + loopTerms[0]) & 4294967295;
+  }
+  return value;
+}
 func initializeLate(): Box { starts++; collect(); return Box(value: 42); }
 func readLate(): int { return late.value; }
 func prepareRecursive(depth: int): void {
@@ -59,6 +71,11 @@ export func calculate(operation: int): int {
   if (operation == 9) {
     prepareRecursive(4); collect(); return (optional ?? 0) + (item?.value ?? 0) - 4;
   }
+  if (operation == 10) { return guardedLoop(0) + loopStarts; }
+  if (operation == 11) { return guardedLoop(1); }
+  if (operation == 12) { loopDivisor = 2; return loopStarts; }
+  if (operation == 13) { return loopStarts; }
+  if (operation == 14) { return guardedLoop(2); }
   optional = null;
   erased = null;
   item = null;
@@ -171,6 +188,30 @@ TEST_F(NativeGlobalStorageTest, ReadonlySlotsKeepLazyInitializationAndMutableObj
 TEST_F(NativeGlobalStorageTest, CalleeInitializationRefreshesTheCallersReadonlyCache) {
   NativeExecution execution(*instance);
   ExpectIntegerOperations(GLOBAL_STORAGE_ENTRY, execution, {8, 7});
+  EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
+}
+
+TEST_F(NativeGlobalStorageTest, VersionedLoopsKeepEmptyEntryFailureRetryAndInitializedValues) {
+  NativeExecution execution(*instance);
+  NativeValue output;
+  const std::array empty{Integer(10)};
+  ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, empty, output), ExecutionStatus::Returned);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 0);
+  const std::array run{Integer(11)};
+  ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, run, output), ExecutionStatus::DivisionByZero);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_FALSE(execution.ExceptionDiagnostic().stack_trace.empty());
+  const std::array repair{Integer(12)};
+  ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, repair, output), ExecutionStatus::Returned);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 1);
+  for (const auto operation : {11, 11, 14, 13}) {
+    const std::array arguments{Integer(operation)};
+    ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
+    const auto expected = operation == 13 ? 2 : (operation == 14 ? 1409286186 : 42);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), expected);
+    EXPECT_EQ(execution.current_frame(), nullptr);
+    EXPECT_FALSE(execution.HasException());
+  }
   EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
 }
 '''

@@ -57,7 +57,8 @@ std::uint8_t ResumePreviousVersion(NativeExecution* execution, NativeResumeState
   if (static_cast<ExecutionStatus>(status) != ExecutionStatus::Returned) {
     return status;
   }
-  const auto constant = execution->instance().constant(0).AsString()->value();
+  const auto constants = test::InstanceConstants(execution->instance());
+  const auto constant = constants.front().AsString()->value();
   const auto value =
       DecodeNativeValue(completion).AsInteger() + static_cast<std::int64_t>(constant.size());
   const auto result = EncodeNativeValue(Value::Integer(value));

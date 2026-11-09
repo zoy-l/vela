@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import subprocess
@@ -11,37 +13,74 @@ import sys
 
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 from tools.escape_benchmark_report import escape_comparison_report
+from tools.gc_benchmark_report import gc_report
 from tools.native_class_benchmark_report import native_class_comparison_report
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
 
 
+@dataclass(frozen=True)
+class ReportMode:
+    filename: str
+    filter_pattern: str
+    summarize: Callable[[dict, list[str], int], str]
+    executable: str
+    help: str
+
+
+REPORT_MODES = {
+    "compare": ReportMode(
+        "comparison.json",
+        "^(compare/|first/(jit|luajit|luajit_interp)/|compile/(representative|luajit)/)",
+        comparison_report, "vela_benchmarks",
+        "Compare Vela, C++, LuaJIT and LuaJIT interpreter"),
+    "native_compare": ReportMode(
+        "native_comparison.json", "^native/", native_call_report, "vela_aot_benchmarks",
+        "Compare JIT/AOT native calls with direct and indirect C++ calls"),
+    "native_class_compare": ReportMode(
+        "native_class_comparison.json", "^native_class/", native_class_comparison_report,
+        "vela_aot_benchmarks",
+        "Compare generated class bindings across JIT, AOT and reloadable modes"),
+    "aot_compare": ReportMode(
+        "aot_comparison.json", "^aot/", aot_comparison_report, "vela_aot_benchmarks",
+        "Compare offline AOT and C++ workloads"),
+    "jit_compare": ReportMode(
+        "jit_comparison.json", "^(aot/(native|cpp)/|hot/steady/)", jit_comparison_report,
+        "vela_aot_benchmarks",
+        "Compare reloadable baseline and optimized JIT with offline AOT and C++"),
+    "escape_compare": ReportMode(
+        "escape_comparison.json", "^(escape/|hot/(baseline|optimized)/virtual/)",
+        escape_comparison_report, "vela_aot_benchmarks",
+        "Compare heap, scalar replacement and private borrowing with virtual-frame reload"),
+    "gc_report": ReportMode(
+        "gc_report.json", "^gc/cohort/", gc_report, "vela_benchmarks",
+        "Report Vela collector cycles, step latency and heap reclamation"),
+}
+
+
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="release")
     comparison = parser.add_mutually_exclusive_group()
-    comparison.add_argument("--compare", action="store_true", help="Compare Vela, C++, LuaJIT and LuaJIT interpreter")
-    comparison.add_argument("--native-compare", action="store_true", help="Compare JIT/AOT native calls with direct and indirect C++ calls")
-    comparison.add_argument("--native-class-compare", action="store_true", help="Compare generated class bindings across JIT, AOT and reloadable modes")
-    comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT and C++ workloads")
-    comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT and C++")
-    comparison.add_argument("--escape-compare", action="store_true", help="Compare heap, scalar replacement and private borrowing with virtual-frame reload")
-    parser.add_argument("--report", type=Path, help="Comparison JSON output (default: out/benchmarks/comparison.json)")
+    for name, mode in REPORT_MODES.items():
+        comparison.add_argument("--" + name.replace("_", "-"), action="store_const",
+                                dest="report_mode", const=name, help=mode.help)
+    parser.add_argument("--report", type=Path, help="Benchmark JSON report (default: out/benchmarks/<mode>.json)")
     options, forwarded = split_forwarded_arguments(arguments)
     parsed = parser.parse_args(options)
     parsed.benchmark_arguments = forwarded
-    comparing = parsed.compare or parsed.native_compare or parsed.native_class_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
-    if parsed.report and not comparing:
-        parser.error("--report requires a comparison mode")
+    reporting = parsed.report_mode is not None
+    if parsed.report and not reporting:
+        parser.error("--report requires a report mode")
     if parsed.report and parsed.report.suffix != ".json":
         parser.error("--report must name a .json file")
-    if comparing and parsed.variant != "release":
-        parser.error("comparisons require the Release build")
-    if comparing and any(value.startswith(("--benchmark_out=", "--benchmark_out_format="))
+    if reporting and parsed.variant != "release":
+        parser.error("reports require the Release build")
+    if reporting and any(value.startswith(("--benchmark_out=", "--benchmark_out_format="))
                               or value in {"--benchmark_out", "--benchmark_out_format"}
                               for value in parsed.benchmark_arguments):
-        parser.error("use --report for comparison output")
+        parser.error("use --report for report output")
     return parsed
 
 
@@ -59,32 +98,18 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     build(parsed.variant, "benchmarks")
-    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare or parsed.native_compare or parsed.native_class_compare else "vela_benchmarks"
+    mode = REPORT_MODES.get(parsed.report_mode)
+    name = mode.executable if mode else "vela_benchmarks"
     executable = output_directory(parsed.variant) / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
-    comparing = parsed.compare or parsed.native_compare or parsed.native_class_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
-    if comparing:
-        filename = "comparison.json"
-        filter_pattern = "^(compare/|first/(jit|luajit|luajit_interp)/|compile/(representative|luajit)/)"
-        if parsed.native_compare:
-            filename, filter_pattern = "native_comparison.json", "^native/"
-        elif parsed.native_class_compare:
-            filename, filter_pattern = "native_class_comparison.json", "^native_class/"
-        elif parsed.aot_compare:
-            filename, filter_pattern = "aot_comparison.json", "^aot/"
-        elif parsed.jit_compare:
-            filename = "jit_comparison.json"
-            filter_pattern = "^(aot/(native|cpp)/|hot/steady/)"
-        elif parsed.escape_compare:
-            filename = "escape_comparison.json"
-            filter_pattern = "^(escape/|hot/(baseline|optimized)/virtual/)"
-        report = (parsed.report or ROOT / "out" / "benchmarks" / filename).resolve()
+    if mode:
+        report = (parsed.report or ROOT / "out" / "benchmarks" / mode.filename).resolve()
         report.parent.mkdir(parents=True, exist_ok=True)
         # A failed invocation must never reuse an earlier successful report.
         report.unlink(missing_ok=True)
         report.with_suffix(".md").unlink(missing_ok=True)
         defaults = {
-            "benchmark_filter": filter_pattern,
+            "benchmark_filter": mode.filter_pattern,
             "benchmark_min_time": "0.2s",
             "benchmark_repetitions": "7",
             "benchmark_enable_random_interleaving": "true",
@@ -100,7 +125,7 @@ def run(parsed: argparse.Namespace) -> None:
         expected_cases = selected.stdout.splitlines()
         repetitions = int(benchmark_option(arguments, "benchmark_repetitions", "7"))
         if not expected_cases:
-            raise ValueError("No benchmarks match the comparison filter")
+            raise ValueError("No benchmarks match the report filter")
         if repetitions < 1:
             raise ValueError("--benchmark_repetitions must be positive")
     subprocess.run(
@@ -108,19 +133,8 @@ def run(parsed: argparse.Namespace) -> None:
         cwd=ROOT,
         check=True,
     )
-    if comparing:
-        summarize = comparison_report
-        if parsed.native_compare:
-            summarize = native_call_report
-        elif parsed.native_class_compare:
-            summarize = native_class_comparison_report
-        elif parsed.aot_compare:
-            summarize = aot_comparison_report
-        elif parsed.jit_compare:
-            summarize = jit_comparison_report
-        elif parsed.escape_compare:
-            summarize = escape_comparison_report
-        text = summarize(
+    if mode:
+        text = mode.summarize(
             json.loads(report.read_text(encoding="utf-8")), expected_cases, repetitions)
         report.with_suffix(".md").write_text(text, encoding="utf-8", newline="\n")
         print(text)

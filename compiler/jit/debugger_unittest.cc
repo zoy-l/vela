@@ -84,6 +84,43 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
     EXPECT_EQ(session_->code_resources().images, 1U);
   }
 
+  void ExpectDeoptimization() const {
+    EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
+              GetParam() == NativeCodeTier::Optimized);
+  }
+
+  void StageAtCheckpoint(compiler::test::CheckpointPublication& publication,
+                         DevelopmentCandidate candidate) {
+    publication.Stage(std::move(candidate));
+    paused_ = [&publication](const runtime::NativeDebugContext& context) {
+      publication.AtSafepoint(context);
+    };
+  }
+
+  void PublishDuringCaller(std::string replacement, std::int64_t expected) {
+    auto candidate = Prepare(std::move(replacement));
+    ASSERT_TRUE(candidate);
+    compiler::test::CheckpointPublication publication(*session_);
+    StageAtCheckpoint(publication, std::move(*candidate));
+    const auto previous = session_->Invoke("main.vela", "caller");
+    paused_ = {};
+    ASSERT_TRUE(previous);
+    EXPECT_EQ(previous->AsInteger(), expected);
+    EXPECT_FALSE(publication.HasPending());
+    EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+    ExpectDeoptimization();
+  }
+
+  void ExpectCurrentCallerAndTwoBatchResources(std::int64_t expected) const {
+    const auto current = session_->Invoke("main.vela", "caller");
+    ASSERT_TRUE(current);
+    EXPECT_EQ(current->AsInteger(), expected);
+    session_->isolate().heap().Collect();
+    // checkpoint 复用首批代码，更新后的被调函数和 caller 由第二批提供。
+    EXPECT_EQ(session_->code_resources().batches, 2U);
+    EXPECT_EQ(session_->code_resources().images, 1U);
+  }
+
   void ExpectRejected(const DevelopmentResult& result, DevelopmentStatus status) const {
     EXPECT_EQ(result.status, status) << result.message;
     EXPECT_EQ(session_->snapshot()->revision, 1U);
@@ -226,8 +263,7 @@ TEST_P(JitDebuggerTest, TypedJSONSessionsKeepPlansAndPartialValuesAcrossPublicat
                            "export func decode(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto result = session_->Invoke("main.vela", "decode");
   ASSERT_TRUE(result) << ExecutionStatusName(result.error());
   EXPECT_EQ(result->AsInteger(), 42);
@@ -268,8 +304,7 @@ TEST_P(JitDebuggerTest, RecoveredCallersKeepScalarValuesComputedBeforeTheEntered
   const auto calls = session_->Invoke("main.vela", "count");
   ASSERT_TRUE(calls);
   EXPECT_EQ(calls->AsInteger(), 4);
-  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
-            GetParam() == NativeCodeTier::Optimized);
+  ExpectDeoptimization();
 }
 
 TEST_P(JitDebuggerTest, InitializationCanPauseButPublicationWaitsUntilItsStateIsComplete) {
@@ -395,9 +430,8 @@ TEST_P(JitDebuggerTest, DeletingAPastFieldAccessKeepsAnActiveCallersRootedLocalV
       "export func read(box: Box): string { return 'new'; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto& published = publication.result();
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
   const auto old = session_->Invoke("main.vela", "read", std::array{box.value()});
   ASSERT_TRUE(old);
   EXPECT_EQ(published.status, DevelopmentStatus::Accepted);
@@ -425,9 +459,8 @@ TEST_P(JitDebuggerTest, AnAlreadyResolvedMethodCallDoesNotRetainItsOldLookupBind
       "export func invoke(box: Box): int { return Box.read(); }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto& published = publication.result();
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
   const auto old = session_->Invoke("main.vela", "invoke", std::array{box.value()});
   ASSERT_TRUE(old);
   EXPECT_EQ(published.status, DevelopmentStatus::Accepted);
@@ -450,8 +483,7 @@ TEST_P(JitDebuggerTest, DeoptimizationDoesNotRepeatAnEnteredCallOrRunTheNewCalle
       "export func count(): int { return calls; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value);
   EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
@@ -459,8 +491,43 @@ TEST_P(JitDebuggerTest, DeoptimizationDoesNotRepeatAnEnteredCallOrRunTheNewCalle
   const auto calls = session_->Invoke("main.vela", "count");
   ASSERT_TRUE(calls);
   EXPECT_EQ(calls->AsInteger(), 1);
-  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
-            GetParam() == NativeCodeTier::Optimized);
+  ExpectDeoptimization();
+}
+
+TEST_P(JitDebuggerTest, RepeatedPureCallsUseNewBodiesAfterActiveFramePublication) {
+  const std::string common =
+      "let calls = 0; func checkpoint(): void {} "
+      "export func count(): int { return calls; } ";
+  const std::string caller =
+      "export func caller(): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { "
+      "sum += step(i); calls++; if (i == 1) { checkpoint(); } } return sum; }";
+  Load(common + "func step(value: int): int { return value + 1; } " + caller);
+  constexpr std::int64_t kPublishedResult = 12;
+  constexpr std::int64_t kCurrentResult = 14;
+  PublishDuringCaller(common + "func step(value: int): int { return value + 2; } " + caller,
+                      kPublishedResult);
+  const auto calls = session_->Invoke("main.vela", "count");
+  ASSERT_TRUE(calls);
+  EXPECT_EQ(calls->AsInteger(), 4);
+  ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
+}
+
+TEST_P(JitDebuggerTest, GuardedReadonlyCallsRecoverAcrossPublicationWithLiveArrayRoots) {
+  const std::string common = "func checkpoint(): void {} ";
+  const std::string caller =
+      "export func caller(): int { const values = [7]; let sum = 0; "
+      "for (let row = 0; row < 4; row++) { sum += read(values, 1, row); "
+      "if (row == 1) { checkpoint(); } } return sum; }";
+  const std::string reader =
+      "func read(values: int[], count: int, row: int): int { let sum = 0; "
+      "for (let i = 0; i < count; i++) { sum += values[i]; } return sum + row + ";
+  Load(common + reader + "1; } " + caller);
+  // 安全点回调会强制 GC；非零数组元素必须在发布和恢复后仍参与结果。
+  constexpr std::int64_t kPublishedResult = 40;
+  constexpr std::int64_t kCurrentResult = 42;
+  PublishDuringCaller(common + reader + "2; } " + caller, kPublishedResult);
+  ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
 }
 
 TEST_P(JitDebuggerTest, MapLiteralDeoptimizationKeepsTheMapAndPendingKeyWithoutReplay) {
@@ -477,15 +544,13 @@ TEST_P(JitDebuggerTest, MapLiteralDeoptimizationKeepsTheMapAndPendingKeyWithoutR
                            "export func caller(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value);
   EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
   EXPECT_EQ(value->AsInteger(), 42);
   EXPECT_EQ(session_->Invoke("main.vela", "count")->AsInteger(), 2);
-  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
-            GetParam() == NativeCodeTier::Optimized);
+  ExpectDeoptimization();
 }
 
 TEST_P(JitDebuggerTest, DeoptimizationPreservesThePendingExceptionAtTheOutermostRecovery) {
@@ -500,8 +565,7 @@ TEST_P(JitDebuggerTest, DeoptimizationPreservesThePendingExceptionAtTheOutermost
       "export func caller(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value) << static_cast<std::uint32_t>(value.error());
   EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
@@ -537,8 +601,7 @@ TEST_P(JitDebuggerTest, GenericInterfaceMethodFramesKeepConcreteTypesDuringDeopt
       "export func count(): int { return calls; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto value = session_->Invoke("main.vela", "caller", std::array{operation.value()});
   ASSERT_TRUE(value) << ExecutionStatusName(value.error());
   // 活跃泛型帧可补充存留依赖并触发重新准备；检查后续安全点完成后的会话状态。
@@ -549,8 +612,7 @@ TEST_P(JitDebuggerTest, GenericInterfaceMethodFramesKeepConcreteTypesDuringDeopt
   const auto calls = session_->Invoke("main.vela", "count");
   ASSERT_TRUE(calls);
   EXPECT_EQ(calls->AsInteger(), 1);
-  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
-            GetParam() == NativeCodeTier::Optimized);
+  ExpectDeoptimization();
 }
 
 TEST_P(JitDebuggerTest, ResumedAsyncFrameCanDeoptimizeAndSuspendAgainInItsOriginalVersion) {
@@ -565,8 +627,7 @@ TEST_P(JitDebuggerTest, ResumedAsyncFrameCanDeoptimizeAndSuspendAgainInItsOrigin
       "export func start(): Future<int> { return task(); }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  StageAtCheckpoint(publication, std::move(*candidate));
   {
     const auto value = session_->Invoke("main.vela", "start");
     ASSERT_TRUE(value);
@@ -722,9 +783,8 @@ TEST_P(JitDebuggerTest, VirtualFieldsAreMaterializedBeforeMigrationAndResumeTheO
                            "export func caller(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto& published = publication.result();
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value) << ExecutionStatusName(value.error());
   EXPECT_EQ(value->AsInteger(), 42);
@@ -743,9 +803,8 @@ TEST_P(JitDebuggerTest, VirtualInstancesParticipateInRequiredFieldConflictChecks
       "read(): int { return this.value; } } export func caller(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto& published = publication.result();
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value) << ExecutionStatusName(value.error());
   EXPECT_EQ(value->AsInteger(), 42);
@@ -767,9 +826,8 @@ TEST_P(JitDebuggerTest, MaterializationPreservesSharedChildrenAndCyclesAcrossRel
       "export func caller(): int { return 0; }");
   ASSERT_TRUE(candidate);
   compiler::test::CheckpointPublication publication(*session_);
-  publication.Stage(std::move(*candidate));
+  StageAtCheckpoint(publication, std::move(*candidate));
   const auto& published = publication.result();
-  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
   const auto value = session_->Invoke("main.vela", "caller");
   ASSERT_TRUE(value) << ExecutionStatusName(value.error());
   EXPECT_EQ(value->AsInteger(), 42);

@@ -15,16 +15,17 @@ python -m tools.vl bench --native-compare
 python -m tools.vl bench --aot-compare
 python -m tools.vl bench --jit-compare
 python -m tools.vl bench --escape-compare
+python -m tools.vl bench --gc-report
 ```
 
 The runner builds Release by default. Arguments after `--` are passed to Google
-Benchmark. Comparison modes default to seven repetitions, a 0.2-second minimum
+Benchmark. Report modes default to seven repetitions, a 0.2-second minimum
 measurement and random interleaving. `--report=PATH.json` selects their JSON
 destination; the matching Markdown report separates time and memory.
 
 ## Source execution and runtime workloads
 
-[execution_benchmark.cc](execution_benchmark.cc) supplies `compile/*`,
+[execution_benchmark.cc](execution_benchmark.cc) supplies `compile/<workload>`,
 `first_execute/*` and `jit/*` cases for integer/double loops, calls, closures,
 fields, arrays, collections, exceptions, strings and the standard library.
 
@@ -39,6 +40,16 @@ Each execution checks its result. Heap counters distinguish live allocation,
 committed storage, post-collection retention and object counts.
 `register_bytes` is not a native-runtime metric.
 
+[native_analysis_benchmark.cc](native_analysis_benchmark.cc) supplies the shared
+compiler microbenchmarks `compile/native/repeated_leaf/*`,
+`compile/native/mixed_component`, `compile/native/nonrecursive` and
+`compile/native/recursive_over_budget`. They measure call planning or recursive
+inlining analysis over prepared IR and check the resulting plan or unchanged
+function. Repeated-leaf arguments select calls per caller and the number of
+callers sharing one callee. Source preparation, code generation and linking are excluded. Run them
+with `python -m tools.vl bench -- --benchmark_filter=^compile/native/`.
+These standalone compiler measurements have no language comparison report.
+
 [standard_value_benchmark.cc](standard_value_benchmark.cc) supplies the shared
 native harness for string case conversion, numeric parsing, date/time and other
 standard APIs. Byte data, JSON/dynamic calls and regular expressions add workloads
@@ -50,7 +61,29 @@ Direct runtime kernels exclude source compilation and generated-call overhead.
 suspend/resume, concurrent tasks and timers. It reports suspended frames and saved
 state separately from the GC heap and checks that completed tasks release them.
 [gc_strategy_benchmark.cc](gc_strategy_benchmark.cc) measures collection phases and
-step distributions. Incremental budgets do not imply hard real-time bounds.
+step distributions, reported separately through `--gc-report` below.
+
+## Collector performance
+
+`python -m tools.vl bench --gc-report` writes `out/benchmarks/gc_report.json` and
+`gc_report.md`. It selects `gc/cohort/*` runtime workloads without a C++ reference
+or AOT/JIT ratios. Each cycle allocates 4,096 new strings, retains either 64 or all
+4,096, and optionally preserves an 8,192-object graph. Step budgets are 16 or 64.
+The harness checks the surviving object count after every cycle.
+
+Automatic collection is disabled during setup. Manual cycle time begins at
+`StartCollection` and ends after the last `Step`, excluding graph construction,
+percentile calculation and Isolate destruction. Per-step clock reads and sample
+recording remain in the cycle measurement. The report shows median cycle time
+and CV, collection-start time, steps per cycle, mean per-cycle p95 step time and
+the maximum observed step across all repetitions. The maximum includes operating
+system scheduling noise; incremental budgets do not imply hard real-time bounds.
+
+Memory columns show the final cycle's pre-collection heap, live and committed
+bytes, reclaimed bytes and reclaimed object count, summarized by median across
+repetitions. They are not process RSS or peak heap measurements. The step p95 is
+calculated per cycle, averaged within each repetition, then reported as the median
+of those averages; it is not a pooled percentile of every step in the run.
 
 ## Representative C++ and LuaJIT comparisons
 
@@ -95,6 +128,15 @@ same input through an increment function. Both compilers may inline that functio
 normally, so this case measures optimized script calls, not forced call latency.
 The host-call case retains the shared, non-inlined C++ host function on both paths.
 
+`temporaryObjects` constructs a temporary `Box`, formats an integer and consumes
+the text length. C++ uses a local value without an object-pointer optimization
+barrier. Both languages may eliminate objects and strings. Reports include Vela
+Heap allocation counts and bytes per complete timed invocation, including
+Heap-accounted external blocks. These counters exclude warm-up and the final
+forced collection; end-of-run heap snapshots describe live storage instead.
+Automatic GC during execution remains timed. This is a language workload, not a
+collector-speed comparison; use `--gc-report` for collector performance.
+
 Synchronous cases have a dedicated runner with scalar result consumption and
 checksum validation. Future completion and scheduler work are compiled only into
 the async runner. Benchmark-only `Sample` records and string error results are
@@ -104,12 +146,15 @@ barrier on both sides so read-only input work cannot be reused across iterations
 There is no repeated-operation loop added solely to divide away entry overhead,
 and no subtraction of independently timed wrappers.
 
-The `aot_workload_contract=runtime-inputs/specialized-completion/v2` context marks
+The `aot_workload_contract=runtime-inputs/specialized-completion/v3` context marks
 this boundary. The suite has 24 workload names and 26 workload/size pairs;
 aggregate ratios weight each selected size separately. Earlier arithmetic
 results used a closed-form sum and an asymmetric result wrapper, and earlier
 `calls` results forced C++ calls to remain out of line. Those timings are not a
 performance baseline for the revised workload contract.
+The earlier `gc` workload forced C++ heap allocation while Vela could eliminate
+the temporary objects and strings. Its ratios are not a baseline for
+`temporaryObjects` or evidence of collector performance.
 
 The [16 algorithm workloads](algorithms/README.md) use the same Vela source for AOT
 and JIT. Input preparation is excluded from steady timing, every invocation checks

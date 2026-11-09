@@ -9,44 +9,27 @@
 
 #include <gtest/gtest.h>
 
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include "compiler/test_support/native_pass_test_support.h"
+
 namespace vela::compiler::native {
 namespace {
-
-void OptimizeLoopFunction(llvm::Function& function) {
-  llvm::LoopAnalysisManager loops;
-  llvm::FunctionAnalysisManager functions;
-  llvm::CGSCCAnalysisManager calls;
-  llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder builder;
-  builder.registerModuleAnalyses(modules);
-  builder.registerCGSCCAnalyses(calls);
-  builder.registerFunctionAnalyses(functions);
-  builder.registerLoopAnalyses(loops);
-  builder.crossRegisterProxies(loops, functions, calls, modules);
-  llvm::FunctionPassManager passes;
-  AddIntegerLoopPasses(passes);
-  passes.run(function, functions);
-}
 
 enum class LoopComparison : std::uint8_t { Signed, SameSign, Unsigned };
 
@@ -106,7 +89,7 @@ failed:
       }
     }
   }
-  OptimizeLoopFunction(function);
+  test::RunFunctionPasses(function, AddIntegerLoopPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t checked_updates = 0;
   for (const auto& block : function) {
@@ -162,7 +145,7 @@ TEST_P(BoundedReductionOptimizerTest, RequiresBoundsOnTheCountTermAndInitialValu
   llvm::SMDiagnostic diagnostic;
   const auto module = llvm::parseAssemblyString(source, diagnostic, context);
   ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
-  OptimizeLoopFunction(*module->getFunction("sum"));
+  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerLoopPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t checked_updates = 0;
   for (const auto& block : *module->getFunction("sum")) {
@@ -214,7 +197,7 @@ failed:
 )",
                                                 diagnostic, context);
   ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
-  OptimizeLoopFunction(*module->getFunction("sum"));
+  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerLoopPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   const auto* checked = module->getFunction("llvm.sadd.with.overflow.i64");
   ASSERT_NE(checked, nullptr);
@@ -239,11 +222,7 @@ bool HasUnpolledArrayLoad(const llvm::Loop& loop) {
   return has_array_load;
 }
 
-TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsObservableBodies) {
-  const auto [inverted, observable, marked] = GetParam();
-  llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  auto module = llvm::parseAssemblyString(R"(
+constexpr auto* kBoundedPollLoop = R"(
 declare void @process()
 declare void @host()
 define i64 @sum(ptr %values, ptr %requests.address, i64 %count) {
@@ -262,7 +241,6 @@ process:
   call void @process()
   br label %calculate
 calculate:
-  call void @host()
   %address = getelementptr i64, ptr %values, i64 %index
   %value = load i64, ptr %address, align 8
   %next.total = xor i64 %total, %value
@@ -273,25 +251,30 @@ done:
 }
 !0 = !{i8 0}
 !1 = !{}
-)",
-                                          diagnostic, context);
+)";
+
+TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsObservableBodies) {
+  const auto [inverted, observable, marked] = GetParam();
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  auto module = llvm::parseAssemblyString(kBoundedPollLoop, diagnostic, context);
   ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
   auto& function = *module->getFunction("sum");
   for (auto& block : function) {
-    for (auto iterator = block.begin(); iterator != block.end();) {
-      auto& instruction = *iterator++;
+    if (observable && block.getName() == "calculate") {
+      llvm::IRBuilder<> builder(&*block.getFirstInsertionPt());
+      builder.CreateCall(module->getFunction("host"));
+    }
+    for (auto& instruction : block) {
       if (!marked && instruction.getName() == "requests") {
         instruction.setMetadata(kNativePollReadyStateMetadata, nullptr);
       } else if (inverted && instruction.getName() == "pending") {
         llvm::cast<llvm::ICmpInst>(instruction).setPredicate(llvm::CmpInst::ICMP_EQ);
         llvm::cast<llvm::BranchInst>(block.getTerminator())->swapSuccessors();
-      } else if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
-                 !observable && call != nullptr && call->getCalledFunction()->getName() == "host") {
-        instruction.eraseFromParent();
       }
     }
   }
-  OptimizeLoopFunction(function);
+  test::RunFunctionPasses(function, AddIntegerLoopPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   llvm::DominatorTree dominators(function);
   const llvm::LoopInfo loops(dominators);
@@ -308,6 +291,53 @@ done:
 INSTANTIATE_TEST_SUITE_P(PollProofs,
                          BoundedPollOptimizerTest,
                          testing::Combine(testing::Bool(), testing::Bool(), testing::Bool()));
+
+class BoundedPollBudgetTest : public testing::TestWithParam<bool> {};
+
+TEST_P(BoundedPollBudgetTest, CountsFastWorkWithoutChargingColdRequestHandling) {
+  const bool fast_work = GetParam();
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  auto module = llvm::parseAssemblyString(kBoundedPollLoop, diagnostic, context);
+  ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
+  auto& function = *module->getFunction("sum");
+  for (auto& block : function) {
+    if (block.getName() == (fast_work ? "calculate" : "process")) {
+      llvm::IRBuilder<> builder(block.getTerminator());
+      // 保留足够多的真实指令，使快路径受工作量上限约束，冷请求处理则不缩短片段。
+      constexpr std::size_t kExtraLoads = 256;
+      for (std::size_t index = 0; index < kExtraLoads; ++index) {
+        builder.CreateLoad(builder.getInt64Ty(), function.getArg(0))->setVolatile(true);
+      }
+    }
+  }
+  test::RunFunctionPasses(function, AddIntegerLoopPasses);
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  std::size_t chunk_guards = 0;
+  for (const auto& block : function) {
+    if (!block.getName().starts_with("poll.chunk")) {
+      continue;
+    }
+    for (const auto& instruction : block) {
+      const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+      if (comparison == nullptr || comparison->getPredicate() != llvm::CmpInst::ICMP_ULE) {
+        continue;
+      }
+      const auto* limit = llvm::dyn_cast<llvm::ConstantInt>(comparison->getOperand(1));
+      ASSERT_NE(limit, nullptr);
+      ++chunk_guards;
+      if (fast_work) {
+        EXPECT_GT(limit->getZExtValue(), 0U);
+        EXPECT_LT(limit->getZExtValue(), 1024U);
+      } else {
+        EXPECT_EQ(limit->getZExtValue(), 1024U);
+      }
+    }
+  }
+  EXPECT_EQ(chunk_guards, 1U);
+}
+
+INSTANTIATE_TEST_SUITE_P(WorkBudgets, BoundedPollBudgetTest, testing::Bool());
 
 }  // namespace
 }  // namespace vela::compiler::native

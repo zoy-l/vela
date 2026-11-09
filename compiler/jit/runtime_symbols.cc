@@ -32,8 +32,6 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeSafepointSymbol, &runtime::vela_native_v3_safepoint);
   bind(runtime::kNativeCanOptimizeSymbol, &runtime::vela_native_v4_can_optimize);
   bind(runtime::kNativeRecoverSymbol, &runtime::vela_native_v4_recover);
-  bind(runtime::kNativeInitializationEnterSymbol, &runtime::vela_native_v3_initialization_enter);
-  bind(runtime::kNativeInitializationExitSymbol, &runtime::vela_native_v3_initialization_exit);
   bind(runtime::kNativeFrameStorageSymbol, &runtime::vela_native_v1_frame_storage);
   bind(runtime::kNativeFrameReleaseSymbol, &runtime::vela_native_v1_frame_release);
   bind(runtime::kNativeRootsEnterSymbol, &runtime::vela_native_v1_roots_enter);
@@ -72,7 +70,6 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeStoreMaterializedFieldSymbol,
        &runtime::vela_native_v7_store_materialized_field);
   bind(runtime::kNativeImportSymbol, &runtime::vela_native_v1_import);
-  bind(runtime::kNativeConstantSymbol, &runtime::vela_native_v1_constant);
   bind(runtime::kNativeTypeTestSymbol, &runtime::vela_native_v1_type_test);
   bind(runtime::kNativeInitializeGlobalSymbol, &runtime::vela_native_v2_initialize_global);
   bind(runtime::kNativeNewObjectSymbol, &runtime::vela_native_v10_new_object);

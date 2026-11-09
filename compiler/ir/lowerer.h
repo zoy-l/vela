@@ -357,6 +357,14 @@ class Lowerer final {
   RegisterId EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
                            std::pair<RegisterId, RegisterId> indices,
                            frontend::SourceLocation location);
+  RegisterId EmitArrayValueLess(const ArrayAlgorithmRegisters& inputs,
+                                std::pair<RegisterId, RegisterId> operands,
+                                frontend::SourceLocation location);
+  void LowerArrayInsertionSort(const ArrayAlgorithmRegisters& inputs,
+                               frontend::SourceLocation location);
+  RegisterId EmitArrayRunEnd(const ArrayAlgorithmRegisters& inputs,
+                             std::pair<RegisterId, RegisterId> run,
+                             frontend::SourceLocation location);
   void LowerArraySort(const ArrayAlgorithmRegisters& inputs,
                       RegisterId scratch,
                       frontend::SourceLocation location);

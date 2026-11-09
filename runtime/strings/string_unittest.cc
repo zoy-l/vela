@@ -149,7 +149,7 @@ TEST(StringGcTest, ReusesBlocksAcrossStringAndInstanceLifetimes) {
   EXPECT_EQ(heap.committed_bytes(), committed);
 }
 
-TEST(StringGcTest, NativeConstantRootsRetainStringsAndDetach) {
+TEST(StringGcTest, RootRangeRetainsStringsAndDetaches) {
   Heap heap(1);
   std::array<StringObject*, 3> constants{};
   {

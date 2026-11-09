@@ -258,6 +258,7 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
   }
   std::vector<FunctionCodeInputs> inputs;
   for (const auto& function : program.functions) {
+    const auto function_index = inputs.size();
     BinaryWriter writer;
     writer.Write(function.name);
     Put(writer, function.json_decode_plan.has_value());
@@ -283,7 +284,7 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
     Put(writer, optimization);
     Put(writer, debugging);
     Put(writer, escape);
-    Put(writer, signatures.at(inputs.size()));
+    Put(writer, signatures.at(function_index));
     Put(writer, function.register_count);
     Put(writer, function.is_exported);
     Sequence(writer, function.value_types, [&](BinaryWriter& output, const auto& type) {
@@ -303,7 +304,8 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
              [](BinaryWriter& output, const auto& handler) { Put(output, handler.target); });
     FunctionCodeInputs input;
     InstructionInputs(writer, function, program, tier, classes, signatures, fields);
-    input.dependencies = calls.dependencies.at(inputs.size());
+    Numbers(writer, calls.slot_calls.at(function_index));
+    input.dependencies = calls.dependencies.at(function_index);
     input.fingerprint = ContentFingerprint(writer.bytes());
     inputs.push_back(std::move(input));
   }

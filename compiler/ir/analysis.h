@@ -10,6 +10,7 @@
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/member.h"
+#include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
 
@@ -43,6 +44,10 @@ struct InstructionEffects final {
 
 // 普通控制流分析不跨宿主实现、异步挂起或异常处理边。
 [[nodiscard]] bool CanAnalyzeSynchronousFunction(const Function& function);
+
+[[nodiscard]] inline bool IsBackJump(const Instruction& instruction, std::size_t index) {
+  return IsJumpOpcode(instruction.opcode) && instruction.index <= index;
+}
 
 [[nodiscard]] inline bool IsBuiltinCall(const Instruction& instruction, Builtin builtin) {
   return instruction.opcode == Opcode::BuiltinCall &&

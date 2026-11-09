@@ -15,16 +15,32 @@
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 namespace vela::compiler::native {
-bool FunctionEmitter::IsEntrySlotRequired(std::size_t callee) const {
-  return tier_ == NativeCodeTier::Optimized &&
-         calls_.IsEntrySlotRequired({.caller = function_index_, .callee = callee});
+FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(std::size_t callee) const {
+  if (tier_ == NativeCodeTier::Optimized &&
+      calls_.IsEntrySlotRequired({.caller = function_index_, .callee = callee})) {
+    return CallEntry::Slot;
+  }
+  // 优化编译将 leaf 同时挂到基线声明；恢复体仍须按基线 tier 选择完整入口。
+  if (generated_[callee].leaf != nullptr &&
+      (program_.native_mode == NativeProgramMode::Closed || tier_ == NativeCodeTier::Optimized)) {
+    return CallEntry::Leaf;
+  }
+  return CallEntry::Body;
+}
+
+void FunctionEmitter::MarkClosedInvariantCall(llvm::BranchInst& branch) const {
+  if (IsClosedLinkedProgram(program_.native_mode, placement_) && roots_.bounded_polls) {
+    MarkInvariantCall(branch);
+  }
 }
 
 std::optional<CallableTarget> FunctionEmitter::CallTarget(std::size_t index) const {
@@ -50,7 +66,8 @@ llvm::BasicBlock* FunctionEmitter::EmitSquareRootCall(const ir::Instruction& ins
     auto* calculate = llvm::BasicBlock::Create(context, "call.sqrt", body_);
     auto* bound = llvm::BasicBlock::Create(context, "call.binding", body_);
     intrinsic_done = llvm::BasicBlock::Create(context, "call.sqrt.done", body_);
-    builder_.CreateCondBr(matches, calculate, bound);
+    auto* branch = builder_.CreateCondBr(matches, calculate, bound);
+    MarkClosedInvariantCall(*branch);
     builder_.SetInsertPoint(calculate);
     Store(instruction.dst, builder_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, operand),
           callee.return_type);
@@ -95,9 +112,19 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
   return arguments;
 }
 
-llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
-                                           CallableTarget selected,
-                                           std::span<llvm::Value* const> arguments) {
+void FunctionEmitter::StoreCallResult(ir::RegisterId reg,
+                                      const SourceType& type,
+                                      llvm::Value* address) {
+  if (type.kind == Kind::Void) {
+    Store(reg, builder_.getFalse(), type);
+  } else {
+    Store(reg, builder_.CreateLoad(ValueType(module_.getContext(), type), address), type);
+  }
+}
+
+void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
+                                   CallableTarget selected,
+                                   std::span<llvm::Value* const> arguments) {
   const auto& target = generated_[selected.function];
   const auto& callee = program_.functions.at(selected.function);
   auto* result = arguments.back();
@@ -107,6 +134,11 @@ llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   auto* merge = llvm::BasicBlock::Create(context, "call.done", body_);
   auto* failed = llvm::BasicBlock::Create(context, "call.leaf.failed", body_);
   auto* returned = llvm::BasicBlock::Create(context, "call.leaf.returned", body_);
+  std::vector<llvm::Value*> leaf_arguments(arguments.begin(), arguments.end());
+  const LeafEntryLayout layout(callee.parameter_count);
+  // 调用者已经建立自己的逻辑帧；叶入口直接消费其深度，避免在循环中重新读取执行状态。
+  leaf_arguments.insert(leaf_arguments.begin() + layout.depth,
+                        builder_.CreateAdd(entry_depth_, builder_.getInt64(1)));
   // 调试器及控制请求需要真正的被调用帧；无请求时只执行有界的纯计算。
   llvm::Value* ready = builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0));
   if (target.budgeted_recursion) {
@@ -116,7 +148,7 @@ llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
         ready, HasStackBudget(depth, kMaximumNativeStackBytes * kRecursiveLeafDepth));
   }
   if (target.leaf_guard != nullptr) {
-    ready = builder_.CreateAnd(ready, builder_.CreateCall(target.leaf_guard, arguments));
+    ready = builder_.CreateAnd(ready, builder_.CreateCall(target.leaf_guard, leaf_arguments));
   }
   auto* branch = builder_.CreateCondBr(builder_.CreateNot(ready), observable, leaf,
                                        llvm::MDBuilder(context).createUnlikelyBranchWeights());
@@ -125,9 +157,9 @@ llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
     branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(leaf);
-  std::vector<llvm::Value*> leaf_arguments(arguments.begin(), arguments.end());
   if (target.budgeted_recursion) {
-    leaf_arguments.insert(leaf_arguments.end() - 1, builder_.getInt32(kRecursiveLeafDepth));
+    leaf_arguments.insert(leaf_arguments.begin() + layout.budget,
+                          builder_.getInt32(kRecursiveLeafDepth));
   }
   auto* computed = builder_.CreateCall(target.leaf, leaf_arguments);
   builder_.CreateCondBr(
@@ -154,24 +186,16 @@ llvm::Value* FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
     Fail(materialized);
   }
   builder_.SetInsertPoint(returned);
+  StoreCallResult(instruction.dst, callee.return_type, result);
   builder_.CreateBr(merge);
   builder_.SetInsertPoint(observable);
   PrepareObservableCall();
   auto* called = builder_.CreateCall(target.body, arguments);
   CheckStatus(called);
-  if (callee.return_type.kind != Kind::Void) {
-    Store(instruction.dst,
-          builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
-          callee.return_type);
-  }
+  StoreCallResult(instruction.dst, callee.return_type, result);
   PollAfterRuntimeCall();
-  auto* observed = builder_.GetInsertBlock();
   builder_.CreateBr(merge);
   builder_.SetInsertPoint(merge);
-  auto* outcome = builder_.CreatePHI(builder_.getInt8Ty(), 2);
-  outcome->addIncoming(computed, returned);
-  outcome->addIncoming(called, observed);
-  return outcome;
 }
 
 void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarget selected) {
@@ -180,16 +204,13 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   if (kind_ == NativeEntryKind::Leaf && target.budgeted_recursion &&
       selected.function == function_index_) {
     auto arguments = CallArguments(instruction, selected, std::nullopt);
-    auto* budget = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
-    arguments.insert(arguments.end() - 1, builder_.CreateNUWSub(budget, builder_.getInt32(1)));
+    const LeafEntryLayout layout(source_.parameter_count);
+    auto* budget = body_->getArg(layout.budget);
+    arguments.insert(arguments.begin() + layout.depth, entry_depth_);
+    arguments.insert(arguments.begin() + layout.budget,
+                     builder_.CreateNUWSub(budget, builder_.getInt32(1)));
     CheckStatus(builder_.CreateCall(target.leaf, arguments));
-    if (callee.return_type.kind == Kind::Void) {
-      Store(instruction.dst, builder_.getFalse(), callee.return_type);
-    } else {
-      Store(instruction.dst,
-            builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
-            callee.return_type);
-    }
+    StoreCallResult(instruction.dst, callee.return_type, result_);
     return;
   }
   // 即使被调用方使用延迟叶入口，调用者也必须占用深度预算并保留失败时的调用链。
@@ -222,11 +243,13 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  auto* result = target.leaf == nullptr ? result_ : leaf_result_;
+  const auto call_entry = SelectCallEntry(selected.function);
+  const auto leaf_call = call_entry == CallEntry::Leaf;
+  auto* result = leaf_call ? leaf_result_ : result_;
   arguments.back() = result;
   auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
   llvm::Value* status = nullptr;
-  if (IsEntrySlotRequired(selected.function)) {
+  if (call_entry == CallEntry::Slot) {
     // 槽属于本次发布的不可变映像；复用的机器码从执行实例读取新目标。
     // 旧帧在安全点恢复到基线后按声明调用，因此不借此进入旧快照的命名目标。
     using runtime::NativeFunctionDescription;
@@ -238,8 +261,8 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     auto* entry = builder_.CreateLoad(builder_.getPtrTy(), ByteAddress(functions, offset),
                                       "call.typed.entry");
     status = builder_.CreateCall(target.body->getFunctionType(), entry, arguments);
-  } else if (target.leaf != nullptr) {
-    status = EmitLeafCall(instruction, selected, arguments);
+  } else if (leaf_call) {
+    EmitLeafCall(instruction, selected, arguments);
   } else {
     status = builder_.CreateCall(borrowed ? target.borrowed : target.body, arguments);
   }
@@ -247,13 +270,9 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     // 被调用方可能在抛错前修改引用字段；错误封套分配前刷新调用者根。
     StoreRoots(instruction_index_);
   }
-  CheckStatus(status);
-  if (callee.return_type.kind == Kind::Void) {
-    Store(instruction.dst, builder_.getFalse(), callee.return_type);
-  } else {
-    Store(instruction.dst,
-          builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
-          callee.return_type);
+  if (!leaf_call) {
+    CheckStatus(status);
+    StoreCallResult(instruction.dst, callee.return_type, result);
   }
   CacheInitializedGlobals(selected.function);
   if (import_done != nullptr) {

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/AsmParser/Parser.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -34,7 +36,9 @@
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
@@ -51,15 +55,22 @@ namespace {
 
 using ir::test::Prepare;
 
+ir::LoweringResult PrepareReloadable(std::string_view source) {
+  auto prepared = Prepare(source);
+  prepared.program.native_mode = NativeProgramMode::Reloadable;
+  return prepared;
+}
+
 std::expected<native::NativeModule, frontend::Diagnostics> GenerateForTest(
     const ir::Program& program,
     const std::string& name,
-    NativeCodePlacement placement) {
-  const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Optimized);
+    NativeCodePlacement placement,
+    NativeCodeTier tier = NativeCodeTier::Optimized,
+    native::NativeDebugging debugging = native::NativeDebugging::Safepoints) {
+  const auto calls = native::PlanNativeCalls(program, tier, debugging);
   const auto fields = native::FindFieldTargets(program);
-  return native::Generate(program, calls, fields, name, native::NativeDebugging::Safepoints,
-                          NativeCodeTier::Optimized, native::EscapeOptimization::Enabled,
-                          placement);
+  return native::Generate(program, calls, fields, name, debugging, tier,
+                          native::EscapeOptimization::Enabled, placement);
 }
 
 struct RangeSpecializationCase final {
@@ -111,6 +122,238 @@ std::unique_ptr<llvm::Module> ParseModule(std::string_view text, llvm::LLVMConte
     ADD_FAILURE() << diagnostic.getMessage().str();
   }
   return module;
+}
+
+template <typename Verify>
+void WithFunctionLoops(llvm::Module& module, Verify verify) {
+  for (auto& function : module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    verify(function, loops);
+  }
+}
+
+TEST(NativeCompilerTest, ReservesLeafResultsOnlyForCallsThatUseTheLeafEntry) {
+  auto prepared = PrepareReloadable(R"(
+func step(value: int): int { return value + 1; }
+export func cold(value: int): int { return step(value); }
+export func repeated(value: int): int {
+  let sum = 0;
+  for (let index = 0; index < 4; index++) { sum += step(value + index); }
+  return sum;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  auto& program = prepared.program;
+  const auto& functions = program.functions;
+  const auto cold = std::ranges::find(functions, "cold", &ir::Function::name);
+  const auto repeated = std::ranges::find(functions, "repeated", &ir::Function::name);
+  ASSERT_NE(cold, functions.end());
+  ASSERT_NE(repeated, functions.end());
+  const auto step = std::ranges::find(functions, "step", &ir::Function::name);
+  ASSERT_NE(step, functions.end());
+  EXPECT_EQ(native::PlanNonrecursiveLeaf(*step, native::NativeDebugging::Safepoints),
+            native::LeafKind::Bounded);
+  const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Optimized);
+  const auto repeated_function = static_cast<std::size_t>(repeated - functions.begin());
+  const native::CallEdge repeated_edge{
+      .caller = repeated_function,
+      .callee = static_cast<std::size_t>(step - functions.begin()),
+  };
+  EXPECT_FALSE(calls.IsEntrySlotRequired(repeated_edge));
+  const auto& dependencies = calls.dependencies.at(repeated_edge.caller);
+  EXPECT_NE(std::ranges::find(dependencies, repeated_edge.callee), dependencies.end());
+  const auto generated = GenerateForTest(program, "leaf_frames", NativeCodePlacement::Dynamic);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto cold_index = std::to_string(cold - functions.begin());
+  const auto repeated_index = std::to_string(repeated_function);
+  const auto& module = *generated->module;
+  for (const auto& [name, expected] : std::array{
+           std::pair{"leaf_frames_body_" + repeated_index, false},
+           std::pair{"leaf_frames_" + cold_index + "_optimized", false},
+           std::pair{"leaf_frames_" + repeated_index + "_optimized", true},
+       }) {
+    const auto* body = module.getFunction(name);
+    ASSERT_NE(body, nullptr) << name;
+    EXPECT_EQ(std::ranges::any_of(
+                  llvm::instructions(body),
+                  [](const auto& instruction) { return instruction.getName() == "leaf.result"; }),
+              expected)
+        << name;
+  }
+}
+
+TEST(NativeCompilerTest, LeafEntriesConsumeCallerDepthAndPreserveRecursivePrepayment) {
+  const auto prepared = Prepare(R"(
+func increment(value: int): int { return value + 1; }
+func read(values: int[], index: int): int { return values[index]; }
+func recurse(value: int): int {
+  if (value <= 0) { return 0; }
+  return value + recurse(value - 1);
+}
+export func calculate(values: int[]): int {
+  let sum = 0;
+  for (let index = 0; index < 4; index++) {
+    sum += increment(read(values, index)) + recurse(index);
+  }
+  return sum;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto generated =
+      GenerateForTest(prepared.program, "leaf_depth", NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto& functions = prepared.program.functions;
+  for (const auto* name : {"increment", "recurse"}) {
+    const auto source = std::ranges::find(functions, name, &ir::Function::name);
+    ASSERT_NE(source, functions.end());
+    const auto* leaf =
+        module.getFunction("leaf_depth_" + std::to_string(source - functions.begin()) + "_leaf");
+    ASSERT_NE(leaf, nullptr) << name;
+    const auto depth_index = static_cast<unsigned>(source->parameter_count + 1);
+    const auto* depth = leaf->getArg(depth_index);
+    EXPECT_TRUE(depth->getType()->isIntegerTy(64));
+    EXPECT_FALSE(depth->use_empty());
+    for (const auto& instruction : llvm::instructions(leaf)) {
+      const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+      if (load == nullptr) {
+        continue;
+      }
+      std::int64_t offset = 0;
+      const auto* base = llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
+                                                                module.getDataLayout());
+      EXPECT_FALSE(base == leaf->getArg(0) &&
+                   std::cmp_equal(offset, runtime::NativeMemoryLayout::kExecutionDepth));
+    }
+    std::size_t calls = 0;
+    for (const auto* user : leaf->users()) {
+      const auto* call = llvm::dyn_cast<llvm::CallBase>(user);
+      if (call == nullptr || call->getCalledFunction() != leaf) {
+        continue;
+      }
+      ++calls;
+      const auto* passed = call->getArgOperand(depth_index);
+      if (call->getFunction() == leaf) {
+        EXPECT_EQ(passed, depth);
+      } else {
+        const auto* next = llvm::dyn_cast<llvm::BinaryOperator>(passed);
+        ASSERT_NE(next, nullptr);
+        EXPECT_EQ(next->getOpcode(), llvm::Instruction::Add);
+        const auto* one = llvm::dyn_cast<llvm::ConstantInt>(next->getOperand(1));
+        ASSERT_NE(one, nullptr);
+        EXPECT_TRUE(one->isOne());
+      }
+    }
+    EXPECT_GT(calls, 0U) << name;
+  }
+}
+
+class ReadonlyLeafInliningTest
+    : public testing::TestWithParam<std::tuple<bool, NativeCodeTier, native::NativeDebugging>> {};
+
+TEST_P(ReadonlyLeafInliningTest, KeepsGuardedBodiesSeparateAndRespectsTierAndDebugging) {
+  const auto [large, tier, debugging] = GetParam();
+  auto prepared =
+      PrepareReloadable("func kernel(values: int[], index: int): int { return values[index]; }");
+  ASSERT_TRUE(prepared.Succeeded());
+  auto& program = prepared.program;
+  auto& functions = program.functions;
+  const auto kernel = std::ranges::find(functions, "kernel", &ir::Function::name);
+  ASSERT_NE(kernel, functions.end());
+  auto& instructions = kernel->instructions;
+  ASSERT_LE(instructions.size(), native::kMaximumInlineInstructions);
+  if (large) {
+    const auto read = std::ranges::find(instructions, Opcode::GetIndex, &ir::Instruction::opcode);
+    ASSERT_NE(read, instructions.end());
+    instructions.insert(read, native::kMaximumInlineInstructions + 1 - instructions.size(), *read);
+  }
+  const auto index = std::to_string(kernel - functions.begin());
+  const auto generated =
+      GenerateForTest(program, "readonly_inlining", NativeCodePlacement::Dynamic, tier, debugging);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto guarded =
+      tier == NativeCodeTier::Optimized && debugging == native::NativeDebugging::Safepoints;
+  const auto* body = module.getFunction("readonly_inlining_body_" + index);
+  ASSERT_NE(body, nullptr);
+  EXPECT_EQ(body->hasFnAttribute(llvm::Attribute::AlwaysInline), !large && !guarded);
+  const auto* leaf = module.getFunction("readonly_inlining_" + index + "_leaf");
+  EXPECT_EQ(leaf != nullptr, guarded);
+  if (leaf != nullptr) {
+    EXPECT_TRUE(leaf->hasFnAttribute(llvm::Attribute::AlwaysInline));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(EntryModes,
+                         ReadonlyLeafInliningTest,
+                         testing::Combine(testing::Bool(),
+                                          testing::Values(NativeCodeTier::Baseline,
+                                                          NativeCodeTier::Optimized),
+                                          testing::Values(native::NativeDebugging::Safepoints,
+                                                          native::NativeDebugging::SourceLines,
+                                                          native::NativeDebugging::Instructions)));
+
+TEST(NativeCompilerTest, ReadonlyManagedLoadsCannotCollectBeforeReturningToTheirCaller) {
+  auto prepared = PrepareReloadable(R"(
+func nested(values: int[][], index: int): int { return values[index][0]; }
+func discarded(values: string[], index: int): int { const unused = values[index]; return 42; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  auto& program = prepared.program;
+  const auto generated = GenerateForTest(program, "managed_read", NativeCodePlacement::Dynamic);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& functions = program.functions;
+  for (const auto* name : {"nested", "discarded"}) {
+    const auto found = std::ranges::find(functions, name, &ir::Function::name);
+    ASSERT_NE(found, functions.end());
+    EXPECT_EQ(native::PlanNonrecursiveLeaf(*found, native::NativeDebugging::Safepoints),
+              native::LeafKind::Guarded);
+    EXPECT_TRUE(std::ranges::any_of(found->instructions, [&](const auto& instruction) {
+      using Kind = frontend::TypeDescriptor::Kind;
+      const auto kind = found->value_types.at(instruction.dst).kind;
+      return instruction.opcode == Opcode::GetIndex &&
+             (kind == Kind::Array || kind == Kind::String);
+    }));
+    const auto* leaf = generated->module->getFunction(
+        "managed_read_" + std::to_string(found - functions.begin()) + "_leaf");
+    ASSERT_NE(leaf, nullptr);
+    for (const auto& instruction : llvm::instructions(leaf)) {
+      if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+        const auto* target = call->getCalledFunction();
+        ASSERT_NE(target, nullptr);
+        EXPECT_TRUE(target->isIntrinsic()) << target->getName().str();
+      }
+    }
+  }
+}
+
+TEST(NativeCompilerTest, StackRootCleanupRestoresTheHeadLoadedOnEntry) {
+  auto prepared = PrepareReloadable("func length(values: int[]): int { return values.length; }");
+  ASSERT_TRUE(prepared.Succeeded());
+  auto& program = prepared.program;
+  const auto& functions = program.functions;
+  const auto found = std::ranges::find(functions, "length", &ir::Function::name);
+  ASSERT_NE(found, functions.end());
+  const auto generated = GenerateForTest(program, "root_restore", NativeCodePlacement::Dynamic);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto* body = generated->module->getFunction("root_restore_body_" +
+                                                    std::to_string(found - functions.begin()));
+  ASSERT_NE(body, nullptr);
+  const auto cleanup = std::ranges::find_if(
+      *body, [](const auto& block) { return block.getName() == "frame.restored"; });
+  ASSERT_NE(cleanup, body->end());
+  const auto restore = std::ranges::find_if(
+      *cleanup, [](const auto& instruction) { return llvm::isa<llvm::StoreInst>(instruction); });
+  ASSERT_NE(restore, cleanup->end());
+  const auto& store = llvm::cast<llvm::StoreInst>(*restore);
+  const auto* previous = llvm::dyn_cast<llvm::LoadInst>(store.getValueOperand());
+  ASSERT_NE(previous, nullptr);
+  EXPECT_EQ(previous->getPointerOperand(), store.getPointerOperand());
+  EXPECT_NE(previous->getParent(), &*cleanup);
 }
 
 TEST(NativeCompilerTest, EmitsOfflineObjectWithScalarCallsAndControlFlow) {
@@ -349,14 +592,9 @@ export func run(values: int[]): int {
   ASSERT_NE(module, nullptr);
   std::size_t checked_calls = 0;
   std::size_t loops_seen = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
+  WithFunctionLoops(*module, [&](llvm::Function& function, const llvm::LoopInfo& loops) {
     const auto escaped = EscapedRuntimeResults(function);
     checked_calls += escaped.size();
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
     for (const auto* loop : loops.getLoopsInPreorder()) {
       ++loops_seen;
       for (const auto* block : loop->blocks()) {
@@ -370,34 +608,39 @@ export func run(values: int[]): int {
         }
       }
     }
-  }
+  });
   EXPECT_GT(checked_calls, 0U);
   EXPECT_GT(loops_seen, 0U);
 }
 
-bool HasBoundedCheckedArrayLoop(const llvm::Loop& loop) {
+struct LoopOperations final {
   bool has_array_load = false;
   bool has_overflow_check = false;
+  bool has_rotation = false;
+  bool observable = false;
+};
+
+LoopOperations AnalyzeLoopOperations(const llvm::Loop& loop) {
+  LoopOperations operations;
   for (const auto* block : loop.blocks()) {
     for (const auto& instruction : *block) {
       if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
-        if (load->isAtomic()) {
-          return false;
-        }
-        has_array_load = has_array_load ||
-                         load->getType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits);
+        operations.observable |= load->isAtomic();
+        operations.has_array_load |=
+            load->getType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits);
       }
       if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
         const auto* callee = call->getCalledFunction();
-        if (callee == nullptr || !callee->isIntrinsic()) {
-          return false;
+        operations.observable |= callee == nullptr || !callee->isIntrinsic();
+        if (callee != nullptr) {
+          const auto name = callee->getName();
+          operations.has_overflow_check |= name.starts_with("llvm.sadd.with.overflow");
+          operations.has_rotation |= name.starts_with("llvm.fsh");
         }
-        has_overflow_check =
-            has_overflow_check || callee->getName().starts_with("llvm.sadd.with.overflow");
       }
     }
   }
-  return has_array_load && has_overflow_check;
+  return operations;
 }
 
 TEST(NativeCompilerTest, BoundsPureInlinedCallsInArrayLoops) {
@@ -417,21 +660,17 @@ export func run(values: int[]): int {
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   std::size_t bounded_loops = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     for (const auto* loop : loops.getLoopsInPreorder()) {
       if (!loop->getSubLoops().empty()) {
         continue;
       }
-      if (HasBoundedCheckedArrayLoop(*loop)) {
+      const auto operations = AnalyzeLoopOperations(*loop);
+      if (operations.has_array_load && operations.has_overflow_check && !operations.observable) {
         ++bounded_loops;
       }
     }
-  }
+  });
   EXPECT_GT(bounded_loops, 0U) << result->llvm_ir;
 }
 
@@ -454,6 +693,36 @@ export func iterate(seed: int, count: int): int {
   EXPECT_TRUE(result->llvm_ir.contains("@llvm.fshr.i32") ||
               result->llvm_ir.contains("@llvm.fshl.i32"))
       << result->llvm_ir;
+}
+
+TEST(NativeCompilerTest, VersionsLazyGlobalGuardsBeforeBoundingInlinedScalarCalls) {
+  const auto prepared = Prepare(R"(
+const terms = [3, 5, 7, 11];
+func rotate(value: int): int { return ((value >>> 7) | (value << 25)) & 4294967295; }
+export func calculate(seed: int): int {
+  let value = seed & 4294967295;
+  for (let block = 0; block < 3; block++) {
+    for (let index = 0; index < 64; index++) {
+      value = (rotate(value) + terms[index & 3]) & 4294967295;
+    }
+  }
+  return value;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result = Compile(prepared.program, {.exports = {"calculate"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  std::size_t clean_loops = 0;
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      const auto operations = AnalyzeLoopOperations(*loop);
+      clean_loops += static_cast<std::size_t>(operations.has_rotation && !operations.observable);
+    }
+  });
+  EXPECT_GT(clean_loops, 0U) << result->llvm_ir;
 }
 
 TEST(NativeCompilerTest, VectorizesIndependentObjectFieldUpdates) {
@@ -504,12 +773,7 @@ export func update(): void {
     const auto module = ParseModule(result->llvm_ir, context);
     ASSERT_NE(module, nullptr);
     std::size_t additions = 0;
-    for (auto& function : *module) {
-      if (function.isDeclaration()) {
-        continue;
-      }
-      llvm::DominatorTree dominators(function);
-      const llvm::LoopInfo loops(dominators);
+    WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
       for (const auto* loop : loops.getLoopsInPreorder()) {
         EXPECT_TRUE(loop->getSubLoops().empty());
         for (const auto* block : loop->blocks()) {
@@ -521,7 +785,7 @@ export func update(): void {
           }
         }
       }
-    }
+    });
     EXPECT_GE(additions, 10U);
   }
 }
@@ -617,12 +881,7 @@ export func calculate(count: int): int {
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   std::size_t direct_loops = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     for (const auto* loop : loops.getLoopsInPreorder()) {
       const auto calls = CollectHostCalls(*loop);
       if (calls.direct.empty()) {
@@ -649,7 +908,7 @@ export func calculate(count: int): int {
       EXPECT_GE(frame_store_count, 1U) << result->llvm_ir;
       EXPECT_LE(frame_store_count, 2U) << result->llvm_ir;
     }
-  }
+  });
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
 }
 
@@ -670,12 +929,7 @@ export func calculate(count: int): int {
   ASSERT_NE(module, nullptr);
   EXPECT_EQ(module->getFunction("vela_native_v1_constant"), nullptr);
   std::size_t direct_loops = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     for (const auto* loop : loops.getLoopsInPreorder()) {
       const auto calls = CollectHostCalls(*loop);
       if (calls.direct.empty()) {
@@ -690,7 +944,7 @@ export func calculate(count: int): int {
         EXPECT_FALSE(loop->contains(argument->getParent())) << result->llvm_ir;
       }
     }
-  }
+  });
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
 }
 
@@ -758,12 +1012,7 @@ export func sum(values: double[]): double {
   const auto module = ParseModule(text, context);
   ASSERT_NE(module, nullptr);
   std::size_t loop_blocks = 0;
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     for (auto* loop : loops.getLoopsInPreorder()) {
       for (const auto* block : loop->blocks()) {
         ++loop_blocks;
@@ -776,7 +1025,7 @@ export func sum(values: double[]): double {
         }
       }
     }
-  }
+  });
   EXPECT_GT(loop_blocks, 0U);
 }
 
@@ -849,14 +1098,9 @@ TEST(NativeCompilerTest, EliminatesIntegerReductionsWithDynamicBounds) {
     llvm::LLVMContext context;
     const auto module = ParseModule(result->llvm_ir, context);
     ASSERT_NE(module, nullptr);
-    for (auto& function : *module) {
-      if (function.isDeclaration()) {
-        continue;
-      }
-      llvm::DominatorTree dominators(function);
-      const llvm::LoopInfo loops(dominators);
+    WithFunctionLoops(*module, [&](llvm::Function& function, const llvm::LoopInfo& loops) {
       EXPECT_TRUE(loops.empty()) << function.getName().str() << '\n' << result->llvm_ir;
-    }
+    });
     EXPECT_EQ(result->llvm_ir.find("@llvm.sadd.with.overflow"), std::string::npos);
     EXPECT_EQ(result->llvm_ir.find("@llvm.ssub.with.overflow"), std::string::npos);
     EXPECT_NE(result->llvm_ir.find("@vela_native_v2_leaf_failure"), std::string::npos);
@@ -915,14 +1159,9 @@ export func fields(bound: int): int {
   llvm::LLVMContext context;
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
-  for (auto& function : *module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
+  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     EXPECT_TRUE(loops.empty()) << result->llvm_ir;
-  }
+  });
 }
 
 TEST(NativeCompilerTest, PreservesArrayStorageWhenTemporaryValuesAreErasedToDynamic) {

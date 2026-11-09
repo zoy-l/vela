@@ -27,6 +27,7 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 
@@ -116,7 +117,7 @@ class FunctionEmitter final {
         roots_(roots) {}
 
   std::expected<void, std::string> Emit();
-  std::size_t PlanAuxiliaryStorage();
+  const NativeFrameLayout& PlanFrame();
   [[nodiscard]] std::uint64_t frame_bytes() const noexcept { return frame_bytes_; }
 
  private:
@@ -173,9 +174,11 @@ class FunctionEmitter final {
   llvm::Value* ReadArrayStorage(llvm::Value* array, ir::RegisterId reg, ArrayStorageField field);
   void SetPosition();
   void PrepareRuntimeCall();
-  bool IsEntrySlotRequired(std::size_t callee) const;
+  enum class CallEntry : std::uint8_t { Body, Leaf, Slot };
+  CallEntry SelectCallEntry(std::size_t callee) const;
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
+  void MarkClosedInvariantCall(llvm::BranchInst& branch) const;
   llvm::Value* ControlState();
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
@@ -219,6 +222,8 @@ class FunctionEmitter final {
   void EmitRecoveryDispatch();
   void GuardResume();
   void BeginConstruction();
+  llvm::Value* InitializationsAddress(Builder& builder);
+  void ExitInitializations(Builder& builder, llvm::Value* count);
   void EndConstruction();
   void AbortConstructions();
   void Finish(llvm::Value* status);
@@ -291,10 +296,12 @@ class FunctionEmitter final {
   void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
   std::optional<CallableTarget> CallTarget(std::size_t index) const;
+  bool IsLeafCall(std::optional<CallableTarget> target) const;
+  void StoreCallResult(ir::RegisterId reg, const SourceType& type, llvm::Value* address);
   void EmitCall(const ir::Instruction& instruction, CallableTarget selected);
-  llvm::Value* EmitLeafCall(const ir::Instruction& instruction,
-                            CallableTarget selected,
-                            std::span<llvm::Value* const> arguments);
+  void EmitLeafCall(const ir::Instruction& instruction,
+                    CallableTarget selected,
+                    std::span<llvm::Value* const> arguments);
   llvm::BasicBlock* EmitSquareRootCall(const ir::Instruction& instruction, std::uint32_t target);
   std::vector<llvm::Value*> CallArguments(const ir::Instruction& instruction,
                                           CallableTarget selected,
@@ -304,6 +311,7 @@ class FunctionEmitter final {
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
   void PrepareFrame();
+  std::size_t PlanAuxiliaryStorage();
   [[nodiscard]] bool CanUseLeafEntry() const;
   [[nodiscard]] bool CanUseSynchronousStackFrame() const;
   [[nodiscard]] bool CanDeferRoots() const;
@@ -368,6 +376,7 @@ class FunctionEmitter final {
   llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
   llvm::Value* root_slots_ = nullptr;
+  llvm::Value* control_state_ = nullptr;
   llvm::Value* frame_storage_ = nullptr;
   llvm::Value* construction_depth_ = nullptr;
   llvm::Value* checkpoint_ = nullptr;
@@ -400,6 +409,7 @@ class FunctionEmitter final {
   std::optional<std::size_t> auxiliary_bytes_;
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
+  std::optional<NativeFrameLayout> frame_plan_;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> constants_;
   std::vector<std::optional<std::uint32_t>> string_constant_registers_;

@@ -28,7 +28,7 @@ def print_help() -> None:
     print()
     print("Commands:")
     print("  build       Configure and build a target")
-    print("  bench       Run Release benchmarks; comparison modes include --escape-compare")
+    print("  bench       Run Release benchmarks, comparisons and --gc-report")
     print("  bindgen     Generate or verify native class bindings from C++ headers")
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")

@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Dominators.h>
@@ -58,9 +59,18 @@ void InlineRecursion(llvm::Function& function) {
   constexpr std::size_t kMaximumDepth = 3;
   llvm::DominatorTree dominators(function);
   PromoteLocalAllocations(function, dominators);
-  if (function.getInstructionCount() >= kMaximumRecursiveInlineInstructions ||
-      RecursiveCalls(function, function).empty()) {
+  const auto original_calls = RecursiveCalls(function, function);
+  if (original_calls.empty() ||
+      function.getInstructionCount() >= kMaximumRecursiveInlineInstructions) {
     return;
+  }
+  const llvm::LoopInfo loops(dominators);
+  // 循环内递归展开会叠加完整循环和帧的活跃状态；指令总量预算无法约束其
+  // 寄存器压力，保留独立调用以免多层循环不变量在每次进入时全部 spill。
+  for (const auto* call : original_calls) {
+    if (loops.getLoopFor(call->getParent()) != nullptr) {
+      return;
+    }
   }
   // 各层始终内联原始快照，避免把已经展开的函数再次复制进同一层。
   auto* snapshot = CloneRecursiveBody(function);

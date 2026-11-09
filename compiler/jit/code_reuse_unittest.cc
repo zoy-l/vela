@@ -4,6 +4,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,21 +21,33 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
+#include "runtime/strings/string.h"
 
 namespace vela::compiler::jit {
 namespace {
 
 using frontend::DiagnosticsText;
 
-class JitCodeFanoutTest : public testing::TestWithParam<std::uint32_t> {};
+const std::string kRepeatedCaller =
+    "export func answer(): int { let sum = 0; "
+    "for (let i = 0; i < 4; i++) { sum += step(i); } return sum; }";
+constexpr std::array<std::int64_t, 4> kRepeatedResults{10, 14, 18, 22};
+
+class JitCodeReuseTest : public testing::Test {
+ public:
+  void SetUp() override { ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error()); }
+
+  std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> compiler = Compiler::Create();
+  SourceSession source{"main.vela"};
+  CodeReuseCache reuse;
+  runtime::Isolate isolate{1};
+};
+
+class JitCodeFanoutTest : public JitCodeReuseTest,
+                          public testing::WithParamInterface<std::uint32_t> {};
 
 TEST_P(JitCodeFanoutTest, EditsReplaceOneTypedSlotAndPreserveEveryCaller) {
   const auto count = GetParam();
-  auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
-  SourceSession source("main.vela");
-  CodeReuseCache reuse;
-  runtime::Isolate isolate(1);
   std::vector<runtime::NativeEntry> entries;
   runtime::NativeTypedEntry target = nullptr;
   for (std::int64_t version = 1; version <= 3; ++version) {
@@ -84,12 +98,7 @@ TEST_P(JitCodeFanoutTest, EditsReplaceOneTypedSlotAndPreserveEveryCaller) {
 
 INSTANTIATE_TEST_SUITE_P(ProjectSizes, JitCodeFanoutTest, testing::Values(32U, 256U));
 
-TEST(JitCodeReuseTest, RecursiveComponentEditsDoNotInvalidateItsOutsideCaller) {
-  auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
-  SourceSession source("main.vela");
-  CodeReuseCache reuse;
-  runtime::Isolate isolate(1);
+TEST_F(JitCodeReuseTest, RecursiveComponentEditsDoNotInvalidateItsOutsideCaller) {
   runtime::NativeEntry caller = nullptr;
   for (std::int64_t version = 1; version <= 3; ++version) {
     const auto prepared = test::PrepareText(
@@ -118,20 +127,24 @@ TEST(JitCodeReuseTest, RecursiveComponentEditsDoNotInvalidateItsOutsideCaller) {
   }
 }
 
-TEST(JitCodeReuseTest, CapturedCallerKeepsItsBodyAndResolvesEditedAndDeletedTargets) {
-  auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
-  SourceSession source("main.vela");
-  CodeReuseCache reuse;
-  runtime::Isolate isolate(1);
+class CapturedJitCallerTest : public JitCodeReuseTest, public testing::WithParamInterface<bool> {};
+
+TEST_P(CapturedJitCallerTest, KeepsItsBodyAndResolvesEditedAndDeletedTargets) {
+  const auto repeated = GetParam();
   auto& dispatch = isolate.native_dispatch();
   std::optional<runtime::NativeVersionEntry> captured;
-  const std::array sources{
-      "func value(): int { return 1; } export func answer(): int { return value(); }",
-      "func value(): int { return 2; } export func answer(): int { return value(); }",
-      "func value(): int { return 3; } export func answer(): int { return value() + 100; }",
-      "export func replacement(): int { return 0; }",
-  };
+  const auto sources = repeated
+                           ? std::vector<std::string>{
+                                 "func step(value: int): int { return value + 1; } " + kRepeatedCaller,
+                                 "func step(value: int): int { return value + 2; } " + kRepeatedCaller,
+                                 "export func replacement(): int { return 0; }",
+                             }
+                           : std::vector<std::string>{
+                                 "func value(): int { return 1; } export func answer(): int { return value(); }",
+                                 "func value(): int { return 2; } export func answer(): int { return value(); }",
+                                 "func value(): int { return 3; } export func answer(): int { return value() + 100; }",
+                                 "export func replacement(): int { return 0; }",
+                             };
   for (std::size_t index = 0; index < sources.size(); ++index) {
     const auto prepared = test::PrepareText(source, sources.at(index));
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
@@ -140,15 +153,12 @@ TEST(JitCodeReuseTest, CapturedCallerKeepsItsBodyAndResolvesEditedAndDeletedTarg
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image, source.snapshot()->revision));
     ASSERT_TRUE(source.Commit(*prepared));
-    if (index == 0) {
+    if (!captured.has_value()) {
       const auto entry = dispatch.FindEntry("main.vela", "answer");
       ASSERT_TRUE(entry);
       const auto version = entry->Capture();
       ASSERT_TRUE(version);
       captured = *version;
-    }
-    if (!captured.has_value()) {
-      FAIL() << "Expected captured to have a value";
     }
     const auto result = captured.value().Invoke({});
     if (index + 1 == sources.size()) {
@@ -156,7 +166,8 @@ TEST(JitCodeReuseTest, CapturedCallerKeepsItsBodyAndResolvesEditedAndDeletedTarg
       EXPECT_EQ(result.error(), ExecutionStatus::TargetDeleted);
     } else {
       ASSERT_TRUE(result);
-      EXPECT_EQ(result->AsInteger(), static_cast<std::int64_t>(index + 1));
+      EXPECT_EQ(result->AsInteger(),
+                repeated ? kRepeatedResults[index] : static_cast<std::int64_t>(index + 1));
     }
   }
   captured.reset();
@@ -164,12 +175,9 @@ TEST(JitCodeReuseTest, CapturedCallerKeepsItsBodyAndResolvesEditedAndDeletedTarg
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
 }
 
-TEST(JitCodeReuseTest, ConstructorBodySpecializationInvalidatesItsCallerAcrossAnEntrySlot) {
-  auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler);
-  SourceSession source("main.vela");
-  CodeReuseCache reuse;
-  runtime::Isolate isolate(1);
+INSTANTIATE_TEST_SUITE_P(CallPatterns, CapturedJitCallerTest, testing::Bool());
+
+TEST_F(JitCodeReuseTest, ConstructorBodySpecializationInvalidatesItsCallerAcrossAnEntrySlot) {
   const auto prepared = test::PrepareText(
       source,
       "class Point { x: int; } "
@@ -204,6 +212,80 @@ TEST(JitCodeReuseTest, ConstructorBodySpecializationInvalidatesItsCallerAcrossAn
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
   ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+}
+
+TEST_F(JitCodeReuseTest, RepeatedPureCallsInvalidateTheirCallerAndTrackSlotTransitions) {
+  const std::array bodies{
+      "func step(value: int): int { return value + 1; } ",
+      "func step(value: int): int { return value + 2; } ",
+      "func step(value: int): int { for (let i = 0; i < 1; i++) { value += 3; } return value; } ",
+      "func step(value: int): int { return value + 4; } ",
+  };
+  runtime::NativeEntry previous = nullptr;
+  for (std::size_t version = 0; version < bodies.size(); ++version) {
+    const auto prepared = test::PrepareText(source, bodies[version] + kRepeatedCaller);
+    ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
+    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+                                               {.tier = NativeCodeTier::Optimized}, &reuse);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    const auto functions = compiled->image->functions.values();
+    const auto answer = std::ranges::find(
+        functions, "answer", [](const auto& function) { return function.name.text(); });
+    ASSERT_NE(answer, functions.end());
+    if (previous != nullptr) {
+      EXPECT_EQ(compiled->compiled_functions, 2U);
+      EXPECT_NE(answer->entry, previous);
+    }
+    previous = answer->entry;
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image, source.snapshot()->revision));
+    ASSERT_TRUE(source.Commit(*prepared));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
+    ASSERT_TRUE(entry);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, kRepeatedResults[version]));
+    isolate.heap().Collect();
+    EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
+    EXPECT_EQ((*compiler)->resource_counts().images, 1U);
+  }
+}
+
+TEST_F(JitCodeReuseTest, ReusedCodeReadsEachInstancesOwnConstantPoolAfterPublicationAndGc) {
+  auto& dispatch = isolate.native_dispatch();
+  std::optional<runtime::NativeVersionEntry> captured;
+  for (const auto* text : {"old", "new", "end"}) {
+    const auto prepared = test::PrepareText(
+        source, "export func text(): string { return '" + std::string(text) + "'; }");
+    ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
+    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+                                               {.tier = NativeCodeTier::Optimized}, &reuse);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    if (captured.has_value()) {
+      EXPECT_EQ(compiled->compiled_functions, 0U);
+    }
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image, source.snapshot()->revision));
+    ASSERT_TRUE(source.Commit(*prepared));
+    const auto entry = dispatch.FindEntry("main.vela", "text");
+    ASSERT_TRUE(entry);
+    if (!captured.has_value()) {
+      const auto retained = entry->Capture();
+      ASSERT_TRUE(retained);
+      captured = *retained;
+    }
+    isolate.heap().Collect();
+    const auto current = entry->Invoke({});
+    ASSERT_TRUE(current);
+    EXPECT_EQ(current->AsString()->value(), text);
+    const auto previous = captured.value().Invoke({});
+    ASSERT_TRUE(previous);
+    EXPECT_EQ(previous->AsString()->value(), "old");
+  }
+  captured.reset();
+  isolate.heap().Collect();
+  EXPECT_EQ((*compiler)->resource_counts().images, 1U);
+  // 当前映像的空发布批次和首版复用的机器码各保留一批；关闭后两者都应退休。
+  EXPECT_EQ((*compiler)->resource_counts().batches, 2U);
+  dispatch.Close();
+  isolate.heap().Collect();
+  EXPECT_EQ((*compiler)->resource_counts().batches, 0U);
 }
 
 }  // namespace

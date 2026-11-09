@@ -87,18 +87,33 @@ TEST(NativeControlTest, StopCanBeRequestedWithoutBorrowingTheIsolateFromAnotherT
 TEST(NativeControlTest, PublicationWaitsForNestedInitializationsAndHostReentry) {
   NativeControl control;
   EXPECT_TRUE(control.CanPublish());
+  int publications = 0;
+  ASSERT_TRUE(control.ScheduleSafepoint([&] { ++publications; }));
   {
     const NativeInitializationScope outer(control);
+    EXPECT_EQ(control.state().initializations, 1U);
     EXPECT_FALSE(control.CanPublish());
     {
       const NativeInitializationScope inner(control);
+      // 模拟生成代码直接更新同一计数器，并与宿主重入的 RAII scope 交错。
+      ++control.state().initializations;
+      EXPECT_EQ(control.state().initializations, 3U);
       ++control.state().host_borrows;
       EXPECT_FALSE(control.CanPublish());
+      EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+      EXPECT_EQ(publications, 0);
+      --control.state().initializations;
     }
     --control.state().host_borrows;
+    EXPECT_EQ(control.state().initializations, 1U);
+    EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+    EXPECT_EQ(publications, 0);
     EXPECT_FALSE(control.CanPublish());
   }
+  EXPECT_EQ(control.state().initializations, 0U);
   EXPECT_TRUE(control.CanPublish());
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_EQ(publications, 1);
 }
 
 TEST(NativeControlTest, PendingPublicationWaitsForHostAndInitializationAndRunsOnce) {

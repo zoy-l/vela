@@ -106,6 +106,17 @@ void ReportPendingState(benchmark::State& state, runtime::Isolate& isolate) {
   state.counters["saved_state_bytes"] = static_cast<double>(scheduler.saved_state_bytes());
 }
 
+void ReportWorkloadAllocations(benchmark::State& state,
+                               const runtime::Heap& heap,
+                               runtime::HeapAllocationStatistics baseline) {
+  const auto allocations = heap.allocation_statistics();
+  const auto iterations = static_cast<double>(state.iterations());
+  state.counters["allocations_per_invocation"] =
+      static_cast<double>(allocations.count - baseline.count) / iterations;
+  state.counters["allocation_bytes_per_invocation"] =
+      static_cast<double>(allocations.bytes - baseline.bytes) / iterations;
+}
+
 template <AotCompletion Completion>
 void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
   runtime::Isolate isolate;
@@ -136,6 +147,7 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
   state.counters["entry_shadow_slots"] = static_cast<double>(problem.shadow_slots);
   state.counters["entry_frame_bytes"] = static_cast<double>(problem.frame_bytes);
   state.counters["entry_static_root_stores"] = static_cast<double>(problem.root_stores);
+  const auto allocation_baseline = isolate.heap().allocation_statistics();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
     benchmark::ClobberMemory();
@@ -148,6 +160,7 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
     auto value = result->AsInteger();
     benchmark::DoNotOptimize(value);
   }
+  ReportWorkloadAllocations(state, isolate.heap(), allocation_baseline);
   ReportAotHeap(state, isolate);
 }
 
@@ -277,6 +290,7 @@ void JitSteady(benchmark::State& state,
   state.counters["expected_result"] = static_cast<double>(problem.expected);
   state.counters["suspended_frames"] = static_cast<double>(suspended_frames);
   state.counters["saved_state_bytes"] = static_cast<double>(saved_bytes);
+  const auto allocation_baseline = isolate.heap().allocation_statistics();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
     benchmark::ClobberMemory();
@@ -289,6 +303,7 @@ void JitSteady(benchmark::State& state,
     auto value = result->AsInteger();
     benchmark::DoNotOptimize(value);
   }
+  ReportWorkloadAllocations(state, isolate.heap(), allocation_baseline);
   ReportJitSetup(state, *setup);
   ReportJitMemory(state, *setup);
 }
@@ -379,16 +394,15 @@ std::int64_t CppRun(runtime::Isolate& isolate,
       }
       break;
     }
-    case AotKernel::Gc: {
+    case AotKernel::TemporaryObjects: {
       constexpr std::size_t kDecimalBufferSize = 32;
       std::array<char, kDecimalBufferSize> buffer{};
       for (std::int64_t index = 0; index < size; ++index) {
-        auto box = std::make_unique<Box>();
-        box->value = index;
+        Box box;
+        box.value = index;
         const auto converted = std::to_chars(buffer.data(), std::to_address(buffer.end()), index);
-        box->text.assign(buffer.data(), converted.ptr);
-        benchmark::DoNotOptimize(box.get());
-        sum += static_cast<std::int64_t>(box->text.size());
+        box.text.assign(buffer.data(), converted.ptr);
+        sum += static_cast<std::int64_t>(box.text.size());
       }
       break;
     }
@@ -576,7 +590,7 @@ int RegisterAotBenchmarks() {
       "LLVM " +
           std::string(compiler::NativeOptimizationName(compiler::NativeOptimization::Release)) +
           "; generic CPU; PIC; checked arithmetic; explicit roots");
-  benchmark::AddCustomContext("aot_workload_contract", "runtime-inputs/specialized-completion/v2");
+  benchmark::AddCustomContext("aot_workload_contract", "runtime-inputs/specialized-completion/v3");
   benchmark::RegisterBenchmark("entry/stack_bounds", NativeEntryCost<EntryOperation::StackBounds>)
       ->UseRealTime();
   benchmark::RegisterBenchmark("entry/execution", NativeEntryCost<EntryOperation::Execution>)

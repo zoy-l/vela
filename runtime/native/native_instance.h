@@ -84,7 +84,6 @@ class NativeInstance final {
     return data_->imports[function]->aot_entry();
   }
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
-  [[nodiscard]] Value constant(std::size_t index) const noexcept;
   [[nodiscard]] std::expected<Value, ExecutionStatus> InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index);
 

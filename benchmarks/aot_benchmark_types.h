@@ -15,7 +15,7 @@ enum class AotKernel : std::uint8_t {
   Fields,
   Arrays,
   Host,
-  Gc,
+  TemporaryObjects,
   Async,
   SpectralNorm,
 };
