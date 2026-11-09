@@ -78,7 +78,7 @@ void NativeExecution::AbortWithOutOfMemory() noexcept {
 
 ExecutionStatus NativeExecution::RestoreFutureError(const FutureResult& completion) {
   const auto& diagnostic = completion.diagnostic;
-  if (!completion.value.IsObject() || completion.value.AsObject() == nullptr) {
+  if (!completion.value.IsObject()) {
     return HandleFailure(diagnostic.status == ExecutionStatus::Thrown ? ExecutionStatus::TypeError
                                                                       : diagnostic.status,
                          diagnostic.message);

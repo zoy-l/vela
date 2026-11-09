@@ -168,12 +168,12 @@ class NativeDispatch final {
   [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> ResolveInterface(
       const NominalType& receiver,
       DeclarationId selector) const noexcept;
-  [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(
-      NativeExecution& execution,
-      DeclarationId declaration,
-      NativeGlobalCache* cache = nullptr);
-  [[nodiscard]] std::expected<void, ExecutionStatus>
-  StoreGlobal(DeclarationId declaration, Value value, NativeGlobalCache* cache = nullptr) noexcept;
+  [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(NativeExecution& execution,
+                                                                 DeclarationId declaration,
+                                                                 NativeGlobalCache& cache);
+  [[nodiscard]] std::expected<void, ExecutionStatus> StoreGlobal(DeclarationId declaration,
+                                                                 Value value,
+                                                                 NativeGlobalCache& cache) noexcept;
   [[nodiscard]] const ClassLayout& CurrentLayout(const NominalType& type) const noexcept;
   // 只在拥有精确根的 Isolate 线程边界调用。返回稳定身份供隔离的前端编译使用。
   [[nodiscard]] std::vector<DeclarationId> RetainedDeclarations();
@@ -197,6 +197,7 @@ class NativeDispatch final {
   friend class Isolate;
   [[nodiscard]] std::expected<void, NativePublicationError> CheckPublication(
       std::uint64_t base_revision) const;
+  [[nodiscard]] std::expected<void, ExecutionStatus> CheckCurrent() const noexcept;
   void TraceMetadata(NativeMetadataTracer& tracer) const;
   friend class NativeExecution;
   void RegisterExecution(NativeExecution& execution) noexcept;

@@ -15,6 +15,7 @@
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "base/source_location.h"
+#include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
@@ -25,6 +26,8 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_image_test_support.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_program_state.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -193,6 +196,34 @@ TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsIts
   EXPECT_EQ(captured->Invoke({})->AsInteger(), 40);
   EXPECT_EQ(old_caller->Invoke({})->AsInteger(), 42);
   EXPECT_EQ(captured->identity().revision, 1U);
+}
+
+TEST(NativeDispatchTest, UnpublishedAndClosedDispatchRejectAllLookupBoundaries) {
+  Isolate isolate;
+  auto& dispatch = isolate.native_dispatch();
+  auto* nominal =
+      isolate.CreateNominalType({.kind = NominalKind::Class, .interfaces = {}, .declaration = {}});
+  const auto image = std::make_shared<VersionedImage>(1, OldAnswer);
+  image->image.native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  auto instance = NativeInstance::Instantiate(isolate, Image(image));
+  ASSERT_TRUE(instance);
+  NativeExecution execution(**instance);
+  NativeGlobalCache cache;
+  EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(dispatch.ResolveInterface(*nominal, kAnswer).error(), ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(), ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),
+            ExecutionStatus::InvalidEntry);
+  dispatch.Close();
+  EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(dispatch.ResolveInterface(*nominal, kAnswer).error(),
+            ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(),
+            ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),
+            ExecutionStatus::ExecutionStopped);
 }
 
 TEST(NativeDispatchTest, BusyPublicationKeepsItsCandidateUntilHostAndInitializationScopesExit) {
@@ -370,11 +401,8 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
   ASSERT_TRUE(callback);
   EXPECT_EQ(callback->arity, 0U);
   const auto result = callback->invoke({});
-  const auto completed_value = result.value();
-  if (!completed_value) {
-    FAIL() << "Future did not complete with a value";
-  }
-  EXPECT_EQ(completed_value->AsInteger(), 40);
+  ASSERT_EQ(result.state(), FutureState::Succeeded);
+  EXPECT_EQ(result.result().value.AsInteger(), 40);
   Isolate other;
   const auto without_session = NativeInstance::Instantiate(other, Image(second));
   ASSERT_FALSE(without_session);

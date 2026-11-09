@@ -15,7 +15,7 @@
 namespace vela::runtime::internal {
 namespace {
 
-layout::Type Import(NativeTypeDescription& target, NativeType source) {
+layout::Type Import(NativeTypeBlueprint& target, NativeType source) {
   if (!source.type) {
     std::unreachable();
   }
@@ -27,7 +27,7 @@ layout::Type Import(NativeTypeDescription& target, NativeType source) {
   return layout::ImportType(target.layouts, source.layouts(), *source.type);
 }
 
-void NameRoot(NativeTypeDescription& description) {
+void NameRoot(NativeTypeBlueprint& description) {
   if (!description.type) {
     std::unreachable();
   }
@@ -53,8 +53,8 @@ void NameRoot(NativeTypeDescription& description) {
 
 }  // namespace
 
-NativeTypeDescription DescribeNativeArray(NativeType element) {
-  NativeTypeDescription result;
+NativeTypeBlueprint DescribeNativeArray(NativeType element) {
+  NativeTypeBlueprint result;
   const auto imported = Import(result, element);
   result.type = layout::Type{
       .kind = layout::Type::Kind::Array,
@@ -65,8 +65,8 @@ NativeTypeDescription DescribeNativeArray(NativeType element) {
   return result;
 }
 
-NativeTypeDescription DescribeNativeCollection(NativeType key, std::optional<NativeType> value) {
-  NativeTypeDescription result;
+NativeTypeBlueprint DescribeNativeCollection(NativeType key, std::optional<NativeType> value) {
+  NativeTypeBlueprint result;
   layout::Collection collection{.name = {}, .key = Import(result, key)};
   if (value) {
     collection.value = Import(result, *value);
@@ -80,10 +80,10 @@ NativeTypeDescription DescribeNativeCollection(NativeType key, std::optional<Nat
   return result;
 }
 
-NativeTypeDescription DescribeNativeSignature(layout::Type::Kind kind,
-                                              NativeType result_type,
-                                              std::span<const NativeType> parameters) {
-  NativeTypeDescription result;
+NativeTypeBlueprint DescribeNativeSignature(layout::Type::Kind kind,
+                                            NativeType result_type,
+                                            std::span<const NativeType> parameters) {
+  NativeTypeBlueprint result;
   layout::Signature signature{.name = {}, .parameters = {}};
   for (const auto parameter : parameters) {
     signature.parameters.push_back({.type = Import(result, parameter)});
@@ -100,11 +100,11 @@ NativeTypeDescription DescribeNativeSignature(layout::Type::Kind kind,
   return result;
 }
 
-NativeTypeDescription DescribeNativeNominal(std::string_view module,
-                                            std::string_view name,
-                                            ScriptTypeKind kind,
-                                            std::span<const NativeType> arguments) {
-  NativeTypeDescription result;
+NativeTypeBlueprint DescribeNativeNominal(std::string_view module,
+                                          std::string_view name,
+                                          ScriptTypeKind kind,
+                                          std::span<const NativeType> arguments) {
+  NativeTypeBlueprint result;
   layout::Nominal nominal{
       .module = std::string(module),
       .name = std::string(name),
@@ -143,8 +143,8 @@ NativeTypeDescription DescribeNativeNominal(std::string_view module,
   return result;
 }
 
-NativeTypeDescription DescribeNativeHost(std::string_view key) {
-  NativeTypeDescription result;
+NativeTypeBlueprint DescribeNativeHost(std::string_view key) {
+  NativeTypeBlueprint result;
   result.type = layout::Type{.kind = layout::Type::Kind::Instance};
   result.layouts.classes.push_back({
       .name = {},

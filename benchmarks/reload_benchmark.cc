@@ -238,8 +238,9 @@ class RetainedValues final {
         if (session.isolate().scheduler().PumpUntil(future) == runtime::FuturePumpResult::Idle) {
           return std::unexpected("suspended task did not complete");
         }
-        const auto result = future.value();
-        if (!result || result->AsInteger() != kSaved + version) {
+        const auto& result = future.result();
+        if (result.state != runtime::FutureState::Succeeded ||
+            result.value.AsInteger() != kSaved + version) {
           return std::unexpected("old continuation checksum mismatch");
         }
       }

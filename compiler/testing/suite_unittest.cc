@@ -395,7 +395,7 @@ TEST(ScriptSuiteTest, ClosingSuiteReleasesTimersFramesRootsAndHostEndpoints) {
   auto marker = std::make_shared<int>(0);
   const std::weak_ptr<int> lifetime(marker);
   auto completer = isolate.scheduler().CreateHostCompleter();
-  completer.future().Observe([marker](runtime::FutureState, runtime::Value) { ++*marker; });
+  completer.future().ObserveResult([marker](const runtime::FutureResult&) { ++*marker; });
   const auto endpoint = std::move(completer).Detach();
   marker.reset();
   std::ostringstream output;

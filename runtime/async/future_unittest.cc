@@ -38,7 +38,7 @@ int ObserveFailureWithHandler() {
   int unhandled = 0;
   scheduler.SetUnhandledErrorHandler([&](const Future&, Value) { ++unhandled; });
   auto completer = scheduler.CreateHostCompleter();
-  completer.future().Observe([](FutureState, Value) {});
+  completer.future().ObserveResult([](const FutureResult&) {});
   const auto completion = completer.CompleteError(Value::Integer(kErrorValue));
   if (!completion) {
     return unhandled;
@@ -51,8 +51,10 @@ TEST(FutureTest, CompletionNotifiesObserversAsMicrotasksInRegistrationOrder) {
   FutureScheduler scheduler;
   auto completer = scheduler.CreateHostCompleter();
   std::vector<int> notifications;
-  completer.future().Observe([&](FutureState, Value) { notifications.push_back(1); });
-  completer.future().Observe([&](FutureState, Value) { notifications.push_back(2); });
+  completer.future().ObserveResult([&, first = std::make_unique<int>(1)](const FutureResult&) {
+    notifications.push_back(*first);
+  });
+  completer.future().ObserveResult([&](const FutureResult&) { notifications.push_back(2); });
   constexpr auto kValue = 7;
   const auto completion = completer.Complete(Value::Integer(kValue));
   ASSERT_TRUE(completion.has_value());
@@ -64,10 +66,7 @@ TEST(FutureTest, CompletionNotifiesObserversAsMicrotasksInRegistrationOrder) {
 TEST(FutureTest, ValueFactoryCreatesCompletedFuture) {
   const Future future = Future::Value(Value::Integer(9));
   ASSERT_EQ(future.state(), FutureState::Succeeded);
-  const auto value = future.value();
-  ASSERT_TRUE(value.has_value());
-  const auto integer = value.value_or(Value::Null()).AsInteger();
-  EXPECT_EQ(integer, 9);
+  EXPECT_EQ(future.result().value.AsInteger(), 9);
 }
 
 TEST(FutureTest, ValueFactoryReportsForeignAdoptionAsInvalidIsolate) {
@@ -92,7 +91,7 @@ TEST(FutureTest, ReportsUnhandledErrorOnlyOnceAfterLateObservation) {
   ASSERT_TRUE(completer.CompleteError(Value::Integer(kErrorValue)));
   ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(unhandled, 1);
-  future.Observe([](FutureState, Value) {});
+  future.ObserveResult([](const FutureResult&) {});
   ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(unhandled, 1);
 }
@@ -229,9 +228,9 @@ TEST(FutureTest, CrossThreadCompletionOnlyPublishesOnOwnerThread) {
   std::thread::id notified_thread;
   bool notified = false;
   Value observed = Value::Null();
-  completer.future().Observe([&](FutureState, Value value) {
+  completer.future().ObserveResult([&](const FutureResult& result) {
     notified_thread = std::this_thread::get_id();
-    observed = value;
+    observed = result.value;
     notified = true;
   });
   std::atomic_bool accepted{false};
@@ -347,7 +346,7 @@ TEST(FutureTest, HandlerAttachedDuringCheckpointSuppressesUnhandledReport) {
   int unhandled = 0;
   scheduler.SetUnhandledErrorHandler([&](const Future&, Value) { ++unhandled; });
   const auto future = Future::Error(Value::Integer(1), &scheduler);
-  scheduler.PostMicrotask([future] { future.Observe([](FutureState, Value) {}); });
+  scheduler.PostMicrotask([future] { future.ObserveResult([](const FutureResult&) {}); });
   ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(unhandled, 0);
 }
@@ -384,8 +383,8 @@ TEST(FutureTest, BindingSchedulesUnboundNativeCompletion) {
   ASSERT_TRUE(future.Bind(first.scheduler(), first.heap()));
   bool notified = false;
   Value observed = Value::Null();
-  future.Observe([&](FutureState, Value value) {
-    observed = value;
+  future.ObserveResult([&](const FutureResult& result) {
+    observed = result.value;
     notified = true;
   });
   EXPECT_FALSE(notified);
@@ -546,10 +545,10 @@ TEST(FutureTest, HostProducerAllowsIdlePumpAndBlockingPumpToHaveDifferentBehavio
   host.join();
   EXPECT_TRUE(accepted.load());
   EXPECT_EQ(completed, FuturePumpResult::Completed);
-  const auto result = root.value();
-  ASSERT_TRUE(result.has_value());
-  ASSERT_TRUE(result.value_or(Value::Null()).IsInteger());
-  EXPECT_EQ(result.value_or(Value::Null()).AsInteger(), kExpectedValue);
+  ASSERT_EQ(root.state(), FutureState::Succeeded);
+  const auto result = root.result().value;
+  ASSERT_TRUE(result.IsInteger());
+  EXPECT_EQ(result.AsInteger(), kExpectedValue);
 }
 
 TEST(FutureTest, FinalHostHandleDestroysPendingCallbacksOnOwnerThread) {

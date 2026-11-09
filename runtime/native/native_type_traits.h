@@ -16,7 +16,7 @@
 
 namespace vela::runtime::internal {
 
-struct NativeTypeDescription final {
+struct NativeTypeBlueprint final {
   layout::Program layouts;
   std::optional<layout::Type> type = std::nullopt;
   std::vector<NativeHostIdentity> hosts;
@@ -26,17 +26,17 @@ struct NativeTypeDescription final {
   }
 };
 
-[[nodiscard]] NativeTypeDescription DescribeNativeArray(NativeType element);
-[[nodiscard]] NativeTypeDescription DescribeNativeCollection(NativeType key,
-                                                             std::optional<NativeType> value);
-[[nodiscard]] NativeTypeDescription DescribeNativeSignature(layout::Type::Kind kind,
-                                                            NativeType result,
-                                                            std::span<const NativeType> parameters);
-[[nodiscard]] NativeTypeDescription DescribeNativeNominal(std::string_view module,
-                                                          std::string_view name,
-                                                          ScriptTypeKind kind,
-                                                          std::span<const NativeType> arguments);
-[[nodiscard]] NativeTypeDescription DescribeNativeHost(std::string_view key);
+[[nodiscard]] NativeTypeBlueprint DescribeNativeArray(NativeType element);
+[[nodiscard]] NativeTypeBlueprint DescribeNativeCollection(NativeType key,
+                                                           std::optional<NativeType> value);
+[[nodiscard]] NativeTypeBlueprint DescribeNativeSignature(layout::Type::Kind kind,
+                                                          NativeType result,
+                                                          std::span<const NativeType> parameters);
+[[nodiscard]] NativeTypeBlueprint DescribeNativeNominal(std::string_view module,
+                                                        std::string_view name,
+                                                        ScriptTypeKind kind,
+                                                        std::span<const NativeType> arguments);
+[[nodiscard]] NativeTypeBlueprint DescribeNativeHost(std::string_view key);
 
 template <class T>
 struct NativeLogicalType;

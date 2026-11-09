@@ -539,12 +539,12 @@ Result MatchOperation(Builtin builtin,
                       std::span<const Value> arguments,
                       Heap& heap,
                       const ArrayLayout* layout) {
-  auto& match = Heap::RegExpMatchOf(*arguments.subspan(0).front().AsObject());
+  auto& match = Heap::RegExpMatchOf(*arguments.front().AsObject());
   switch (builtin) {
     case Builtin::RegExpMatchStart:
-      return Value::Integer(static_cast<std::int64_t>(match.captures().subspan(0).front().start));
+      return Value::Integer(static_cast<std::int64_t>(match.captures().front().start));
     case Builtin::RegExpMatchEnd:
-      return Value::Integer(static_cast<std::int64_t>(match.captures().subspan(0).front().end));
+      return Value::Integer(static_cast<std::int64_t>(match.captures().front().end));
     case Builtin::RegExpMatchInput:
       return Value::String(match.input);
     case Builtin::RegExpMatchPattern:
@@ -594,9 +594,9 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
     return Compile(arguments, heap);
   }
   if (builtin == Builtin::RegExpEscape) {
-    return Escape(arguments.subspan(0).front(), heap);
+    return Escape(arguments.front(), heap);
   }
-  const auto receiver = arguments.subspan(0).front();
+  const auto receiver = arguments.front();
   auto* object = receiver.AsObjectOrNull();
   if (object == nullptr) {
     return Failure(ExecutionStatus::TypeError);

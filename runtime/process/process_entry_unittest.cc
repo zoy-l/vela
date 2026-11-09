@@ -164,12 +164,12 @@ TEST_F(ProcessEntryTest, CleanupClosesHostEndpointsAndReleasesPendingWaiters) {
   FutureCompletionEndpoint endpoint;
   std::weak_ptr<int> released;
   int other_calls = 0;
-  other.Observe([&](FutureState, Value) { ++other_calls; });
+  other.ObserveResult([&](const FutureResult&) { ++other_calls; });
   {
     ProcessEntry process(isolate_, errors_);
     auto capture = std::make_shared<int>();
     released = capture;
-    other.Observe([capture = std::move(capture)](FutureState, Value) {});
+    other.ObserveResult([capture = std::move(capture)](const FutureResult&) {});
     auto completer = scheduler.CreateHostCompleter();
     auto host_future = completer.future();
     host_future.AttachHeap(isolate_.heap());

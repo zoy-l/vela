@@ -1237,11 +1237,7 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
     ASSERT_EQ(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost),
               runtime::FuturePumpResult::Completed);
     ASSERT_EQ(future->state(), runtime::FutureState::Succeeded);
-    const auto completed = future->value();
-    if (!completed) {
-      FAIL() << "Future completed without a value";
-    }
-    value = *completed;
+    value = future->result().value;
   }
   ASSERT_TRUE(value.IsInteger());
   EXPECT_EQ(value.AsInteger(), 42);

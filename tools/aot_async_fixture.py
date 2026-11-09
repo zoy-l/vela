@@ -372,7 +372,8 @@ TEST(NativeHostTest, RepeatedScalarValueAwaitAllocatesOnlyTheResultFuture) {
   ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
   auto future = Heap::GetFuture(*DecodeNativeValue(output).AsObject())->Rooted();
   ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
-  EXPECT_EQ(future.value()->AsInteger(), 42);
+  ASSERT_EQ(future.state(), FutureState::Succeeded);
+  EXPECT_EQ(future.result().value.AsInteger(), 42);
   // 标量 Future.value 已融合到 await；整次激活只分配一个结果 Future。
   EXPECT_EQ(isolate.heap().object_count() - baseline, 1U);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);

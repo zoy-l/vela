@@ -8,7 +8,6 @@
 #include <span>
 #include <string_view>
 #include <tuple>
-#include <vector>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
@@ -55,6 +54,19 @@ struct ArgumentBinding final {
   DynamicCallStyle style = DynamicCallStyle::Function;
   std::uint32_t positional = 0;
   bool named = false;
+
+  std::expected<void, ExecutionStatus> BindNames(const HeapObject& names, std::uint32_t count) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+      const auto value = *Heap::GetElement(names, index);
+      if (!value.IsString()) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      if (const auto result = Bind(value.AsString()->value(), index); !result) {
+        return result;
+      }
+    }
+    return {};
+  }
 
   std::expected<void, ExecutionStatus> Bind(std::string_view name, std::uint32_t index) {
     const auto& call = *signature;
@@ -114,13 +126,18 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
     const CallSignature& signature,
     const ResolvedCallable& callable,
     const HeapObject& arguments,
-    const HeapObject& names,
+    const HeapObject* names,
     DynamicCallStyle style) {
   const auto count = Heap::ArrayLength(arguments);
-  const auto names_count = Heap::ArrayLength(names);
   const auto hidden = callable.implicit ? 1U : 0U;
-  if (!count || !names_count || *count != *names_count || hidden < signature.hidden_parameters) {
+  if (!count || hidden < signature.hidden_parameters) {
     return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (names != nullptr) {
+    const auto names_count = Heap::ArrayLength(*names);
+    if (!names_count || *count != *names_count) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
   }
   const auto skipped = hidden - signature.hidden_parameters;
   const auto& parameters = signature.parameters;
@@ -133,15 +150,14 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
       .rest_start = *count,
   };
   ArgumentBinding binding{.signature = &signature, .bound = &bound, .style = style};
-  for (std::uint32_t index = 0; index < *count; ++index) {
-    const auto name = *Heap::GetElement(names, index);
-    if (!name.IsString()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+  if (names == nullptr) {
+    for (std::uint32_t index = 0; index < *count; ++index) {
+      if (const auto result = binding.Bind({}, index); !result) {
+        return std::unexpected(result.error());
+      }
     }
-    const auto result = binding.Bind(name.AsString()->value(), index);
-    if (!result) {
-      return std::unexpected(result.error());
-    }
+  } else if (const auto result = binding.BindNames(*names, *count); !result) {
+    return std::unexpected(result.error());
   }
   for (std::size_t index = 0; index < bound.source_indices.size(); ++index) {
     const auto& parameter = parameters.at(skipped + index);

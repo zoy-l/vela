@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -358,17 +359,42 @@ std::expected<void, NativeContractViolation> RetainedContracts::Check(
   return {};
 }
 
-void AppendVersions(const NativeRetainedFunction& reference,
-                    const NativeFunctionDependencies& dependencies,
-                    const DependencySelection& selection,
-                    std::vector<NativeRetainedFunction>& pending) {
-  std::size_t index = 0;
-  for (const auto version : dependencies.versions.values()) {
-    if (selection.CanReach(DependencyGroup::Version, index++)) {
-      pending.push_back({.image = reference.image, .function = version});
+class RetainedFunctions final {
+ public:
+  explicit RetainedFunctions(std::span<const NativeRetainedFunction> initial)
+      : pending_(initial.begin(), initial.end()) {}
+
+  [[nodiscard]] std::optional<NativeRetainedFunction> Next() {
+    while (!pending_.empty()) {
+      const auto reference = pending_.back();
+      pending_.pop_back();
+      if (visited_
+              .emplace(reference.image, reference.function, reference.instruction.value_or(0),
+                       reference.phase)
+              .second) {
+        return reference;
+      }
+    }
+    return std::nullopt;
+  }
+
+  void AppendVersions(const NativeRetainedFunction& reference,
+                      const NativeFunctionDependencies& dependencies,
+                      const DependencySelection& selection) {
+    std::size_t index = 0;
+    for (const auto version : dependencies.versions.values()) {
+      if (selection.CanReach(DependencyGroup::Version, index++)) {
+        pending_.push_back({.image = reference.image, .function = version});
+      }
     }
   }
-}
+
+ private:
+  std::vector<NativeRetainedFunction> pending_;
+  absl::flat_hash_set<
+      std::tuple<const NativeImage*, std::uint32_t, std::uint32_t, NativeDependencyPhase>>
+      visited_;
+};
 
 void AppendDeclarations(const NativeFunctionDependencies& dependencies,
                         const DependencySelection& selection,
@@ -415,19 +441,11 @@ std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
   if (auto checked = contracts.CheckTypes(types); !checked) {
     return checked;
   }
-  std::vector<NativeRetainedFunction> pending(retained.begin(), retained.end());
-  absl::flat_hash_set<
-      std::tuple<const NativeImage*, std::uint32_t, std::uint32_t, NativeDependencyPhase>>
-      visited;
+  RetainedFunctions traversal(retained);
   absl::flat_hash_map<const NativeImage*, DeclarationIndex> declarations;
-  while (!pending.empty()) {
-    const auto reference = pending.back();
-    pending.pop_back();
-    if (reference.image == &candidate ||
-        !visited
-             .emplace(reference.image, reference.function, reference.instruction.value_or(0),
-                      reference.phase)
-             .second) {
+  while (const auto next = traversal.Next()) {
+    const auto reference = *next;
+    if (reference.image == &candidate) {
       continue;
     }
     const auto& image = *reference.image;
@@ -444,7 +462,7 @@ std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
       if (const auto checked = contracts.Check(function, entry->second, selection); !checked) {
         return checked;
       }
-      AppendVersions(reference, *dependencies, selection, pending);
+      traversal.AppendVersions(reference, *dependencies, selection);
     }
   }
   return {};
@@ -452,27 +470,17 @@ std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
 
 std::vector<DeclarationId> RetainedNativeDeclarations(
     std::span<const NativeRetainedFunction> functions) {
-  std::vector<NativeRetainedFunction> pending(functions.begin(), functions.end());
-  absl::flat_hash_set<
-      std::tuple<const NativeImage*, std::uint32_t, std::uint32_t, NativeDependencyPhase>>
-      visited;
+  RetainedFunctions traversal(functions);
   absl::flat_hash_set<DeclarationId> declarations;
-  while (!pending.empty()) {
-    const auto reference = pending.back();
-    pending.pop_back();
-    if (!visited
-             .emplace(reference.image, reference.function, reference.instruction.value_or(0),
-                      reference.phase)
-             .second) {
-      continue;
-    }
+  while (const auto next = traversal.Next()) {
+    const auto reference = *next;
     const auto& function = reference.image->function(reference.function);
     declarations.insert(function.identity.declaration);
     if (const auto* dependencies = function.dependencies) {
       const DependencySelection selection(*dependencies, reference.instruction.value_or(0),
                                           reference.phase);
       AppendDeclarations(*dependencies, selection, declarations);
-      AppendVersions(reference, *dependencies, selection, pending);
+      traversal.AppendVersions(reference, *dependencies, selection);
     }
   }
   declarations.erase(DeclarationId{});

@@ -279,8 +279,7 @@ void ExpectIntegerOperations(Entry entry, NativeExecution& execution,
 
 void ExpectFutureAnswer(Isolate& isolate, const Future& future) {
   ASSERT_EQ(future.state(), FutureState::Succeeded);
-  ASSERT_TRUE(future.value().has_value());
-  EXPECT_EQ(future.value()->AsInteger(), 42);
+  EXPECT_EQ(future.result().value.AsInteger(), 42);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
 }
@@ -597,10 +596,10 @@ TEST(NativeHostTest, ImportedFuturePayloadAndErrorAreCheckedWithoutVmExecution) 
     ASSERT_NE(future, nullptr);
     ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
     if (operation == 0) {
-      ASSERT_TRUE(future->value().has_value());
-      EXPECT_EQ(future->value()->AsInteger(), 42);
+      ASSERT_EQ(future->state(), FutureState::Succeeded);
+      EXPECT_EQ(future->result().value.AsInteger(), 42);
     } else {
-      ASSERT_TRUE(future->error().has_value());
+      ASSERT_EQ(future->state(), FutureState::Failed);
       const auto diagnostic = future->error_diagnostic();
       ASSERT_TRUE(diagnostic.has_value());
       EXPECT_EQ(diagnostic->status, ExecutionStatus::TypeError);

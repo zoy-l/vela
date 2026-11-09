@@ -331,8 +331,8 @@ extern "C" std::uint8_t vela_native_v1_async_call(NativeExecution* execution,
       call.wait_layout = layouts.arrays[static_cast<std::size_t>(index)];
     }
   }
-  return StoreNativeResult(
-      result, ExecuteFutureOperation(execution->isolate(), call, NativeFutureCallbacks(instance)));
+  return StoreNativeResult(result, ExecuteFutureOperation(execution->isolate(), std::move(call),
+                                                          NativeFutureCallbacks(instance)));
 }
 
 extern "C" std::uint8_t vela_native_v1_async_error(NativeExecution* execution,

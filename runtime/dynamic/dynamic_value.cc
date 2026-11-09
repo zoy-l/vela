@@ -112,11 +112,7 @@ Result ArrayIndex(Builtin builtin, std::span<const Value> arguments, Heap& heap)
     if (!Heap::IsValueOfType(original, layout.value_type())) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    auto value = original;
-    const auto* element = layout.element.nominal;
-    if (!value.IsNull() && element != nullptr && element->IsEnum()) {
-      value = Heap::LoadField(*value.AsObject(), 0);
-    }
+    const auto value = UnboxDynamicValue(original, layout.element);
     const auto written = WriteIndex(heap, object, index.AsInteger(), value);
     return written ? Result(original) : std::unexpected(written.error());
   }

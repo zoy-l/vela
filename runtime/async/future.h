@@ -96,8 +96,6 @@ class Future final {
   struct Observer;
 
  public:
-  using Callback = std::function<void(FutureState, ::vela::runtime::Value)>;
-
   explicit Future(FutureScheduler* scheduler = nullptr);
   ~Future();
   Future(const Future& other);
@@ -135,13 +133,10 @@ class Future final {
   [[nodiscard]] const FutureResult& result() const noexcept;
   [[nodiscard]] bool is_pending() const noexcept { return state() == FutureState::Pending; }
   [[nodiscard]] bool IsCompleted() const noexcept;
-  [[nodiscard]] std::optional<::vela::runtime::Value> value() const;
-  [[nodiscard]] std::optional<::vela::runtime::Value> error() const;
   [[nodiscard]] std::optional<FutureDiagnostic> error_diagnostic() const;
   // 消费者自行读取最终结果，不需要排队执行监听器。
   void MarkObserved() const noexcept;
-  void Observe(Callback callback) const;
-  void ObserveResult(std::function<void(const FutureResult&)> callback,
+  void ObserveResult(absl::AnyInvocable<void(const FutureResult&)> callback,
                      std::shared_ptr<std::vector<::vela::runtime::Value>> references = {}) const;
   // 可取消的宿主观察。其根由返回能力持有，Future 对象图只借用观察者控制状态。
   [[nodiscard]] std::expected<FutureObservation, ExecutionStatus> SubscribeResult(
@@ -170,11 +165,12 @@ class Future final {
   void Retain() noexcept;
   void Unroot() noexcept;
   void ReportUnhandledError() const;
+  void QueueUnhandledError() const;
   void TrackRun(const std::shared_ptr<FutureTaskRun>& run) const;
   explicit Future(std::shared_ptr<SharedState> state, Rooting rooting);
   std::expected<void, FutureCompletionError> RequestCompletion(FutureResult&& result);
   void Publish(FutureResult result);
-  void NotifyObserver(std::function<void(const FutureResult&)> callback,
+  void NotifyObserver(absl::AnyInvocable<void(const FutureResult&)> callback,
                       std::shared_ptr<std::vector<::vela::runtime::Value>> references,
                       std::optional<ExecutionContext> context,
                       std::shared_ptr<FutureTaskRun> run) const;

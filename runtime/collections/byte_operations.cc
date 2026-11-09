@@ -325,8 +325,13 @@ std::expected<Value, ExecutionStatus> ExecuteByteBuiltin(Builtin builtin,
   if (!element) {
     return std::unexpected(element.error());
   }
-  if (builtin == Builtin::ByteArrayGetIndex) {
-    return Value::Integer(element->front());
+  switch (builtin) {
+    case Builtin::ByteArrayGetIndex:
+      return Value::Integer(element->front());
+    case Builtin::ByteArraySetIndex:
+      break;
+    default:
+      std::unreachable();
   }
   const auto value = arguments[2];
   if (!value.IsInteger()) {

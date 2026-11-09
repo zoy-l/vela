@@ -9,7 +9,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -23,6 +22,7 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -157,23 +157,13 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
     const auto output = Value::Object(object);
     RootRange root(isolate_->heap(), &output, 1, std::nullopt);
     for (std::uint32_t index = 0; index < count_; ++index) {
-      auto value = values[kValuesStart + index];
-      const auto* instance = layout_->element.nominal;
-      if (!value.IsNull() && instance != nullptr && instance->IsEnum()) {
-        value = Heap::LoadField(*value.AsObject(), 0);
-      }
+      const auto value = UnboxDynamicValue(values[kValuesStart + index], layout_->element);
       const auto stored = isolate_->heap().SetElement(*object, index, value);
       if (!stored) {
         const auto status = stored.error() == ArrayAccessError::OutOfMemory
                                 ? ExecutionStatus::OutOfMemory
                                 : ExecutionStatus::TypeError;
-        CompleteFutureError(*isolate_, result_, Value::Null(),
-                            {
-                                .message = std::string(ExecutionStatusName(status)),
-                                .stack_trace = {},
-                                .status = status,
-                                .origin = {},
-                            });
+        CompleteFutureStatus(*isolate_, result_, status);
         return;
       }
     }
@@ -470,7 +460,7 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
 }
 
 std::expected<Value, ExecutionStatus> ExecuteComposition(Isolate& isolate,
-                                                         const FutureCall& call,
+                                                         FutureCall call,
                                                          const FutureCallbacks& callbacks) {
   const auto operation = call.operation;
   const auto arguments = call.values;
@@ -519,11 +509,11 @@ std::expected<Value, ExecutionStatus> ExecuteComposition(Isolate& isolate,
   const auto context = std::make_shared<const FutureContinuation>(FutureContinuation{
       .isolate = &isolate,
       .source = source,
-      .target = target,
-      .references = references,
+      .target = std::move(target),
+      .references = std::move(references),
       .result_type = result_type,
-      .type_error = call.type_error,
-      .timeout_error = call.timeout_error,
+      .type_error = std::move(call.type_error),
+      .timeout_error = std::move(call.timeout_error),
   });
   OperationResult observed;
   if (operation == AsyncOperation::Timeout) {
@@ -542,7 +532,7 @@ std::expected<Value, ExecutionStatus> ExecuteComposition(Isolate& isolate,
 }  // namespace
 
 std::expected<Value, ExecutionStatus> ExecuteFutureOperation(Isolate& isolate,
-                                                             const FutureCall& call,
+                                                             FutureCall call,
                                                              const FutureCallbacks& callbacks) {
   switch (call.operation) {
     case AsyncOperation::Microtask:
@@ -557,7 +547,7 @@ std::expected<Value, ExecutionStatus> ExecuteFutureOperation(Isolate& isolate,
     case AsyncOperation::CatchError:
     case AsyncOperation::WhenComplete:
     case AsyncOperation::Timeout:
-      return ExecuteComposition(isolate, call, callbacks);
+      return ExecuteComposition(isolate, std::move(call), callbacks);
     default:
       std::unreachable();
   }

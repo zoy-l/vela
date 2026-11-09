@@ -60,6 +60,7 @@ void VisitReferenceStorage(const ArrayLayout& layout,
   }
   VisitElementStorage(layout, storage, [&visitor]<class T>(std::span<T> elements) {
     using Element = std::remove_const_t<T>;
+    // 运行时布局筛选不影响模板实例化；标量分支不能实例化只接受引用的 visitor。
     if constexpr (std::is_same_v<Element, Value> || std::is_pointer_v<Element>) {
       visitor(elements);
     }

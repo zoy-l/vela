@@ -108,7 +108,7 @@ TEST(IsolateLifecycleTest, PendingEndpointClosesAndReleasesReferencesWithoutBloc
   auto marker = std::make_shared<int>(0);
   const std::weak_ptr<int> lifetime = marker;
   auto completer = isolate.scheduler().CreateHostCompleter();
-  completer.future().Observe([marker](FutureState, Value) { ++*marker; });
+  completer.future().ObserveResult([marker](const FutureResult&) { ++*marker; });
   auto endpoint = std::move(completer).Detach();
   marker.reset();
   ASSERT_TRUE(isolate.ReloadBlockers().empty());
@@ -123,7 +123,7 @@ TEST(IsolateLifecycleTest, RefusedStopPreservesPendingEventsAndOpenEndpoints) {
   Isolate isolate;
   auto completer = isolate.scheduler().CreateHostCompleter();
   bool called = false;
-  completer.future().Observe([&](FutureState, Value) { called = true; });
+  completer.future().ObserveResult([&](const FutureResult&) { called = true; });
   const auto endpoint = std::move(completer).Detach();
   {
     const auto host_root_storage = HostRoot::Create(isolate, Value::Null());
@@ -140,8 +140,8 @@ TEST(IsolateLifecycleTest, StopDisposesDeferredHostDestructionOnTheOwnerThread) 
   Isolate isolate;
   std::thread::id destroyed_on;
   Future future(&isolate.scheduler());
-  future.Observe(
-      [resource = std::make_shared<test::DestructionThread>(destroyed_on)](FutureState, Value) {});
+  future.ObserveResult(
+      [resource = std::make_shared<test::DestructionThread>(destroyed_on)](const FutureResult&) {});
   std::thread host([future = std::move(future)] {});
   host.join();
   EXPECT_EQ(destroyed_on, std::thread::id{});
@@ -197,8 +197,8 @@ TEST(IsolateLifecycleTest, ConcurrentFinalHostReleaseNeverOutlivesSuccessfulStop
     auto isolate = std::make_unique<Isolate>();
     std::thread::id destroyed_on;
     Future future(&isolate->scheduler());
-    future.Observe([resource = std::make_shared<test::DestructionThread>(destroyed_on)](FutureState,
-                                                                                        Value) {});
+    future.ObserveResult([resource = std::make_shared<test::DestructionThread>(destroyed_on)](
+                             const FutureResult&) {});
     std::thread host([future = std::move(future)] {});
     if (isolate->TryStop()) {
       isolate.reset();

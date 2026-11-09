@@ -2,737 +2,6 @@
   "previous": {
     "schema_version": 1,
     "run_date": "2026-11-09",
-    "completed_at": "2026-11-09T08:50:38.879584+08:00",
-    "source": {
-      "revision": "10d26d5e9c4de6c9365ece2c12d95417de7d529f",
-      "working_tree_at_measurement": " M .agents/architecture.md\n M benchmarks/BUILD.gn\n M benchmarks/README.md\n M benchmarks/aot_benchmark.cc\n M benchmarks/aot_benchmark_types.h\n M benchmarks/aot_cases.json\n M benchmarks/aot_workloads.vela\n M benchmarks/gc_strategy_benchmark.cc\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/aot/native_compiler_unittest.cc\n M compiler/ir/analysis.h\n M compiler/ir/lowerer.h\n M compiler/ir/lowerer_array_algorithms.cc\n M compiler/jit/code_inputs.cc\n M compiler/jit/code_reuse_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/debugger_unittest.cc\n M compiler/jit/runtime_symbols.cc\n M compiler/jit/state_evolution_unittest.cc\n M compiler/language/string_gc_unittest.cc\n M compiler/native/call_emitter.cc\n M compiler/native/call_targets.cc\n M compiler/native/call_targets.h\n M compiler/native/code_generator.cc\n M compiler/native/frame_emitter.cc\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/global_emitter.cc\n M compiler/native/integer_loop_optimizer.cc\n M compiler/native/integer_loop_optimizer_unittest.cc\n M compiler/native/native_frame_plan.cc\n M compiler/native/native_frame_plan.h\n M compiler/native/native_roots.cc\n M compiler/native/native_roots.h\n M compiler/native/native_roots_unittest.cc\n M compiler/native/recursive_inliner.cc\n M compiler/native/recursive_inliner.h\n M compiler/native/recursive_inliner_unittest.cc\n M compiler/native/reference_emitter.cc\n M docs/zh-CN/hot_reload.md\n M runtime/BUILD.gn\n M runtime/native/native_control.cc\n M runtime/native/native_control.h\n M runtime/native/native_control_unittest.cc\n M runtime/native/native_image_lifetime_unittest.cc\n M runtime/native/native_image_test_support.h\n M runtime/native/native_instance.cc\n M runtime/native/native_instance.h\n M runtime/native/native_instance_unittest.cc\n M runtime/native/native_operations.cc\n M runtime/native/native_operations.h\n M runtime/native/native_symbols.h\n M runtime/strings/string_unittest.cc\n M tools/aot_global_fixture.py\n M tools/aot_numeric_fixture.py\n M tools/aot_unittest.py\n M tools/bench.py\n M tools/bench_unittest.py\n M tools/benchmark_report.py\n M tools/vl.py\n?? benchmarks/native_analysis_benchmark.cc\n?? compiler/native/invariant_call_optimizer.cc\n?? compiler/native/invariant_call_optimizer.h\n?? compiler/native/invariant_call_optimizer_unittest.cc\n?? compiler/native/loop_cloning.cc\n?? compiler/native/loop_cloning.h\n?? compiler/native/loop_cloning_unittest.cc\n?? compiler/test_support/native_pass_test_support.cc\n?? compiler/test_support/native_pass_test_support.h\n?? tools/gc_benchmark_report.py",
-      "modified_file_sha256": {
-        ".agents/architecture.md": "5880423a9e1e6fbbf584d662409ce1b3500f9a4fb9ce5af5bcc36be6df2f066e",
-        "benchmarks/BUILD.gn": "b1d9c14bca5243b2b6184cf2b9908dc6e8fa8c5c1033c554b61e8d5987bc8297",
-        "benchmarks/README.md": "c795f341f44d9acade08aea7a36e19de6b4ea8c0b494a3ec1654023fa8339c56",
-        "benchmarks/aot_benchmark.cc": "597692961b4012ab727735959348e515b76232309d365185201b1d215ee22fcf",
-        "benchmarks/aot_benchmark_types.h": "42aa778b2600f8e6740803bb7000bf57a0cd3682959928da2863c427fbcedf09",
-        "benchmarks/aot_cases.json": "d73e31a629ef99675bf35fd48f14bcc2c6db0bfa6804c4601ad1c47a4998f68d",
-        "benchmarks/aot_workloads.vela": "400d518d70c6942380b007c3e9d0b4af316c7f557d36a45a0593ebed9bdc0e6a",
-        "benchmarks/gc_strategy_benchmark.cc": "c41ad0ef77f31f697f485fd2995dddd1b3f96c49dfe791bb00407db488be4e97",
-        "compiler/BUILD.gn": "018acf0d8fd85785eb2e03c4433e7e767c9b6f54eb4d03fbc1e1f9d92b02e154",
-        "compiler/aot/native_compiler_unittest.cc": "0463a32987bce029b4a53ba3741a3cc20b55b8d2401958d5ff207fb182666df0",
-        "compiler/ir/lowerer.h": "8df739ace4104e3a8412b5aa974ad4ee7f4c0e354d0968318b8f3656c62f9d66",
-        "compiler/ir/lowerer_array_algorithms.cc": "5f6fa6d4b1a5f2d1c2e1373b766c4168125318b49565a104f1bcde7ec4bd4265",
-        "compiler/jit/code_inputs.cc": "e821357bc8273481f15f3b356a388501bd36a8f89ba2706fe04093fec632d3e4",
-        "compiler/jit/code_reuse_unittest.cc": "5fa2668708d2055ded333ee0cfd6d9c92b2bbec2fc2a863e6b1043c4dd1a67bf",
-        "compiler/jit/compiler_unittest.cc": "7d2e90866dab9f5bb7d276ca949676007ef176f0407d24c33d1771e8de5f4750",
-        "compiler/jit/debugger_unittest.cc": "8711b777a47a7067dfe1708d985034b72c04928951fa5376305c27c38da2d755",
-        "compiler/jit/runtime_symbols.cc": "7aa755166976432fb72b7c044d28a951ad70f511b9ba0e96a2a70ad44fc92788",
-        "compiler/jit/state_evolution_unittest.cc": "cf5b2e1941cbec4d1e54527781bfe7386757b77622e9b55be554266a0b689001",
-        "compiler/language/string_gc_unittest.cc": "1dadb21aa23e5e27aa0b7a83191cb837da6800aa86af0bc876cb545e87a86b0e",
-        "compiler/native/call_emitter.cc": "1a0b08513ef393cf123f6d81abfa50f3179ae71a4e829a6d83b05dfe2241623f",
-        "compiler/native/call_targets.cc": "c6b3362705f6551aa97eb11e30e9c19fdbc3f54fe249d74b46115f36df67c7b9",
-        "compiler/native/call_targets.h": "695ad05a2b9ada0993885401a2b20c4564a461e7e25ac5c2ff87a406b6b450ce",
-        "compiler/native/code_generator.cc": "59f446e35a726da163c7ef1640b2b98e0cbe9e081b69709a11218254f965afe3",
-        "compiler/native/frame_emitter.cc": "5347c3999339ee7e1b02c720087e96f5b826556faf42b6c3c8cdc0d0aacdaa8d",
-        "compiler/native/function_emitter.cc": "ff2450ad491a6a201212c1d73cd6bb365ef01cb7aa7f6c699be44c2f4b2a3a6a",
-        "compiler/native/function_emitter.h": "f99eaabca6bdba16a490b15c8cc22c7b16108baca77dcbaefb7e71f76e920c67",
-        "compiler/native/global_emitter.cc": "61ef8fec15a34dbdec3582565b19f2bbd5d0680570f09a9c961dc0057f93a46f",
-        "compiler/native/integer_loop_optimizer.cc": "c4057306fe083d92cbdccb6bde97515ba7434359c3959ba13bffa8e39171a93a",
-        "compiler/native/integer_loop_optimizer_unittest.cc": "63594bd9af4c66bfcba6859f93919f476c56a5bd22ea27b58c54e27e8469257c",
-        "compiler/native/native_frame_plan.cc": "4fdab5f50910b2951f38ae104f83565d4b7ff8bd898cadaed64b2c858de28023",
-        "compiler/native/native_frame_plan.h": "7697bb3f05d8b7afaa1bbbc0ceb80c9d57fa8db9c8fddab01d9d13a9deb27d66",
-        "compiler/native/native_roots.cc": "12057dbe4429e522b809a203c5f39175704a0756612a1bb77abdeca55d2398b6",
-        "compiler/native/native_roots.h": "ee2bba7e3a4628d71fdc36e0a0e083182b20c6b476cbffbe1f05ba0d381cb7bc",
-        "compiler/native/native_roots_unittest.cc": "0c93a1bef8217d2c268dbda7bbac66d4773b9896037833ef889de69699d9379b",
-        "compiler/native/recursive_inliner.cc": "fc291d547d0d69f468ef29760b5db29704edfa8cb9fa0f88ceaa5c797a920b91",
-        "compiler/native/recursive_inliner.h": "8a2d1a4a9b20be74144e18d26f8f9c306ba972746b9123f41f7ed565f7522e7c",
-        "compiler/native/recursive_inliner_unittest.cc": "e0c3aff8105c31e9a7ba049cc17b0d4ae861650571a3629b2436fde7f725c4a0",
-        "compiler/native/reference_emitter.cc": "c93e7c0db739d06ac162c4235e7d24c6457b6e759058f3e6e519d62cf3a8cd21",
-        "docs/zh-CN/hot_reload.md": "30f50e2c6217b230e0063b976291741703ddff3042fc1a4f4bf707559220ea87",
-        "runtime/BUILD.gn": "a7b98a036c000f6cf4da5c3d65cef2f8935987b7f3874b16255fd998906b8704",
-        "runtime/native/native_control.cc": "d8d4b5ce9eb6e6a8d4cdfebceb004431e1802fa93d41502b88b48b32b97c2e3b",
-        "runtime/native/native_control.h": "81bd9c3b34338013e9c1c9063bf4fafc956534821959d35248b95fabea5729c1",
-        "runtime/native/native_control_unittest.cc": "8c5aef1864eb5b521030bccc8675f31866cb1c1722bc7e8a9372cd8b89c7465f",
-        "runtime/native/native_image_lifetime_unittest.cc": "c0c36b157ef1ec4c7d950edab57186c9de1e66306c928086a4bea90c3c49a619",
-        "runtime/native/native_image_test_support.h": "d66f7442ab2d53ad2cadecf5d46c96a95a228ab7f74271071335074e8c4610b9",
-        "runtime/native/native_instance.cc": "9e83bf8fea91a77cab9599fd2be75011b7db72548cf9382ce1f59e0cb48b500d",
-        "runtime/native/native_instance.h": "d157ca9dcfc887071f3da483d2a01d722e952e59647e0b85c794f318048e4b02",
-        "runtime/native/native_instance_unittest.cc": "0ee31d09a7be1eac85064d8ba7b68044f896fa6eac3fad914f62c4a59ee80913",
-        "runtime/native/native_operations.cc": "2cc95868fe1688b9e80ebf5171514f612e8d308c4a070e31b71ca379cdc259ca",
-        "runtime/native/native_operations.h": "cf867d2e2c36bdbe64d7fc8670a02269b566c8e55890609fd63c3bab7092a8eb",
-        "runtime/native/native_symbols.h": "777bc3f914c0c72df9c20416f245a315306acb2994c51975b6a271729419d352",
-        "runtime/strings/string_unittest.cc": "63a0812dedfba191cb0470dc150521acfdf55dcb5138f801ad0f545290f41c7c",
-        "tools/aot_global_fixture.py": "20f9d2de30e951f2e7deaa495efbe1b54551f6230695a5216e881344fbf58e0f",
-        "tools/aot_numeric_fixture.py": "65c761fa32e768da71f433ded168c639e21a35d7057d26243496fdf2085a796b",
-        "tools/aot_unittest.py": "b980d7806d804d65826213322857f3a6ada626c87719b69c520eddbb400f6da7",
-        "tools/bench.py": "7b11992c5fc1979dc03918521c895e30887987b1ba90d295ba44817b9e89afa3",
-        "tools/bench_unittest.py": "934a0632f7bda10acbcd70f8e2c47a8f359ef9e1e372d6e6b768e4e3741aa1a0",
-        "tools/benchmark_report.py": "db9c81ed682bf93c3ca284f940e2fbeececc8bfd4865a65ad6cfb48d5c252324",
-        "tools/vl.py": "b3e8a9c91fc14da22eb094536c376bfac32d8636f4ddeb6815197da516117df6",
-        "benchmarks/native_analysis_benchmark.cc": "a7d17060c01a937fe5fd0b82da60bb946e009bc25e53f7d6f6063bcb83b2da22",
-        "compiler/native/invariant_call_optimizer.cc": "715922b79a7d46a53263a65a77e7a422a70dcf9f30f72eac67901a238aec0927",
-        "compiler/native/invariant_call_optimizer.h": "f778bb368a803fbe8c2e05eb9399b74fb157a27f974a0a7e475aa23df45df32a",
-        "compiler/native/invariant_call_optimizer_unittest.cc": "25c4d18ecfe7c3fe4854c4fd659780af2e3ecf51a0f34c0bf66c71167576e883",
-        "compiler/native/loop_cloning.cc": "156d63ea123495194806d4125901835b27e6966e587118a34d11a834af16a8e6",
-        "compiler/native/loop_cloning.h": "6d78f6b4fb40e80d5534b185b449e6bdc7948fc4d343f798773699f89d350112",
-        "tools/gc_benchmark_report.py": "06dd5307d5a0d513a9534d3ff6e5bf9106193df56762b93cc2df6c2e70f288ea"
-      },
-      "summary_self_hash": "Excluded to avoid a self-referential source fingerprint.",
-      "binary_source_snapshot": "Frozen executable matches the previous measured Release artifact SHA-256. Workspace compiler edits during this run are excluded.",
-      "working_tree_at_build": " M .agents/architecture.md\n M benchmarks/BUILD.gn\n M benchmarks/README.md\n M benchmarks/aot_benchmark.cc\n M benchmarks/aot_benchmark_types.h\n M benchmarks/aot_cases.json\n M benchmarks/aot_workloads.vela\n M benchmarks/gc_strategy_benchmark.cc\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/aot/native_compiler_unittest.cc\n M compiler/ir/lowerer.h\n M compiler/ir/lowerer_array_algorithms.cc\n M compiler/jit/code_inputs.cc\n M compiler/jit/code_reuse_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/debugger_unittest.cc\n M compiler/jit/runtime_symbols.cc\n M compiler/jit/state_evolution_unittest.cc\n M compiler/language/string_gc_unittest.cc\n M compiler/native/call_emitter.cc\n M compiler/native/call_targets.cc\n M compiler/native/call_targets.h\n M compiler/native/code_generator.cc\n M compiler/native/frame_emitter.cc\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/global_emitter.cc\n M compiler/native/integer_loop_optimizer.cc\n M compiler/native/integer_loop_optimizer_unittest.cc\n M compiler/native/native_frame_plan.cc\n M compiler/native/native_frame_plan.h\n M compiler/native/native_roots.cc\n M compiler/native/native_roots.h\n M compiler/native/native_roots_unittest.cc\n M compiler/native/recursive_inliner.cc\n M compiler/native/recursive_inliner.h\n M compiler/native/recursive_inliner_unittest.cc\n M compiler/native/reference_emitter.cc\n M docs/zh-CN/hot_reload.md\n M runtime/BUILD.gn\n M runtime/native/native_control.cc\n M runtime/native/native_control.h\n M runtime/native/native_control_unittest.cc\n M runtime/native/native_image_lifetime_unittest.cc\n M runtime/native/native_image_test_support.h\n M runtime/native/native_instance.cc\n M runtime/native/native_instance.h\n M runtime/native/native_instance_unittest.cc\n M runtime/native/native_operations.cc\n M runtime/native/native_operations.h\n M runtime/native/native_symbols.h\n M runtime/strings/string_unittest.cc\n M tools/aot_global_fixture.py\n M tools/aot_numeric_fixture.py\n M tools/aot_unittest.py\n M tools/bench.py\n M tools/bench_unittest.py\n M tools/benchmark_report.py\n M tools/vl.py\n?? benchmarks/native_analysis_benchmark.cc\n?? compiler/native/invariant_call_optimizer.cc\n?? compiler/native/invariant_call_optimizer.h\n?? compiler/native/invariant_call_optimizer_unittest.cc\n?? compiler/native/loop_cloning.cc\n?? compiler/native/loop_cloning.h\n?? tools/gc_benchmark_report.py",
-      "fingerprint_scope": "Source fingerprint describes the frozen Release artifact; concurrent workspace compiler edits are excluded.",
-      "generated_source_sha256": {
-        "out\\release\\gen\\benchmarks\\native_class\\workloads.vela": "f6e057ce087362300cf491b43184d35de8e7aa1e6fbc22d438907f857b1b77b2",
-        "out\\release\\gen\\benchmarks\\native_class\\nativeclass.vela": "5285bc973efa431ccf5a49fd6cccd9b6956e9574a05ac42eda05d02756b40068",
-        "out\\release\\gen\\benchmarks\\native_call\\workloads.vela": "ba270b33bbc3600a58239b0f5a0c18b3ff71cfc1d1b31b593ecfb239da7f9f52"
-      },
-      "generated_source_observations": {
-        "out\\release\\gen\\benchmarks\\native_class\\nativeclass.vela": {
-          "observed_sha256": "1f9902b37b6690bf258a5334802634f119602d9184a949c1caab6d04c80341b7",
-          "verified_difference": "Only the fixed-length binding-generation comment changed; declaration body is byte-identical to the frozen image and initial source.",
-          "declaration_body_sha256": "e173874741126b9893956db1ccaf391018dee03ccebc8727e2d64b6c1638c549"
-        }
-      },
-      "generated_sources_verified": {
-        "workloads.vela": {
-          "observed_sha256": "f6e057ce087362300cf491b43184d35de8e7aa1e6fbc22d438907f857b1b77b2",
-          "snapshot_sha256": "f6e057ce087362300cf491b43184d35de8e7aa1e6fbc22d438907f857b1b77b2",
-          "body_sha256": null,
-          "observed_sha256_at_completion": "f6e057ce087362300cf491b43184d35de8e7aa1e6fbc22d438907f857b1b77b2"
-        },
-        "nativeclass.vela": {
-          "observed_sha256": "1f9902b37b6690bf258a5334802634f119602d9184a949c1caab6d04c80341b7",
-          "snapshot_sha256": "5285bc973efa431ccf5a49fd6cccd9b6956e9574a05ac42eda05d02756b40068",
-          "body_sha256": "e173874741126b9893956db1ccaf391018dee03ccebc8727e2d64b6c1638c549",
-          "observed_sha256_at_completion": "1f9902b37b6690bf258a5334802634f119602d9184a949c1caab6d04c80341b7"
-        }
-      }
-    },
-    "machine": {
-      "os": "Microsoft Windows 11 专业版",
-      "version": "10.0.26300.0",
-      "architecture": "AMD64",
-      "host": "DESKTOP-E7S678P",
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
-      "logical_cpus": 24
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin\n",
-      "llvm_version": "21.1.8",
-      "args_gn": "cc_wrapper = \"C:/Users/zoy/AppData/Local/Microsoft/WinGet/Packages/Mozilla.sccache_Microsoft.Winget.Source_8wekyb3d8bbwe/sccache-v0.16.0-x86_64-pc-windows-msvc/sccache.exe\"\ntarget_cpu = \"x64\"\ntarget_os = \"win\"\nvela_archiver = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang/windows-amd64/bin/llvm-lib.exe\"\nvela_build_config = \"release\"\nvela_thin_lto = true\nvela_build_identity =\n    \"2a7124eeb2a4b0f2324a7caf3ef371e6d1534752882b8843d4c7944586362815\"\nvela_cc = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang/windows-amd64/bin/clang-cl.exe\"\nvela_cxx = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang/windows-amd64/bin/clang-cl.exe\"\nvela_linker = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang/windows-amd64/bin/lld-link.exe\"\nvela_python = \"C:/Users/zoy/AppData/Local/Microsoft/WindowsApps/PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0/python.exe\"\nvela_llvm_root = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64\"\nvela_llvm_rtti = \"NO\"\nvela_llvm_target = \"x86_64-pc-windows-msvc\"\nvela_llvm_libraries = [\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86CodeGen.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86Desc.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86Info.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMCDisassembler.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAsmPrinter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMPasses.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMIRPrinter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMHipStdPar.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCoroutines.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMipo.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMInstrumentation.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMVectorize.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSandboxIR.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMLinker.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOpenMP.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendDirective.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendAtomic.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOffloading.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObjectYAML.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMGlobalISel.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSelectionDAG.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCodeGen.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTarget.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMScalarOpts.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObjCARCOpts.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCodeGenTypes.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCGData.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitWriter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCFGuard.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAggressiveInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTransformUtils.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAnalysis.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMProfileData.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSymbolize.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoBTF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoPDB.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoMSF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoCodeView.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoGSYM.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARFLowLevel.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObject.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTextAPI.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMCParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMIRReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAsmParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMC.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCore.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMRemarks.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitstreamReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBinaryFormat.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTargetParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSupport.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDemangle.lib\",\n]\nvela_llvm_jit_libraries = [\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOrcDebugging.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOrcJIT.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMWindowsDriver.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMJITLink.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOption.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMExecutionEngine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMRuntimeDyld.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOrcTargetProcess.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOrcShared.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86CodeGen.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86Desc.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMX86Info.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMCDisassembler.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAsmPrinter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMPasses.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMIRPrinter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMHipStdPar.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCoroutines.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMipo.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMInstrumentation.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMVectorize.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSandboxIR.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMLinker.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOpenMP.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendDirective.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendAtomic.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOffloading.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObjectYAML.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMGlobalISel.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSelectionDAG.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCodeGen.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTarget.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMScalarOpts.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObjCARCOpts.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCodeGenTypes.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCGData.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitWriter.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCFGuard.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAggressiveInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTransformUtils.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAnalysis.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMProfileData.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSymbolize.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoBTF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoPDB.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoMSF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoCodeView.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoGSYM.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARFLowLevel.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObject.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTextAPI.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMCParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMIRReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAsmParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMC.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCore.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMRemarks.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitstreamReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBinaryFormat.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTargetParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSupport.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDemangle.lib\",\n]\nvela_llvm_tooling_libraries = [\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOpenMP.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendDirective.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendAtomic.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendOffloading.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObjectYAML.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMScalarOpts.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAggressiveInstCombine.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTransformUtils.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAnalysis.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMFrontendHLSL.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMWindowsDriver.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMProfileData.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSymbolize.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoBTF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoPDB.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoMSF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoCodeView.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoGSYM.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARF.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDebugInfoDWARFLowLevel.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMObject.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTextAPI.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMCParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMIRReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMAsmParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMMC.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMOption.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMCore.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMRemarks.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBinaryFormat.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMTargetParser.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMBitstreamReader.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMSupport.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/llvm/21.1.8/windows-amd64/lib/LLVMDemangle.lib\",\n]\nvela_llvm_system_libraries = [\n  \"psapi.lib\",\n  \"shell32.lib\",\n  \"ole32.lib\",\n  \"uuid.lib\",\n  \"advapi32.lib\",\n  \"ws2_32.lib\",\n  \"ntdll.lib\",\n]\nvela_llvm_jit_system_libraries = [\n  \"psapi.lib\",\n  \"shell32.lib\",\n  \"ole32.lib\",\n  \"uuid.lib\",\n  \"advapi32.lib\",\n  \"ws2_32.lib\",\n  \"ntdll.lib\",\n]\nvela_llvm_tooling_system_libraries = [\n  \"psapi.lib\",\n  \"shell32.lib\",\n  \"ole32.lib\",\n  \"uuid.lib\",\n  \"advapi32.lib\",\n  \"ws2_32.lib\",\n  \"ntdll.lib\",\n]\nvela_clang_root = \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64\"\nvela_clang_libraries = [\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangTooling.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangFrontend.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangSerialization.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangDriver.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangParse.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangSema.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangAnalysis.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangASTMatchers.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangFormat.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangToolingInclusions.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangToolingCore.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangRewrite.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangEdit.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangAPINotes.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangAST.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangLex.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangBasic.lib\",\n  \"C:/Users/zoy/Documents/Vela/third_party/build_tools/clang_sdk/21.1.8/windows-amd64/lib/clangSupport.lib\",\n]\n"
-    },
-    "build": "release",
-    "binary_sha256": "31cbfae075885bfb008853051bc65bdccf41c2b84bac39d9b725ea1a883541ce",
-    "measurement": {
-      "affinity": {
-        "mask": 1048576,
-        "logical_cpu": 20
-      },
-      "priority": "Normal",
-      "repetitions": 21,
-      "minimum_time_seconds": 0.5,
-      "random_interleaving": true,
-      "warmup_seconds": 0,
-      "shell": "PowerShell",
-      "setup": "$nullableRunner = [System.Diagnostics.Process]::GetCurrentProcess(); $nullableRunner.ProcessorAffinity = [IntPtr]1048576",
-      "command": [
-        "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-nullable-rerun-ih53rdq5\\benchmark-snapshot.exe",
-        "--benchmark_filter=^native_class/.*/nullable/real_time$",
-        "--benchmark_repetitions=21",
-        "--benchmark_min_time=0.5s",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_display_aggregates_only=true",
-        "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-nullable-rerun-ih53rdq5\\nullable.json",
-        "--benchmark_out_format=json"
-      ],
-      "aggregation": "Median complete batch wall time / 4096 operations. CV = sample standard deviation / mean."
-    },
-    "suite": {
-      "identity": "Release nullable C++ class bindings focused remeasurement",
-      "cases": 12,
-      "samples": 252,
-      "native_class_cpp_pairs": 1,
-      "selected_cases": [
-        "native_class/aot/class/nullable/real_time",
-        "native_class/aot/free/nullable/real_time",
-        "native_class/baseline/class/nullable/real_time",
-        "native_class/baseline/free/nullable/real_time",
-        "native_class/optimized/class/nullable/real_time",
-        "native_class/optimized/free/nullable/real_time",
-        "native_class/reload_baseline/class/nullable/real_time",
-        "native_class/reload_baseline/free/nullable/real_time",
-        "native_class/reload_optimized/class/nullable/real_time",
-        "native_class/reload_optimized/free/nullable/real_time",
-        "native_class/cpp_pointer/nullable/real_time",
-        "native_class/cpp_adapter/nullable/real_time"
-      ],
-      "all_expected_cases_passed": true
-    },
-    "comparison": {
-      "previous_comparable": false,
-      "reason": "Focused remeasurement uses 21 repetitions and 0.5s samples; previous full binding suite uses 7 repetitions and 0.2s samples. This is a precision check of the same frozen artifact, not a source performance improvement.",
-      "previous_summary_sha256": "43ca52c1fadc7e7b10bf7af3c37912d53a0fc77ceefa6e7decc8804579ff6505",
-      "previous_summary_encoding": "UTF-8 JSON; ensure_ascii=False; sort_keys=True; separators=(',', ':'); no trailing newline"
-    },
-    "benchmark_context": {
-      "date": "2026-11-09T08:46:04+08:00",
-      "host_name": "DESKTOP-E7S678P",
-      "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-nullable-rerun-ih53rdq5\\benchmark-snapshot.exe",
-      "num_cpus": 24,
-      "mhz_per_cpu": 4700,
-      "caches": [
-        {
-          "type": "Data",
-          "level": 1,
-          "size": 32768,
-          "num_sharing": 2
-        },
-        {
-          "type": "Instruction",
-          "level": 1,
-          "size": 32768,
-          "num_sharing": 2
-        },
-        {
-          "type": "Unified",
-          "level": 2,
-          "size": 1048576,
-          "num_sharing": 2
-        },
-        {
-          "type": "Unified",
-          "level": 3,
-          "size": 33554432,
-          "num_sharing": 12
-        }
-      ],
-      "load_avg": [],
-      "library_version": "1.9.5",
-      "library_build_type": "release",
-      "json_schema_version": 1,
-      "algorithms_cpp": "GN Release flags; FP contraction disabled; stable_sort",
-      "algorithms_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-      "algorithms_upstream": "https://api.github.com/repositories/1166763612",
-      "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
-      "aot_runtime_abi": "2a7124eeb2a4b0f2324a7caf3ef371e6d1534752882b8843d4c7944586362815/release",
-      "aot_workload_contract": "runtime-inputs/specialized-completion/v3",
-      "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
-      "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
-      "jit_cpu": "znver4",
-      "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-      "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
-      "jit_prepared_suites": "0",
-      "jit_steady_setup": "shared-image/fresh-isolate/v1"
-    },
-    "cases": {
-      "native_class/cpp_adapter/nullable/real_time": {
-        "wall_median_ns_per_call": 1.3079901000518699,
-        "wall_cv": 0.01194703956013226,
-        "wall_stddev_ns_per_call": 0.01565346532874141,
-        "wall_min_ns_per_call": 1.294322546983956,
-        "wall_max_ns_per_call": 1.3751630744673613,
-        "counters": {}
-      },
-      "native_class/aot/free/nullable/real_time": {
-        "wall_median_ns_per_call": 1.6178555203050464,
-        "wall_cv": 0.008539829286680041,
-        "wall_stddev_ns_per_call": 0.013831004102589674,
-        "wall_min_ns_per_call": 1.611193327744347,
-        "wall_max_ns_per_call": 1.6754454669396548,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 30300.0,
-          "first_execution_ns": 6900.0
-        }
-      },
-      "native_class/aot/class/nullable/real_time": {
-        "wall_median_ns_per_call": 1.6130673041379873,
-        "wall_cv": 0.03778021831294864,
-        "wall_stddev_ns_per_call": 0.06160900598399348,
-        "wall_min_ns_per_call": 1.6111424259268838,
-        "wall_max_ns_per_call": 1.8955113958391823,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 30000.0,
-          "first_execution_ns": 6800.0
-        }
-      },
-      "native_class/reload_optimized/free/nullable/real_time": {
-        "wall_median_ns_per_call": 6.77590357759221,
-        "wall_cv": 0.09250899770089346,
-        "wall_stddev_ns_per_call": 0.645934634172202,
-        "wall_min_ns_per_call": 6.746075906808757,
-        "wall_max_ns_per_call": 9.568643613890872,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 56800.0,
-          "first_execution_ns": 29400.0
-        }
-      },
-      "native_class/baseline/free/nullable/real_time": {
-        "wall_median_ns_per_call": 2.4798663287367457,
-        "wall_cv": 0.05432200439969042,
-        "wall_stddev_ns_per_call": 0.13688417015745705,
-        "wall_min_ns_per_call": 2.467907060710607,
-        "wall_max_ns_per_call": 3.0894121915120607,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29800.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        }
-      },
-      "native_class/reload_baseline/free/nullable/real_time": {
-        "wall_median_ns_per_call": 6.7819828003233456,
-        "wall_cv": 0.15470028118475998,
-        "wall_stddev_ns_per_call": 1.086637625762868,
-        "wall_min_ns_per_call": 6.741904689304719,
-        "wall_max_ns_per_call": 11.763918781237097,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 55400.0,
-          "first_execution_ns": 29400.0
-        }
-      },
-      "native_class/baseline/class/nullable/real_time": {
-        "wall_median_ns_per_call": 2.4774080215273284,
-        "wall_cv": 0.011140576130394196,
-        "wall_stddev_ns_per_call": 0.02767379748362993,
-        "wall_min_ns_per_call": 2.4673331443876463,
-        "wall_max_ns_per_call": 2.601639116008697,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29600.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        }
-      },
-      "native_class/reload_baseline/class/nullable/real_time": {
-        "wall_median_ns_per_call": 6.783375276561671,
-        "wall_cv": 0.01612591200851362,
-        "wall_stddev_ns_per_call": 0.10997340244537511,
-        "wall_min_ns_per_call": 6.7404559904874395,
-        "wall_max_ns_per_call": 7.1694330298950435,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 55000.0,
-          "first_execution_ns": 29400.0
-        }
-      },
-      "native_class/optimized/class/nullable/real_time": {
-        "wall_median_ns_per_call": 2.480855704386476,
-        "wall_cv": 0.0033085126677234234,
-        "wall_stddev_ns_per_call": 0.008212588739107471,
-        "wall_min_ns_per_call": 2.472361174997652,
-        "wall_max_ns_per_call": 2.505963889048479,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29000.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        }
-      },
-      "native_class/cpp_pointer/nullable/real_time": {
-        "wall_median_ns_per_call": 1.2906936375855063,
-        "wall_cv": 0.014073790123275177,
-        "wall_stddev_ns_per_call": 0.018243044325734082,
-        "wall_min_ns_per_call": 1.2824092588359466,
-        "wall_max_ns_per_call": 1.3701589190324763,
-        "counters": {}
-      },
-      "native_class/reload_optimized/class/nullable/real_time": {
-        "wall_median_ns_per_call": 6.778176248626323,
-        "wall_cv": 0.1524135115268397,
-        "wall_stddev_ns_per_call": 1.0774032877343043,
-        "wall_min_ns_per_call": 6.741632554528972,
-        "wall_max_ns_per_call": 11.741256211272777,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 53900.0,
-          "first_execution_ns": 29400.0
-        }
-      },
-      "native_class/optimized/free/nullable/real_time": {
-        "wall_median_ns_per_call": 2.4745202853370287,
-        "wall_cv": 0.29474803191477705,
-        "wall_stddev_ns_per_call": 0.7799806763183843,
-        "wall_min_ns_per_call": 2.4689741150666493,
-        "wall_max_ns_per_call": 6.050320751315636,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 27500.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        }
-      }
-    },
-    "workload_pairs": [],
-    "native_call_pairs": [],
-    "native_class_cpp_pairs": [
-      {
-        "workload": "nullable",
-        "calls_per_iteration": 4096,
-        "cases": {
-          "cpp": "native_class/cpp_pointer/nullable/real_time",
-          "cpp_adapter": "native_class/cpp_adapter/nullable/real_time",
-          "aot": "native_class/aot/class/nullable/real_time",
-          "baseline": "native_class/baseline/class/nullable/real_time",
-          "optimized": "native_class/optimized/class/nullable/real_time",
-          "reload_baseline": "native_class/reload_baseline/class/nullable/real_time",
-          "reload_optimized": "native_class/reload_optimized/class/nullable/real_time"
-        },
-        "wall_median_ns_per_call": {
-          "cpp": 1.2906936375855063,
-          "cpp_adapter": 1.3079901000518699,
-          "aot": 1.6130673041379873,
-          "baseline": 2.4774080215273284,
-          "optimized": 2.480855704386476,
-          "reload_baseline": 6.783375276561671,
-          "reload_optimized": 6.778176248626323
-        },
-        "wall_cv": {
-          "cpp": 0.014073790123275177,
-          "cpp_adapter": 0.01194703956013226,
-          "aot": 0.03778021831294864,
-          "baseline": 0.011140576130394196,
-          "optimized": 0.0033085126677234234,
-          "reload_baseline": 0.01612591200851362,
-          "reload_optimized": 0.1524135115268397
-        },
-        "ratios_to_cpp": {
-          "cpp_adapter": 1.0134009047249353,
-          "aot": 1.2497677660792872,
-          "baseline": 1.919439245212212,
-          "optimized": 1.9221104312774018,
-          "reload_baseline": 5.255604489731037,
-          "reload_optimized": 5.251576401434985
-        }
-      }
-    ],
-    "native_class_results": {
-      "native_class/aot/class/nullable/real_time": {
-        "ns_per_call": 1.6130673041379873,
-        "stddev_ns": 0.06160900598399348,
-        "min_ns": 1.6111424259268838,
-        "max_ns": 1.8955113958391823,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 30000.0,
-          "first_execution_ns": 6800.0
-        },
-        "class_to_free": 0.9970403932199358,
-        "difference_ns": -0.004788216167059156,
-        "combined_stddev_ns": 0.06314242862625413,
-        "wall_cv": 0.03778021831294864
-      },
-      "native_class/aot/free/nullable/real_time": {
-        "ns_per_call": 1.6178555203050464,
-        "stddev_ns": 0.013831004102589674,
-        "min_ns": 1.611193327744347,
-        "max_ns": 1.6754454669396548,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 30300.0,
-          "first_execution_ns": 6900.0
-        },
-        "wall_cv": 0.008539829286680041
-      },
-      "native_class/baseline/class/nullable/real_time": {
-        "ns_per_call": 2.4774080215273284,
-        "stddev_ns": 0.02767379748362993,
-        "min_ns": 2.4673331443876463,
-        "max_ns": 2.601639116008697,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29600.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        },
-        "class_to_free": 0.9990086936618597,
-        "difference_ns": -0.0024583072094173097,
-        "combined_stddev_ns": 0.13965355386405537,
-        "wall_cv": 0.011140576130394196
-      },
-      "native_class/baseline/free/nullable/real_time": {
-        "ns_per_call": 2.4798663287367457,
-        "stddev_ns": 0.13688417015745705,
-        "min_ns": 2.467907060710607,
-        "max_ns": 3.0894121915120607,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29800.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        },
-        "wall_cv": 0.05432200439969042
-      },
-      "native_class/cpp_adapter/nullable/real_time": {
-        "ns_per_call": 1.3079901000518699,
-        "stddev_ns": 0.01565346532874141,
-        "min_ns": 1.294322546983956,
-        "max_ns": 1.3751630744673613,
-        "counters": {},
-        "wall_cv": 0.01194703956013226
-      },
-      "native_class/cpp_pointer/nullable/real_time": {
-        "ns_per_call": 1.2906936375855063,
-        "stddev_ns": 0.018243044325734082,
-        "min_ns": 1.2824092588359466,
-        "max_ns": 1.3701589190324763,
-        "counters": {},
-        "wall_cv": 0.014073790123275177
-      },
-      "native_class/optimized/class/nullable/real_time": {
-        "ns_per_call": 2.480855704386476,
-        "stddev_ns": 0.008212588739107471,
-        "min_ns": 2.472361174997652,
-        "max_ns": 2.505963889048479,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 29000.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        },
-        "class_to_free": 1.0025602615129035,
-        "difference_ns": 0.006335419049447122,
-        "combined_stddev_ns": 0.7800239112000874,
-        "wall_cv": 0.0033085126677234234
-      },
-      "native_class/optimized/free/nullable/real_time": {
-        "ns_per_call": 2.4745202853370287,
-        "stddev_ns": 0.7799806763183843,
-        "min_ns": 2.4689741150666493,
-        "max_ns": 6.050320751315636,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1072.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 27500.0,
-          "first_execution_ns": 9200.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 3.0,
-          "entry_root_stores": 5.0
-        },
-        "wall_cv": 0.29474803191477705
-      },
-      "native_class/reload_baseline/class/nullable/real_time": {
-        "ns_per_call": 6.783375276561671,
-        "stddev_ns": 0.10997340244537511,
-        "min_ns": 6.7404559904874395,
-        "max_ns": 7.1694330298950435,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 55000.0,
-          "first_execution_ns": 29400.0
-        },
-        "class_to_free": 1.0002053199306637,
-        "difference_ns": 0.0013924762383252798,
-        "combined_stddev_ns": 1.0921883898709852,
-        "wall_cv": 0.01612591200851362
-      },
-      "native_class/reload_baseline/free/nullable/real_time": {
-        "ns_per_call": 6.7819828003233456,
-        "stddev_ns": 1.086637625762868,
-        "min_ns": 6.741904689304719,
-        "max_ns": 11.763918781237097,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 55400.0,
-          "first_execution_ns": 29400.0
-        },
-        "wall_cv": 0.15470028118475998
-      },
-      "native_class/reload_optimized/class/nullable/real_time": {
-        "ns_per_call": 6.778176248626323,
-        "stddev_ns": 1.0774032877343043,
-        "min_ns": 6.741632554528972,
-        "max_ns": 11.741256211272777,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 53900.0,
-          "first_execution_ns": 29400.0
-        },
-        "class_to_free": 1.00033540486639,
-        "difference_ns": 0.002272671034113216,
-        "combined_stddev_ns": 1.256196400267038,
-        "wall_cv": 0.1524135115268397
-      },
-      "native_class/reload_optimized/free/nullable/real_time": {
-        "ns_per_call": 6.77590357759221,
-        "stddev_ns": 0.645934634172202,
-        "min_ns": 6.746075906808757,
-        "max_ns": 9.568643613890872,
-        "counters": {
-          "allocations_per_iteration": 0.0,
-          "constructed_per_iteration": 0.0,
-          "destroyed_per_iteration": 0.0,
-          "peak_live_bytes": 1280.0,
-          "retained_bytes_delta": 0.0,
-          "shared_owner_delta": 0.0,
-          "instantiation_ns": 56800.0,
-          "first_execution_ns": 29400.0
-        },
-        "wall_cv": 0.09250899770089346
-      }
-    },
-    "ratio_summary": {
-      "complete_workloads": {},
-      "native_free_calls": {},
-      "native_class_calls": {
-        "aot": {
-          "pairs": 1,
-          "geometric_mean": 1.2497677660792872,
-          "minimum": 1.2497677660792872,
-          "maximum": 1.2497677660792872
-        },
-        "baseline": {
-          "pairs": 1,
-          "geometric_mean": 1.919439245212212,
-          "minimum": 1.919439245212212,
-          "maximum": 1.919439245212212
-        },
-        "optimized": {
-          "pairs": 1,
-          "geometric_mean": 1.9221104312774018,
-          "minimum": 1.9221104312774018,
-          "maximum": 1.9221104312774018
-        },
-        "reload_baseline": {
-          "pairs": 1,
-          "geometric_mean": 5.255604489731037,
-          "minimum": 5.255604489731037,
-          "maximum": 5.255604489731037
-        },
-        "reload_optimized": {
-          "pairs": 1,
-          "geometric_mean": 5.251576401434985,
-          "minimum": 5.251576401434985,
-          "maximum": 5.251576401434985
-        }
-      }
-    },
-    "variation": {
-      "minimum_wall_cv": 0.0033085126677234234,
-      "maximum_wall_cv": 0.29474803191477705
-    },
-    "validation": {
-      "coverage": "12 cases / 252 complete samples passed production native class report validation.",
-      "checks": "Checksums passed; hot nullable paths have zero Heap allocations, zero retained heap delta, unchanged shared ownership and balanced host object lifetimes.",
-      "artifact_identity": "Same frozen Release SHA-256 as the previous binding report; generated workload and declaration bodies verified."
-    },
-    "limitations": [
-      "Complete batch time includes loop/checksum work and amortized runtime entry/exit; it is not isolated ABI latency.",
-      "C++ reference is an opaque pointer call. All backends alternate null and non-null arguments.",
-      "Frozen artifact excludes compiler changes made concurrently in the workspace."
-    ]
-  },
-  "latest": {
-    "schema_version": 1,
-    "run_date": "2026-11-09",
     "completed_at": "2026-11-09T01:47:26.031572+00:00",
     "source": {
       "revision": "10d26d5e9c4de6c9365ece2c12d95417de7d529f",
@@ -1238,6 +507,1298 @@
       "Complete timed batch includes loop/checksum work and amortized execution entry/exit. Values are ns per operation, not isolated ABI latency.",
       "The C++ reference is an opaque pointer call. Both paths alternate null and non-null arguments; workload, reference and safety semantics are unchanged.",
       "The unchanged C++ source has different medians in the two linked binaries. Both the same-run ratio and final AOT / saved-baseline C++ ratio are retained."
+    ]
+  },
+  "latest": {
+    "schema_version": 1,
+    "run_date": "2026-11-09",
+    "completed_at": "2026-11-09T13:21:26.676031+08:00",
+    "source": {
+      "source_revision": "78d3e29cfe46c6bed43aabed4f8cc7c2dfa786b7",
+      "working_tree": " M base/regexp.h\n M benchmarks/aot_benchmark.cc\n M benchmarks/async_benchmark.cc\n M benchmarks/gc_strategy_benchmark.cc\n M benchmarks/reload_benchmark.cc\n M benchmarks/standard_value_benchmark.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/debugger_unittest.cc\n M compiler/jit/test_support.cc\n M compiler/language/native_binding_unittest.cc\n M compiler/test_support/program_test_support.cc\n M compiler/testing/suite_unittest.cc\n M runtime/async/execution_context_unittest.cc\n M runtime/async/future.cc\n M runtime/async/future.h\n M runtime/async/future_completion_unittest.cc\n M runtime/async/future_composition.cc\n M runtime/async/future_composition.h\n M runtime/async/future_unittest.cc\n M runtime/collections/array_operations.cc\n M runtime/collections/array_unittest.cc\n M runtime/collections/byte_operations.cc\n M runtime/collections/collection_operations.cc\n M runtime/dynamic/dynamic_array.cc\n M runtime/dynamic/dynamic_array.h\n M runtime/dynamic/dynamic_async.cc\n M runtime/dynamic/dynamic_call.cc\n M runtime/dynamic/dynamic_call.h\n M runtime/dynamic/dynamic_value.cc\n M runtime/dynamic/numeric_operations_internal.h\n M runtime/heap/element_storage.h\n M runtime/heap/heap.cc\n M runtime/heap/heap.h\n M runtime/heap/heap_array.cc\n M runtime/heap/heap_collection.cc\n M runtime/heap/heap_instance.cc\n M runtime/heap/instance_storage_unittest.cc\n M runtime/isolate/isolate.cc\n M runtime/isolate/isolate_lifecycle_unittest.cc\n M runtime/library/builtins.cc\n M runtime/native/host_value.h\n M runtime/native/native_api_cpp.h\n M runtime/native/native_async.cc\n M runtime/native/native_call.cc\n M runtime/native/native_dependencies.cc\n M runtime/native/native_dispatch.cc\n M runtime/native/native_dispatch.h\n M runtime/native/native_dispatch_unittest.cc\n M runtime/native/native_dynamic.cc\n M runtime/native/native_exception.cc\n M runtime/native/native_function.cc\n M runtime/native/native_global_internal.h\n M runtime/native/native_image_lifetime_unittest.cc\n M runtime/native/native_instance.cc\n M runtime/native/native_type_traits.cc\n M runtime/native/native_type_traits.h\n M runtime/process/process_entry_unittest.cc\n M runtime/regexp/regexp.cc\n M runtime/strings/unicode_operations.cc\n M runtime/value/callable.cc\n M tools/aot_async_fixture.py\n M tools/aot_unittest.py",
+      "modified_file_sha256": {
+        "base/regexp.h": "b1fe9df96afbcde266ded8bb33565e9475600fe51babf5db18740a010e1361b8",
+        "benchmarks/aot_benchmark.cc": "85fd220e92a772bd50b839b33bde736848a48666d82525a1d85876647b6c0a44",
+        "benchmarks/async_benchmark.cc": "60f4e0c1b5b202d5c7ac5ac1dbd24e284b44051d53c3e43fcc9afefb7526f89b",
+        "benchmarks/gc_strategy_benchmark.cc": "f5a1d022eb4de0cb5e86d78187fffea1219bbbabb9b1edf93515fb175755d0c1",
+        "benchmarks/reload_benchmark.cc": "6bba1cbcb8d7e7e049be3ba039368073a872e06de8ff72e89d1cf82de3024530",
+        "benchmarks/standard_value_benchmark.cc": "6651cb3cd7381dba202fe425a6a4e7a33a388a755d64b08f139282d1a3d7bfcf",
+        "compiler/jit/compiler_unittest.cc": "600c099879c0d540144a6f249162cc9fcc5ae3a04b87a409980d46cc92acb3b3",
+        "compiler/jit/debugger_unittest.cc": "f1435fd9cbf4c2d1df9a23b5e24685e920763a626ccdb271ce82b1b64e0c35bb",
+        "compiler/jit/test_support.cc": "13ebff4df10fbb24e9591834252bfce149f148e51bd9128480eb1c5725cded76",
+        "compiler/language/native_binding_unittest.cc": "c966a3f2ff209af3a3851ca7811575c5e976d00281a2aebb92ce594c1c0bd269",
+        "compiler/test_support/program_test_support.cc": "fc656692a13d5783894a5b01d9372573a672fe5c1097810a8449017f02c17f7a",
+        "compiler/testing/suite_unittest.cc": "d9f58f0608b4deee97f7f3b115b8122121365efdfaa688ca3590ba5c3cbce8f6",
+        "runtime/async/execution_context_unittest.cc": "a3c031dee25c1172e922e856d5c9c0765b2c2b681e99f9f69f7bb7ee75190dd5",
+        "runtime/async/future.cc": "d9ed973c2b3c5eb78d8edc58145e4a64f362844800214d83826f8bdc8481547d",
+        "runtime/async/future.h": "3c8050a80cb15549e5856f8b88d143cf28cda0e0482439562df8eb6fc91e1ed7",
+        "runtime/async/future_completion_unittest.cc": "1365e7c247368381bd07b15a983a2b9975cae3310aae85bb06e704f459f5a856",
+        "runtime/async/future_composition.cc": "1f1a2a3612da65e3040030f2705fb9f7e316845453c13eaeb58872c947d66250",
+        "runtime/async/future_composition.h": "c101e5749e9871a9f4dad11d440b3692291b24ce1ecc1f2187c7891d835ae1ac",
+        "runtime/async/future_unittest.cc": "20d2c179fdb186bde204dead6d6ba35def30308ced495136f92ad37edd92008b",
+        "runtime/collections/array_operations.cc": "41df431f3961f4b40e8ed8195f7f10bce60b45032979d7b5f14a95dc3380784a",
+        "runtime/collections/array_unittest.cc": "2540691bffa7bda5ef287f482c5b32c8202f4765d396370cbfca5cb517fb852c",
+        "runtime/collections/byte_operations.cc": "07eeabd05306cbcf39c780931c273651494672aa932cecbb083f0af9002a09a4",
+        "runtime/collections/collection_operations.cc": "7c200adf6f3106dcd9e9a18f3e0cfc568662e17191eac00ce7c4353ec954a28f",
+        "runtime/dynamic/dynamic_array.cc": "e04266579a95db96a6fa3ea6c298b2ab071ba02cc132eabda391719c8fcff806",
+        "runtime/dynamic/dynamic_array.h": "f1e7043218e37c470bab34d812bde621beda3e4b612ea651deeca9fe92aea07f",
+        "runtime/dynamic/dynamic_async.cc": "350b57442ca7d4418919a27599f0a7ea863320502c68313813a2721f28154255",
+        "runtime/dynamic/dynamic_call.cc": "c7501a0b131ff64867252373d8f41b91dfe2eac99ecbc0cb415ef66cb631f578",
+        "runtime/dynamic/dynamic_call.h": "88bacaffb65d91e18d5b9a2bd435cbf27cc688ae7527356da2939532dd9e21cc",
+        "runtime/dynamic/dynamic_value.cc": "733c7b1462a7237c6a6a97590a25f020eeb49f7268b584390e4fd61d4e85f288",
+        "runtime/dynamic/numeric_operations_internal.h": "051320fc50cfa7ef17da91948fe27b3958a3a1daa501613862a9ca6008ea30a6",
+        "runtime/heap/element_storage.h": "806aad6ccfdef9f9f78456e4423b3fd1556e90fb365f1b00742f49ee827bd6e1",
+        "runtime/heap/heap.cc": "7eeb93de4dd1dd440d9bc8d8f45256c18530ab5e504eeb57ded9ffc71520c594",
+        "runtime/heap/heap.h": "115fb2c545c6cefa5b639f1d40402276f8b72e86af6d371ccd83d691bb9eeec7",
+        "runtime/heap/heap_array.cc": "0aeae6206b7b6ff03c391f38cd373c377ef10160c651e7793fb7386eef53076d",
+        "runtime/heap/heap_collection.cc": "5c6f2347e6f68b5ec09ba7a3718e8f30fd56489b1775248d77e150d5333d544a",
+        "runtime/heap/heap_instance.cc": "16caab756ea6284d2a3b2294429076438f2852ba5575be82b318ad1c499f67ac",
+        "runtime/heap/instance_storage_unittest.cc": "8c50dc1d71c06f847313b0ceffe8fb498ce3f4bff3b5d6f5d6a482fb30aa2d7b",
+        "runtime/isolate/isolate.cc": "aa826fdaa6208b6a1e3639fcce27bda05ec8a8ec645a06a6f47111ba4ae82645",
+        "runtime/isolate/isolate_lifecycle_unittest.cc": "3398339a440f087b26dabff890419f7ed8e31694fe19defd25dae760367cbba9",
+        "runtime/library/builtins.cc": "9d6c2907fcaa88f4fd4a74794f53cf2e1e53346f26d7b64060acbfb7b6475065",
+        "runtime/native/host_value.h": "5f7da160d6e139c956cdf633016647449207bd708d202f9b9d1c4aca93f5e4c5",
+        "runtime/native/native_api_cpp.h": "b027fd84a951d14128b5c2b9090fcdcab505ce56d0e7290500ad5c7e084154d0",
+        "runtime/native/native_async.cc": "338e97f8819bf8e6d983c65eb20a827d4f302a9161b37f70a72c36cc358f9b31",
+        "runtime/native/native_call.cc": "435ba2bb6cd1eef940ccf3ad244a24fb1949939b69ef080c75346fb35b7a2b2f",
+        "runtime/native/native_dependencies.cc": "7584936c80ed62a389c5f20cb7a14f250175bb327b7ff962073d7d48e4e90cc3",
+        "runtime/native/native_dispatch.cc": "191eb5636e1e0dd1f00bf62f28eb9497b4d4c95f3cd6f704b2a26c558037a0e2",
+        "runtime/native/native_dispatch.h": "398eb5ba58594236999df2deabaea8173e452aa7f735f11d4b717cc63a768a73",
+        "runtime/native/native_dispatch_unittest.cc": "a91cda7ff555e5748f603bf8875d4cbaaba85da74a3928033e43c4c70acea14e",
+        "runtime/native/native_dynamic.cc": "28a72cd5035ae44b78425e25c6c034349942b91e313754651670380713007f1e",
+        "runtime/native/native_exception.cc": "36507f034848d149678aa8a14509fa15e9cf0106638cf50dd36d63cd43b26c8c",
+        "runtime/native/native_function.cc": "025eed4324841b4d6cb1aacd9f64b27c433263152c23a3160b421ae5b8e4d34d",
+        "runtime/native/native_global_internal.h": "c8908c9d792e81c02aa5c2ba2f213156665dda19fefee91f9d22660c11e3e1c2",
+        "runtime/native/native_image_lifetime_unittest.cc": "9948f84fdedc40e96c929b52a0f24e8b600477124fbb2e284ae3ba13290236cd",
+        "runtime/native/native_instance.cc": "fe5e22b445048736c27fb2d53e36462260dbe8bce99b5cfa90b55886051ae9a6",
+        "runtime/native/native_type_traits.cc": "36856d3811ac07e54764e9659092ccc3d94d736e8d1abd842ad80af7d97f73cf",
+        "runtime/native/native_type_traits.h": "1fdddbf86a9fe6a90cf3c16a16c5d8fe7c64aa3ce22ab35895b6438af219515c",
+        "runtime/process/process_entry_unittest.cc": "f2ecbcb3b5faddbb5dc8570639405e1b24054bbd25bba1efe998e874407833f4",
+        "runtime/regexp/regexp.cc": "79d870d37f620c9bcf688717b5104cd2e7c884f70049ef0ad39826b55afd4632",
+        "runtime/strings/unicode_operations.cc": "a70991c0a6ebe27fbc746c2e5554314e62e8036df7ad5b0bb671876eac74512f",
+        "runtime/value/callable.cc": "a1ae9d0e173af49d08cb0e1ace181f3527098fea45ded02933b432dc19d6d8bb",
+        "tools/aot_async_fixture.py": "6ee7d10c8b9e72482a04283f332a29423c6baae17d0f46915118cfc0a2ad237a",
+        "tools/aot_unittest.py": "957ca65c50f3cc2fa58be3690364c37e5374f44c2932e39c8a347f000c737ce3"
+      }
+    },
+    "machine": {
+      "os": "Microsoft Windows 11 专业版",
+      "version": "10.0.26300.0",
+      "architecture": "AMD64",
+      "host": "DESKTOP-E7S678P",
+      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+      "logical_cpus": 24
+    },
+    "toolchain": {
+      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Users\\zoy\\Documents\\Vela\\third_party\\build_tools\\clang\\windows-amd64\\bin",
+      "cxx_sha256": "8267dac999d2a4cbeb0784abf25c8480139cd43cbda6e2b354d0adf2f7c99316",
+      "llvm_version": "21.1.8",
+      "args_gn_sha256": "e36c4475f2487d0fd5ce2c311564320a9302e912e1669095e64f8fa83a36f3d0"
+    },
+    "build": {
+      "variant": "release",
+      "thin_lto": true,
+      "target_cpu": "x64",
+      "target_os": "win",
+      "command": "python -m tools.vl build release benchmarks"
+    },
+    "measurement": {
+      "affinity_by_group": {
+        "common": {
+          "mask": 4194304,
+          "logical_cpu": 22
+        },
+        "added": {
+          "mask": 4194304,
+          "logical_cpu": 22
+        },
+        "continuation": {
+          "mask": 4194304,
+          "logical_cpu": 22
+        },
+        "callback": {
+          "mask": 16,
+          "logical_cpu": 4
+        }
+      },
+      "priority": "Normal",
+      "repetitions": 7,
+      "minimum_time_seconds": 0.3,
+      "warmup_seconds": 0.2,
+      "random_interleaving": true,
+      "commands": [
+        {
+          "group": "common",
+          "side": "baseline",
+          "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-baseline.exe",
+          "arguments": [
+            "--benchmark_filter=^(array/default_sort/64|array/default_sort/4096|array/dynamic_sort/64|array/dynamic_sort/4096|dynamic/typed_boundaries|jit/string_builder_large|async/no_await_loop|async/suspend_resume|async/concurrent/1000|async/suspended_gc/1000)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-common-baseline.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "common",
+          "side": "candidate",
+          "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+          "arguments": [
+            "--benchmark_filter=^(array/default_sort/64|array/default_sort/4096|array/dynamic_sort/64|array/dynamic_sort/4096|dynamic/typed_boundaries|jit/string_builder_large|async/no_await_loop|async/suspend_resume|async/concurrent/1000|async/suspended_gc/1000)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-v2-common-candidate.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "added",
+          "side": "baseline",
+          "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-added-baseline.exe",
+          "arguments": [
+            "--benchmark_filter=^(gc/map_references/4096|array/dynamic_callback)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-added-baseline.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "added",
+          "side": "candidate",
+          "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+          "arguments": [
+            "--benchmark_filter=^(gc/map_references/4096|array/dynamic_callback)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-v2-added-candidate.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "continuation",
+          "side": "baseline",
+          "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-continuation-baseline.exe",
+          "arguments": [
+            "--benchmark_filter=^(async/then_chain|string/code_points)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-continuation-baseline.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "continuation",
+          "side": "candidate",
+          "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+          "arguments": [
+            "--benchmark_filter=^(async/then_chain|string/code_points)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-v2-continuation-candidate.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "callback",
+          "side": "baseline",
+          "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-callback-baseline.exe",
+          "arguments": [
+            "--benchmark_filter=^(interop/jit/typed/callback|interop/jit/runtime/callback|interop/aot/typed/callback|interop/aot/runtime/callback)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-quiet-callback-baseline.json",
+            "--benchmark_out_format=json"
+          ]
+        },
+        {
+          "group": "callback",
+          "side": "candidate",
+          "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
+          "arguments": [
+            "--benchmark_filter=^(interop/jit/typed/callback|interop/jit/runtime/callback|interop/aot/typed/callback|interop/aot/runtime/callback)$",
+            "--benchmark_min_time=0.3s",
+            "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0.2",
+            "--benchmark_enable_random_interleaving=true",
+            "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-final-quiet-callback-candidate.json",
+            "--benchmark_out_format=json"
+          ]
+        }
+      ],
+      "aggregation": "Median wall nanoseconds per complete workload or complete interop call, including checks. CV is sample standard deviation divided by mean. All raw samples are retained in the OS temporary directory."
+    },
+    "suite": {
+      "identity": "Runtime review: 18 targeted performance and control workloads",
+      "cases": 18,
+      "samples": 252,
+      "all_expected_cases_passed": true,
+      "selected_cases": [
+        "array/default_sort/4096",
+        "array/default_sort/64",
+        "array/dynamic_callback",
+        "array/dynamic_sort/4096",
+        "array/dynamic_sort/64",
+        "async/concurrent/1000",
+        "async/no_await_loop",
+        "async/suspend_resume",
+        "async/suspended_gc/1000",
+        "async/then_chain",
+        "dynamic/typed_boundaries",
+        "gc/map_references/4096",
+        "interop/aot/runtime/callback",
+        "interop/aot/typed/callback",
+        "interop/jit/runtime/callback",
+        "interop/jit/typed/callback",
+        "jit/string_builder_large",
+        "string/code_points"
+      ]
+    },
+    "comparison": {
+      "previous_comparable": false,
+      "reason": "The retained previous entry measures nullable native-class workloads with a different scope and settings. Use implementation_baseline for this task's paired artifact comparisons.",
+      "previous_summary_sha256": "fe118ae164aae9f5791ef0dac1b1b605fcc3ab8805d99d83eb3cf0e83994485b",
+      "previous_summary_encoding": "UTF-8 JSON; ensure_ascii=False; sort_keys=True; separators=(',', ':'); no trailing newline"
+    },
+    "artifacts": [
+      {
+        "group": "common",
+        "side": "baseline",
+        "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-baseline.exe",
+        "binary_sha256": "d5f57210c73149fe7022f2f7f5e6744920f5b98465ef9a43dbba9bdca81e8017",
+        "raw_json_sha256": "0938128f955ae1ea68eea40308c937e06d69a7f7859a9f0c28bbd258f93c4be3",
+        "source_phase": "Clean task-start source at revision 78d3e29cfe46c6bed43aabed4f8cc7c2dfa786b7."
+      },
+      {
+        "group": "common",
+        "side": "candidate",
+        "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "binary_sha256": "0ff16824e500c76929ba07a6c2d7a50e97c684a3c42f93bb867fe727a9c261ec",
+        "raw_json_sha256": "9337a36844a1a93a0079d356ff068ded0882c890f69eef7c9c9e6dc54c04953a"
+      },
+      {
+        "group": "added",
+        "side": "baseline",
+        "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-added-baseline.exe",
+        "binary_sha256": "89316d0d37389335668c01d45b27353668992953e1e54124f54fe03c6bbf5990",
+        "raw_json_sha256": "6c333ddf9ce8dc2a8d540dfbfadf80d88524f9510d75232770502c477111319b",
+        "source_phase": "Intermediate audit cleanup before Map marking, sorting and dynamic-name optimizations. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact."
+      },
+      {
+        "group": "added",
+        "side": "candidate",
+        "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "binary_sha256": "0ff16824e500c76929ba07a6c2d7a50e97c684a3c42f93bb867fe727a9c261ec",
+        "raw_json_sha256": "2b6a4bf22ff341fccbcda756f9f71184458829e92fbbe17e290962be05e4ce00"
+      },
+      {
+        "group": "continuation",
+        "side": "baseline",
+        "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-continuation-baseline.exe",
+        "binary_sha256": "6d0972a5a882b653be08866c9aaaa188fdc13c370d7c35bea90ee54064a74367",
+        "raw_json_sha256": "3618b3797fd8ed5792f1c1b958e9648ab9daf7c036a38d9131e45379e769e304",
+        "source_phase": "Intermediate audit source before diagnostic ownership, callback and code-point changes. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact."
+      },
+      {
+        "group": "continuation",
+        "side": "candidate",
+        "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "binary_sha256": "0ff16824e500c76929ba07a6c2d7a50e97c684a3c42f93bb867fe727a9c261ec",
+        "raw_json_sha256": "45b918a2b9c0cb07d80580b473716308491af6d6c31775d6eacd33f288cc1fe3"
+      },
+      {
+        "group": "callback",
+        "side": "baseline",
+        "binary": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-callback-baseline.exe",
+        "binary_sha256": "fb36cf63661d941c4b15d9dcd0082bebf9de4e50bc74546484e63da4aecee2e0",
+        "raw_json_sha256": "a8bc9c5083e17453d43e1e120b2ffce949d9188c0cfed20804f3909ebfa9a7e7",
+        "source_phase": "AOT benchmark artifact frozen before callback argument encoding changes. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact."
+      },
+      {
+        "group": "callback",
+        "side": "candidate",
+        "binary": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
+        "binary_sha256": "28aabd8a6cbe93d35dccd4331bd9017bc085fe53688de89b95a78f6f4d2a0cb7",
+        "raw_json_sha256": "10fe97f01c0981bdfbd320cfa32767a2f9c1fe3779be0eeb1e8c8bbcecb0f6b9"
+      }
+    ],
+    "benchmark_context": {
+      "common/baseline": {
+        "date": "2026-11-09T12:53:04+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-baseline.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "common/candidate": {
+        "date": "2026-11-09T13:10:58+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "added/baseline": {
+        "date": "2026-11-09T12:56:49+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-added-baseline.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "added/candidate": {
+        "date": "2026-11-09T13:12:43+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "continuation/baseline": {
+        "date": "2026-11-09T12:57:37+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-continuation-baseline.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "continuation/candidate": {
+        "date": "2026-11-09T13:12:52+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "x64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "0",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      },
+      "callback/baseline": {
+        "date": "2026-11-09T13:17:05+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-runtime-callback-baseline.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "algorithms_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "algorithms_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "algorithms_upstream": "https://api.github.com/repositories/1166763612",
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "bb3eec507c9c38911c3ceb9335d515558e15266d7017d984e890e34f735f53b6/release",
+        "aot_workload_contract": "runtime-inputs/specialized-completion/v3",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      },
+      "callback/candidate": {
+        "date": "2026-11-09T13:18:20+08:00",
+        "host_name": "DESKTOP-E7S678P",
+        "executable": "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_aot_benchmarks.exe",
+        "num_cpus": 24,
+        "mhz_per_cpu": 4700,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 32768,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 1048576,
+            "num_sharing": 2
+          },
+          {
+            "type": "Unified",
+            "level": 3,
+            "size": 33554432,
+            "num_sharing": 12
+          }
+        ],
+        "load_avg": [],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "algorithms_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+        "algorithms_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+        "algorithms_upstream": "https://api.github.com/repositories/1166763612",
+        "aot_codegen": "LLVM O3; generic CPU; PIC; checked arithmetic; explicit roots",
+        "aot_runtime_abi": "963b14bd07edfd9181bd374be40e932e1d8a76032e6e42dce61390f6768770df/release",
+        "aot_workload_contract": "runtime-inputs/specialized-completion/v3",
+        "escape_allocation_sample": "separate warmed Isolate; automatic GC disabled; one invocation",
+        "jit_baseline": "LLVM O3; host CPU; current dispatch; precise roots; safepoints",
+        "jit_cpu": "znver4",
+        "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+        "jit_optimized": "LLVM O3; host CPU; typed slots; SCC direct calls/inlining; body dependencies; selective recovery",
+        "jit_prepared_suites": "0",
+        "jit_steady_setup": "shared-image/fresh-isolate/v1"
+      }
+    },
+    "cases": {
+      "array/default_sort/4096": {
+        "wall_median_ns_per_iteration": 345394.94047673244,
+        "wall_cv": 0.0004951918336717909,
+        "wall_stddev_ns_per_iteration": 171.05471304145294,
+        "counters": {
+          "first_call_allocated_bytes": 262224.0,
+          "first_call_allocation_count": 13.0,
+          "first_call_gc_bytes": 32896.0,
+          "first_call_peak_heap_bytes": 229520.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "async/no_await_loop": {
+        "wall_median_ns_per_iteration": 102520.13392865982,
+        "wall_cv": 0.023935154844666445,
+        "wall_stddev_ns_per_iteration": 2444.9176796503994,
+        "counters": {
+          "first_async_bytes": 62848.0,
+          "retained_bytes": 192.0,
+          "saved_bytes_per_frame": 0.0,
+          "saved_state_bytes": 0.0
+        }
+      },
+      "dynamic/typed_boundaries": {
+        "wall_median_ns_per_iteration": 3680.3872767775047,
+        "wall_cv": 0.0005589917627543586,
+        "wall_stddev_ns_per_iteration": 2.0570716836933616,
+        "counters": {
+          "first_call_allocated_bytes": 0.0,
+          "first_call_allocation_count": 0.0,
+          "first_call_gc_bytes": 0.0,
+          "first_call_peak_heap_bytes": 0.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "async/concurrent/1000": {
+        "wall_median_ns_per_iteration": 2688430.597009389,
+        "wall_cv": 0.018340334617600415,
+        "wall_stddev_ns_per_iteration": 49698.09909499904,
+        "counters": {
+          "first_async_bytes": 409072.0,
+          "retained_bytes": 192.0,
+          "saved_bytes_per_frame": 239.984015984016,
+          "saved_state_bytes": 240224.0
+        }
+      },
+      "async/suspend_resume": {
+        "wall_median_ns_per_iteration": 746.6319940476751,
+        "wall_cv": 0.015276346303790473,
+        "wall_stddev_ns_per_iteration": 11.50934479426261,
+        "counters": {
+          "first_async_bytes": 320.0,
+          "retained_bytes": 192.0,
+          "saved_bytes_per_frame": 224.0,
+          "saved_state_bytes": 224.0
+        }
+      },
+      "jit/string_builder_large": {
+        "wall_median_ns_per_iteration": 55020.87797573213,
+        "wall_cv": 0.0006015152342758604,
+        "wall_stddev_ns_per_iteration": 33.09761875706129,
+        "counters": {
+          "allocated_bytes": 18944.0,
+          "committed_bytes": 47104.0,
+          "first_allocated_bytes": 21312.0,
+          "first_committed_bytes": 21312.0,
+          "heap_objects": 9.0,
+          "retained_bytes": 272.0,
+          "retained_objects": 4.0
+        }
+      },
+      "array/dynamic_sort/64": {
+        "wall_median_ns_per_iteration": 3583.7224702174267,
+        "wall_cv": 0.004558569931626465,
+        "wall_stddev_ns_per_iteration": 16.36702978695139,
+        "counters": {
+          "first_call_allocated_bytes": 4656.0,
+          "first_call_allocation_count": 11.0,
+          "first_call_gc_bytes": 1120.0,
+          "first_call_peak_heap_bytes": 4208.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "array/default_sort/64": {
+        "wall_median_ns_per_iteration": 3391.3973213982117,
+        "wall_cv": 0.0012946469716704414,
+        "wall_stddev_ns_per_iteration": 4.39331018826013,
+        "counters": {
+          "first_call_allocated_bytes": 4176.0,
+          "first_call_allocation_count": 7.0,
+          "first_call_gc_bytes": 640.0,
+          "first_call_peak_heap_bytes": 3728.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "array/dynamic_sort/4096": {
+        "wall_median_ns_per_iteration": 348561.60714217107,
+        "wall_cv": 0.0006997532196859068,
+        "wall_stddev_ns_per_iteration": 243.93461947571257,
+        "counters": {
+          "first_call_allocated_bytes": 262704.0,
+          "first_call_allocation_count": 17.0,
+          "first_call_gc_bytes": 33376.0,
+          "first_call_peak_heap_bytes": 230000.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "async/suspended_gc/1000": {
+        "wall_median_ns_per_iteration": 8627984.44440058,
+        "wall_cv": 0.03739470895169512,
+        "wall_stddev_ns_per_iteration": 327466.0242426328,
+        "counters": {
+          "first_async_bytes": 409072.0,
+          "retained_bytes": 192.0,
+          "saved_bytes_per_frame": 239.984015984016,
+          "saved_state_bytes": 240224.0
+        }
+      },
+      "gc/map_references/4096": {
+        "wall_median_ns_per_iteration": 15582.377232075964,
+        "wall_cv": 0.07048503508831776,
+        "wall_stddev_ns_per_iteration": 1160.0691993073535,
+        "counters": {}
+      },
+      "array/dynamic_callback": {
+        "wall_median_ns_per_iteration": 400537.1651771838,
+        "wall_cv": 0.003432540205713864,
+        "wall_stddev_ns_per_iteration": 1374.8396192657601,
+        "counters": {
+          "first_call_allocated_bytes": 524800.0,
+          "first_call_allocation_count": 4099.0,
+          "first_call_gc_bytes": 8704.0,
+          "first_call_peak_heap_bytes": 65120.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "async/then_chain": {
+        "wall_median_ns_per_iteration": 43806.852678634255,
+        "wall_cv": 0.020102264015938114,
+        "wall_stddev_ns_per_iteration": 887.955045888122,
+        "counters": {
+          "first_async_bytes": 12544.0,
+          "retained_bytes": 192.0,
+          "saved_bytes_per_frame": 224.0,
+          "saved_state_bytes": 224.0
+        }
+      },
+      "string/code_points": {
+        "wall_median_ns_per_iteration": 16043.264036732937,
+        "wall_cv": 0.0015767327147140707,
+        "wall_stddev_ns_per_iteration": 25.30196957888899,
+        "counters": {
+          "first_call_allocated_bytes": 20728.0,
+          "first_call_allocation_count": 11.0,
+          "first_call_gc_bytes": 16696.0,
+          "first_call_peak_heap_bytes": 16696.0,
+          "retained_bytes": 0.0
+        }
+      },
+      "interop/jit/runtime/callback": {
+        "wall_median_ns_per_call": 79.4058407744084,
+        "wall_cv": 0.006738447449832015,
+        "wall_stddev_ns_per_call": 0.53646076196323,
+        "counters": {
+          "allocated_bytes": 472.0,
+          "baseline_bytes": 472.0,
+          "committed_bytes": 472.0,
+          "external_roots": 3.0,
+          "heap_allocations_per_operation": 0.0,
+          "heap_bytes_per_operation": 0.0,
+          "peak_extra_bytes": 0.0,
+          "retained_bytes": 472.0,
+          "retained_extra_bytes": 0.0,
+          "scope_storage_bytes": 336.0,
+          "shutdown_blockers": 3.0
+        }
+      },
+      "interop/jit/typed/callback": {
+        "wall_median_ns_per_call": 92.44624999951156,
+        "wall_cv": 0.07945214671858836,
+        "wall_stddev_ns_per_call": 7.5607126457062455,
+        "counters": {
+          "allocated_bytes": 472.0,
+          "baseline_bytes": 472.0,
+          "committed_bytes": 472.0,
+          "external_roots": 3.0,
+          "heap_allocations_per_operation": 0.0,
+          "heap_bytes_per_operation": 0.0,
+          "peak_extra_bytes": 0.0,
+          "retained_bytes": 472.0,
+          "retained_extra_bytes": 0.0,
+          "scope_storage_bytes": 336.0,
+          "shutdown_blockers": 3.0
+        }
+      },
+      "interop/aot/typed/callback": {
+        "wall_median_ns_per_call": 92.59918154823156,
+        "wall_cv": 0.01012302006786477,
+        "wall_stddev_ns_per_call": 0.9413668643235522,
+        "counters": {
+          "allocated_bytes": 472.0,
+          "baseline_bytes": 472.0,
+          "committed_bytes": 472.0,
+          "external_roots": 3.0,
+          "heap_allocations_per_operation": 0.0,
+          "heap_bytes_per_operation": 0.0,
+          "peak_extra_bytes": 0.0,
+          "retained_bytes": 472.0,
+          "retained_extra_bytes": 0.0,
+          "scope_storage_bytes": 336.0,
+          "shutdown_blockers": 3.0
+        }
+      },
+      "interop/aot/runtime/callback": {
+        "wall_median_ns_per_call": 81.40375744046327,
+        "wall_cv": 0.01237262073252741,
+        "wall_stddev_ns_per_call": 1.0018507054632309,
+        "counters": {
+          "allocated_bytes": 472.0,
+          "baseline_bytes": 472.0,
+          "committed_bytes": 472.0,
+          "external_roots": 3.0,
+          "heap_allocations_per_operation": 0.0,
+          "heap_bytes_per_operation": 0.0,
+          "peak_extra_bytes": 0.0,
+          "retained_bytes": 472.0,
+          "retained_extra_bytes": 0.0,
+          "scope_storage_bytes": 336.0,
+          "shutdown_blockers": 3.0
+        }
+      }
+    },
+    "implementation_baseline": {
+      "revision": "78d3e29cfe46c6bed43aabed4f8cc7c2dfa786b7",
+      "source_phase_notes": {
+        "common": "Clean task-start source at revision 78d3e29cfe46c6bed43aabed4f8cc7c2dfa786b7.",
+        "added": "Intermediate audit cleanup before Map marking, sorting and dynamic-name optimizations. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact.",
+        "continuation": "Intermediate audit source before diagnostic ownership, callback and code-point changes. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact.",
+        "callback": "AOT benchmark artifact frozen before callback argument encoding changes. Exact intermediate source patch was not retained; the frozen binary SHA-256 identifies this artifact."
+      },
+      "cases": {
+        "array/dynamic_sort/64": {
+          "wall_median_ns_per_iteration": 3837.119047602755,
+          "wall_cv": 0.005307642556186788,
+          "wall_stddev_ns_per_iteration": 20.372645770426274,
+          "counters": {
+            "first_call_allocated_bytes": 5672.0,
+            "first_call_allocation_count": 10.0,
+            "first_call_gc_bytes": 1120.0,
+            "first_call_peak_heap_bytes": 5224.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "array/dynamic_sort/4096": {
+          "wall_median_ns_per_iteration": 429013.3184505456,
+          "wall_cv": 0.01705057579937056,
+          "wall_stddev_ns_per_iteration": 7355.584146459347,
+          "counters": {
+            "first_call_allocated_bytes": 328232.0,
+            "first_call_allocation_count": 16.0,
+            "first_call_gc_bytes": 33376.0,
+            "first_call_peak_heap_bytes": 295528.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "array/default_sort/4096": {
+          "wall_median_ns_per_iteration": 424938.61606983177,
+          "wall_cv": 0.021579838915790277,
+          "wall_stddev_ns_per_iteration": 9280.555609818657,
+          "counters": {
+            "first_call_allocated_bytes": 327752.0,
+            "first_call_allocation_count": 12.0,
+            "first_call_gc_bytes": 32896.0,
+            "first_call_peak_heap_bytes": 295048.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "async/suspended_gc/1000": {
+          "wall_median_ns_per_iteration": 9038661.111103633,
+          "wall_cv": 0.030918792541808682,
+          "wall_stddev_ns_per_iteration": 278654.12092113955,
+          "counters": {
+            "first_async_bytes": 409072.0,
+            "retained_bytes": 192.0,
+            "saved_bytes_per_frame": 239.984015984016,
+            "saved_state_bytes": 240224.0
+          }
+        },
+        "jit/string_builder_large": {
+          "wall_median_ns_per_iteration": 61643.94345281229,
+          "wall_cv": 0.03402399228255964,
+          "wall_stddev_ns_per_iteration": 2101.695781370902,
+          "counters": {
+            "allocated_bytes": 18944.0,
+            "committed_bytes": 47104.0,
+            "first_allocated_bytes": 21312.0,
+            "first_committed_bytes": 21312.0,
+            "heap_objects": 9.0,
+            "retained_bytes": 272.0,
+            "retained_objects": 4.0
+          }
+        },
+        "async/suspend_resume": {
+          "wall_median_ns_per_iteration": 849.2619791695688,
+          "wall_cv": 0.016981493912681726,
+          "wall_stddev_ns_per_iteration": 14.373964674565542,
+          "counters": {
+            "first_async_bytes": 320.0,
+            "retained_bytes": 192.0,
+            "saved_bytes_per_frame": 224.0,
+            "saved_state_bytes": 224.0
+          }
+        },
+        "array/default_sort/64": {
+          "wall_median_ns_per_iteration": 3680.6339285736353,
+          "wall_cv": 0.008453414614925138,
+          "wall_stddev_ns_per_iteration": 31.139473580109218,
+          "counters": {
+            "first_call_allocated_bytes": 5192.0,
+            "first_call_allocation_count": 6.0,
+            "first_call_gc_bytes": 640.0,
+            "first_call_peak_heap_bytes": 4744.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "dynamic/typed_boundaries": {
+          "wall_median_ns_per_iteration": 4022.3005952438625,
+          "wall_cv": 0.03570370556621036,
+          "wall_stddev_ns_per_iteration": 142.72617779706673,
+          "counters": {
+            "first_call_allocated_bytes": 0.0,
+            "first_call_allocation_count": 0.0,
+            "first_call_gc_bytes": 0.0,
+            "first_call_peak_heap_bytes": 0.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "async/no_await_loop": {
+          "wall_median_ns_per_iteration": 110764.9404762664,
+          "wall_cv": 0.012623196962328753,
+          "wall_stddev_ns_per_iteration": 1392.6108394618202,
+          "counters": {
+            "first_async_bytes": 62848.0,
+            "retained_bytes": 192.0,
+            "saved_bytes_per_frame": 0.0,
+            "saved_state_bytes": 0.0
+          }
+        },
+        "async/concurrent/1000": {
+          "wall_median_ns_per_iteration": 2995947.0149192177,
+          "wall_cv": 0.021118248573452077,
+          "wall_stddev_ns_per_iteration": 63088.14246641612,
+          "counters": {
+            "first_async_bytes": 409072.0,
+            "retained_bytes": 192.0,
+            "saved_bytes_per_frame": 239.984015984016,
+            "saved_state_bytes": 240224.0
+          }
+        },
+        "array/dynamic_callback": {
+          "wall_median_ns_per_iteration": 414375.1488099735,
+          "wall_cv": 0.003381216100920661,
+          "wall_stddev_ns_per_iteration": 1399.8344274202418,
+          "counters": {
+            "first_call_allocated_bytes": 631296.0,
+            "first_call_allocation_count": 5123.0,
+            "first_call_gc_bytes": 54720.0,
+            "first_call_peak_heap_bytes": 65056.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "gc/map_references/4096": {
+          "wall_median_ns_per_iteration": 22715.50436525412,
+          "wall_cv": 0.01683467071920894,
+          "wall_stddev_ns_per_iteration": 380.6878889876217,
+          "counters": {}
+        },
+        "async/then_chain": {
+          "wall_median_ns_per_iteration": 46519.78794640854,
+          "wall_cv": 0.002691160485114762,
+          "wall_stddev_ns_per_iteration": 125.03032926513032,
+          "counters": {
+            "first_async_bytes": 12544.0,
+            "retained_bytes": 192.0,
+            "saved_bytes_per_frame": 224.0,
+            "saved_state_bytes": 224.0
+          }
+        },
+        "string/code_points": {
+          "wall_median_ns_per_iteration": 18181.65820928456,
+          "wall_cv": 0.0008573978919072631,
+          "wall_stddev_ns_per_iteration": 15.59258707509377,
+          "counters": {
+            "first_call_allocated_bytes": 20728.0,
+            "first_call_allocation_count": 11.0,
+            "first_call_gc_bytes": 16696.0,
+            "first_call_peak_heap_bytes": 16696.0,
+            "retained_bytes": 0.0
+          }
+        },
+        "interop/jit/typed/callback": {
+          "wall_median_ns_per_call": 109.32033854089696,
+          "wall_cv": 0.013663870919413462,
+          "wall_stddev_ns_per_call": 1.5021647434356071,
+          "counters": {
+            "allocated_bytes": 472.0,
+            "baseline_bytes": 472.0,
+            "committed_bytes": 472.0,
+            "external_roots": 3.0,
+            "heap_allocations_per_operation": 0.0,
+            "heap_bytes_per_operation": 0.0,
+            "peak_extra_bytes": 0.0,
+            "retained_bytes": 472.0,
+            "retained_extra_bytes": 0.0,
+            "scope_storage_bytes": 336.0,
+            "shutdown_blockers": 3.0
+          }
+        },
+        "interop/jit/runtime/callback": {
+          "wall_median_ns_per_call": 96.82622767908946,
+          "wall_cv": 0.013426891873600409,
+          "wall_stddev_ns_per_call": 1.3069261014023408,
+          "counters": {
+            "allocated_bytes": 472.0,
+            "baseline_bytes": 472.0,
+            "committed_bytes": 472.0,
+            "external_roots": 3.0,
+            "heap_allocations_per_operation": 0.0,
+            "heap_bytes_per_operation": 0.0,
+            "peak_extra_bytes": 0.0,
+            "retained_bytes": 472.0,
+            "retained_extra_bytes": 0.0,
+            "scope_storage_bytes": 336.0,
+            "shutdown_blockers": 3.0
+          }
+        },
+        "interop/aot/typed/callback": {
+          "wall_median_ns_per_call": 109.33804687548825,
+          "wall_cv": 0.0030753466969723215,
+          "wall_stddev_ns_per_call": 0.335871129254555,
+          "counters": {
+            "allocated_bytes": 472.0,
+            "baseline_bytes": 472.0,
+            "committed_bytes": 472.0,
+            "external_roots": 3.0,
+            "heap_allocations_per_operation": 0.0,
+            "heap_bytes_per_operation": 0.0,
+            "peak_extra_bytes": 0.0,
+            "retained_bytes": 472.0,
+            "retained_extra_bytes": 0.0,
+            "scope_storage_bytes": 336.0,
+            "shutdown_blockers": 3.0
+          }
+        },
+        "interop/aot/runtime/callback": {
+          "wall_median_ns_per_call": 97.04930803552867,
+          "wall_cv": 0.006418023030058818,
+          "wall_stddev_ns_per_call": 0.6226480857465592,
+          "counters": {
+            "allocated_bytes": 472.0,
+            "baseline_bytes": 472.0,
+            "committed_bytes": 472.0,
+            "external_roots": 3.0,
+            "heap_allocations_per_operation": 0.0,
+            "heap_bytes_per_operation": 0.0,
+            "peak_extra_bytes": 0.0,
+            "retained_bytes": 472.0,
+            "retained_extra_bytes": 0.0,
+            "scope_storage_bytes": 336.0,
+            "shutdown_blockers": 3.0
+          }
+        }
+      }
+    },
+    "runtime_comparisons": {
+      "array/default_sort/4096": {
+        "candidate_to_baseline": 0.8128113741961555,
+        "change_percent": -18.718862580384453
+      },
+      "array/default_sort/64": {
+        "candidate_to_baseline": 0.9214166328984768,
+        "change_percent": -7.858336710152325
+      },
+      "array/dynamic_callback": {
+        "candidate_to_baseline": 0.9666051796963925,
+        "change_percent": -3.339482030360752
+      },
+      "array/dynamic_sort/4096": {
+        "candidate_to_baseline": 0.81247269525585,
+        "change_percent": -18.752730474415003
+      },
+      "array/dynamic_sort/64": {
+        "candidate_to_baseline": 0.9339617629159465,
+        "change_percent": -6.603823708405354
+      },
+      "async/concurrent/1000": {
+        "candidate_to_baseline": 0.8973558556348099,
+        "change_percent": -10.26441443651901
+      },
+      "async/no_await_loop": {
+        "candidate_to_baseline": 0.9255648356586875,
+        "change_percent": -7.443516434131247
+      },
+      "async/suspend_resume": {
+        "candidate_to_baseline": 0.8791539152356166,
+        "change_percent": -12.08460847643834
+      },
+      "async/suspended_gc/1000": {
+        "candidate_to_baseline": 0.9545644358544926,
+        "change_percent": -4.543556414550743
+      },
+      "async/then_chain": {
+        "candidate_to_baseline": 0.9416821230806205,
+        "change_percent": -5.831787691937951
+      },
+      "dynamic/typed_boundaries": {
+        "candidate_to_baseline": 0.9149955826596723,
+        "change_percent": -8.500441734032771
+      },
+      "gc/map_references/4096": {
+        "candidate_to_baseline": 0.6859798039928594,
+        "change_percent": -31.40201960071406
+      },
+      "interop/aot/runtime/callback": {
+        "candidate_to_baseline": 0.8387876131034573,
+        "change_percent": -16.12123868965427
+      },
+      "interop/aot/typed/callback": {
+        "candidate_to_baseline": 0.8469072220915146,
+        "change_percent": -15.30927779084854
+      },
+      "interop/jit/runtime/callback": {
+        "candidate_to_baseline": 0.820086072521411,
+        "change_percent": -17.991392747858903
+      },
+      "interop/jit/typed/callback": {
+        "candidate_to_baseline": 0.8456454785394507,
+        "change_percent": -15.435452146054928
+      },
+      "jit/string_builder_large": {
+        "candidate_to_baseline": 0.8925593479893117,
+        "change_percent": -10.744065201068832
+      },
+      "string/code_points": {
+        "candidate_to_baseline": 0.8823872856954466,
+        "change_percent": -11.761271430455345
+      }
+    },
+    "workload_pairs": [],
+    "native_call_pairs": [],
+    "native_class_cpp_pairs": [],
+    "ratio_summary": {
+      "complete_workloads": {},
+      "native_free_calls": {},
+      "native_class_calls": {}
+    },
+    "validation": {
+      "cpp_suites": {
+        "base_tests": 27,
+        "vela_benchmark_tests": 7,
+        "vela_frontend_tests": 359,
+        "vela_ir_tests": 27,
+        "vela_aot_tests": 170,
+        "vela_jit_tests": 395,
+        "vela_compiler_tests": 1280,
+        "runtime_tests": 428
+      },
+      "cpp_total": 2693,
+      "tooling_tests": 224,
+      "tooling_result": "OK",
+      "lint": "Repository-wide 800 C++ files, six failures fixed; nine repaired or subsequently changed files rechecked with zero failures. The final positional/named binding implementation was rechecked separately with zero failures.",
+      "final_binding_regression": {
+        "runtime_tests": 428,
+        "vela_compiler_tests": 290,
+        "vela_jit_tests": 23
+      },
+      "no_observed_median_regression": true,
+      "benchmark": "All expected cases and 252 samples passed existing report repetition checks and benchmark correctness/cleanup checks."
+    },
+    "limitations": [
+      "Windows x64 execution only; Linux/macOS implementations were inspected but not executed.",
+      "This is a targeted runtime audit suite, not the complete benchmark registry.",
+      "String-builder snapshot caching was withdrawn after its append control regressed; exploratory raw evidence remains in TEMP and is excluded from delivered performance gains.",
+      "Intermediate baseline source patches were not retained. Their exact executable hashes and known implementation phases are retained without reconstructing missing source fingerprints."
     ]
   }
 }

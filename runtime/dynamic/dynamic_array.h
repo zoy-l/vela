@@ -16,7 +16,6 @@ class Isolate;
 struct DynamicArrayInvocation final {
   Value callback;
   HeapObject* arguments = nullptr;
-  HeapObject* names = nullptr;
 };
 
 struct DynamicArrayPreparation final {

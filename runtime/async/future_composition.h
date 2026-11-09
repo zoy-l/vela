@@ -40,6 +40,6 @@ struct FutureCall final {
 };
 
 [[nodiscard]] std::expected<Value, ExecutionStatus>
-ExecuteFutureOperation(Isolate& isolate, const FutureCall& call, const FutureCallbacks& callbacks);
+ExecuteFutureOperation(Isolate& isolate, FutureCall call, const FutureCallbacks& callbacks);
 
 }  // namespace vela::runtime

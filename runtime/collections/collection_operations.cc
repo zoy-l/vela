@@ -46,7 +46,7 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
     case Builtin::SetUnion:
     case Builtin::SetIntersection:
     case Builtin::SetDifference:
-      return ExecuteSetOperation(builtin, object, arguments.subspan(1).front(), heap);
+      return ExecuteSetOperation(builtin, object, arguments[1], heap);
     case Builtin::CollectionSize: {
       const auto length = Heap::CollectionLength(object);
       if (!length) {
@@ -63,8 +63,8 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
     }
     case Builtin::SetAdd:
     case Builtin::MapSet: {
-      const auto key = arguments.subspan(1).front();
-      const auto value = builtin == Builtin::MapSet ? arguments.subspan(2).front() : Value::Null();
+      const auto key = arguments[1];
+      const auto value = builtin == Builtin::MapSet ? arguments[2] : Value::Null();
       const auto inserted = heap.InsertCollection(object, key, value);
       if (!inserted) {
         return std::unexpected(inserted.error());
@@ -73,17 +73,17 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
                                         : Value::Null();
     }
     case Builtin::CollectionHas: {
-      const auto found = Heap::HasCollectionKey(object, arguments.subspan(1).front());
+      const auto found = Heap::HasCollectionKey(object, arguments[1]);
       if (!found) {
         return std::unexpected(found.error());
       }
       return Value::Boolean(*found);
     }
     case Builtin::MapGet: {
-      return Heap::GetCollectionValue(object, arguments.subspan(1).front());
+      return Heap::GetCollectionValue(object, arguments[1]);
     }
     case Builtin::CollectionDelete: {
-      const auto removed = Heap::RemoveCollection(object, arguments.subspan(1).front());
+      const auto removed = Heap::RemoveCollection(object, arguments[1]);
       if (!removed) {
         return std::unexpected(removed.error());
       }
@@ -91,7 +91,7 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
     }
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues: {
-      const auto target = arguments.subspan(1).front();
+      const auto target = arguments[1];
       auto* target_object = target.AsObjectOrNull();
       if (target_object == nullptr) {
         return std::unexpected(ExecutionStatus::TypeError);

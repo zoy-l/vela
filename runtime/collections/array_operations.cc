@@ -18,7 +18,6 @@
 #include "runtime/collections/index_range.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
-#include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
 
@@ -145,43 +144,64 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
     return Value::Object(&array);
   }
   struct Entry final {
-    Value value;
+    const char* data = nullptr;
     std::uint32_t position = 0;
-    std::array<char, kScalarTextCapacity> buffer{};
-    std::size_t length = 0;
+    std::uint32_t length = 0;
 
-    [[nodiscard]] std::string_view text() const {
-      return value.IsString() ? value.AsString()->value() : std::string_view(buffer.data(), length);
-    }
+    [[nodiscard]] std::string_view text() const { return {data, length}; }
   };
   NativeBuffer<Entry> storage(heap, count);
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto entries = storage.values();
-  // 格式化仅执行一次；排序只移动值及其文本，不分配 GC 对象，原数组保根所有引用。
+  NativeBuffer<char> characters(heap, count * kScalarTextCapacity);
+  if (!characters.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto text = characters.values();
+  std::array<char, kScalarTextCapacity> buffer{};
+  std::size_t text_bytes = 0;
   for (std::uint32_t index = 0; index < count; ++index) {
     const auto value = *Heap::GetElement(array, index);
     if (value.IsObject()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     auto& entry = *std::construct_at(&entries[index]);
-    entry.value = value;
     entry.position = index;
-    if (!value.IsString()) {
-      const auto text = FormatArrayValue(value, entry.buffer);
-      if (text.data() != entry.buffer.data()) {
-        std::ranges::copy(text, entry.buffer.begin());
-      }
-      entry.length = text.size();
+    const auto formatted = FormatArrayValue(value, buffer);
+    entry.length = static_cast<std::uint32_t>(formatted.size());
+    if (value.IsString()) {
+      entry.data = formatted.data();
+    } else {
+      const auto output = text.subspan(text_bytes, formatted.size());
+      std::ranges::copy(formatted, output.begin());
+      entry.data = output.data();
+      text_bytes += formatted.size();
     }
   }
+  // 文本连续打包，排序只移动固定大小的条目；原数组保根所有引用。
   std::ranges::sort(entries, [](const Entry& left, const Entry& right) {
     const auto comparison = CompareText(left.text(), right.text());
     return comparison == 0 ? left.position < right.position : comparison < 0;
   });
+  // 按置换环写回，不分配或执行用户代码；临时保存的值在环闭合前不会遇到 GC。
   for (std::uint32_t index = 0; index < count; ++index) {
-    std::ignore = heap.SetElement(array, index, entries[index].value);
+    if (entries[index].position == index) {
+      continue;
+    }
+    const auto saved = *Heap::GetElement(array, index);
+    auto destination = index;
+    while (true) {
+      const auto source = entries[destination].position;
+      entries[destination].position = destination;
+      if (source == index) {
+        std::ignore = heap.SetElement(array, destination, saved);
+        break;
+      }
+      std::ignore = heap.SetElement(array, destination, *Heap::GetElement(array, source));
+      destination = source;
+    }
   }
   return Value::Object(&array);
 }

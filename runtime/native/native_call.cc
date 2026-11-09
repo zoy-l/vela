@@ -144,7 +144,8 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   constexpr std::size_t kInlineArguments = 8;
-  NativeBuffer<Value, kInlineArguments> storage(heap, function.parameter_count);
+  // 显式实参已保根；这里只保存隐式接收者和新分配的缺省值。
+  NativeBuffer<Value, kInlineArguments> storage(heap, function.parameter_count - arguments.size());
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
@@ -154,11 +155,18 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   if (target.implicit) {
     values.front() = *target.implicit;
   }
+  NativeBuffer<NativeValue, kInlineArguments> input(heap, function.parameter_count);
+  if (!input.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto encoded = input.values();
+  if (target.implicit) {
+    encoded.front() = EncodeNativeValue(*target.implicit);
+  }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    auto value = arguments.subspan(index).front();
+    auto value = arguments[index];
     if (typed) {
-      const auto parameter =
-          parameters.subspan(index + hidden - function.hidden_parameters).front();
+      const auto parameter = parameters[index + hidden - function.hidden_parameters];
       auto type = types.at(parameter.type);
       if ((parameter.flags & kNativeOptionalParameter) != 0) {
         type.nullable = true;
@@ -169,26 +177,23 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
       }
       value = *converted;
     }
-    values.subspan(index + hidden).front() = value;
+    encoded[index + hidden] = EncodeNativeValue(value);
   }
-  for (std::size_t index = arguments.size() + hidden; index < values.size(); ++index) {
-    const auto parameter = parameters.subspan(index - function.hidden_parameters).front();
+  for (std::size_t index = arguments.size() + hidden; index < encoded.size(); ++index) {
+    const auto parameter = parameters[index - function.hidden_parameters];
+    auto& value = values[index - arguments.size()];
     if ((parameter.flags & kNativeRestParameter) != 0) {
       auto* empty = heap.AllocateArray(*types.at(parameter.type).array, 0);
       if (empty == nullptr) {
         return std::unexpected(ExecutionStatus::OutOfMemory);
       }
-      values.subspan(index).front() = Value::Object(empty);
+      value = Value::Object(empty);
     } else if ((parameter.flags & kNativeOptionalParameter) == 0) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
+    encoded[index] = EncodeNativeValue(value);
   }
-  NativeBuffer<NativeValue, kInlineArguments> input(heap, values.size());
-  if (!input.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  std::ranges::transform(values, input.values().begin(), EncodeNativeValue);
-  return InvokeNativeTarget(execution, target.function, input.values());
+  return InvokeNativeTarget(execution, target.function, encoded);
 }
 
 Future InvokeFutureCallback(const NativeCallDomain& domain,

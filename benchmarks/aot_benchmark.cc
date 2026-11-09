@@ -85,7 +85,7 @@ std::expected<runtime::Value, ExecutionStatus> AwaitResult(runtime::Isolate& iso
       future->state() != runtime::FutureState::Succeeded) {
     return std::unexpected(ExecutionStatus::NativeFailure);
   }
-  return future->value().value_or(runtime::Value::Null());
+  return future->result().value;
 }
 
 template <AotCompletion Completion>
@@ -326,17 +326,17 @@ std::expected<std::int64_t, ExecutionStatus> CppAsync(runtime::Isolate& isolate,
       return;
     }
     const auto source = runtime::Future::Value(runtime::Value::Integer(++index), &scheduler);
-    source.Observe([&](runtime::FutureState, runtime::Value completed) {
-      const auto segment = runtime::Future::Value(completed, &scheduler);
-      segment.Observe(
-          [&](runtime::FutureState, runtime::Value awaited) { advance(awaited.AsInteger()); });
+    source.ObserveResult([&](const runtime::FutureResult& completed) {
+      const auto segment = runtime::Future::Value(completed.value, &scheduler);
+      segment.ObserveResult(
+          [&](const runtime::FutureResult& awaited) { advance(awaited.value.AsInteger()); });
     });
   };
   advance(0);
   if (scheduler.PumpUntil(result) == runtime::FuturePumpResult::Idle || completion_error) {
     return std::unexpected(ExecutionStatus::NativeFailure);
   }
-  const auto value = result.value().value_or(runtime::Value::Null());
+  const auto value = result.result().value;
   if (!value.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }

@@ -5,6 +5,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_program_state.h"
@@ -12,10 +13,21 @@
 
 namespace vela::runtime::internal {
 
+inline void StoreNativeGlobal(Heap& heap,
+                              HeapObject& storage,
+                              std::size_t index,
+                              NativeProgramState::GlobalState& state,
+                              Value value) noexcept {
+  heap.SetValueSlot(storage, index, value);
+  state = NativeProgramState::GlobalState::Ready;
+}
+
 // 调用方拥有实例借用及发布保护域。初始化器返回存储表示，不能套用导出结果的 enum 装箱。
 inline std::expected<Value, ExecutionStatus> InitializeNativeGlobal(
     NativeExecution& execution,
     NativeEntry entry,
+    HeapObject& storage,
+    std::size_t index,
     NativeProgramState::GlobalState& state) {
   using State = NativeProgramState::GlobalState;
   if (state == State::Initializing) {
@@ -28,16 +40,9 @@ inline std::expected<Value, ExecutionStatus> InitializeNativeGlobal(
     state = State::Uninitialized;
     return std::unexpected(status);
   }
-  return DecodeNativeValue(result);
-}
-
-inline void StoreNativeGlobal(Heap& heap,
-                              HeapObject& storage,
-                              std::size_t index,
-                              NativeProgramState::GlobalState& state,
-                              Value value) noexcept {
-  heap.SetValueSlot(storage, index, value);
-  state = NativeProgramState::GlobalState::Ready;
+  const auto value = DecodeNativeValue(result);
+  StoreNativeGlobal(execution.isolate().heap(), storage, index, state, value);
+  return value;
 }
 
 }  // namespace vela::runtime::internal

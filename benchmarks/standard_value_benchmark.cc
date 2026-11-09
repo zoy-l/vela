@@ -104,6 +104,29 @@ BENCHMARK_CAPTURE(DefaultSort, Dynamic, SortDispatch::Dynamic)
     ->Arg(64)
     ->Arg(4096);
 
+BENCHMARK_CAPTURE(SteadyValue,
+                  DynamicArrayCallback,
+                  R"(func main(): int {
+  const values: dynamic = [1, 2, 3];
+  let total = 0;
+  const add = (value: int): void => { total += value; };
+  for (let index = 0; index < 512; index++) { values.forEach(add); }
+  return total;
+})",
+                  3072)
+    ->Name("array/dynamic_callback");
+
+BENCHMARK_CAPTURE(SteadyValue,
+                  CodePoints,
+                  R"(func main(): int {
+  const builder = String();
+  for (let index = 0; index < 1024; index++) { builder.append('\u{1F600}'); }
+  const points = builder.toString().codePoints();
+  return points.length == 1024 && points[1023] == 128512 ? 42 : 0;
+})",
+                  42)
+    ->Name("string/code_points");
+
 void ConvertCase(benchmark::State& state, CaseWorkload workload) {
   const auto count = state.range(0);
   std::string_view part;

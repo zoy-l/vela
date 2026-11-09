@@ -143,9 +143,9 @@ testing::AssertionResult CompletesWithInteger(runtime::Isolate& isolate,
       runtime::FuturePumpResult::Idle) {
     return testing::AssertionFailure() << "Future did not complete";
   }
-  const auto completed = future->value();
-  return completed ? IsExpectedInteger(*completed, expected)
-                   : testing::AssertionFailure() << "Future did not complete with a value";
+  return future->state() == runtime::FutureState::Succeeded
+             ? IsExpectedInteger(future->result().value, expected)
+             : testing::AssertionFailure() << "Future did not complete with a value";
 }
 
 testing::AssertionResult ReturnsInteger(const runtime::NativeNamedEntry& entry,

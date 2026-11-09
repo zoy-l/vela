@@ -4,6 +4,7 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include "base/async_operation.h"
 #include "base/execution_status.h"
@@ -150,7 +151,7 @@ std::expected<Value, ExecutionStatus> ExecuteDynamicAsyncOperation(
     if (!checked) {
       return std::unexpected(checked.error());
     }
-    return ExecuteFutureOperation(isolate, call, callbacks);
+    return ExecuteFutureOperation(isolate, std::move(call), callbacks);
   }
   if (type.object_kind == ObjectKind::Completer) {
     const auto checked = CheckCompleterCall(call, type);

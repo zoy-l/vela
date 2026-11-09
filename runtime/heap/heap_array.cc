@@ -357,9 +357,7 @@ void Heap::WriteBarrier(HeapObject& source,
     return;
   }
   MarkElements(layout, storage);
-  if (phase() == GcPhase::Sweep) {
-    DrainGray();
-  }
+  DrainGrayIfSweeping();
 }
 
 void Heap::ReleaseArray(HeapObject& array) noexcept {

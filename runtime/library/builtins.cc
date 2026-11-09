@@ -306,7 +306,10 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
   if (builtin == Builtin::StringIncludes) {
     return Value::Boolean(*found >= 0);
   }
-  return Value::Integer(*found);
+  if (builtin == Builtin::StringIndexOf) {
+    return Value::Integer(*found);
+  }
+  std::unreachable();
 }
 
 }  // namespace vela::runtime

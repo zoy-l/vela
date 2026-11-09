@@ -363,14 +363,8 @@ std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExe
   auto& state = data_->global_state(index);
   const auto function = data_->image->global_initializers.values()[index];
   const auto entry = data_->image->function(function).entry;
-  const auto value = internal::InitializeNativeGlobal(execution, entry, state);
-  if (!value) {
-    return value;
-  }
-  internal::StoreNativeGlobal(data_->isolate->heap(),
-                              *data_->values[NativeProgramState::kGlobals].AsObject(), index, state,
-                              *value);
-  return value;
+  auto& storage = *data_->values[NativeProgramState::kGlobals].AsObject();
+  return internal::InitializeNativeGlobal(execution, entry, storage, index, state);
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(

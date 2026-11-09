@@ -58,6 +58,7 @@ std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(Value value,
           return std::unexpected(resolved.error());
         }
         result.function = *resolved;
+        return result;
       }
       break;
     }

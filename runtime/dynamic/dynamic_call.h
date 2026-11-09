@@ -39,11 +39,12 @@ struct BoundArguments final {
   std::uint32_t rest_count = 0;
 };
 
+// names 为空表示内部数组回调的纯位置参数；显式动态调用提供与 arguments 等长的名称数组。
 [[nodiscard]] std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
     const CallSignature& signature,
     const ResolvedCallable& callable,
     const HeapObject& arguments,
-    const HeapObject& names,
+    const HeapObject* names,
     DynamicCallStyle style);
 // 返回原生调用参数表示，包含 enum 解箱、缺省空值和 rest 数组分配。
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(

@@ -98,7 +98,8 @@ TEST(NativeImageLifetimeTest, SuspendedVersionRetainsItsImageUntilResumptionAndC
   constexpr std::int64_t kInput = 39;
   ASSERT_TRUE(completer.Complete(Value::Integer(kInput)));
   ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
-  EXPECT_EQ(future->value().value_or(Value::Integer(0)).AsInteger(), 42);
+  ASSERT_EQ(future->state(), FutureState::Succeeded);
+  EXPECT_EQ(future->result().value.AsInteger(), 42);
   heap.Collect();
   EXPECT_TRUE(lifetime.expired());
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);

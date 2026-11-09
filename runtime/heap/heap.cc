@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -334,15 +335,11 @@ void Heap::Step(std::size_t work_budget) noexcept {
 }
 
 void Heap::FinishCollection() noexcept {
-  while (IsCollecting()) {
-    Step(std::numeric_limits<std::size_t>::max());
-  }
+  Step(std::numeric_limits<std::size_t>::max());
 }
 
 void Heap::Collect() noexcept {
-  if (!IsCollecting()) {
-    StartCollection();
-  }
+  StartCollection();
   FinishCollection();
 }
 
@@ -353,9 +350,7 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
   internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
   if (IsCollecting()) {
     MarkRoot(root);
-    if (phase() == GcPhase::Sweep) {
-      DrainGray();
-    }
+    DrainGrayIfSweeping();
   }
 }
 
@@ -494,11 +489,15 @@ void Heap::DrainGray() noexcept {
   }
 }
 
-void Heap::WriteBarrierSlow(Value value) noexcept {
-  MarkValue(value);
+void Heap::DrainGrayIfSweeping() noexcept {
   if (phase() == GcPhase::Sweep) {
     DrainGray();
   }
+}
+
+void Heap::WriteBarrierSlow(Value value) noexcept {
+  MarkValue(value);
+  DrainGrayIfSweeping();
 }
 
 void Heap::WriteRootBarrier(std::span<const Value> values) noexcept {
@@ -508,9 +507,7 @@ void Heap::WriteRootBarrier(std::span<const Value> values) noexcept {
   for (const auto value : values) {
     MarkValue(value);
   }
-  if (phase() == GcPhase::Sweep) {
-    DrainGray();
-  }
+  DrainGrayIfSweeping();
 }
 
 void Heap::WriteRootBarrier(const Future& future) noexcept {
@@ -518,9 +515,7 @@ void Heap::WriteRootBarrier(const Future& future) noexcept {
     return;
   }
   future.Trace(*this);
-  if (phase() == GcPhase::Sweep) {
-    DrainGray();
-  }
+  DrainGrayIfSweeping();
 }
 
 Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
@@ -683,8 +678,8 @@ void Heap::DestroyAll() noexcept {
       block = next;
     }
   }
-  allocated_bytes_ = 0;
-  committed_bytes_ = 0;
+  assert(allocated_bytes_ == 0);
+  assert(committed_bytes_ == 0);
 }
 
 }  // namespace vela::runtime

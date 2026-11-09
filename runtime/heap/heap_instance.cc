@@ -1,5 +1,6 @@
 #include "runtime/heap/heap.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -172,12 +173,13 @@ std::expected<std::unique_ptr<InstanceMigration>, ExecutionStatus> Heap::Prepare
   const auto fields = storage->fields();
   const auto declarations = layout.field_declarations();
   const auto old_declarations = object.layout->field_declarations();
-  for (std::uint32_t index = 0; index < previous.count; ++index) {
-    const auto field = declarations.subspan(index).front();
-    if (field != DeclarationId{} && field == old_declarations.subspan(index).front()) {
+  const auto shared_count = std::min(previous.count, storage->count);
+  for (std::uint32_t index = 0; index < shared_count; ++index) {
+    const auto field = declarations[index];
+    if (field != DeclarationId{} && field == old_declarations[index]) {
       FieldStorage::Store(fields, storage->count, index,
                           FieldStorage::Load(old_fields, previous.count, index));
-      storage->SetFieldState(index, old_states.subspan(index).front());
+      storage->SetFieldState(index, old_states[index]);
     }
   }
   migration->field_roots_.Attach(*this, *storage);

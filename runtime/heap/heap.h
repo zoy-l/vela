@@ -455,6 +455,7 @@ class Heap final {
   void MarkObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
+  void DrainGrayIfSweeping() noexcept;
   void WriteBarrierSlow(Value value) noexcept;
   void WriteBarrier(HeapObject& source,
                     const ArrayLayout& layout,

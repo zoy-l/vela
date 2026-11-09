@@ -17,8 +17,9 @@ struct NumericOperands final {
   Value right;
 };
 
-[[clang::always_inline]] inline std::expected<Value, ExecutionStatus>
-IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept {
+inline std::expected<Value, ExecutionStatus> IntegerArithmetic(Opcode opcode,
+                                                               std::int64_t left,
+                                                               std::int64_t right) noexcept {
   const auto result = EvaluateIntegerArithmetic(opcode, left, right);
   if (!result) {
     return std::unexpected(result.error());
@@ -26,9 +27,8 @@ IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept
   return Value::Integer(*result);
 }
 
-[[clang::always_inline]] inline std::expected<Value, ExecutionStatus> IntegerOperation(
-    Opcode opcode,
-    NumericOperands operands) noexcept {
+inline std::expected<Value, ExecutionStatus> IntegerOperation(Opcode opcode,
+                                                              NumericOperands operands) noexcept {
   const auto& [left_value, right_value] = operands;
   if (!left_value.IsInteger() || !right_value.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -37,12 +37,6 @@ IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept
   const auto right = right_value.AsInteger();
   bool result = false;
   switch (opcode) {
-    case Opcode::EqualInt:
-      result = left == right;
-      break;
-    case Opcode::NotEqualInt:
-      result = left != right;
-      break;
     case Opcode::LessInt:
       result = left < right;
       break;
@@ -61,9 +55,8 @@ IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept
   return Value::Boolean(result);
 }
 
-[[clang::always_inline]] inline std::expected<Value, ExecutionStatus> DoubleOperation(
-    Opcode opcode,
-    NumericOperands operands) noexcept {
+inline std::expected<Value, ExecutionStatus> DoubleOperation(Opcode opcode,
+                                                             NumericOperands operands) noexcept {
   const auto& [left_value, right_value] = operands;
   if (!left_value.IsDouble() || !right_value.IsDouble()) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -82,10 +75,6 @@ IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept
         return std::unexpected(ExecutionStatus::DivisionByZero);
       }
       return Value::Double(left / right);
-    case Opcode::EqualDouble:
-      return Value::Boolean(left == right);
-    case Opcode::NotEqualDouble:
-      return Value::Boolean(left != right);
     case Opcode::LessDouble:
       return Value::Boolean(left < right);
     case Opcode::LessEqualDouble:

@@ -665,20 +665,14 @@ TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginal
     ASSERT_EQ(session_->isolate().scheduler().PumpUntil(*old_future,
                                                         runtime::FuturePumpMode::WaitForHost),
               runtime::FuturePumpResult::Completed);
-    const auto old_value = old_future->value();
-    if (!old_value) {
-      FAIL() << "Original continuation did not complete with a value";
-    }
-    EXPECT_EQ(old_value->AsInteger(), 42);
+    ASSERT_EQ(old_future->state(), runtime::FutureState::Succeeded);
+    EXPECT_EQ(old_future->result().value.AsInteger(), 42);
     const auto latest = entry->Invoke({});
     ASSERT_TRUE(latest);
     auto* current_future = runtime::Heap::GetFuture(*latest->AsObject());
     ASSERT_NE(current_future, nullptr);
-    const auto latest_value = current_future->value();
-    if (!latest_value) {
-      FAIL() << "Current continuation did not complete with a value";
-    }
-    EXPECT_EQ(latest_value->AsInteger(), 100);
+    ASSERT_EQ(current_future->state(), runtime::FutureState::Succeeded);
+    EXPECT_EQ(current_future->result().value.AsInteger(), 100);
   }
   session_->isolate().heap().Collect();
   EXPECT_EQ(session_->code_resources().images, 1U);

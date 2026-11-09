@@ -57,16 +57,17 @@ std::expected<std::size_t, ExecutionStatus> WalkGraphemes(std::string_view text,
   return count;
 }
 
-Result FillCodePoints(std::string_view text, HeapObject& array) {
+Result FillCodePoints(const StringObject& string, HeapObject& array) {
   const auto numbers = Heap::IntegerElements(array);
-  if (!numbers || Utf8Length(text) != numbers->size()) {
+  if (!numbers || string.length() != numbers->size()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   std::size_t offset = 0;
   std::size_t index = 0;
+  const auto text = string.value();
   while (offset < text.size()) {
     const auto decoded = DecodeUtf8Prefix(text.substr(offset));
-    numbers->subspan(index++).front() = static_cast<std::int64_t>(decoded.value);
+    (*numbers)[index++] = static_cast<std::int64_t>(decoded.value);
     offset += decoded.width;
   }
   return Value::Object(&array);
@@ -148,7 +149,7 @@ Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, 
     return std::unexpected(ExecutionStatus::TypeError);
   }
   if (builtin == Builtin::StringCodePoints) {
-    return FillCodePoints(text, *object);
+    return FillCodePoints(*receiver.AsString(), *object);
   }
   return heap.FillGraphemes(*object, text).transform([target]() { return target; });
 }

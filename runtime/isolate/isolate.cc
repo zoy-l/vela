@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -128,8 +129,7 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   std::ranges::sort(references);
   const auto duplicates = std::ranges::unique(references);
   references.erase(duplicates.begin(), duplicates.end());
-  std::erase_if(references,
-                [field_count](std::uint32_t index) -> bool { return index >= field_count; });
+  assert(references.empty() || references.back() < field_count);
 
   std::unique_ptr<ClassLayout> layout(new ClassLayout(field_count, std::move(references)));
   ClassLayout* result = layout.get();

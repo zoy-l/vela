@@ -67,7 +67,7 @@ std::expected<Value, ExecutionStatus> CreatePlan(
 std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
                                                     const ResolvedCallable& callable,
                                                     const HeapObject& arguments,
-                                                    const HeapObject& names,
+                                                    const HeapObject* names,
                                                     DynamicCallStyle style) {
   const auto& instance = execution.instance();
   const auto& signature = instance.call_signature(callable.function);
@@ -107,7 +107,7 @@ std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
 std::expected<Value, ExecutionStatus> InvokeFunction(NativeExecution& execution,
                                                      Value function,
                                                      const HeapObject& arguments,
-                                                     const HeapObject& names) {
+                                                     const HeapObject* names) {
   const auto callable = ResolveNativeCallable(execution.instance(), function);
   if (!callable) {
     return std::unexpected(callable.error());
@@ -164,8 +164,6 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       value = InvokeNativeTarget(execution, member.target, arguments);
       break;
     }
-    default:
-      return std::unexpected(ExecutionStatus::TypeError);
   }
   return value && resolving ? CreatePlan(execution, *value) : value;
 }
@@ -212,7 +210,7 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
 std::expected<Value, ExecutionStatus> MethodCall(NativeExecution& execution,
                                                  Value plan_value,
                                                  const HeapObject& arguments,
-                                                 const HeapObject& names) {
+                                                 const HeapObject* names) {
   const auto plan = ReadDynamicCallPlan(plan_value);
   const auto& method = plan.method;
   if (method) {
@@ -298,9 +296,8 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
   }
   if (builtin == Builtin::DynamicArrayInvoke) {
     const auto request = PrepareDynamicArrayInvocation(execution.isolate().heap(), arguments);
-    return request
-               ? InvokeFunction(execution, request->callback, *request->arguments, *request->names)
-               : std::unexpected(request.error());
+    return request ? InvokeFunction(execution, request->callback, *request->arguments, nullptr)
+                   : std::unexpected(request.error());
   }
   if (builtin >= Builtin::DynamicArrayCallback && builtin <= Builtin::DynamicArrayValidate) {
     return ReadDynamicArrayOperation(builtin, arguments);
@@ -313,8 +310,8 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
       return std::unexpected(ExecutionStatus::TypeError);
     }
     return builtin == Builtin::DynamicCall
-               ? InvokeFunction(execution, first, *second.AsObject(), *names.AsObject())
-               : MethodCall(execution, first, *second.AsObject(), *names.AsObject());
+               ? InvokeFunction(execution, first, *second.AsObject(), names.AsObject())
+               : MethodCall(execution, first, *second.AsObject(), names.AsObject());
   }
   return InCurrentInstance(execution, [&] { return AccessMember(execution, builtin, arguments); });
 }

@@ -13,7 +13,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,13 +50,14 @@ struct Future::SharedState final {
   SharedState(SharedState&&) = delete;
   SharedState& operator=(SharedState&&) = delete;
   struct Waiter final {
-    std::function<void(const FutureResult&)> callback;
+    absl::AnyInvocable<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
     std::optional<ExecutionContext> context;
     std::shared_ptr<FutureTaskRun> run;
     std::weak_ptr<FutureObservation::State> subscription;
   };
   void CancelWaiter(std::size_t index);
+  void ReindexWaiters();
   ExternalResource external;
   std::atomic_size_t retained_count{0};
   std::atomic_bool completion_requested{false};
@@ -115,6 +115,14 @@ struct FutureObservation::State final
     action(source.result());
   }
 
+  void Enqueue() {
+    scheduler->microtasks_.push_back({
+        .context = context,
+        .run = run,
+        .action = [self = shared_from_this()] { self->Invoke(); },
+    });
+  }
+
   std::optional<Future> future;
   FutureScheduler* scheduler;
   std::optional<std::size_t> waiter_index;
@@ -134,6 +142,10 @@ void Future::SharedState::CancelWaiter(std::size_t index) {
   std::erase_if(waiters, [](const Waiter& waiter) {
     return !waiter.callback && waiter.subscription.expired();
   });
+  ReindexWaiters();
+}
+
+void Future::SharedState::ReindexWaiters() {
   for (std::size_t position = 0; position < waiters.size(); ++position) {
     if (const auto observation = waiters[position].subscription.lock()) {
       observation->waiter_index = position;
@@ -198,12 +210,7 @@ void FutureScheduler::CloseRunFutures(FutureTaskRun& run) {
       }
       return false;
     });
-    state->cancelled_waiters = 0;
-    for (std::size_t index = 0; index < state->waiters.size(); ++index) {
-      if (const auto observation = state->waiters[index].subscription.lock()) {
-        observation->waiter_index = index;
-      }
-    }
+    state->ReindexWaiters();
     if (state->run.get() == &run) {
       state->retained.reset();
       state->adopted.reset();
@@ -222,7 +229,7 @@ bool FutureRunScope::IsOwnerOf(const Future& future) const noexcept {
 // 微任务独占监听器：回调、稳定根及结果句柄共用一次分配，取消排队也能立即释放根。
 struct Future::Observer final {
   Observer(Future source,
-           std::function<void(const FutureResult&)> action,
+           absl::AnyInvocable<void(const FutureResult&)> action,
            std::shared_ptr<std::vector<::vela::runtime::Value>> values)
       : future(std::move(source)), callback(std::move(action)), references(std::move(values)) {
     if (auto* heap = future.state_->heap; heap != nullptr && references != nullptr) {
@@ -230,10 +237,10 @@ struct Future::Observer final {
     }
   }
 
-  void Invoke() const { callback(future.state_->completion); }
+  void Invoke() { callback(future.state_->completion); }
 
   Future future;
-  std::function<void(const FutureResult&)> callback;
+  absl::AnyInvocable<void(const FutureResult&)> callback;
   std::shared_ptr<std::vector<::vela::runtime::Value>> references;
   RootRange roots{std::nullopt};
 };
@@ -446,12 +453,7 @@ std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, He
   AttachHeap(heap);
   if (newly_bound && state_->completion.state == FutureState::Failed &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {
-    const auto self = Retained();
-    scheduler.checkpoints_.push_back({
-        .context = state_->creation_context,
-        .run = state_->run,
-        .action = [self] { self.ReportUnhandledError(); },
-    });
+    QueueUnhandledError();
   }
   return {};
 }
@@ -476,34 +478,17 @@ bool Future::IsCompleted() const noexcept {
   return state_->completion_requested;
 }
 
-std::optional<::vela::runtime::Value> Future::value() const {
-  return state_->completion.state == FutureState::Succeeded
-             ? std::optional(state_->completion.value)
-             : std::nullopt;
-}
-
-std::optional<::vela::runtime::Value> Future::error() const {
-  return state_->completion.state == FutureState::Failed ? std::optional(state_->completion.value)
-                                                         : std::nullopt;
-}
-
 std::optional<FutureDiagnostic> Future::error_diagnostic() const {
   return state_->completion.state == FutureState::Failed
              ? std::optional(state_->completion.diagnostic)
              : std::nullopt;
 }
 
-void Future::Observe(Callback callback) const {
-  ObserveResult([callback = std::move(callback)](const FutureResult& result) {
-    callback(result.state, result.value);
-  });
-}
-
 void Future::MarkObserved() const noexcept {
   state_->error_observation = SharedState::ErrorObservation::Observed;
 }
 
-void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
+void Future::ObserveResult(absl::AnyInvocable<void(const FutureResult&)> callback,
                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
   if (auto* heap = state_->heap; heap != nullptr && references != nullptr) {
     heap->WriteRootBarrier(*references);
@@ -553,16 +538,12 @@ std::expected<FutureObservation, ExecutionStatus> Future::SubscribeResult(
         .subscription = observation,
     });
   } else {
-    scheduler.microtasks_.push_back({
-        .context = observation->context,
-        .run = observation->run,
-        .action = [observation] { observation->Invoke(); },
-    });
+    observation->Enqueue();
   }
   return FutureObservation(std::move(observation));
 }
 
-void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
+void Future::NotifyObserver(absl::AnyInvocable<void(const FutureResult&)> callback,
                             std::shared_ptr<std::vector<::vela::runtime::Value>> references,
                             std::optional<ExecutionContext> context,
                             std::shared_ptr<FutureTaskRun> run) const {
@@ -679,11 +660,7 @@ void Future::Publish(FutureResult result) {
     if (const auto observation = waiter.subscription.lock()) {
       observation->waiter_index.reset();
       if (observation->future) {
-        state_->scheduler->microtasks_.push_back({
-            .context = observation->context,
-            .run = observation->run,
-            .action = [observation] { observation->Invoke(); },
-        });
+        observation->Enqueue();
       }
     } else if (waiter.callback) {
       NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context,
@@ -692,12 +669,7 @@ void Future::Publish(FutureResult result) {
   }
   if (state_->scheduler != nullptr &&
       state_->error_observation == SharedState::ErrorObservation::Unobserved) {
-    const auto self = Retained();
-    state_->scheduler->checkpoints_.push_back({
-        .context = state_->creation_context,
-        .run = state_->run,
-        .action = [self] { self.ReportUnhandledError(); },
-    });
+    QueueUnhandledError();
   }
 }
 
@@ -734,6 +706,14 @@ void Future::Follow(const Future& source) {
   state_->retained.reset();
   auto target = Internal();
   source.ObserveResult([target](const FutureResult& result) mutable { target.Publish(result); });
+}
+
+void Future::QueueUnhandledError() const {
+  state_->scheduler->checkpoints_.push_back({
+      .context = state_->creation_context,
+      .run = state_->run,
+      .action = [self = Retained()] { self.ReportUnhandledError(); },
+  });
 }
 
 void Future::ReportUnhandledError() const {

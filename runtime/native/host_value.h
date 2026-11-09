@@ -120,16 +120,18 @@ Result<std::array<runtime::Value, sizeof...(Args)>> EncodeHostArguments(
   std::array<runtime::Value, sizeof...(Args)> values{};
   if constexpr (sizeof...(Args) != 0) {
     std::size_t index = 0;
+    std::optional<Error> failure;
     const auto encode = [&]<class T>(const HostValue<T>& value) {
       auto encoded = EncodeHostValue<T>(scope, value);
       if (!encoded) {
+        failure = std::move(encoded.error());
         return false;
       }
       values[index++] = *encoded;
       return true;
     };
     if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
+      return std::unexpected(std::move(*failure));
     }
   }
   return values;

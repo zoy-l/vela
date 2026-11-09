@@ -165,6 +165,39 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
   EXPECT_EQ(heap.object_count(), 2U);
 }
 
+TEST(InstanceStorageTest, MigrationToAShorterLayoutDropsRemovedFields) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  auto* nominal =
+      isolate.CreateNominalType({.kind = NominalKind::Class, .interfaces = {}, .declaration = {}});
+  ClassLayoutOptions options{
+      .callable = {},
+      .interfaces = {},
+      .dispatch_targets = {},
+      .nominal = nominal,
+      .storage = ClassStorage::Reloadable,
+      .field_declarations = {{1}, {2}},
+  };
+  auto* original = isolate.CreateClassLayout(2, std::array<std::uint32_t, 1>{1}, options);
+  Value value = Value::Object(heap.AllocateInstance(*original));
+  const RootRange root(heap, &value, 1);
+  auto& object = *value.AsObject();
+  ASSERT_TRUE(heap.SetField(object, 0, Value::Integer(42)));
+  ASSERT_TRUE(heap.SetField(object, 1, Value::String(heap.AllocateString("removed"))));
+  options.field_declarations.resize(1);
+  auto* replacement = isolate.CreateClassLayout(1, {}, options);
+  auto migration = heap.PrepareInstanceMigration(object, *replacement);
+  ASSERT_TRUE(migration);
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 2U);
+  (*migration)->Commit();
+  EXPECT_EQ(Heap::ClassOf(object), replacement);
+  EXPECT_EQ(Heap::LoadField(object, 0).AsInteger(), 42);
+  EXPECT_FALSE(Heap::GetField(object, 1));
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 1U);
+}
+
 TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeCreationAndMiddleRemoval) {
   Isolate isolate;
   auto& heap = isolate.heap();

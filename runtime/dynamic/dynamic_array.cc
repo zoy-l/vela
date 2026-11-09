@@ -26,11 +26,10 @@ using OperationResult = std::expected<void, ExecutionStatus>;
 constexpr std::size_t kReceiver = 0;
 constexpr std::size_t kCallback = 1;
 constexpr std::size_t kArguments = 2;
-constexpr std::size_t kNames = 3;
-constexpr std::size_t kOutput = 4;
-constexpr std::size_t kAlgorithm = 5;
-constexpr std::size_t kThunk = 6;
-constexpr std::size_t kSlotCount = 7;
+constexpr std::size_t kOutput = 3;
+constexpr std::size_t kAlgorithm = 4;
+constexpr std::size_t kThunk = 5;
+constexpr std::size_t kSlotCount = 6;
 
 std::expected<std::int64_t, ExecutionStatus> ComparatorSign(Value value) {
   if (value.IsInteger()) {
@@ -137,21 +136,6 @@ OperationResult InitializeArguments(Isolate& isolate, HeapObject& plan, std::uin
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   heap.SetValueSlot(plan, kArguments, Value::Object(arguments));
-  const auto* strings = &isolate.string_array_layout();
-  auto* names = heap.AllocateArray(*strings, count);
-  if (names == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  heap.SetValueSlot(plan, kNames, Value::Object(names));
-  if (count != 0) {
-    auto* empty = heap.AllocateString("");
-    if (empty == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    for (std::uint32_t index = 0; index < count; ++index) {
-      std::ignore = heap.SetElement(*names, index, Value::String(empty));
-    }
-  }
   return {};
 }
 
@@ -262,7 +246,6 @@ std::expected<DynamicArrayInvocation, ExecutionStatus> PrepareDynamicArrayInvoca
   return DynamicArrayInvocation{
       .callback = callback,
       .arguments = &arguments,
-      .names = slots.subspan(kNames).front().AsObject(),
   };
 }
 

@@ -611,7 +611,7 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
   ASSERT_TRUE(CompleteNativeFuture(completer));
   ASSERT_EQ(isolate.scheduler().PumpUntil(root_future), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(root_future.state(), runtime::FutureState::Succeeded);
-  ASSERT_EQ(root_future.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+  ASSERT_EQ(root_future.result().value.AsInteger(), kNativeFutureValue);
   PendingFetchCompleter() = nullptr;
 }
 
@@ -644,7 +644,7 @@ async func main(): Future<int> {
   ASSERT_TRUE(completer.Complete(callable.value()));
   ASSERT_EQ(isolate.scheduler().PumpUntil(result), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(result.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(result.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+  EXPECT_EQ(result.result().value.AsInteger(), kNativeFutureValue);
 }
 
 TEST(NativeBindingTest, NativeFutureParametersUseHeapBackedCodec) {
@@ -659,7 +659,7 @@ async func main(): Future<int> { return await echo(Future.value(9)); }
   auto root = test::StartFuture(*compiled.instance);
   ASSERT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), 9);
+  EXPECT_EQ(root.result().value.AsInteger(), 9);
 }
 
 }  // namespace

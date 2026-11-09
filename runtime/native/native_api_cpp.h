@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -13,7 +14,6 @@
 #include <vela/handles.h>
 #include <vela/types.h>
 
-#include "base/execution_status.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_value.h"
@@ -75,16 +75,18 @@ template <class R, class... Args, class Entry>
   std::array<VelaAotValue, sizeof...(Args)> encoded{};
   if constexpr (sizeof...(Args) != 0) {
     std::size_t index = 0;
+    std::optional<Error> failure;
     const auto encode = [&]<class T>(const HostValue<T>& value) {
       auto argument = EncodeArgument<T>(scope, value);
       if (!argument) {
+        failure = std::move(argument.error());
         return false;
       }
       encoded[index++] = *argument;
       return true;
     };
     if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
+      return std::unexpected(std::move(*failure));
     }
   }
   VelaAotValue result{};

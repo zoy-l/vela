@@ -39,7 +39,7 @@ namespace {
 bool IsNativeTypeCompatible(const layout::Type& type,
                             NativeType native,
                             const layout::Program& layouts) {
-  return native.type && layout::IsSameType(layouts, type, native.layouts(), *native.type);
+  return NativeType{.type = type, .description = &layouts, .hosts = {}} == native;
 }
 
 }  // namespace

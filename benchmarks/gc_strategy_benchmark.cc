@@ -6,6 +6,7 @@
 #include <limits>
 #include <ratio>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "benchmark/benchmark.h"
@@ -25,6 +26,54 @@ constexpr std::int64_t kSmallStepBudget = 16;
 constexpr std::int64_t kLargeStepBudget = 64;
 constexpr std::size_t kStepPercentile = 95;
 constexpr std::size_t kPercent = 100;
+
+void CollectionReferences(benchmark::State& state) {
+  runtime::Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateCollectionLayout({
+      .keys = {.element = {.kind = runtime::ValueKind::String}},
+      .values = runtime::ArrayLayout{.element = {.kind = runtime::ValueKind::String}},
+  });
+  const auto count = static_cast<std::size_t>(state.range(0));
+  const auto map = runtime::Value::Object(heap.AllocateCollection(*layout));
+  if (map.AsObject() == nullptr) {
+    state.SkipWithError("cannot allocate reference map");
+    return;
+  }
+  const runtime::RootRange map_root(heap, &map, 1);
+  std::array<runtime::Value, 2> input;
+  const runtime::RootRange input_roots(heap, input.data(), input.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto text = std::to_string(index);
+    auto* key = heap.AllocateString(text);
+    if (key == nullptr) {
+      state.SkipWithError("cannot allocate map key");
+      return;
+    }
+    input.front() = runtime::Value::String(key);
+    auto* value = heap.AllocateString(text);
+    if (value == nullptr) {
+      state.SkipWithError("cannot allocate map value");
+      return;
+    }
+    input.back() = runtime::Value::String(value);
+    if (!heap.InsertCollection(*map.AsObject(), input.front(), input.back())) {
+      state.SkipWithError("cannot populate reference map");
+      return;
+    }
+  }
+  input.fill(runtime::Value::Null());
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    heap.Collect();
+    if (heap.object_count() != (count * 2) + 1) {
+      state.SkipWithError("collector lost a reference map entry");
+      return;
+    }
+  }
+}
+
+BENCHMARK(CollectionReferences)->Name("gc/map_references")->Arg(4096);
 
 void CollectionCycle(benchmark::State& state) {
   using Clock = std::chrono::steady_clock;

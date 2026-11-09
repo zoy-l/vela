@@ -2,9 +2,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 #include "gtest/gtest.h"
 
+#include "base/builtin.h"
+#include "base/execution_status.h"
+#include "runtime/collections/array_operations.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
@@ -32,6 +36,34 @@ TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
             ArrayAccessError::ElementTypeMismatch);
   EXPECT_EQ(Heap::ArrayLength(*array), 1U);
   EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 42);
+}
+
+TEST(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEveryValue) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  Value value = Value::Object(heap.AllocateArray(*layout, 3));
+  const RootRange root(heap, &value, 1);
+  auto& array = *value.AsObject();
+  const std::array<std::int64_t, 3> original{3, 1, 2};
+  for (std::uint32_t index = 0; index < original.size(); ++index) {
+    ASSERT_TRUE(heap.SetElement(array, index, Value::Integer(original[index])));
+  }
+  const auto bytes = heap.allocated_bytes();
+  heap.ResetAllocationStatistics();
+  heap.SetAllocationCountLimit(1);
+  const auto failed = ExecuteArrayBuiltin(Builtin::ArraySortDefault, std::span(&value, 1), heap);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error(), ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(heap.allocated_bytes(), bytes);
+  for (std::uint32_t index = 0; index < original.size(); ++index) {
+    EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), original[index]);
+  }
+  heap.SetAllocationCountLimit(std::numeric_limits<std::uint64_t>::max());
+  ASSERT_TRUE(ExecuteArrayBuiltin(Builtin::ArraySortDefault, std::span(&value, 1), heap));
+  for (std::uint32_t index = 0; index < original.size(); ++index) {
+    EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), index + 1);
+  }
 }
 
 TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {

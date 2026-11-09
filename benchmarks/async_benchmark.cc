@@ -33,6 +33,13 @@ async func main(): Future<int> {
   return 42;
 }
 )";
+constexpr std::string_view kThenChain = R"(
+async func main(): Future<int> {
+  let result = Future.value(0);
+  for (let index = 0; index < 64; index++) { result = result.then(value => value + 1); }
+  return await result;
+}
+)";
 
 enum class Collection : std::uint8_t { Automatic, WhileSuspended };
 
@@ -48,9 +55,9 @@ std::optional<runtime::Future> StartFuture(benchmark::State& state,
 }
 
 bool IsAnswer(const runtime::Future& result, std::int64_t expected) {
-  const auto value = result.value();
-  return result.state() == runtime::FutureState::Succeeded && value && value->IsInteger() &&
-         value->AsInteger() == expected;
+  const auto value = result.result().value;
+  return result.state() == runtime::FutureState::Succeeded && value.IsInteger() &&
+         value.AsInteger() == expected;
 }
 
 void SteadyExecution(benchmark::State& state,
@@ -201,6 +208,8 @@ BENCHMARK_CAPTURE(SteadyExecution, SuspendResume, kSuspendResume, kAnswer, Colle
     ->Name("async/suspend_resume");
 BENCHMARK_CAPTURE(SteadyExecution, NoAwaitLoop, kNoAwaitLoop, kAnswer, Collection::Automatic)
     ->Name("async/no_await_loop");
+BENCHMARK_CAPTURE(SteadyExecution, ThenChain, kThenChain, 64, Collection::Automatic)
+    ->Name("async/then_chain");
 BENCHMARK(FirstExecution)->Name("async/first_call")->Iterations(1000)->UseRealTime();
 BENCHMARK_CAPTURE(ConcurrentTasks, Automatic, Collection::Automatic)
     ->Name("async/concurrent")

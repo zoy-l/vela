@@ -498,9 +498,7 @@ std::expected<void, ExecutionStatus> Heap::ClearCollection(HeapObject& object) n
   if (storage.size != 0) {
     ++storage.mutation;
   }
-  if (storage.capacity != 0) {
-    std::ranges::fill(storage.table.buckets, kEmpty);
-  }
+  std::ranges::fill(storage.table.buckets, kEmpty);
   storage.used = 0;
   storage.size = 0;
   storage.head = kEmpty;
@@ -645,14 +643,26 @@ void Heap::MarkCollection(HeapObject& object) noexcept {
     return;
   }
   const auto& table = storage.table;
+  const auto& value_layout = layout.values;
+  if (layout.keys.HasReferences() && value_layout && value_layout->HasReferences()) {
+    VisitReferenceStorage(layout.keys, table.keys, [&](auto keys) {
+      VisitReferenceStorage(*value_layout, table.values, [&](auto values) {
+        for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
+          MarkReference(keys[entry]);
+          MarkReference(values[entry]);
+        }
+      });
+    });
+    return;
+  }
   const auto mark = [this, &storage, &table](auto elements) {
     for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
       MarkReference(elements[entry]);
     }
   };
   VisitReferenceStorage(layout.keys, table.keys, mark);
-  if (layout.values) {
-    VisitReferenceStorage(*layout.values, table.values, mark);
+  if (value_layout) {
+    VisitReferenceStorage(*value_layout, table.values, mark);
   }
 }
 

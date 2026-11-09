@@ -177,7 +177,7 @@ std::expected<std::int64_t, std::string> AwaitInteger(runtime::Future& future,
   if (future.state() != runtime::FutureState::Succeeded) {
     return std::unexpected(future.error_diagnostic().value_or(runtime::FutureDiagnostic{}).message);
   }
-  const auto value = future.value().value_or(runtime::Value::Null());
+  const auto value = future.result().value;
   if (!value.IsInteger()) {
     return std::unexpected("test Future must complete with int");
   }

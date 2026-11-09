@@ -623,11 +623,8 @@ std::vector<DeclarationId> NativeDispatch::RetainedDeclarations() {
 std::expected<NativeNamedEntry, ExecutionStatus> NativeDispatch::FindEntry(
     std::string_view module_uri,
     std::string_view name) {
-  if (closed_) {
-    return std::unexpected(ExecutionStatus::ExecutionStopped);
-  }
-  if (current_ == nullptr) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
   }
   const auto found = current_->exports.find(ExportName{.module = module_uri, .name = name});
   if (found == current_->exports.end()) {
@@ -638,11 +635,8 @@ std::expected<NativeNamedEntry, ExecutionStatus> NativeDispatch::FindEntry(
 
 std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::Resolve(
     DeclarationId declaration) const noexcept {
-  if (closed_) {
-    return std::unexpected(ExecutionStatus::ExecutionStopped);
-  }
-  if (current_ == nullptr) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
   }
   const auto found = current_->functions.find(declaration);
   if (found == current_->functions.end()) {
@@ -651,11 +645,21 @@ std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::Resolv
   return NativeResolvedDeclaration{.state = current_->state.AsObject(), .function = found->second};
 }
 
+std::expected<void, ExecutionStatus> NativeDispatch::CheckCurrent() const noexcept {
+  if (closed_) {
+    return std::unexpected(ExecutionStatus::ExecutionStopped);
+  }
+  if (current_ == nullptr) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  return {};
+}
+
 std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::ResolveInterface(
     const NominalType& receiver,
     DeclarationId selector) const noexcept {
-  if (closed_) {
-    return std::unexpected(ExecutionStatus::ExecutionStopped);
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
   }
   const auto found = current_->interface_targets.find(std::pair(&receiver, selector));
   if (found == current_->interface_targets.end()) {
@@ -666,9 +670,9 @@ std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::Resolv
 
 std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution& execution,
                                                                  DeclarationId declaration,
-                                                                 NativeGlobalCache* cache) {
-  if (closed_) {
-    return std::unexpected(ExecutionStatus::ExecutionStopped);
+                                                                 NativeGlobalCache& cache) {
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
   }
   const auto found = current_->FindGlobal(declaration);
   if (!found) {
@@ -676,9 +680,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   }
   const auto& entry = **found;
   auto& slot = *entry.slot;
-  if (cache != nullptr) {
-    *cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
-  }
+  cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
   using State = NativeProgramState::GlobalState;
   if (slot.state == State::Ready) {
     return Heap::ValueSlots(*slot.storage.AsObject()).front();
@@ -687,29 +689,23 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   auto instance = NativeInstance::Borrow(*current_->state.AsObject());
   const NativeInstanceScope scope(execution, instance);
   const auto initializer = instance.image().function(entry.initializer).entry;
-  const auto value = internal::InitializeNativeGlobal(execution, initializer, slot.state);
-  if (!value) {
-    return value;
-  }
-  internal::StoreNativeGlobal(isolate_->heap(), *slot.storage.AsObject(), 0, slot.state, *value);
-  return value;
+  return internal::InitializeNativeGlobal(execution, initializer, *slot.storage.AsObject(), 0,
+                                          slot.state);
 }
 
 std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(
     DeclarationId declaration,
     Value value,
-    NativeGlobalCache* cache) noexcept {
-  if (closed_) {
-    return std::unexpected(ExecutionStatus::ExecutionStopped);
+    NativeGlobalCache& cache) noexcept {
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
   }
   const auto found = current_->FindGlobal(declaration);
   if (!found) {
     return std::unexpected(found.error());
   }
   auto& slot = *(**found).slot;
-  if (cache != nullptr) {
-    *cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
-  }
+  cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
   internal::StoreNativeGlobal(isolate_->heap(), *slot.storage.AsObject(), 0, slot.state, value);
   return {};
 }
@@ -722,7 +718,7 @@ extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
   auto& cache = program.global_cache(index);
   return internal::StoreNativeResult(
       result,
-      dispatch.LoadGlobal(*execution, program.image->global_declarations.values()[index], &cache));
+      dispatch.LoadGlobal(*execution, program.image->global_declarations.values()[index], cache));
 }
 
 extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
@@ -731,7 +727,7 @@ extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
   auto& program = execution->instance().program();
   auto& cache = program.global_cache(index);
   const auto declaration = program.image->global_declarations.values()[index];
-  const auto stored = program.dispatch->StoreGlobal(declaration, DecodeNativeValue(*value), &cache);
+  const auto stored = program.dispatch->StoreGlobal(declaration, DecodeNativeValue(*value), cache);
   return ToNativeStatus(stored);
 }
 
