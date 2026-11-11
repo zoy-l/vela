@@ -14,6 +14,7 @@
 #include <vector>
 #include "base/builtin.h"
 #include "base/declaration.h"
+#include "compiler/frontend/builtins/reflection_builtins.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -33,10 +34,13 @@ struct StandardDeclaration final {
   std::string_view source;
 };
 
+constexpr std::string_view kReflectionModuleName = "reflection";
+
 constexpr auto kAsyncNames = std::to_array<std::string_view>(
     {kFutureTypeName, kCompleterTypeName, kTimerTypeName, kTimeoutExceptionTypeName});
 
 constexpr auto kDeclarations = std::to_array<StandardDeclaration>({
+    {.name = kReflectionModuleName, .source = kReflectionStandardSource},
     {
         .name = kMathTypeName,
         .source = R"(/// Mathematical constants and functions.
@@ -349,6 +353,24 @@ std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declara
   return found == kIntrinsics.end() ? std::nullopt : std::optional(found->second);
 }
 
+void BindStandardClass(Class& declaration) {
+  if (declaration.name == kMathTypeName) {
+    for (auto& field : declaration.fields) {
+      if (field.name == "PI" || field.name == "E") {
+        field.binding = BindingKind::Constant;
+      }
+    }
+  }
+  for (auto& method : declaration.methods) {
+    if (!method.intrinsic) {
+      method.intrinsic = Intrinsic(declaration.name, method);
+    }
+    if (method.intrinsic) {
+      method.native_symbol.clear();
+    }
+  }
+}
+
 std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
   struct Entry final {
     std::once_flag once;
@@ -357,24 +379,27 @@ std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
   static std::array<Entry, kDeclarations.size()> entries;
   auto& entry = entries.at(index);
   std::call_once(entry.once, [&] {
-    auto syntax = std::make_shared<ParsedSource>(ParseSourceSnapshot(
-        std::string(kDeclarations.at(index).source), 0, SyntaxContext::Standard));
+    const auto& standard = kDeclarations.at(index);
+    const auto path = std::string(kStandardSourcePrefix) + std::string(standard.name);
+    auto syntax = std::make_shared<ParsedSource>(
+        ParseSourceSnapshot(std::string(standard.source), 0, SyntaxContext::Standard));
+    if (standard.name == kReflectionModuleName && syntax->diagnostics.empty()) {
+      syntax->diagnostics = BindReflectionDeclarations(syntax->program);
+    }
     for (auto& declaration : syntax->program.classes) {
-      for (auto& method : declaration.methods) {
-        method.intrinsic = Intrinsic(declaration.name, method);
-        if (method.intrinsic) {
-          method.native_symbol.clear();
-        }
-      }
+      BindStandardClass(declaration);
     }
     if (syntax->diagnostics.empty()) {
-      syntax->diagnostics = BindStandardDeclarations(
-          syntax->program, {
-                               .path = std::string(kStandardSourcePrefix) +
-                                       std::string(kDeclarations.at(index).name),
-                               .text = syntax->source->text,
-                               .syntax = syntax->source,
-                           });
+      syntax->diagnostics =
+          BindStandardDeclarations(syntax->program, {
+                                                        .path = path,
+                                                        .text = syntax->source->text,
+                                                        .syntax = syntax->source,
+                                                    });
+    } else {
+      for (auto& diagnostic : syntax->diagnostics) {
+        diagnostic.source_path = path;
+      }
     }
     entry.syntax = std::move(syntax);
   });
@@ -410,7 +435,7 @@ bool IsStandardName(std::string_view name) noexcept {
     }
     return names;
   }();
-  return kNames.contains(name);
+  return kNames.contains(name) || IsReflectionStandardName(name);
 }
 
 bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
@@ -427,6 +452,9 @@ bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
 Diagnostics AddStandardEnvironment(Program& program) {
   absl::flat_hash_set<std::string> used(program.standard_names.begin(),
                                         program.standard_names.end());
+  if (std::ranges::any_of(used, IsReflectionStandardName)) {
+    used.insert(std::string(kReflectionModuleName));
+  }
   for (const auto& alias : program.aliases) {
     if (alias.target.name == kIntTypeName || alias.target.name == kDoubleTypeName) {
       used.insert(alias.target.name);

@@ -27,8 +27,9 @@ struct FutureDiagnostic;
 struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
+struct CodeIdentity;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 19;
+inline constexpr std::uint32_t kNativeAbiVersion = 22;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
@@ -232,6 +233,9 @@ class NativeExecution final {
                                                 std::string_view message);
   void SetException(Value exception) noexcept;
 };
+
+[[nodiscard]] bool CanReenterNativeProgram(const NativeExecution* parent,
+                                           const CodeIdentity& identity) noexcept;
 
 // 切换到闭包创建时的实例；调用深度、根和异常仍属于同一次逻辑执行。
 class NativeInstanceScope final {

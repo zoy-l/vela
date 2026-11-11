@@ -79,11 +79,14 @@ void Lowerer::LowerFieldDefaultInitializers(const frontend::Class& owner) {
   const auto& info = model_.classes.at(owner.name);
   for (const auto& field : owner.fields) {
     if (field.storage == frontend::MemberStorage::Static) {
-      LowerInitializer(InitializerKey(InitializerKind::StaticField, owner.name + '.' + field.name),
-                       *field.initializer, info.static_fields.at(field.name).type, field.location);
+      LowerInitializer(
+          InitializerKey(InitializerKind::StaticField,
+                         QualifiedMemberKey({.owner = owner.name, .name = field.name})),
+          *field.initializer, info.static_fields.at(field.name).type, field.location);
     } else if (native_mode_ == NativeProgramMode::Reloadable && field.initializer != nullptr) {
       LowerInitializer(
-          InitializerKey(InitializerKind::InstanceField, owner.name + '.' + field.name),
+          InitializerKey(InitializerKind::InstanceField,
+                         QualifiedMemberKey({.owner = owner.name, .name = field.name})),
           *field.initializer, info.fields.at(field.name).type, field.location);
     }
   }
@@ -121,6 +124,13 @@ std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& own
              : 0;
 }
 
+Lowerer::ConstructorFieldMask Lowerer::ConstructorMask(FieldId field) {
+  return {
+      .index = field / kConstructorMaskBits,
+      .bit = std::uint64_t{1} << (field % kConstructorMaskBits),
+  };
+}
+
 void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owner) {
   const auto& source = *owner.declaration;
   for (const auto& field : source.fields) {
@@ -143,15 +153,15 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
     }
     std::optional<std::size_t> provided;
     if (source.IsConstructorField(field)) {
+      const auto field_mask = ConstructorMask(index);
       const auto mask = EmitTemporary({
           .opcode = Opcode::LoadInt,
-          .immediate =
-              std::bit_cast<std::int64_t>(std::uint64_t{1} << (index % kConstructorMaskBits)),
+          .immediate = std::bit_cast<std::int64_t>(field_mask.bit),
           .location = field.location,
       });
       const auto bits = EmitTemporary({
           .opcode = Opcode::BitAndInt,
-          .lhs = 1 + (index / kConstructorMaskBits),
+          .lhs = 1 + field_mask.index,
           .rhs = mask,
           .location = field.location,
       });
@@ -193,9 +203,7 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   for (const auto& member : declaration->members) {
     layout.enum_members.push_back(member.name);
   }
-  if (declarations_ != nullptr) {
-    layout.declaration = declarations_->nominals.at(name);
-  }
+  layout.declaration = declarations_->nominals.at(name);
   layout.field_types = {
       {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName},
   };
@@ -343,8 +351,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
           .field_declaration = FieldDeclaration(info.type, field),
       });
       if (masks != 0) {
-        provided.at(field / kConstructorMaskBits) |= std::uint64_t{1}
-                                                     << (field % kConstructorMaskBits);
+        const auto field_mask = ConstructorMask(field);
+        provided.at(field_mask.index) |= field_mask.bit;
       }
     } else {
       const auto saved = AllocateRegister(argument.location);

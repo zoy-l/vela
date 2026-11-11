@@ -147,7 +147,7 @@ std::string CompletionSource(const frontend::SourceSnapshot& snapshot, std::size
   }
   std::string text(source);
   // 保留已经输入的前缀，光标位置仍落在同一个 token 内。
-  text.insert(end, "__vela_completion__");
+  text.insert(end, kCompletionMarker);
   CloseCompletionDelimiters(text, snapshot.tokens);
   return text;
 }
@@ -227,8 +227,10 @@ bool SemanticIndex::DependsOn(std::string_view path) const {
 }
 
 std::size_t SemanticIndex::TokenAt(SourceLocation location) const {
-  const auto& source = sources_[location.source_id];
-  const auto& tokens = source.tokens;
+  return TokenIndexAt(sources_[location.source_id].tokens, location);
+}
+
+std::size_t TokenIndexAt(std::span<const frontend::Token> tokens, SourceLocation location) {
   const auto position = std::pair(location.line, location.column);
   const auto found = std::ranges::lower_bound(tokens, position, {}, [](const auto& token) {
     const auto token_location = token.location;
@@ -309,7 +311,8 @@ SemanticIndex::Scope SemanticIndex::ComputeExtent(const Statement& statement) co
 
 std::size_t SemanticIndex::AddSymbol(SourceLocation location,
                                      CompletionKind kind,
-                                     std::string detail) {
+                                     std::string detail,
+                                     std::optional<SourceLocation> documentation) {
   const auto& source = sources_[location.source_id];
   auto token = TokenAt(location);
   // match 绑定的位置指向 let，catch 指向关键字；普通声明已经指向名称。
@@ -328,7 +331,7 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location,
                 .label = name.lexeme,
                 .detail = std::move(detail),
                 .kind = kind,
-                .documentation = DocumentationAt(location),
+                .documentation = DocumentationAt(documentation.value_or(location)),
             },
         .owner = {},
         .key = key,
@@ -350,7 +353,19 @@ void SemanticIndex::AddReference(SourceLocation location,
                           Reference{.symbol = found->second, .expression = expression});
 }
 
-void SemanticIndex::VisitType(const TypeName& type) {
+SemanticIndex::Key SemanticIndex::TypeReferenceKey(const TypeName& type) const {
+  auto token = TokenAt(type.location);
+  const auto& tokens = sources_[type.location.source_id].tokens;
+  // qualified type 的 location 指向导入前缀，定义属于最后一个标识符。
+  while (token + 2 < tokens.size() && tokens[token + 1].kind == TokenKind::Dot &&
+         tokens[token + 2].kind == TokenKind::Identifier) {
+    token += 2;
+  }
+  return {type.location.source_id, tokens[token].offset};
+}
+
+std::optional<SemanticIndex::TypeReference> SemanticIndex::VisitType(const TypeName& type) {
+  std::optional<TypeReference> reference;
   if (type.kind == TypeName::Kind::Parameter) {
     if (const auto parameter = type_parameter_symbols_.find(type.parameter);
         parameter != type_parameter_symbols_.end()) {
@@ -358,20 +373,16 @@ void SemanticIndex::VisitType(const TypeName& type) {
     }
   }
   if (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) {
-    auto token = TokenAt(type.location);
-    const auto& tokens = sources_[type.location.source_id].tokens;
-    // qualified type 的 location 指向导入前缀，定义属于最后一个标识符。
-    while (token + 2 < tokens.size() && tokens[token + 1].kind == TokenKind::Dot &&
-           tokens[token + 2].kind == TokenKind::Identifier) {
-      token += 2;
+    if (const auto found = names_.find(type.name); found != names_.end()) {
+      const auto key = TypeReferenceKey(type);
+      references_.try_emplace(key, Reference{.symbol = found->second});
+      reference = TypeReference{.key = key, .symbol = found->second};
     }
-    auto location = tokens[token].location;
-    location.source_id = type.location.source_id;
-    AddReference(location, type.name);
   }
   for (const auto& argument : type.arguments) {
     VisitType(argument);
   }
+  return reference;
 }
 
 std::optional<std::size_t> SemanticIndex::DeclareLocal(const void* node,
@@ -400,6 +411,7 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
                                   const Scope& scope,
                                   const frontend::FunctionDescriptor* signature) {
   MarkTypeParameters(function.type_parameters);
+  VisitAttributes(function.attributes, scope);
   VisitType(function.return_type);
   auto body = function.body ? Extent(*function.body) : scope;
   body.depth = scope.depth + 1;
@@ -589,12 +601,22 @@ void SemanticIndex::VisitCallArguments(const Expression& expression, const Scope
       expression.location.source_id == 0) {
     calls_.insert_or_assign(callee_key, &expression);
   }
-  const auto parameters =
-      target != references_.end() ? parameters_.find(target->second.symbol) : parameters_.end();
-  for (const auto& argument : expression.arguments) {
-    if (parameters != parameters_.end() && !argument.name.empty()) {
-      const auto parameter = parameters->second.find(argument.name);
-      if (parameter != parameters->second.end()) {
+  VisitArguments(expression.arguments, scope,
+                 target != references_.end() ? ParameterSymbols(target->second.symbol) : nullptr);
+}
+
+const SemanticIndex::NamedSymbols* SemanticIndex::ParameterSymbols(std::size_t symbol) const {
+  const auto found = parameters_.find(symbol);
+  return found != parameters_.end() ? &found->second : nullptr;
+}
+
+void SemanticIndex::VisitArguments(std::span<const frontend::CallArgument> arguments,
+                                   const Scope& scope,
+                                   const NamedSymbols* parameters) {
+  for (const auto& argument : arguments) {
+    if (parameters != nullptr && !argument.name.empty()) {
+      const auto parameter = parameters->find(argument.name);
+      if (parameter != parameters->end()) {
         references_.insert_or_assign(KeyAt(argument.location),
                                      Reference{.symbol = parameter->second});
       }
@@ -665,6 +687,12 @@ void SemanticIndex::VisitProgram() {
   for (const auto& declaration : program_.interfaces) {
     VisitInterface(declaration, root);
   }
+  for (const auto& declaration : program_.enums) {
+    VisitAttributes(declaration.attributes, root);
+    for (const auto& member : declaration.members) {
+      VisitAttributes(member.attributes, root);
+    }
+  }
   for (const auto& alias : program_.aliases) {
     MarkTypeParameters(alias.type_parameters);
     VisitType(alias.target);
@@ -681,6 +709,7 @@ void SemanticIndex::VisitProgram() {
 void SemanticIndex::VisitClass(const frontend::Class& declaration, const Scope& root) {
   context_class_ = declaration.name;
   MarkTypeParameters(declaration.type_parameters);
+  VisitAttributes(declaration.attributes, root);
   if (declaration.base_class) {
     VisitType(*declaration.base_class);
   }
@@ -688,6 +717,7 @@ void SemanticIndex::VisitClass(const frontend::Class& declaration, const Scope& 
     VisitType(type);
   }
   for (const auto& field : declaration.fields) {
+    VisitAttributes(field.attributes, root);
     VisitType(field.type);
     VisitExpression(field.initializer.get(), root);
   }
@@ -710,11 +740,24 @@ void SemanticIndex::VisitClass(const frontend::Class& declaration, const Scope& 
 
 void SemanticIndex::VisitInterface(const frontend::Interface& declaration, const Scope& root) {
   MarkTypeParameters(declaration.type_parameters);
+  VisitAttributes(declaration.attributes, root);
   for (const auto& method : declaration.methods) {
     VisitFunction(method, root);
   }
   for (const auto& method : declaration.method_templates) {
     VisitFunction(method, root);
+  }
+}
+
+void SemanticIndex::VisitAttributes(std::span<const frontend::Attribute> attributes,
+                                    const Scope& scope) {
+  for (const auto& attribute : attributes) {
+    const auto reference = VisitType(attribute.type);
+    if (reference && phase_ != IndexPhase::SourceTypes && attribute.type.location.source_id == 0) {
+      attribute_calls_.insert_or_assign(reference->key, &attribute);
+    }
+    VisitArguments(attribute.arguments, scope,
+                   reference ? ParameterSymbols(reference->symbol) : nullptr);
   }
 }
 
@@ -779,7 +822,7 @@ std::vector<ImportLink> SemanticIndex::ImportLinks(PositionEncoding encoding) co
   return result;
 }
 
-const frontend::Token* SemanticIndex::QueryToken(std::size_t offset) const {
+const frontend::Token* SemanticIndex::QueryToken(std::size_t offset, TokenQuery query) const {
   if (sources_.empty()) {
     return nullptr;
   }
@@ -788,18 +831,16 @@ const frontend::Token* SemanticIndex::QueryToken(std::size_t offset) const {
   if (!index) {
     return nullptr;
   }
-  auto selected = tokens.begin() + static_cast<std::ptrdiff_t>(*index);
+  const auto* selected = &tokens[*index];
   // 编辑器的光标可停在单词末尾，此时当前位置可能已经属于紧接着的 '(' 或 '.'。
-  if (selected->offset == offset && !frontend::IsMemberName(selected->kind) &&
-      selected->kind != TokenKind::Print && selected != tokens.begin()) {
-    const auto previous = std::prev(selected);
-    if ((frontend::IsMemberName(previous->kind) || previous->kind == TokenKind::Print) &&
-        previous->offset + previous->length == offset) {
+  if (selected->offset == offset && !IsNameLikeToken(selected->kind) && selected != tokens.data()) {
+    const auto* previous = std::prev(selected);
+    if (IsNameLikeToken(previous->kind) && previous->offset + previous->length == offset) {
       selected = previous;
     }
   }
   const auto& token = *selected;
-  if (offset > token.offset + token.length) {
+  if (query == TokenQuery::Containing && offset > token.offset + token.length) {
     return nullptr;
   }
   return &token;

@@ -23,6 +23,8 @@ namespace vela::compiler::native {
 namespace {
 constexpr unsigned kIntegerShiftMask = 63;
 constexpr double kIntegerMagnitudeLimit = 0x1p63;
+constexpr auto kIntegerMinimumBits =
+    std::bit_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::min());
 
 }  // namespace
 
@@ -66,8 +68,7 @@ void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
   const auto opcode = instruction.opcode;
   if (opcode == Opcode::NegInt) {
     if (!HasRangeProof(array_access_.no_overflow)) {
-      Check(builder_.CreateICmpNE(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
-                                            std::numeric_limits<std::int64_t>::min()))),
+      Check(builder_.CreateICmpNE(left, builder_.getInt64(kIntegerMinimumBits)),
             ExecutionStatus::IntegerOverflow);
     }
     result = builder_.CreateNSWNeg(left);
@@ -104,8 +105,7 @@ void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
       case Opcode::DivInt:
       case Opcode::ModInt: {
         Check(builder_.CreateICmpNE(right, builder_.getInt64(0)), ExecutionStatus::DivisionByZero);
-        auto* minimum = builder_.CreateICmpEQ(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
-                                                        std::numeric_limits<std::int64_t>::min())));
+        auto* minimum = builder_.CreateICmpEQ(left, builder_.getInt64(kIntegerMinimumBits));
         auto* negative_one = builder_.CreateICmpEQ(
             right, builder_.getInt64(std::numeric_limits<std::uint64_t>::max()));
         Check(builder_.CreateNot(builder_.CreateAnd(minimum, negative_one)),
@@ -259,7 +259,7 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   auto* left_present = IsPresent(builder_, left, left_type);
   auto* right_present = IsPresent(builder_, right, right_type);
   llvm::Value* payload_equal = builder_.getFalse();
-  if (left_type.kind == right_type.kind && left_type.kind != Kind::Null) {
+  if (left_type.kind == right_type.kind) {
     auto* left_payload = PayloadOf(builder_, left, left_type);
     auto* right_payload = PayloadOf(builder_, right, right_type);
     payload_equal = left_type.kind == Kind::Double

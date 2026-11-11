@@ -43,12 +43,12 @@ class ReplSource final {
   [[nodiscard]] std::expected<ReplSourceCandidate, ReplSourceError> Prepare(
       std::string_view source) const;
   void Commit(ReplSourceCandidate& candidate);
-  void Remap(frontend::Diagnostics& diagnostics, const ReplEntry& current) const;
   void Remap(SourceLocation& location, std::string& path, const ReplEntry& current) const;
   [[nodiscard]] std::string_view source() const noexcept { return user_source_; }
 
  private:
   enum class Echo : std::uint8_t { Display, Suppress };
+  void Remap(frontend::Diagnostics& diagnostics, const ReplEntry& current) const;
   void BindEntries(frontend::Program& program, const ReplEntry& current, Echo echo) const;
   [[nodiscard]] ReplEntry Locate(std::uint32_t line, const ReplEntry& current) const;
 

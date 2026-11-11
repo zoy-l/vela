@@ -59,8 +59,8 @@ class HostTypeReloadTest : public testing::TestWithParam<NativeCodeTier> {
     return test::UpdateSource(*compiler_, source_, isolate_, std::move(text), GetParam(), retained);
   }
 
-  runtime::Isolate& isolate_state() { return isolate_; }
-  const Compiler& compiler_state() const { return *compiler_; }
+  Compiler& compiler() { return *compiler_; }
+  runtime::Isolate& isolate() { return isolate_; }
 
  private:
   std::unique_ptr<Compiler> compiler_;
@@ -69,7 +69,7 @@ class HostTypeReloadTest : public testing::TestWithParam<NativeCodeTier> {
 };
 
 TEST_P(HostTypeReloadTest, TypeKeepsStructuralMetadataWithoutRetainingAnOldCodeVersion) {
-  auto& isolate = isolate_state();
+  auto& isolate = this->isolate();
   const std::string source =
       "class Box { value: int = 42; } export func answer(): int { return Box().value; }";
   auto updated = Update(source);
@@ -86,7 +86,7 @@ TEST_P(HostTypeReloadTest, TypeKeepsStructuralMetadataWithoutRetainingAnOldCodeV
     updated = Update(source);
     ASSERT_TRUE(updated) << updated.error();
     isolate.heap().Collect();
-    EXPECT_EQ(compiler_state().resource_counts().images, 1U);
+    EXPECT_EQ(compiler().resource_counts().images, 1U);
     EXPECT_EQ(isolate.layout_counts().collections, retained.collections);
     EXPECT_EQ(isolate.layout_counts().signatures, retained.signatures);
     {
@@ -103,7 +103,7 @@ TEST_P(HostTypeReloadTest, TypeKeepsStructuralMetadataWithoutRetainingAnOldCodeV
 }
 
 TEST_P(HostTypeReloadTest, AContainerRetainsItsMetadataAfterItsExplicitTypeIsReleased) {
-  auto& isolate = isolate_state();
+  auto& isolate = this->isolate();
   auto updated = Update(
       "interface View { read(): int; } "
       "class Box implements View { read(): int { return 42; } } "
@@ -135,7 +135,7 @@ TEST_P(HostTypeReloadTest, AContainerRetainsItsMetadataAfterItsExplicitTypeIsRel
 }
 
 TEST_P(HostTypeReloadTest, TypedNamedEntryUsesCurrentPublicationAndCaptureKeepsItsVersion) {
-  auto& isolate = isolate_state();
+  auto& isolate = this->isolate();
   ASSERT_TRUE(Update("export func answer(): int { return 41; }"));
   auto entry = Entry<std::int64_t()>::Bind(isolate.native_dispatch(), "main.vela", "answer");
   ASSERT_TRUE(entry);
@@ -152,14 +152,14 @@ TEST_P(HostTypeReloadTest, TypedNamedEntryUsesCurrentPublicationAndCaptureKeepsI
     EXPECT_EQ(*current, 42);
     EXPECT_EQ(*old, 41);
   }
-  EXPECT_EQ(compiler_state().resource_counts().images, 2U);
+  EXPECT_EQ(compiler().resource_counts().images, 2U);
   captured = std::unexpected(Error{.message = {}, .stack_trace = {}});
   isolate.heap().Collect();
-  EXPECT_EQ(compiler_state().resource_counts().images, 1U);
+  EXPECT_EQ(compiler().resource_counts().images, 1U);
 }
 
 TEST_P(HostTypeReloadTest, TypedEntryChecksChangedSignaturesAndRejectsPrivateLookup) {
-  auto& isolate = isolate_state();
+  auto& isolate = this->isolate();
   ASSERT_TRUE(
       Update("func hidden(): int { return 41; } export func answer(): int { return hidden(); }"));
   const auto hidden = Entry<std::int64_t()>::Bind(isolate.native_dispatch(), "main.vela", "hidden");

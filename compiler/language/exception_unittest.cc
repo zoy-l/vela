@@ -3,7 +3,7 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -13,10 +13,7 @@ namespace {
 class ExceptionExecutionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(ExceptionExecutionTest, CompletesWithPreciseUnwindingAndStrictTypes) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(Unwinding,
@@ -232,7 +229,7 @@ TEST(ExceptionTest, FinallyPreservesOriginalTraceAcrossNestedHandledExceptions) 
 
 TEST(ExceptionTest, FailedGlobalInitializerUnwindsAndCanBeRetriedAfterCatch) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 class Failure {}
 let attempts = 0;
 let answer = initialize();
@@ -244,9 +241,7 @@ func initialize(): int {
 func main(): int {
   try { return answer; } catch (error: Failure) { return answer; }
 })",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(ExceptionTest, RepeatedCaughtFailuresReleaseTheirEnvelopesAfterExecution) {
@@ -273,7 +268,7 @@ func main(): int {
 class InvalidExceptionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InvalidExceptionTest, RejectsInvalidSyntaxTypesAndUnsafeFlow) {
-  EXPECT_FALSE(frontend::CheckTestSource(GetParam()).Succeeded());
+  test::ExpectRejectedCheck(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

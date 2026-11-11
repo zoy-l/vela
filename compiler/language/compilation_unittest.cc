@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "base/execution_status.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -227,7 +228,7 @@ async func main(): Future<void> {
   ASSERT_EQ(root.state(), runtime::FutureState::Failed);
   const auto diagnostic = root.error_diagnostic();
   ASSERT_TRUE(diagnostic.has_value());
-  const auto diagnostic_value = diagnostic.value_or(runtime::FutureDiagnostic{});
+  const auto& diagnostic_value = *diagnostic;
   EXPECT_EQ(diagnostic_value.message, "async failure");
   ASSERT_FALSE(diagnostic_value.stack_trace.empty());
   EXPECT_EQ(diagnostic_value.stack_trace.front().function, "main");
@@ -261,13 +262,8 @@ async func main(): Future<int> {
   return waited[0] + waited[1] + winner;
 }
 )";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  auto root = test::StartFuture(**entry);
-  const auto value = test::AwaitInteger(root, isolate);
-  ASSERT_TRUE(value) << value.error();
-  EXPECT_EQ(*value, 7);
+  constexpr std::int64_t kExpectedResult = 7;
+  test::ExpectFutureAnswer(source, kExpectedResult);
 }
 
 TEST(CompilerTest, FutureWaitCollectsPendingResultsInInputOrder) {
@@ -282,13 +278,8 @@ async func main(): Future<int> {
   return waited[0] * 10 + waited[1];
 }
 )";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  auto root = test::StartFuture(**entry);
-  const auto value = test::AwaitInteger(root, isolate);
-  ASSERT_TRUE(value) << value.error();
-  EXPECT_EQ(*value, 56);
+  constexpr std::int64_t kExpectedResult = 56;
+  test::ExpectFutureAnswer(source, kExpectedResult);
 }
 
 TEST(CompilerTest, FutureSyncInvokesComputationAndReturnsFuture) {
@@ -297,13 +288,8 @@ async func main(): Future<int> {
   return await Future.sync((): int => 8);
 }
 )";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  auto root = test::StartFuture(**entry);
-  const auto value = test::AwaitInteger(root, isolate);
-  ASSERT_TRUE(value) << value.error();
-  EXPECT_EQ(*value, 8);
+  constexpr std::int64_t kExpectedResult = 8;
+  test::ExpectFutureAnswer(source, kExpectedResult);
 }
 
 TEST(CompilerTest, FutureDelayedAndMicrotaskInvokeCallbacks) {
@@ -314,13 +300,8 @@ async func main(): Future<int> {
   return delayed + microtask;
 }
 )";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  auto root = test::StartFuture(**entry);
-  const auto value = test::AwaitInteger(root, isolate);
-  ASSERT_TRUE(value) << value.error();
-  EXPECT_EQ(*value, 13);
+  constexpr std::int64_t kExpectedResult = 13;
+  test::ExpectFutureAnswer(source, kExpectedResult);
 }
 
 TEST(CompilerTest, CompilesNestedClassConstruction) {

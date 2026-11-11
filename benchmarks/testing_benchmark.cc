@@ -154,7 +154,7 @@ std::expected<std::vector<std::string>, std::string> PopulateSuiteCache(
     paths.push_back(PathText(path));
     const auto populated = compiler::jit::CompileFile(
         **compiler, paths.back(),
-        {.diagnostics = {}, .compilation = {.code_cache = directory / "cache"}});
+        {.diagnostics = {}, .compilation = {.code_cache = directory / "cache"}, .reflection = {}});
     if (!populated.Succeeded()) {
       return std::unexpected("cannot compile SDK cache inputs");
     }
@@ -184,7 +184,8 @@ void CacheBatch(benchmark::State& state) {
     for (const auto& path : *paths) {
       runtime::Isolate isolate;
       const auto compiled = compiler::jit::CompileFile(
-          **compiler, path, {.diagnostics = {}, .compilation = {.code_cache = cache / "cache"}});
+          **compiler, path,
+          {.diagnostics = {}, .compilation = {.code_cache = cache / "cache"}, .reflection = {}});
       if (!compiled.Succeeded() || compiled.code.cache != compiler::jit::CodeCacheStatus::Hit) {
         state.SkipWithError("cached suite compilation failed or missed its cache");
         break;

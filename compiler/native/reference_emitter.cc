@@ -154,8 +154,13 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
   }
   for (const auto reg : roots_.stores.at(index)) {
     const auto& slot = roots_.slots.at(reg);
-    WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
+    StoreRootValue(reg, RootAddress(*slot));
   }
+}
+
+void FunctionEmitter::StoreRootValue(ir::RegisterId reg, llvm::Value* address) {
+  auto stored = LoadStoredValue(reg);
+  WriteStoredValue(RecordAddress(address, MemoryRegion::Roots), stored);
 }
 
 void FunctionEmitter::ClearRoots(std::size_t index) {
@@ -259,7 +264,7 @@ void FunctionEmitter::EmitLocatedMapBuiltin(const ir::Instruction& instruction,
                                              map,
                                              key,
                                              Payload(instruction.lhs + 2),
-                                             map_lookups_[instruction_index_],
+                                             location,
                                          }));
     builder_.CreateBr(done);
     builder_.SetInsertPoint(done);
@@ -280,7 +285,7 @@ void FunctionEmitter::EmitMapBuiltin(const ir::Instruction& instruction, Builtin
   if (builtin == Builtin::MapGet) {
     auto get = module_.getOrInsertFunction(runtime::kNativeMapGetSymbol, builder_.getVoidTy(),
                                            pointer, pointer, pointer);
-    auto& function = *module_.getFunction(runtime::kNativeMapGetSymbol);
+    auto& function = *llvm::cast<llvm::Function>(get.getCallee());
     function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
         llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
     function.addParamAttr(1, llvm::Attribute::ReadOnly);
@@ -451,7 +456,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       if (!program_.classes.at(instruction.index).callable) {
         auto helper =
             module_.getOrInsertFunction(runtime::kNativeNewObjectSymbol, pointer, pointer, word);
-        auto& allocation = *module_.getFunction(runtime::kNativeNewObjectSymbol);
+        auto& allocation = *llvm::cast<llvm::Function>(helper.getCallee());
         // 普通实例一定是新分配的对象；可调用值的版本绑定和潜在身份复用单独处理。
         MarkHeapAllocation(allocation);
         auto* object = builder_.CreateCall(helper, {context, index});
@@ -486,7 +491,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       }
       auto helper = module_.getOrInsertFunction(runtime::kNativeNewArraySymbol, pointer, pointer,
                                                 word, builder_.getInt64Ty());
-      auto& allocation = *module_.getFunction(runtime::kNativeNewArraySymbol);
+      auto& allocation = *llvm::cast<llvm::Function>(helper.getCallee());
       MarkHeapAllocation(allocation);
       auto* array = builder_.CreateCall(helper, {context, index, length});
       Check(builder_.CreateIsNotNull(array), ExecutionStatus::OutOfMemory);

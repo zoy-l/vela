@@ -122,11 +122,6 @@ std::vector<std::size_t> CallComponents(const std::vector<std::vector<std::size_
   return components;
 }
 
-bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
-  return mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
-         callee.identity.local == 0 && callee.identity.declaration != DeclarationId{};
-}
-
 std::vector<std::size_t> FunctionCallees(const ir::Function& function,
                                          const ir::Program& program,
                                          std::span<const std::optional<CallableTarget>> direct) {
@@ -232,6 +227,11 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
 }
 
 }  // namespace
+
+bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
+  return mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
+         callee.identity.local == 0 && callee.identity.declaration != DeclarationId{};
+}
 
 bool NativeCallPlan::IsEntrySlotRequired(CallEdge edge) const {
   return std::ranges::binary_search(slot_calls.at(edge.caller), edge.callee);

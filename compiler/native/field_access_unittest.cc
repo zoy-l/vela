@@ -1,6 +1,7 @@
 #include "compiler/native/field_access.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -15,6 +16,13 @@
 
 namespace vela::compiler::native {
 namespace {
+
+std::ptrdiff_t RedundantFieldWrites(const ir::Function& function, const ir::Program& program) {
+  const auto roots = PlanNativeRoots(function, program.functions, program.native_mode,
+                                     NativeDebugging::Safepoints);
+  const auto writes = FindFieldKindWrites(function, program, roots.safepoints);
+  return std::ranges::count(writes, FieldKindWrite::Redundant);
+}
 
 TEST(FieldAccessTest, KeepsInitializationAndKindTransitionsWhileRemovingRepeatedScalarKinds) {
   const auto prepared = ir::test::Prepare(R"(
@@ -33,11 +41,8 @@ export func aliased(point: Point, alias: Point): void {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   for (const auto& function : program.functions) {
-    const auto roots = PlanNativeRoots(function, program.functions, program.native_mode,
-                                       NativeDebugging::Safepoints);
-    const auto writes = FindFieldKindWrites(function, program, roots.safepoints);
     const auto expected = function.name == "update" ? 2 : 0;
-    EXPECT_EQ(std::ranges::count(writes, FieldKindWrite::Redundant), expected) << function.name;
+    EXPECT_EQ(RedundantFieldWrites(function, program), expected) << function.name;
   }
 }
 
@@ -58,10 +63,7 @@ export func reassigned(first: Point, second: Point): void {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   for (const auto& function : program.functions) {
-    const auto roots = PlanNativeRoots(function, program.functions, program.native_mode,
-                                       NativeDebugging::Safepoints);
-    const auto writes = FindFieldKindWrites(function, program, roots.safepoints);
-    EXPECT_EQ(std::ranges::count(writes, FieldKindWrite::Redundant), 0) << function.name;
+    EXPECT_EQ(RedundantFieldWrites(function, program), 0) << function.name;
   }
 }
 

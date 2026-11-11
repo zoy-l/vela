@@ -7,18 +7,20 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
-#include "base/execution_status.h"
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "base/streams.h"
+#include "compiler/cli/development_diagnostics.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
+#include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_source.h"
 #include "runtime/heap/heap.h"
-#include "runtime/isolate/external_resources.h"
 #include "runtime/process/process_entry.h"
 
 namespace vela::tooling {
@@ -49,10 +51,7 @@ CommandResult Command(std::string_view line,
       session.isolate().SetOutput(streams.output.get());
     } else {
       errors << "vela: cannot reset REPL: " << reset.message << '\n';
-      for (const auto& resource : reset.blockers) {
-        errors << "  " << runtime::ExternalResourceKindName(resource.kind) << " #"
-               << resource.identity << ": " << resource.references << " reference(s)\n";
-      }
+      WriteExternalResources(errors, reset.blockers);
     }
   } else {
     errors << "vela: unknown REPL command; use .help\n";
@@ -61,22 +60,14 @@ CommandResult Command(std::string_view line,
 }
 
 void ReportSubmission(const compiler::DevelopmentSubmission& result, std::ostream& errors) {
-  for (const auto& diagnostic : result.diagnostics) {
-    frontend::WriteDiagnostic(errors, diagnostic);
-  }
+  WriteDiagnostics(errors, result.diagnostics);
   if (result.update && result.status == compiler::SubmissionStatus::Rejected) {
-    for (const auto& diagnostic : result.update->diagnostics) {
-      frontend::WriteDiagnostic(errors, diagnostic);
-    }
+    WriteDiagnostics(errors, result.update->diagnostics);
     if (result.update->diagnostics.empty()) {
       errors << "vela: " << result.update->message << '\n';
     }
   }
-  if (result.runtime_diagnostic) {
-    runtime::WriteRuntimeDiagnostic(errors, *result.runtime_diagnostic);
-  } else if (result.execution) {
-    errors << "vela: " << ExecutionStatusName(*result.execution) << '\n';
-  }
+  WriteExecutionFailure(errors, result.runtime_diagnostic, result.execution, "vela: ");
 }
 
 int ReadSubmissions(compiler::DevelopmentSession& session,
@@ -117,26 +108,41 @@ int ReadSubmissions(compiler::DevelopmentSession& session,
 
 int RunRepl(const std::filesystem::path& directory, Streams streams) {
   auto& errors = streams.errors.get();
-  const auto options =
-      compiler::ReadSourceDiagnosticOptions(directory / "__vela_repl__.vela", errors);
+  const auto repl_path = directory / "__vela_repl__.vela";
+  const auto options = compiler::ReadSourceConfiguration(repl_path, errors);
   if (!options) {
     return options.error().exit_code;
   }
   compiler::DevelopmentOptions development;
-  development.diagnostics = *options;
+  development.diagnostics = options->diagnostics;
+  development.reflection = options->reflection;
+  const auto roots = frontend::ReflectionFileModules(options->reflection);
+  frontend::ModuleCache cache;
+  const auto reflected_sources = frontend::CaptureSourceFiles(roots, cache, {});
+  if (!reflected_sources.diagnostics.empty()) {
+    WriteDiagnostics(errors, reflected_sources.diagnostics);
+    return kSourceErrorExitCode;
+  }
   const auto entry = PathText(directory / "__vela_repl_host__.vela");
   auto created = compiler::DevelopmentSession::Create(entry, {}, std::move(development));
   if (!created) {
-    for (const auto& diagnostic : created.error()) {
-      frontend::WriteDiagnostic(errors, diagnostic);
-    }
+    WriteDiagnostics(errors, created.error());
     return kSourceErrorExitCode;
   }
   auto& session = **created;
   session.isolate().SetOutput(streams.output.get());
-  auto candidate = session.Prepare(
-      {.changes = {{.path = entry, .text = "func main(): void {}"}}, .added_roots = {}},
-      compiler::DevelopmentOperation::Load);
+  compiler::SourceUpdate update{
+      .changes = {{.path = entry, .text = "func main(): void {}"}},
+      .added_roots = {},
+  };
+  for (const auto& source : reflected_sources.sources) {
+    update.changes.push_back({
+        .path = source.path,
+        .text = std::string(source.text),
+        .syntax = cache.sources.find(source.path)->second,
+    });
+  }
+  auto candidate = session.Prepare(std::move(update), compiler::DevelopmentOperation::Load);
   if (!candidate) {
     errors << "vela: cannot initialize REPL: " << candidate.error().message << '\n';
     return kSourceErrorExitCode;
@@ -147,7 +153,7 @@ int RunRepl(const std::filesystem::path& directory, Streams streams) {
     errors << "vela: cannot initialize REPL: " << loaded.message << '\n';
     return kSourceErrorExitCode;
   }
-  compiler::DevelopmentRepl repl(session, PathText(directory / "__vela_repl__.vela"));
+  compiler::DevelopmentRepl repl(session, PathText(repl_path));
   return ReadSubmissions(session, repl, streams);
 }
 

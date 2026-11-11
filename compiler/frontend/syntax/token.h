@@ -119,6 +119,7 @@ enum class TokenRole : std::uint8_t {
   PrefixOperator,
   ConditionalOperator,
   MapDelimiter,
+  AttributeDelimiter,
 };
 
 [[nodiscard]] constexpr bool IsStringToken(TokenKind kind) noexcept {
@@ -137,7 +138,7 @@ enum class TokenRole : std::uint8_t {
 // 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。
 [[nodiscard]] inline bool IsMemberName(TokenKind kind) noexcept {
   return kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set ||
-         kind == TokenKind::Match;
+         kind == TokenKind::Match || kind == TokenKind::Type;
 }
 
 [[nodiscard]] constexpr bool IsDeclarationName(TokenKind kind) noexcept {

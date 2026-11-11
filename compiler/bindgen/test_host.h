@@ -22,10 +22,10 @@ class Padding {
   Padding(Padding&&) = delete;
   Padding& operator=(Padding&&) = delete;
   virtual ~Padding() = default;
-  [[nodiscard]] std::int64_t PaddingValue() const noexcept { return padding_; }
 
  private:
-  std::int64_t padding_ = 0;
+  // 保留有数据的首基类，验证后续基类的宿主指针调整。
+  [[maybe_unused]] std::int64_t padding_ = 0;
 };
 
 class VirtualCounter {

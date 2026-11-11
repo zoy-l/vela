@@ -73,6 +73,7 @@ llvm::Value* LoadImport(Builder& builder,
                         std::uint32_t function,
                         NativeCodePlacement placement);
 llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution);
+llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* MakeOptional(Builder& builder,

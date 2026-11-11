@@ -15,11 +15,13 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_map.h>
 
 #include "base/callable.h"
 #include "base/declaration.h"
 #include "base/member.h"
 #include "base/native_program_mode.h"
+#include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/token.h"
@@ -40,9 +42,9 @@ class Lowerer final {
  public:
   Lowerer(const frontend::Program& source,
           const frontend::SemanticModel& model,
-          const DeclarationBindings* declarations,
+          const DeclarationBindings& declarations,
           NativeProgramMode native_mode) noexcept
-      : source_(source), model_(model), declarations_(declarations), native_mode_(native_mode) {}
+      : source_(source), model_(model), declarations_(&declarations), native_mode_(native_mode) {}
 
   // lowering 状态借用固定的 AST 和语义模型；执行上下文不允许复制或迁移。
   ~Lowerer() = default;
@@ -70,6 +72,8 @@ class Lowerer final {
     CallableMode mode = CallableMode::Plain;
     std::span<const frontend::Capture> captures;
     std::optional<LoweredValue> receiver;
+    const frontend::FunctionDescriptor* interface_signature = nullptr;
+    std::optional<DeclarationId> binding_receiver;
   };
 
   using ClassMap = absl::flat_hash_map<std::string, ClassId>;
@@ -126,6 +130,11 @@ class Lowerer final {
                                const frontend::LambdaDescriptor* lambda);
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
+  struct ConstructorFieldMask final {
+    std::uint32_t index;
+    std::uint64_t bit;
+  };
+  [[nodiscard]] static ConstructorFieldMask ConstructorMask(FieldId field);
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
   CallSignature& RegisterFunctionSignature(Function& function,
                                            const frontend::Function& source,
@@ -144,6 +153,9 @@ class Lowerer final {
   void LowerControlExit(const frontend::Statement& statement);
   Completion LowerFinalizers(std::size_t depth);
   RegisterId LowerConstantLabel(const frontend::Expression& source);
+  std::size_t LowerLabelMismatch(const LoweredValue& selector,
+                                 RegisterId label,
+                                 frontend::SourceLocation location);
   LoweredValue LowerMatch(const frontend::Expression& expression);
 
   [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression);
@@ -171,7 +183,33 @@ class Lowerer final {
                                      std::span<const RegisterId> arguments,
                                      frontend::SourceLocation location);
   void LowerJSONDecodePlans();
-  void LowerPublicConstructors();
+  void LowerExposedConstructors();
+  void LowerReflection();
+  void LowerAttributes();
+  CallSignature DescribeCallSignature(const frontend::FunctionDescriptor& source);
+  CallSignature::Parameter DescribeCallParameter(
+      const frontend::FunctionDescriptor& source,
+      const frontend::FunctionDescriptor::Parameter& parameter);
+  reflection::Type DescribeReflectionType(const frontend::TypeDescriptor& type);
+  std::uint32_t DescribeReflectionArgument(const frontend::TypeDescriptor& type);
+  std::vector<std::uint32_t> DescribeReflectionArguments(
+      std::span<const frontend::TypeDescriptor> arguments);
+  reflection::Member DescribeReflectionMethod(
+      const frontend::TypeDescriptor& owner,
+      std::uint32_t declaring_type,
+      const frontend::Function& source,
+      const absl::node_hash_map<std::string, frontend::FunctionDescriptor>& methods);
+  void DescribeReflectionClass(const frontend::Class& owner);
+  void DescribeReflectionFields(const frontend::Class& owner,
+                                const frontend::ClassDescriptor& descriptor,
+                                const ClassDeclarations& identities,
+                                std::uint32_t type);
+  void DescribeReflectionConstructor(const frontend::Class& owner,
+                                     const frontend::ClassDescriptor& descriptor,
+                                     std::uint32_t type);
+  void RegisterReflectionSelections();
+  void DescribeReflectionInterface(const frontend::Interface& owner);
+  void DescribeReflectionEnum(const frontend::Enum& owner);
   void LowerConstructorFactory(const frontend::ClassDescriptor& owner, const std::string& name);
   [[nodiscard]] Function PrepareConstructorFactory(const frontend::ClassDescriptor& owner,
                                                    const std::string& name);
@@ -242,6 +280,7 @@ class Lowerer final {
   [[nodiscard]] RegisterId AllocateRegisterWindow(std::size_t count,
                                                   frontend::SourceLocation location);
   [[nodiscard]] static bool IsInteger(const frontend::TypeDescriptor& type);
+  [[nodiscard]] bool IsDynamicExpression(const frontend::Expression& expression) const;
   void Emit(Instruction instruction);
   [[nodiscard]] std::optional<DeclarationId> ReceiverDeclaration(
       const frontend::TypeDescriptor& type) const;

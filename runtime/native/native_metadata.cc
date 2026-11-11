@@ -27,6 +27,7 @@ void NativeMetadataTracer::Mark(const NominalType* nominal) {
     Mark(interface);
   }
   Mark(nominal->fixed_layout());
+  Mark(nominal->base());
 }
 
 void NativeMetadataTracer::Mark(const ArrayLayout* layout) {

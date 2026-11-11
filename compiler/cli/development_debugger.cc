@@ -91,7 +91,7 @@ void DevelopmentDebugger::Break(std::string_view arguments) {
   const auto snapshot = session_->snapshot();
   const auto path = separator == std::string_view::npos
                         ? snapshot->roots.front()
-                        : PathText(Utf8Path(arguments.substr(0, separator)).lexically_normal());
+                        : NormalizePath(arguments.substr(0, separator));
   if (!snapshot->sources.contains(path)) {
     *errors_ << "breakpoint module is not loaded: " << path << '\n';
     return;

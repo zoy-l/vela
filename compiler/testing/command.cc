@@ -226,12 +226,13 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   compiler::jit::SourceOptions compilation;
   compilation.diagnostics = configuration.diagnostics;
   compilation.compilation.code_cache = configuration.root / ".cache/vela/native/test";
-  const auto compiled = compiler::jit::CompileFile(*compiler, PathText(path), compilation);
+  const auto source_path = PathText(path);
+  const auto compiled = compiler::jit::CompileFile(*compiler, source_path, compilation);
   for (const auto& diagnostic : compiled.diagnostics) {
     if (diagnostic.severity == frontend::DiagnosticSeverity::Warning) {
       ReportEvent warning(ReportEventType::Warning, identity);
       std::ostringstream text;
-      frontend::WriteDiagnostic(text, diagnostic, PathText(path));
+      frontend::WriteDiagnostic(text, diagnostic, source_path);
       warning.file = file;
       warning.text = text.str();
       reporter.Emit(warning);
@@ -247,8 +248,8 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
                 {
                     {
                         .function = {},
-                        .source_path = diagnostic.source_path.empty() ? PathText(path)
-                                                                      : diagnostic.source_path,
+                        .source_path =
+                            diagnostic.source_path.empty() ? source_path : diagnostic.source_path,
                         .line = diagnostic.location.line,
                         .column = diagnostic.location.column,
                         .instruction = 0,
@@ -375,9 +376,7 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
     return kUsageExitCode;
   }
   if (command->help) {
-    output << "Usage: vela test [paths...] [--config FILE] [--name REGEX] [--plain-name TEXT]\n"
-              "  [--tags EXPR] [--exclude-tags EXPR] [--timeout DURATION] [--concurrency N]\n"
-              "  [--reporter compact|expanded|json] [--list]\n";
+    WriteTestCommandHelp(output);
     return 0;
   }
   std::error_code error;

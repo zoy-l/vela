@@ -6,6 +6,7 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
@@ -22,13 +23,7 @@ TEST_P(CollectionLanguageTest, ExecutesTypedCollectionsUnderGcPressure) {
   runtime::Isolate isolate(1);
   const auto program = test::CompileCleanSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
-  const auto retained = isolate.heap().object_count();
-  const auto result = test::ExecuteInteger(**program);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), retained);
+  test::ExpectStableAnswer(**program);
 }
 
 INSTANTIATE_TEST_SUITE_P(OrderedStorage,
@@ -147,10 +142,7 @@ TEST(MapLiteralTest, KeepsMapAndKeyAliveAcrossSuspensionAndFailure) {
 }
 
 TEST(MapLiteralTest, GlobalLiteralInitializationRetriesAndDetectsCycles) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(test::kMapLiteralInitializationSource, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(test::kMapLiteralInitializationSource);
 }
 
 std::int64_t FreezeMapHeap(runtime::NativeContext& context) noexcept {
@@ -203,7 +195,7 @@ func main(): int {
   return calls == 0 ? 42 : 0;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_EQ(compiled.diagnostics.size(), 2U);
   const auto result = test::ExecuteInteger(*compiled.instance);
@@ -212,8 +204,7 @@ func main(): int {
 }
 
 TEST_P(CollectionTypeErrorTest, RejectsInvalidKeysValuesAndImplicitConversions) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

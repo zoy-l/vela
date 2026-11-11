@@ -9,6 +9,7 @@
 
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -22,10 +23,7 @@ namespace {
 class StandardLibraryExecutionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(StandardLibraryExecutionTest, UsesRealModuleCompilerAndVmPaths) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(Libraries,
@@ -222,17 +220,8 @@ TEST(StandardLibraryTest, RejectsImplicitConversionsAndRemovedModuleScheme) {
   EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
 }
 
-class ArrayAlgorithmExecutionTest : public testing::TestWithParam<std::string_view> {};
-
-TEST_P(ArrayAlgorithmExecutionTest, PreservesTypedCallbacksEvaluationOrderAndGcRoots) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-}
-
 INSTANTIATE_TEST_SUITE_P(TraversalSortAndReduction,
-                         ArrayAlgorithmExecutionTest,
+                         StandardLibraryExecutionTest,
                          testing::Values(
                              R"(func main(): int {
   const original = [1, 2, 3];
@@ -343,7 +332,7 @@ func main(): int {
 
 class InvalidStandardApiTest : public testing::TestWithParam<std::string_view> {};
 TEST_P(InvalidStandardApiTest, RejectsInvalidContracts) {
-  EXPECT_FALSE(frontend::CheckTestSource(GetParam()).Succeeded());
+  test::ExpectRejectedCheck(GetParam());
 }
 INSTANTIATE_TEST_SUITE_P(
     StrictSignatures,

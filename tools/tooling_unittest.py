@@ -769,6 +769,16 @@ func main(): int {
                               if item['label'].endswith(':')}
                 self.assertEqual(parameters, details)
 
+    def test_attribute_arguments_complete_from_generated_constructor_fields(self) -> None:
+        header = "class Button extends Reflect { label: string = ''; enabled: bool = true; }\n"
+        for annotation, labels in (
+                ("[Button(la¦)] class Counter {}", {"label:"}),
+                ("[Button(label: 'reset', ¦)] class Counter {}", {"enabled:"}),
+                ("[Button(en¦] class Counter {}", {"enabled:"})):
+            with self.subTest(annotation=annotation):
+                items = self.argument_completions(header + annotation)
+                self.assertEqual({item['label'] for item in items if item['label'].endswith(':')}, labels)
+
     def test_named_argument_completion_preserves_function_value_and_lexical_semantics(self) -> None:
         header = ('class Box { value: int; add(left: int, right: int): int { return left + right; } }\n'
                   'func sum(left: int, right: int): int { return left + right; }\n'

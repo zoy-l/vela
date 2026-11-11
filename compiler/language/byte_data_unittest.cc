@@ -2,8 +2,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
-#include "runtime/heap/heap.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -13,24 +12,11 @@ class ByteDataProgramTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(ByteDataProgramTest, ExecutesWithGCAndReleasesOwnedStorage) {
   runtime::Isolate isolate(1);
-  const auto baseline = isolate.heap().object_count();
-  {
-    const auto result = test::RunInteger(GetParam(), isolate);
-    ASSERT_TRUE(result) << result.error();
-    EXPECT_EQ(*result, 42);
-  }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), baseline);
+  test::ExpectStableAnswer(GetParam(), isolate);
 }
 
 TEST_P(ByteDataProgramTest, ReloadsWithIndependentIsolateOwnership) {
-  runtime::Isolate isolate(1);
-  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
-  ASSERT_TRUE(loaded) << loaded.error();
-  const auto result = test::ExecuteInteger(**loaded);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRestoredAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,
@@ -187,10 +173,7 @@ func main(): int {
 class InvalidByteDataTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InvalidByteDataTest, RejectsWrongTypesReadonlyPropertiesAndUnsupportedOperations) {
-  runtime::Isolate isolate;
-  const auto compiled = test::CompileSource(GetParam(), isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_FALSE(compiled.diagnostics.empty());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

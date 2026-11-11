@@ -28,6 +28,7 @@
 #include "runtime/isolate/layout_transaction.h"
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_global_internal.h"
 #include "runtime/native/native_image.h"
@@ -37,6 +38,16 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+
+HeapObject& NativeInstance::current_state() const noexcept {
+  const auto* session = dispatch();
+  return session == nullptr ? *anchor_.AsObject() : session->current_state();
+}
+
+std::uint64_t NativeInstance::current_revision() const noexcept {
+  const auto* session = dispatch();
+  return session == nullptr ? image().revision : session->revision();
+}
 namespace {
 
 std::unexpected<NativeInstantiationError> OutOfMemory(std::string message) {
@@ -320,16 +331,16 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
 
 CallSignature DescribeCall(const NativeFunctionDescription& source) {
   CallSignature result{
-      .parameters = ConvertTable<CallSignature::Parameter>(
-          source.parameters,
-          [](const NativeCallParameter& parameter) {
-            return CallSignature::Parameter{
-                .name = Text(parameter.name),
-                .type = parameter.type,
-                .optional = (parameter.flags & kNativeOptionalParameter) != 0,
-                .rest = (parameter.flags & kNativeRestParameter) != 0,
-            };
-          }),
+      .parameters =
+          ConvertTable<CallSignature::Parameter>(source.parameters,
+                                                 [](const NativeCallParameter& parameter) {
+                                                   return CallSignature::Parameter{
+                                                       .name = Text(parameter.name),
+                                                       .type = parameter.type,
+                                                       .optional = parameter.IsOptional(),
+                                                       .rest = parameter.IsRest(),
+                                                   };
+                                                 }),
       .result = OptionalIndex(source.result_type),
       .hidden_parameters = static_cast<std::uint8_t>(source.hidden_parameters),
       .receiver = OptionalIndex(source.receiver_type),
@@ -480,6 +491,28 @@ NativeInstance::Instantiate(Isolate& isolate, std::shared_ptr<const NativeImage>
   return Instantiate(isolate, description, std::move(image), nullptr);
 }
 
+namespace {
+
+void BindNominalBases(const NativeImage& image, const ProgramLayouts& layouts) {
+  const auto classes = image.classes.values();
+  if (std::ranges::none_of(classes,
+                           [](const auto& type) { return type.base_class != DeclarationId{}; })) {
+    return;
+  }
+  absl::flat_hash_map<DeclarationId, const NominalType*> nominal_types;
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    nominal_types.emplace(classes[index].declaration, &layouts.classes[index]->nominal_type());
+  }
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    const auto base = classes[index].base_class;
+    if (base != DeclarationId{}) {
+      layouts.classes[index]->nominal_type().BindBase(*nominal_types.at(base));
+    }
+  }
+}
+
+}  // namespace
+
 std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
 NativeInstance::Instantiate(Isolate& isolate,
                             const NativeImage& image,
@@ -525,6 +558,9 @@ NativeInstance::Instantiate(Isolate& isolate,
     class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
   }
   state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
+  if (!can_reuse) {
+    BindNominalBases(image, state.layouts);
+  }
   if (!closed) {
     PrepareDirectFieldLayouts(state);
   }

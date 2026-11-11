@@ -78,7 +78,7 @@ void LayoutTransaction::CommitNative(HeapObject& owner) {
   RetainStructuralMetadata();
   TransferNew(isolate_->class_layouts_, initial_.classes, state.owned_classes,
               [&](ClassLayout& layout) {
-                if (layout.IsEnum()) {
+                if (layout.IsEnum() || layout.IsMetadata()) {
                   metadata.classes.insert(&layout);
                   return true;
                 }

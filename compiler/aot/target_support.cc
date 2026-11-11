@@ -238,30 +238,43 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
       return std::unexpected(verified.error());
     }
   }
-  auto archive = Arguments(root, "archive_arguments", *roots);
-  if (!archive) {
-    return std::unexpected(archive.error());
-  }
-  auto link = Arguments(root, "link_arguments", *roots);
-  if (!link) {
-    return std::unexpected(link.error());
-  }
-  const auto archiver = PackagedPath(root, "archiver", package);
-  const auto linker = PackagedPath(root, "linker", package);
-  const auto runtime = PackagedPath(root, "runtime", package);
-  for (const auto* path : {&archiver, &linker, &runtime}) {
-    if (!*path) {
-      return std::unexpected(path->error());
-    }
-  }
-  return TargetSupport{
-      .archiver = *archiver,
-      .linker = *linker,
-      .runtime = *runtime,
+  TargetSupport support{
+      .archiver = {},
+      .linker = {},
+      .runtime = {},
       .identity = ContentFingerprint(*bytes).Hex(),
-      .archive_arguments = std::move(*archive),
-      .link_arguments = std::move(*link),
+      .archive_arguments = {},
+      .link_arguments = {},
   };
+  if (kind == NativeOutputKind::StaticLibrary) {
+    auto arguments = Arguments(root, "archive_arguments", *roots);
+    if (!arguments) {
+      return std::unexpected(arguments.error());
+    }
+    const auto archiver = PackagedPath(root, "archiver", package);
+    if (!archiver) {
+      return std::unexpected(archiver.error());
+    }
+    support.archiver = *archiver;
+    support.archive_arguments = std::move(*arguments);
+  } else {
+    auto arguments = Arguments(root, "link_arguments", *roots);
+    if (!arguments) {
+      return std::unexpected(arguments.error());
+    }
+    const auto linker = PackagedPath(root, "linker", package);
+    if (!linker) {
+      return std::unexpected(linker.error());
+    }
+    const auto runtime = PackagedPath(root, "runtime", package);
+    if (!runtime) {
+      return std::unexpected(runtime.error());
+    }
+    support.linker = *linker;
+    support.runtime = *runtime;
+    support.link_arguments = std::move(*arguments);
+  }
+  return support;
 }
 
 std::expected<std::vector<std::byte>, std::string> LinkNativeArtifact(

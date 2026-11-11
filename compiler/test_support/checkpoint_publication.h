@@ -1,11 +1,14 @@
 #pragma once
 
 #include <optional>
+#include <string_view>
 
 #include "compiler/development/development_session.h"
 #include "runtime/native/native_debugger.h"
 
 namespace vela::compiler::test {
+
+inline constexpr std::string_view kCheckpointFunction = "checkpoint";
 
 // 测试和基准在 checkpoint 安全点消费一次候选；结果保留给调用方验证发布及迁移契约。
 struct CheckpointPublication final : runtime::NativeDebugger {

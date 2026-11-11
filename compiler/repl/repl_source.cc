@@ -1,6 +1,7 @@
 #include "compiler/repl/repl_source.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iterator>
@@ -75,6 +76,27 @@ struct InputBody final {
   bool terminated = false;
 };
 
+std::span<const frontend::Token> DeclarationHead(std::span<const frontend::Token> tokens) {
+  using Kind = frontend::TokenKind;
+  while (tokens.front().kind == Kind::LeftBracket) {
+    std::size_t depth = 1;
+    std::size_t end = 1;
+    while (depth != 0 && end + 1 < tokens.size()) {
+      const auto kind = tokens[end++].kind;
+      if (kind == Kind::LeftBracket) {
+        ++depth;
+      } else if (kind == Kind::RightBracket) {
+        --depth;
+      }
+    }
+    if (depth != 0) {
+      break;
+    }
+    tokens = tokens.subspan(end);
+  }
+  return tokens;
+}
+
 bool IsBlockDeclaration(std::span<const frontend::Token> tokens) {
   using Kind = frontend::TokenKind;
   while (tokens.front().kind == Kind::Export || tokens.front().kind == Kind::Async) {
@@ -90,17 +112,18 @@ bool IsBlockDeclaration(std::span<const frontend::Token> tokens) {
 InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexed) {
   using Token = frontend::TokenKind;
   const auto first_kind = lexed.tokens.front().kind;
+  const auto declaration = DeclarationHead(lexed.tokens);
   const auto last_kind =
       lexed.tokens.size() > 1 ? lexed.tokens.at(lexed.tokens.size() - 2).kind : Token::EndOfFile;
   InputBody body{
       .text = std::string(source),
-      .declaration = frontend::IsDeclarationStart(first_kind),
+      .declaration = frontend::IsDeclarationStart(declaration.front().kind),
       .terminated = last_kind == Token::Semicolon,
   };
   const bool block_statement = first_kind == Token::LeftBrace || first_kind == Token::If ||
                                first_kind == Token::While || first_kind == Token::For ||
                                first_kind == Token::Switch || first_kind == Token::Try;
-  const bool needs_semicolon = !body.terminated && !IsBlockDeclaration(lexed.tokens) &&
+  const bool needs_semicolon = !body.terminated && !IsBlockDeclaration(declaration) &&
                                (last_kind != Token::RightBrace || !block_statement);
   if (needs_semicolon && lexed.tokens.size() > 1) {
     const auto& last = lexed.tokens.at(lexed.tokens.size() - 2);

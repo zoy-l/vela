@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <span>
@@ -43,15 +44,17 @@ enum class SyntaxContext : std::uint8_t { Source, Standard };
                                                SyntaxContext context = SyntaxContext::Source);
 
 [[nodiscard]] ParseResult ParseSource(std::string_view source, std::uint32_t source_id = 0);
+[[nodiscard]] std::expected<TypeName, Diagnostics> ParseTypeSource(std::string_view source);
 void AppendProgram(Program& destination, Program source);
 
 class Parser final {
  public:
-  // token 存储必须覆盖 Parse；语法角色直接标注到同一 token 流，供格式化等工具消费。
+  // token 流由 Lexer 产生并以 EOF 终止，存储覆盖 Parse；语法角色标注回同一 token 流。
   explicit Parser(std::span<Token> tokens, SyntaxContext context = SyntaxContext::Source)
       : tokens_(tokens), context_(context) {}
 
   [[nodiscard]] ParseResult Parse();
+  [[nodiscard]] std::expected<TypeName, Diagnostics> ParseTypeExpression();
 
  private:
   [[nodiscard]] const Token& Peek() const;
@@ -63,11 +66,12 @@ class Parser final {
   const Token* TakeName();
   enum class SignatureContext : std::uint8_t { Function, Interface };
   std::optional<Function> ParseSignature(Function function, SignatureContext context);
-  const Token* Expect(TokenKind kind, std::string message);
+  const Token* Expect(TokenKind kind, std::string_view message);
   void AnnotatePrevious(TokenRole role);
   void AddDiagnostic(SourceLocation location, std::string message);
   void Synchronize();
   void ParseDeclaration(Program& program);
+  std::optional<std::vector<Attribute>> ParseAttributes();
 
   struct MemberModifiers final {
     Visibility visibility = Visibility::Public;
@@ -79,9 +83,10 @@ class Parser final {
   MemberModifiers ParseMemberModifiers();
   enum class MemberParseResult : std::uint8_t { Parsed, Failed };
   MemberParseResult ParseClassMember(Class& declaration);
-  MemberParseResult ParseNativeClassMember(Class& declaration);
-  MemberParseResult ParseNativeConstructor(Class& declaration);
+  MemberParseResult ParseNativeClassMember(Class& declaration, std::vector<Attribute> attributes);
+  MemberParseResult ParseNativeConstructor(Class& declaration, std::vector<Attribute> attributes);
   std::unique_ptr<Function> ParseConstructor(Class& declaration, MemberModifiers modifiers);
+  static std::unique_ptr<Function> CreateConstructor(SourceLocation location);
   std::optional<Field> ParseField(const Token& name, MemberModifiers modifiers);
 
   std::optional<Enum> ParseEnum();
@@ -123,8 +128,7 @@ class Parser final {
   std::unique_ptr<Statement> ParseWhileStatement();
   std::unique_ptr<Statement> ParseForStatement();
   std::unique_ptr<Statement> ParseForEachStatement();
-  std::unique_ptr<Statement> ParseBreakStatement();
-  std::unique_ptr<Statement> ParseContinueStatement();
+  std::unique_ptr<Statement> ParseJumpStatement(Statement::Kind kind, std::string_view message);
   std::unique_ptr<Statement> ParseSwitchStatement();
 
   std::unique_ptr<Expression> ParseExpression();

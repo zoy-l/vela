@@ -9,6 +9,7 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "benchmarks/jit_benchmark.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -86,31 +87,15 @@ void ReloadModules(benchmark::State& state, NativeCodeTier tier, ModuleGraph gra
     benchmark::DoNotOptimize(iteration);
     ++version;
     const auto started = Clock::now();
-    auto candidate = session.Prepare(
-        {
-            .base_revision = session.snapshot()->revision,
-            .changes =
-                {
-                    {
-                        .path = independent ? "entry.vela" : "dependency.vela",
-                        .text = ValueSource(version),
-                    },
-                },
-            .added_roots = {},
-        },
-        DevelopmentOperation::HotReload);
-    if (!candidate) {
-      state.SkipWithError(frontend::DiagnosticsText(candidate.error().diagnostics));
+    auto updated = PublishDevelopment(session, independent ? "entry.vela" : "dependency.vela",
+                                      ValueSource(version), DevelopmentOperation::HotReload);
+    if (!updated) {
+      state.SkipWithError(updated.error());
       return;
     }
-    static_cast<void>(session.Submit(std::move(*candidate)));
-    const auto result = session.Pump();
+    const auto& result = *updated;
     const auto elapsed = Clock::now() - started;
     state.SetIterationTime(std::chrono::duration<double>(elapsed).count());
-    if (result.status != DevelopmentStatus::Accepted) {
-      state.SkipWithError(result.message);
-      return;
-    }
     const auto current = session.Invoke("entry.vela", "value");
     if (!current || current->AsInteger() != version) {
       state.SkipWithError("incremental entry checksum mismatch");

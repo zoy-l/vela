@@ -210,9 +210,13 @@ bool Lexer::ScanPunctuation(char character, std::size_t start) {
       ScanArithmetic({.character = character, .start = start});
       break;
     case '=':
+      ScanEquals(start);
+      break;
     case '<':
+      ScanLess(start);
+      break;
     case '>':
-      ScanComparison({.character = character, .start = start});
+      ScanGreater(start);
       break;
     case '!':
       AddToken(Match('=') ? TokenKind::BangEqual : TokenKind::Bang, start);
@@ -263,21 +267,6 @@ void Lexer::ScanArithmetic(PunctuationContext context) {
     AddToken(Match('=') ? TokenKind::SlashEqual : TokenKind::Slash, start);
   } else {
     AddToken(Match('=') ? TokenKind::PercentEqual : TokenKind::Percent, start);
-  }
-}
-
-void Lexer::ScanComparison(PunctuationContext context) {
-  const auto [character, start] = context;
-  switch (character) {
-    case '=':
-      ScanEquals(start);
-      return;
-    case '<':
-      ScanLess(start);
-      return;
-    default:
-      ScanGreater(start);
-      return;
   }
 }
 
@@ -338,15 +327,15 @@ bool Lexer::IsAtEnd() const {
 }
 
 char Lexer::Peek() const {
-  return IsAtEnd() ? '\0' : source_.at(current_);
+  return IsAtEnd() ? '\0' : source_[current_];
 }
 
 char Lexer::PeekNext() const {
-  return current_ + 1 >= source_.size() ? '\0' : source_.at(current_ + 1);
+  return current_ + 1 >= source_.size() ? '\0' : source_[current_ + 1];
 }
 
 char Lexer::Advance() {
-  const char character = source_.at(current_++);
+  const char character = source_[current_++];
   if (character == '\n') {
     ++location_.line;
     location_.column = 1;

@@ -1,5 +1,7 @@
 #include "compiler/native/native_image_data.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -8,8 +10,10 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -19,6 +23,7 @@
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "base/source_location.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -29,6 +34,8 @@
 
 namespace vela::compiler::native {
 namespace {
+
+static_assert(kInvalidFunctionTarget == runtime::kNoNativeIndex);
 
 runtime::NativeTypeDescription Describe(const layout::Type& type) {
   return {
@@ -117,8 +124,13 @@ class NativeImageBuilder final {
   }
 
   runtime::NativeText Text(std::string_view text) {
+    if (const auto found = texts_.find(text); found != texts_.end()) {
+      return found->second;
+    }
     const auto bytes = Copy(std::span(text));
-    return {.data = bytes.data, .size = bytes.size};
+    const runtime::NativeText result{.data = bytes.data, .size = bytes.size};
+    texts_.emplace(result.text(), result);
+    return result;
   }
 
   runtime::NativeTable<runtime::NativeText> Texts(const std::vector<std::string>& texts) {
@@ -132,14 +144,20 @@ class NativeImageBuilder final {
 
   runtime::NativeClassDescription Class(std::size_t index);
   runtime::NativeSignatureDescription Signature(const layout::Signature& source);
+  runtime::NativeTable<runtime::NativeCallParameter> CallParameters(
+      const CallSignature& source,
+      std::span<const std::uint32_t> defaults = {});
   runtime::NativeFunctionDescription Function(const ir::Function& function);
+  runtime::NativeAttributeValue AttributeField(const reflection::AttributeValue& field);
   const runtime::NativeFunctionDependencies* Dependencies(const ir::Function& function);
   runtime::NativeTable<runtime::NativeDependencyBlock> Blocks(const ir::Function& function);
+  void Reflection();
   [[nodiscard]] DeclarationId LexicalClass(DeclarationId owner) const;
 
   const ir::Program* program_;
   std::shared_ptr<NativeImageData> data_;
   absl::flat_hash_map<DeclarationId, const ir::Declaration*> declarations_;
+  absl::flat_hash_map<std::string_view, runtime::NativeText> texts_;
 };
 
 runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
@@ -297,6 +315,24 @@ const runtime::NativeFunctionDependencies* NativeImageBuilder::Dependencies(
   });
 }
 
+runtime::NativeTable<runtime::NativeCallParameter> NativeImageBuilder::CallParameters(
+    const CallSignature& source,
+    std::span<const std::uint32_t> defaults) {
+  std::vector<runtime::NativeCallParameter> parameters;
+  parameters.reserve(source.parameters.size());
+  for (const auto& parameter : source.parameters) {
+    parameters.push_back({
+        .name = Text(parameter.name),
+        .type = parameter.type,
+        .flags = ParameterFlags(parameter),
+    });
+  }
+  for (const auto index : defaults) {
+    parameters[index].flags |= runtime::kNativeDefaultParameter;
+  }
+  return Copy(parameters);
+}
+
 runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Function& function) {
   runtime::NativeFunctionDescription result{
       .name = Text(function.name),
@@ -314,16 +350,7 @@ runtime::NativeFunctionDescription NativeImageBuilder::Function(const ir::Functi
     result.hidden_parameters = signature.hidden_parameters;
     result.receiver_type = signature.receiver.value_or(runtime::kNoNativeIndex);
     result.result_type = signature.result.value_or(runtime::kNoNativeIndex);
-    std::vector<runtime::NativeCallParameter> parameters;
-    parameters.reserve(signature.parameters.size());
-    for (const auto& parameter : signature.parameters) {
-      parameters.push_back({
-          .name = Text(parameter.name),
-          .type = parameter.type,
-          .flags = ParameterFlags(parameter),
-      });
-    }
-    result.parameters = Copy(parameters);
+    result.parameters = CallParameters(signature);
   }
   std::vector<SourceLocation> locations;
   locations.reserve(function.instructions.size() + 1);
@@ -445,7 +472,127 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build() {
     });
   }
   image.json_decode_plans = Copy(json_plans);
+  Reflection();
   return std::move(data_);
+}
+
+runtime::NativeAttributeValue NativeImageBuilder::AttributeField(
+    const reflection::AttributeValue& field) {
+  runtime::NativeAttributeValue value{.type = field.type, .payload = 0, .text = {}};
+  std::visit(
+      [&](const auto& scalar) {
+        using T = std::decay_t<decltype(scalar)>;
+        if constexpr (std::is_same_v<T, std::string>) {
+          value.kind = static_cast<std::uint32_t>(runtime::NativeAttributeValueKind::String);
+          value.text = Text(scalar);
+        } else if constexpr (std::is_same_v<T, double>) {
+          value.kind = static_cast<std::uint32_t>(runtime::NativeAttributeValueKind::Double);
+          value.payload = std::bit_cast<std::uint64_t>(scalar);
+        } else if constexpr (std::is_same_v<T, std::int64_t>) {
+          value.kind = static_cast<std::uint32_t>(runtime::NativeAttributeValueKind::Integer);
+          value.payload = std::bit_cast<std::uint64_t>(scalar);
+        } else if constexpr (std::is_same_v<T, bool>) {
+          value.kind = static_cast<std::uint32_t>(runtime::NativeAttributeValueKind::Boolean);
+          value.payload = static_cast<std::uint64_t>(scalar);
+        }
+      },
+      field.value);
+  return value;
+}
+
+void NativeImageBuilder::Reflection() {
+  const auto& layouts = program_->layouts;
+  const auto argument_keys = [&](const auto& arguments) {
+    std::vector<std::string> keys;
+    keys.reserve(arguments.size());
+    for (const auto argument : arguments) {
+      keys.push_back(argument == runtime::kNoNativeIndex
+                         ? "void"
+                         : layout::TypeKey(layouts, layouts.types.at(argument)));
+    }
+    return keys;
+  };
+  using TypeOrder = std::tuple<std::string, std::string, std::vector<std::string>, std::size_t>;
+  std::vector<TypeOrder> types;
+  for (std::size_t index = 0; index < program_->reflection_types.size(); ++index) {
+    const auto& type = program_->reflection_types.at(index);
+    types.emplace_back(type.module, type.name, argument_keys(type.arguments), index);
+  }
+  std::ranges::sort(types);
+  absl::flat_hash_map<std::uint32_t, std::size_t> type_order;
+  std::vector<runtime::NativeReflectionType> reflection_types;
+  for (const auto& order : types) {
+    const auto& type = program_->reflection_types.at(std::get<3>(order));
+    type_order.emplace(type.type, reflection_types.size());
+    reflection_types.push_back({
+        .type = type.type,
+        .module = Text(type.module),
+        .name = Text(type.name),
+        .arguments = Copy(type.arguments),
+        .base = type.base,
+        .interfaces = Copy(type.interfaces),
+        .flags = type.flags,
+    });
+  }
+  data_->image_.reflection_types = Copy(reflection_types);
+  using MemberOrder = std::tuple<std::string, std::vector<std::string>, std::size_t>;
+  std::vector<MemberOrder> members;
+  for (std::size_t index = 0; index < program_->reflection_members.size(); ++index) {
+    const auto& member = program_->reflection_members.at(index);
+    members.emplace_back(member.name, argument_keys(member.type_arguments), index);
+  }
+  std::ranges::sort(members);
+  std::vector<runtime::NativeReflectionMember> reflection_members;
+  for (const auto& order : members) {
+    const auto& member = program_->reflection_members.at(std::get<2>(order));
+    reflection_members.push_back({
+        .declaration = member.declaration,
+        .declaring_type = member.declaring_type,
+        .name = Text(member.name),
+        .kind = static_cast<std::uint32_t>(member.kind),
+        .flags = member.flags,
+        .type = member.type,
+        .target = member.target,
+        .getter = member.getter,
+        .setter = member.setter,
+        .parameters = CallParameters(member.signature, member.default_parameters),
+        .type_arguments = Copy(member.type_arguments),
+    });
+  }
+  data_->image_.reflection_members = Copy(reflection_members);
+  absl::flat_hash_map<DeclarationId, const MemberOrder*> attribute_targets;
+  for (const auto& order : members) {
+    const auto& member = program_->reflection_members.at(std::get<2>(order));
+    attribute_targets.emplace(member.declaration, &order);
+  }
+  using AttributeOrder =
+      std::tuple<std::size_t, std::string, std::vector<std::string>, std::size_t>;
+  std::vector<AttributeOrder> annotation_order;
+  for (std::size_t index = 0; index < program_->attributes.size(); ++index) {
+    const auto& attribute = program_->attributes.at(index);
+    if (const auto found = attribute_targets.find(attribute.target);
+        found != attribute_targets.end()) {
+      const auto& order = *found->second;
+      const auto& member = program_->reflection_members.at(std::get<2>(order));
+      annotation_order.emplace_back(type_order.at(member.declaring_type), member.name,
+                                    std::get<1>(order), index);
+    } else {
+      annotation_order.emplace_back(types.size(), "", std::vector<std::string>{}, index);
+    }
+  }
+  std::ranges::sort(annotation_order);
+  std::vector<runtime::NativeAttribute> attributes;
+  for (const auto& order : annotation_order) {
+    const auto& attribute = program_->attributes.at(std::get<3>(order));
+    std::vector<runtime::NativeAttributeValue> fields;
+    fields.reserve(attribute.fields.size());
+    for (const auto& field : attribute.fields) {
+      fields.push_back(AttributeField(field));
+    }
+    attributes.push_back(
+        {.target = attribute.target, .type = attribute.type, .fields = Copy(fields)});
+  }
+  data_->image_.attributes = Copy(attributes);
 }
 
 void NativeImageData::BindEntries(std::span<const runtime::NativeEntry> entries,

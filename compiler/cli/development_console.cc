@@ -28,18 +28,19 @@
 #include "base/process_exit.h"
 #include "base/streams.h"
 #include "compiler/cli/development_debugger.h"
+#include "compiler/cli/development_diagnostics.h"
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_source.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/isolate/external_resources.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/process/process_entry.h"
@@ -97,6 +98,9 @@ std::string_view StatusName(DevelopmentStatus status) {
 
 bool IsSameChanges(const SourceUpdate& left, const SourceUpdate& right) {
   return left.base_revision == right.base_revision && left.added_roots == right.added_roots &&
+         left.reflection.has_value() == right.reflection.has_value() &&
+         (!left.reflection ||
+          frontend::IsSameReflectionSelections(*left.reflection, *right.reflection)) &&
          std::ranges::equal(left.changes, right.changes, [](const auto& first, const auto& second) {
            return first.path == second.path && first.text == second.text;
          });
@@ -160,9 +164,7 @@ class DevelopmentConsole final {
 };
 
 void DevelopmentConsole::Diagnostics(const frontend::Diagnostics& diagnostics) const {
-  for (const auto& diagnostic : diagnostics) {
-    frontend::WriteDiagnostic(streams_.errors.get(), diagnostic);
-  }
+  WriteDiagnostics(streams_.errors.get(), diagnostics);
 }
 
 void DevelopmentConsole::Print(const DevelopmentResult& result) {
@@ -174,10 +176,7 @@ void DevelopmentConsole::Print(const DevelopmentResult& result) {
   }
   errors << '\n';
   Diagnostics(result.diagnostics);
-  for (const auto& blocker : result.blockers) {
-    errors << "  " << runtime::ExternalResourceKindName(blocker.kind) << " #" << blocker.identity
-           << ": " << blocker.references << " reference(s)\n";
-  }
+  WriteExternalResources(errors, result.blockers);
   if (result.execution) {
     errors << "  " << ExecutionStatusName(*result.execution) << '\n';
   }
@@ -355,11 +354,8 @@ void DevelopmentConsole::Call(const std::string& command) {
     runtime::WriteValue(streams_.output.get(), *value);
     streams_.output.get() << '\n';
   } else {
-    if (const auto& diagnostic = session_->last_diagnostic()) {
-      runtime::WriteRuntimeDiagnostic(streams_.errors.get(), *diagnostic);
-    } else {
-      streams_.errors.get() << "call failed: " << ExecutionStatusName(value.error()) << '\n';
-    }
+    WriteExecutionFailure(streams_.errors.get(), session_->last_diagnostic(), value.error(),
+                          "call failed: ");
   }
 }
 
@@ -396,12 +392,8 @@ void DevelopmentConsole::Submit(const std::string& input) {
   if (result.update && result.status == compiler::SubmissionStatus::Rejected) {
     Print(*result.update);
   }
-  if (result.runtime_diagnostic) {
-    runtime::WriteRuntimeDiagnostic(streams_.errors.get(), *result.runtime_diagnostic);
-  } else if (result.execution) {
-    streams_.errors.get() << "submission failed: " << ExecutionStatusName(*result.execution)
-                          << '\n';
-  }
+  WriteExecutionFailure(streams_.errors.get(), result.runtime_diagnostic, result.execution,
+                        "submission failed: ");
 }
 
 void DevelopmentConsole::Command(const std::string& command) {
@@ -457,7 +449,7 @@ void DevelopmentConsole::Watch() {
   if (*polled) {
     auto update = std::move(**polled);
     last_error_.clear();
-    if (update.changes.empty() && update.added_roots.empty()) {
+    if (update.IsEmpty()) {
       observed_.reset();
       waiting_.reset();
       return;
@@ -509,12 +501,13 @@ int DevelopmentConsole::Run() {
     return kSourceErrorExitCode;
   }
   compiler::DevelopmentOptions options;
-  const auto diagnostics =
-      compiler::ReadSourceDiagnosticOptions(Utf8Path(files_.entry()), streams_.errors.get());
-  if (!diagnostics) {
-    return diagnostics.error().exit_code;
+  const auto configuration =
+      compiler::ReadSourceConfiguration(Utf8Path(files_.entry()), streams_.errors.get());
+  if (!configuration) {
+    return configuration.error().exit_code;
   }
-  options.diagnostics = *diagnostics;
+  options.diagnostics = configuration->diagnostics;
+  options.reflection = configuration->reflection;
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
   options.progress = [this](const DevelopmentResult& result) {

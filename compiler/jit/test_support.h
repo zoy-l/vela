@@ -5,6 +5,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -19,6 +20,10 @@
 #include "runtime/value/value.h"
 
 namespace vela::compiler::jit::test {
+
+std::span<const runtime::NativeFunctionDescription>::iterator FindImageFunction(
+    std::span<const runtime::NativeFunctionDescription> functions,
+    std::string_view name);
 
 std::expected<SourceCandidate, SourceCandidateError> PrepareText(
     const SourceSession& source,

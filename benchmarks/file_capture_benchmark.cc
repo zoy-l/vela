@@ -17,6 +17,7 @@
 #include "compiler/development/development_files.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -90,6 +91,15 @@ void PollIdle(benchmark::State& state, compiler::DevelopmentFiles& files) {
   }
 }
 
+void OpenAndPollIdle(benchmark::State& state, compiler::DevelopmentFiles& files) {
+  const auto source = OpenSource(files);
+  if (!source) {
+    state.SkipWithError(source.error());
+    return;
+  }
+  PollIdle(state, files);
+}
+
 std::expected<Clock::duration, std::string> CaptureEdit(compiler::DevelopmentFiles& files,
                                                         compiler::SourceSession& source,
                                                         const std::string& path,
@@ -138,18 +148,18 @@ void CaptureFiles(benchmark::State& state, FileActivity activity) {
     return;
   }
   compiler::DevelopmentFiles files(PathText(directory.path() / "main.vela"));
+  state.counters["files"] = static_cast<double>(count);
+  state.counters["changed_files"] = activity == FileActivity::Idle ? 0 : 1;
+  if (activity == FileActivity::Idle) {
+    OpenAndPollIdle(state, files);
+    return;
+  }
   auto opened = OpenSource(files);
   if (!opened) {
     state.SkipWithError(opened.error());
     return;
   }
   auto& source = **opened;
-  state.counters["files"] = static_cast<double>(count);
-  state.counters["changed_files"] = activity == FileActivity::Idle ? 0 : 1;
-  if (activity == FileActivity::Idle) {
-    PollIdle(state, files);
-    return;
-  }
   const auto edited = directory.path() / "module_1.vela";
   const auto path = PathText(edited);
   std::int64_t version = count;
@@ -169,6 +179,34 @@ void CaptureFiles(benchmark::State& state, FileActivity activity) {
     state.SetIterationTime(std::chrono::duration<double>(*elapsed).count());
   }
 }
+
+void CaptureReflectionIdle(benchmark::State& state) {
+  BenchmarkDirectory directory(state);
+  if (!directory.IsValid()) {
+    return;
+  }
+  constexpr std::array sources{
+      frontend::SourceInput{.path = "main.vela", .text = "class Box<T> {}"},
+      frontend::SourceInput{
+          .path = "vela.json",
+          .text = R"({"reflection":[
+        {"module":"main","type":"Box<Map<string, int[]>>"}
+      ]})",
+      },
+  };
+  for (const auto& source : sources) {
+    const auto written =
+        WriteFileAtomically(directory.path() / source.path, std::as_bytes(std::span(source.text)));
+    if (!written) {
+      state.SkipWithError(written.error());
+      return;
+    }
+  }
+  compiler::DevelopmentFiles files(PathText(directory.path() / "main.vela"));
+  OpenAndPollIdle(state, files);
+}
+
+BENCHMARK(CaptureReflectionIdle)->Name("files/capture/reflection_idle")->UseRealTime();
 
 int Register() {
   for (const auto activity : {FileActivity::Idle, FileActivity::Edit}) {

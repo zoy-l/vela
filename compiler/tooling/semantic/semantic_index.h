@@ -164,9 +164,14 @@ class SemanticIndex final {
     Scope scope;
     std::size_t available = 0;
   };
+  [[nodiscard]] static bool IsLocalVisible(const Local& local, std::size_t offset);
   struct Reference final {
     std::size_t symbol = 0;
     const frontend::Expression* expression = nullptr;
+  };
+  struct TypeReference final {
+    Key key;
+    std::size_t symbol;
   };
   struct SymbolRename final {
     std::size_t symbol = 0;
@@ -179,7 +184,9 @@ class SemanticIndex final {
     std::string context_class;
   };
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
-  [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
+  enum class TokenQuery : std::uint8_t { Containing, Nearest };
+  [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset,
+                                                  TokenQuery query = TokenQuery::Containing) const;
   [[nodiscard]] std::optional<std::size_t> RenameTarget(std::size_t offset) const;
   [[nodiscard]] Key RenamedKey(Key key,
                                const SemanticIndex& renamed,
@@ -195,9 +202,17 @@ class SemanticIndex final {
                                                   const std::string& owner,
                                                   Symbol::Role role);
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
+  [[nodiscard]] Key TypeReferenceKey(const frontend::TypeName& type) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
   [[nodiscard]] Scope ComputeExtent(const frontend::Statement& statement) const;
-  std::size_t AddSymbol(SourceLocation location, CompletionKind kind, std::string detail);
+  std::size_t AddSymbol(SourceLocation location,
+                        CompletionKind kind,
+                        std::string detail,
+                        std::optional<SourceLocation> documentation = std::nullopt);
+  template <class Declaration, class Detail>
+  std::size_t DeclareSourceSymbol(const Declaration& declaration,
+                                  CompletionKind kind,
+                                  Detail detail);
   template <class Declaration, class Detail>
   std::size_t DeclareSymbol(const Declaration& declaration, CompletionKind kind, Detail detail);
   template <class Declaration, class Detail>
@@ -217,7 +232,7 @@ class SemanticIndex final {
   void CollectEnumMembers(const frontend::Enum& declaration);
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();
-  void VisitType(const frontend::TypeName& type);
+  std::optional<TypeReference> VisitType(const frontend::TypeName& type);
   void VisitFunction(const frontend::Function& function,
                      const Scope& scope,
                      const frontend::FunctionDescriptor* signature = nullptr);
@@ -226,6 +241,7 @@ class SemanticIndex final {
   void VisitExpression(const frontend::Expression* expression, const Scope& scope);
   void VisitProgram();
   void VisitClass(const frontend::Class& declaration, const Scope& root);
+  void VisitAttributes(std::span<const frontend::Attribute> attributes, const Scope& scope);
   void VisitInterface(const frontend::Interface& declaration, const Scope& root);
   void VisitDefinitions(const Scope& root);
   [[nodiscard]] const frontend::NodeFacts& Facts() const;
@@ -261,6 +277,11 @@ class SemanticIndex final {
   void IndexExpression(const frontend::Expression& expression);
   void IndexMemberExpression(const frontend::Expression& expression);
   void VisitCallArguments(const frontend::Expression& expression, const Scope& scope);
+  using NamedSymbols = absl::flat_hash_map<std::string, std::size_t>;
+  [[nodiscard]] const NamedSymbols* ParameterSymbols(std::size_t symbol) const;
+  void VisitArguments(std::span<const frontend::CallArgument> arguments,
+                      const Scope& scope,
+                      const NamedSymbols* parameters);
   [[nodiscard]] std::vector<Completion> ScopeCompletions(std::size_t offset,
                                                          std::string_view prefix) const;
   [[nodiscard]] const frontend::FunctionDescriptor* FindCallParameters(
@@ -282,10 +303,11 @@ class SemanticIndex final {
   absl::flat_hash_map<Key, Reference> references_;
   absl::flat_hash_map<std::string, std::size_t> names_;
   absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::size_t>> members_;
-  absl::flat_hash_map<std::size_t, absl::flat_hash_map<std::string, std::size_t>> parameters_;
+  absl::flat_hash_map<std::size_t, NamedSymbols> parameters_;
   absl::flat_hash_map<std::uint32_t, std::size_t> bindings_;
   absl::flat_hash_map<Key, Receiver> receivers_;
   absl::flat_hash_map<Key, const frontend::Expression*> calls_;
+  absl::flat_hash_map<Key, const frontend::Attribute*> attribute_calls_;
   absl::flat_hash_map<frontend::TypeParameterId, std::size_t> type_parameter_symbols_;
   absl::flat_hash_map<std::size_t, std::uint32_t> import_targets_;
   absl::flat_hash_map<std::string, std::uint32_t> prefixes_;

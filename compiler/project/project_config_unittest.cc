@@ -1,14 +1,16 @@
 #include "compiler/project/project_config.h"
 
+#include <array>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "gtest/gtest.h"
 
 #include "base/process_exit.h"
@@ -17,6 +19,78 @@
 
 namespace vela::compiler {
 namespace {
+
+TEST(ProjectConfigurationTest, ParsesExplicitReflectionWithoutImplicitMemberSelection) {
+  const auto config = ParseProjectConfiguration("project/vela.json", R"({"reflection":[
+    {"module":"src/counter","type":"Counter<int>","members":[
+      {"kind":"field","name":"value"},
+      {"kind":"method","name":"convert","typeArguments":["string?[]"]},
+      {"kind":"getter","name":"count"},
+      {"kind":"constructor"}
+    ]},
+    {"module":"sdk:test","type":"Matcher"}
+  ]})");
+  ASSERT_TRUE(config) << config.error().message;
+  ASSERT_EQ(config->reflection.size(), 2U);
+  const auto& first = config->reflection.front();
+  EXPECT_EQ(first.module, "project/src/counter.vela");
+  EXPECT_EQ(first.type.ToString(), "Counter<int>");
+  ASSERT_EQ(first.members.size(), 4U);
+  EXPECT_EQ(first.members.front().kind, frontend::ReflectionMemberKind::Field);
+  EXPECT_EQ(first.members.at(1).type_arguments.front().ToString(), "string?[]");
+  EXPECT_EQ(first.members.back().kind, frontend::ReflectionMemberKind::Constructor);
+  EXPECT_TRUE(config->reflection.back().members.empty());
+  EXPECT_EQ(first.source_path, "project/vela.json");
+}
+
+TEST(ProjectConfigurationTest, RejectsMalformedReflectionSelectionsAtTheirConfigurationLocation) {
+  for (
+      const auto* source : {
+          R"({"reflection":{}})",
+          R"({"reflection":[{}]})",
+          R"({"reflection":[{"module":"app","type":"Box<"}]})",
+          R"({"reflection":[{"module":"app","type":"int;"}]})",
+          R"({"reflection":[{"module":"*.vela","type":"Counter"}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":true}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{}]}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{"kind":"all"}]}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{"kind":"field"}]}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{"kind":"constructor","name":"new"}]}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{"kind":"getter","name":"x","typeArguments":[]}]}]})",
+          R"({"reflection":[{"module":"app","type":"Counter","members":[{"kind":"method","name":"x","typeArguments":["int;"]}]}]})",
+      }) {
+    const auto config = ParseProjectConfiguration("vela.json", source);
+    ASSERT_FALSE(config) << source;
+    EXPECT_TRUE(config.error().field.starts_with("reflection"));
+    EXPECT_EQ(config.error().file, "vela.json");
+    EXPECT_EQ(config.error().exit_code, kUsageExitCode);
+  }
+}
+
+TEST(ProjectConfigurationTest, ReportsDeferredGenericConstraintErrorsAtTheConfigurationInput) {
+  constexpr std::string_view kConfiguration = R"({
+  "reflection": [
+    {"module": "models", "type": "Limited<string>"}
+  ]
+})";
+  const auto configuration = ParseProjectConfiguration("project/vela.json", kConfiguration);
+  ASSERT_TRUE(configuration);
+  const std::array sources{
+      frontend::SourceInput{.path = "project/main.vela", .text = "func main(): void {}"},
+      frontend::SourceInput{
+          .path = "project/models.vela",
+          .text = "class Limited<T extends int> { value: T; }",
+      },
+  };
+  auto parsed = frontend::LoadSources(sources, sources.front().path, configuration->reflection);
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_FALSE(checked.Succeeded());
+  for (const auto& diagnostic : checked.diagnostics) {
+    EXPECT_EQ(diagnostic.source_path, "project/vela.json");
+    EXPECT_EQ(diagnostic.location.line, 3U);
+  }
+}
 
 TEST(ProjectConfigurationTest, LeavesMissingTestAndPathsForTheCommandBoundary) {
   const auto empty = ParseProjectConfiguration("project/vela.json", "{}");
@@ -147,11 +221,6 @@ class ProjectConfigurationFileTest : public test::DirectoryTest {
     std::error_code error;
     std::filesystem::create_directories(directory() / "project" / "nested", error);
     ASSERT_FALSE(error);
-  }
-  void Write(const std::filesystem::path& relative, std::string_view text) {
-    std::ofstream output(directory() / relative, std::ios::binary);
-    output.write(text.data(), static_cast<std::streamsize>(text.size()));
-    ASSERT_TRUE(output.good());
   }
 };
 

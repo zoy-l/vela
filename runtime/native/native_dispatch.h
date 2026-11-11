@@ -154,6 +154,7 @@ class NativeDispatch final {
   [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
   // 只借用当前快照；使用者在可能分配前建立 NativeInstance 借用根。
   [[nodiscard]] HeapObject& current_state() const noexcept;
+  [[nodiscard]] std::expected<HeapObject*, ExecutionStatus> BorrowCurrentState() const noexcept;
   [[nodiscard]] std::expected<NativePreparedPublication, NativePublicationError> Prepare(
       std::uint64_t base_revision,
       std::shared_ptr<const NativeImage> image);

@@ -104,9 +104,8 @@ const TypeChecker::TypeParameterInfo* TypeChecker::FindTypeParameter(const Type&
 const TypeChecker::Type* TypeChecker::ResolveParameterBound(const TypeParameterInfo& parameter) {
   if (!parameter.resolved) {
     // 先标记已解析，上界中的自引用只读取参数类型本身，不重入上界解析。
-    auto& info = type_parameters_.at(parameter.declaration->identity);
-    info.resolved = true;
-    if (const auto& bound = info.declaration->bound) {
+    parameter.resolved = true;
+    if (const auto& bound = parameter.declaration->bound) {
       const auto type = ResolveType(*bound, VoidTypePolicy::Allowed);
       if (type.kind == Type::Kind::Void || type.kind == Type::Kind::Null) {
         AddDiagnostic(bound->location, "generic bound must be a value type");
@@ -115,7 +114,7 @@ const TypeChecker::Type* TypeChecker::ResolveParameterBound(const TypeParameterI
                       "dynamic cannot be a generic bound; omit 'extends' for an unconstrained "
                       "parameter");
       } else if (IsValid(type)) {
-        info.bound = type;
+        parameter.bound = type;
       }
     }
   }
@@ -174,7 +173,7 @@ TypeChecker::Type TypeChecker::ParameterCapability(const Type& type, SourceLocat
 
 bool TypeChecker::IsPotentiallyNullable(const Type& type) const {
   auto current = type;
-  absl::flat_hash_set<TypeParameterId> visited;
+  std::size_t steps = 0;
   while (true) {
     if (current.kind == Type::Kind::Parameter && current.known_non_null) {
       return false;
@@ -187,7 +186,7 @@ bool TypeChecker::IsPotentiallyNullable(const Type& type) const {
     if (parameter == nullptr) {
       return false;
     }
-    if (!parameter->bound || !visited.insert(parameter->declaration->identity).second) {
+    if (!parameter->bound || ++steps > type_parameters_.size()) {
       return true;
     }
     current = *parameter->bound;
@@ -195,17 +194,17 @@ bool TypeChecker::IsPotentiallyNullable(const Type& type) const {
 }
 
 void TypeChecker::QueueBoundCheck(std::string owner,
-                                  std::vector<TypeParameter> parameters,
+                                  std::span<const TypeParameter> parameters,
                                   std::vector<Type> arguments,
                                   SourceLocation location) {
   const bool bounded = std::ranges::any_of(
       parameters, [](const auto& parameter) { return parameter.bound.has_value(); });
-  if (!bounded || arguments.size() != parameters.size()) {
+  if (!bounded) {
     return;
   }
   bound_checks_.push_back({
       .owner = std::move(owner),
-      .parameters = std::move(parameters),
+      .parameters = parameters,
       .arguments = std::move(arguments),
       .location = location,
   });
@@ -214,18 +213,17 @@ void TypeChecker::QueueBoundCheck(std::string owner,
 bool TypeChecker::CheckTypeArguments(const BoundCheck& check) {
   TypeSubstitutions substitutions;
   for (std::size_t index = 0; index < check.parameters.size(); ++index) {
-    substitutions.emplace(check.parameters.at(index).identity,
-                          DescribeType(check.arguments.at(index)));
+    substitutions.emplace(check.parameters[index].identity, DescribeType(check.arguments[index]));
   }
   bool satisfied = true;
   for (std::size_t index = 0; index < check.parameters.size(); ++index) {
-    const auto& parameter = check.parameters.at(index);
+    const auto& parameter = check.parameters[index];
     if (!parameter.bound) {
       continue;
     }
     const auto bound =
         ResolveType(SubstituteTypeName(*parameter.bound, substitutions), VoidTypePolicy::Allowed);
-    const auto& argument = check.arguments.at(index);
+    const auto& argument = check.arguments[index];
     if (!IsValid(bound) || !IsValid(argument)) {
       satisfied = false;
       continue;
@@ -239,6 +237,25 @@ bool TypeChecker::CheckTypeArguments(const BoundCheck& check) {
     }
   }
   return satisfied;
+}
+
+std::vector<TypeChecker::Type> TypeChecker::ResolveTypeArguments(
+    std::span<const TypeName> arguments) {
+  std::vector<Type> result;
+  result.reserve(arguments.size());
+  for (const auto& argument : arguments) {
+    result.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
+  }
+  return result;
+}
+
+void TypeChecker::ResolveNominalArguments(const Program& program) {
+  for (const auto& [name, origin] : program.origins) {
+    if (origin.arguments.empty() || origin.kind == DeclarationKind::Function) {
+      continue;
+    }
+    generic_arguments_.insert_or_assign(name, ResolveTypeArguments(origin.arguments));
+  }
 }
 
 void TypeChecker::RegisterApplications() {
@@ -257,14 +274,14 @@ void TypeChecker::RegisterApplications() {
     } else if (const auto* alias = specializer_->AliasTemplate(application.name)) {
       parameters = alias->type_parameters;
     }
-    if (parameters.empty() || parameters.size() != application.arguments.size() ||
+    if (parameters.size() != application.arguments.size() ||
         std::ranges::none_of(parameters,
                              [](const auto& parameter) { return parameter.bound.has_value(); })) {
       continue;
     }
     pending_applications_.push_back({
         .owner = application.name,
-        .parameters = std::vector<TypeParameter>(parameters.begin(), parameters.end()),
+        .parameters = parameters,
         .arguments = std::move(application.arguments),
         .location = application.location,
     });
@@ -279,13 +296,9 @@ bool TypeChecker::DrainBoundChecks() {
     while (!pending_applications_.empty()) {
       auto application = std::move(pending_applications_.back());
       pending_applications_.pop_back();
-      std::vector<Type> arguments;
-      arguments.reserve(application.arguments.size());
-      for (const auto& argument : application.arguments) {
-        arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
-      }
-      QueueBoundCheck(std::move(application.owner), std::move(application.parameters),
-                      std::move(arguments), application.location);
+      auto arguments = ResolveTypeArguments(application.arguments);
+      QueueBoundCheck(std::move(application.owner), application.parameters, std::move(arguments),
+                      application.location);
     }
     while (!bound_checks_.empty()) {
       auto check = std::move(bound_checks_.back());
@@ -299,6 +312,7 @@ bool TypeChecker::DrainBoundChecks() {
 
 void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
   InterfaceDescriptor interface;
+  interface.declaration = &source;
   interface_method_applications_.try_emplace(source.name);
   interface.type = {
       .kind = Type::Kind::Interface,
@@ -328,6 +342,16 @@ void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
 
 void TypeChecker::CheckTemplateFunction(const Function& function, const ClassInfo* owner) {
   const auto errors = ErrorCount(diagnostics_);
+  if (owner != nullptr && !function.attributes.empty()) {
+    CheckAttributeTarget(function.attributes, owner->type, &function,
+                         ReflectionMemberBinding{
+                             .kind = ReflectionMemberKind::Method,
+                             .name = function.name,
+                             .type_arguments = {},
+                         });
+  } else {
+    CheckTopLevelFunctionAttributes(function);
+  }
   CollectCapturedMutableDeclarations(function, captured_declarations_);
   const auto signature = ResolveSignature(function);
   CheckFunctionBody(function, signature, owner);
@@ -348,6 +372,7 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
   const auto found = classes_.find(self.name);
   if (IsValid(self) && found != classes_.end()) {
     const auto& info = found->second;
+    CheckClassAttributes(source, self);
     CollectCapturedMutableDeclarations(source, captured_declarations_);
     CheckClassBody(source, info);
     for (const auto& method : source.method_templates) {
@@ -375,9 +400,12 @@ void TypeChecker::CheckDefinitions(Program& program) {
       ValidateTypeParameters(method.type_parameters);
       static_cast<void>(ResolveSignature(method));
     }
-    static_cast<void>(
+    const auto self =
         ResolveType(SelfApplication(interface.name, interface.type_parameters, interface.location),
-                    VoidTypePolicy::Forbidden));
+                    VoidTypePolicy::Forbidden);
+    if (self.kind == Type::Kind::Interface) {
+      CheckInterfaceAttributes(interface, self);
+    }
   }
   for (const auto& function : templates.functions) {
     ValidateTypeParameters(function.type_parameters);
@@ -411,11 +439,13 @@ void TypeChecker::CheckDefinitions(Program& program) {
       ValidateTypeParameters(method.type_parameters);
       static_cast<void>(ResolveSignature(method));
     }
+    CheckInterfaceTemplateAttributes(interface, interfaces_.at(interface.name).type);
   }
   definitions_ = std::exchange(facts_, {});
   facts_ = std::move(concrete);
   builtin_function_ids_ = std::move(concrete_builtins);
   checking_definitions_ = false;
+  attribute_bindings_.clear();
 }
 
 void TypeChecker::CheckPendingSpecializations() {

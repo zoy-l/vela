@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from aot_benchmarks import compile_workloads
+from aot_benchmarks import compile_workloads, native_image_declaration
 
 
 BATCH = 4096
@@ -119,7 +119,7 @@ def generate(compiler: Path, output: Path) -> None:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>", "#include <cstdint>", "#include <string_view>",
               '#include "runtime/native/native_image.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
+              native_image_declaration(manifest),
               "namespace vela::benchmarks::native_class {",
               "inline const auto* const kImage = " + manifest["image"] + "();",
               "inline constexpr std::uint32_t kReceiver = " + str(indices["receiver"]) + ";",

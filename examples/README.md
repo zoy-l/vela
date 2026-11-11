@@ -41,6 +41,36 @@ For example:
 
 ## Other examples
 
+### Runtime reflection
+
+Copy [reflection/main.vela](reflection/main.vela). The template uses `[Reflect]`
+to register the counter's public members and a selected enum member. Its custom
+`Button extends Reflect` attribute registers `add` and supplies data for
+`Reflect.findMethods<Button>()`. No project configuration is required.
+
+```powershell
+.\out\release\vela.exe check examples\reflection\main.vela
+.\out\release\vela.exe run examples\reflection\main.vela
+```
+
+The example discovers types, constructs a counter, reads and writes a field,
+reads a computed property, invokes a method with a named argument, and reads a
+registered enum member. It prints `Counter`, `20`, `40`, `42`, `true`, `true`,
+`2`, `1`, `true`, and the discovered button label `Add`, each on its own line.
+
+To reuse the saved method descriptor across Hot Reload:
+
+```powershell
+.\out\release\vela.exe dev examples\reflection\main.vela
+```
+
+Enter `.call next` to get `43`. Replace `this.value += amount;` with
+`this.value += amount * 10;` and save. After `accepted`, `.call next` returns
+`53`: the existing descriptor calls the current method and preserves the counter.
+See the [reflection contract](../docs/zh-CN/reflection.md) for the full API.
+
+### Stateful Hot Reload
+
 Run [hot_reload.vela](hot_reload.vela) in the JIT development console:
 
 ```powershell
@@ -51,6 +81,8 @@ Enter `.call next` to get `1`. Change `count += 1` to `count += 10` and save.
 After the console reports `accepted`, `.call next` returns `11`: Hot Reload
 preserves the counter. Enter `.reload`, wait for `accepted`, then `.call next`
 returns `10`: Reload rebuilds script state and reruns `main()`. Use `.quit` to exit.
+
+### Standalone programs
 
 ```powershell
 .\out\debug\vela.exe run examples\hello.vela

@@ -47,11 +47,22 @@
 namespace vela::bindgen {
 namespace {
 
+void ReportError(clang::DiagnosticsEngine& diagnostics,
+                 const std::string& message,
+                 clang::SourceLocation location = {}) {
+  diagnostics.Report(location, diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error, "%0"))
+      << message;
+}
+
+bool IsInaccessible(clang::AccessSpecifier access) {
+  return access == clang::AS_private || access == clang::AS_protected;
+}
+
 std::string RealPath(llvm::StringRef path, clang::DiagnosticsEngine& diagnostics) {
   llvm::SmallString<0> real;
   if (const auto error = llvm::sys::fs::real_path(path, real)) {
-    diagnostics.Report(diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error, "%0"))
-        << "cannot resolve binding input: " + path.str() + ": " + error.message();
+    ReportError(diagnostics,
+                "cannot resolve binding input: " + path.str() + ": " + error.message());
     return {};
   }
   return std::string(real);
@@ -144,25 +155,21 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     const auto& sources = context_->getSourceManager();
     std::vector<std::string> parsed_inputs;
     for (auto file = sources.fileinfo_begin(); file != sources.fileinfo_end(); ++file) {
-      parsed_inputs.push_back(RealPath(file->first.getName(), compiler_->getDiagnostics()));
+      parsed_inputs.push_back(CanonicalPath(file->first.getName()));
     }
     std::ranges::sort(parsed_inputs);
     std::ranges::sort(module.classes, {}, &Class::key);
     for (const auto& header : collection_->headers) {
       if (!std::ranges::binary_search(parsed_inputs, header)) {
-        auto& diagnostics = compiler_->getDiagnostics();
-        diagnostics.Report(diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error, "%0"))
-            << "configured header was not read by the translation unit: " + header;
+        ReportError(compiler_->getDiagnostics(),
+                    "configured header was not read by the translation unit: " + header);
       }
     }
   }
 
  private:
   void Error(const clang::Decl& declaration, const std::string& message) {
-    auto& diagnostics = compiler_->getDiagnostics();
-    diagnostics.Report(declaration.getLocation(),
-                       diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error, "%0"))
-        << message;
+    ReportError(compiler_->getDiagnostics(), message, declaration.getLocation());
   }
 
   static std::optional<std::string> Annotation(const clang::Decl& declaration,
@@ -176,17 +183,20 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     return std::nullopt;
   }
 
-  Source Location(const clang::Decl& declaration) {
-    const auto& sources = context_->getSourceManager();
-    const auto location = sources.getExpansionLoc(declaration.getLocation());
-    const auto filename = sources.getFilename(location);
+  const std::string& CanonicalPath(llvm::StringRef filename) {
     const auto [path, inserted] =
         source_paths_.try_emplace(std::string_view(filename.data(), filename.size()));
     if (inserted) {
       path->second = RealPath(filename, compiler_->getDiagnostics());
     }
+    return path->second;
+  }
+
+  Source Location(const clang::Decl& declaration) {
+    const auto& sources = context_->getSourceManager();
+    const auto location = sources.getExpansionLoc(declaration.getLocation());
     return {
-        .path = path->second,
+        .path = CanonicalPath(sources.getFilename(location)),
         .line = sources.getExpansionLineNumber(location),
         .column = sources.getExpansionColumnNumber(location),
     };
@@ -209,8 +219,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   void CollectClass(clang::CXXRecordDecl& record) {
     if (record.isDependentContext() || llvm::isa<clang::ClassTemplateSpecializationDecl>(record) ||
         (record.isLocalClass() != nullptr) || record.isAnonymousStructOrUnion() ||
-        record.isUnion() || record.getAccess() == clang::AS_private ||
-        record.getAccess() == clang::AS_protected) {
+        record.isUnion() || IsInaccessible(record.getAccess())) {
       Error(record, "host classes must be accessible, named, non-template class definitions");
       return;
     }
@@ -231,8 +240,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     for (const auto* parent = record.getDeclContext(); !parent->isTranslationUnit();
          parent = parent->getParent()) {
       if (const auto* outer = llvm::dyn_cast<clang::CXXRecordDecl>(parent);
-          outer != nullptr &&
-          (outer->getAccess() == clang::AS_private || outer->getAccess() == clang::AS_protected)) {
+          outer != nullptr && IsInaccessible(outer->getAccess())) {
         Error(record, "host class has an inaccessible enclosing class");
         return;
       }
@@ -309,8 +317,8 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     });
   }
 
-  bool SkipLifecycle(const clang::CXXMethodDecl& method) {
-    const auto* constructor = llvm::dyn_cast<clang::CXXConstructorDecl>(&method);
+  bool SkipLifecycle(const clang::CXXMethodDecl& method,
+                     const clang::CXXConstructorDecl* constructor) {
     if (llvm::isa<clang::CXXDestructorDecl>(method) || method.isCopyAssignmentOperator() ||
         method.isMoveAssignmentOperator() ||
         (constructor != nullptr && constructor->isCopyOrMoveConstructor())) {
@@ -325,10 +333,10 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   }
 
   void CollectMethod(clang::CXXMethodDecl& method, Class& output) {
-    if (SkipLifecycle(method)) {
+    const auto* constructor = llvm::dyn_cast<clang::CXXConstructorDecl>(&method);
+    if (SkipLifecycle(method, constructor)) {
       return;
     }
-    const auto* constructor = llvm::dyn_cast<clang::CXXConstructorDecl>(&method);
     if (method.isImmediateFunction() || method.isExplicitObjectMemberFunction()) {
       Error(method,
             "export requires a runtime-callable method without an explicit object parameter; "
@@ -364,18 +372,16 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     const auto explicit_name = Annotation(method, "vela.name:");
     if (explicit_name) {
       member.name = *explicit_name;
-    }
-    if (const auto name = Annotation(method, "vela.getter:")) {
-      member.name = *name;
+    } else if (const auto getter = Annotation(method, "vela.getter:")) {
+      member.name = *getter;
       member.kind = MemberKind::Getter;
-    }
-    if (const auto name = Annotation(method, "vela.setter:")) {
-      member.name = *name;
+    } else if (const auto setter = Annotation(method, "vela.setter:")) {
+      member.name = *setter;
       member.kind = MemberKind::Setter;
     }
     if ((constructor != nullptr && member.kind != MemberKind::Constructor) ||
         (method.isStatic() && member.kind != MemberKind::Static) ||
-        (constructor != nullptr && explicit_name)) {
+        (constructor != nullptr && explicit_name.has_value())) {
       Error(method, "constructor and static method annotations do not define instance properties");
       return;
     }

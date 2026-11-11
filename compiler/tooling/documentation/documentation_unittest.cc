@@ -36,6 +36,30 @@ export class Box { items: Map<string, Map<string, int>> = {'inner': {'answer': 4
       "items: Map<string, Map<string, int>> = {'inner': {'answer': 42}};"));
 }
 
+TEST_F(DocumentationTest, PreservesAttributeDeclarationsDataAndAttachedComments) {
+  const auto result = Generate(R"(
+/// Labels a reflected action.
+export class Button extends Reflect { label: string = ''; }
+/// A reflected counter.
+[Reflect]
+export class Counter {
+  /// Current count.
+  [Reflect]
+  value: int = 0;
+  /// Resets the counter.
+  [Button(label: 'reset')]
+  reset(): void { this.value = 0; }
+}
+)");
+  ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
+  EXPECT_TRUE(result.markdown.contains("class Button extends Reflect"));
+  EXPECT_TRUE(result.markdown.contains("[Reflect]\nclass Counter"));
+  EXPECT_TRUE(result.markdown.contains("[Button(label: 'reset')]\nreset(): void;"));
+  EXPECT_TRUE(result.markdown.contains("A reflected counter."));
+  EXPECT_TRUE(result.markdown.contains("Current count."));
+  EXPECT_TRUE(result.markdown.contains("Resets the counter."));
+}
+
 TEST_F(DocumentationTest, EmitsOnlyExportsInSourceOrderAndPreservesDocComments) {
   const auto result = Generate(R"(
 /// Shared value.

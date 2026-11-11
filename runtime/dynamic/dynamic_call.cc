@@ -3,11 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <tuple>
+
+#include <absl/functional/function_ref.h>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
@@ -46,27 +47,12 @@ DynamicCallPlan ReadDynamicCallPlan(Value value) {
 
 namespace {
 
-constexpr auto kUnassigned = std::numeric_limits<std::uint32_t>::max();
-
 struct ArgumentBinding final {
   const CallSignature* signature = nullptr;
   BoundArguments* bound = nullptr;
   DynamicCallStyle style = DynamicCallStyle::Function;
   std::uint32_t positional = 0;
   bool named = false;
-
-  std::expected<void, ExecutionStatus> BindNames(const HeapObject& names, std::uint32_t count) {
-    for (std::uint32_t index = 0; index < count; ++index) {
-      const auto value = *Heap::GetElement(names, index);
-      if (!value.IsString()) {
-        return std::unexpected(ExecutionStatus::TypeError);
-      }
-      if (const auto result = Bind(value.AsString()->value(), index); !result) {
-        return result;
-      }
-    }
-    return {};
-  }
 
   std::expected<void, ExecutionStatus> Bind(std::string_view name, std::uint32_t index) {
     const auto& call = *signature;
@@ -92,7 +78,7 @@ struct ArgumentBinding final {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     auto& source = output.source_indices.at(*parameter - skipped);
-    if (source != kUnassigned || parameters.at(*parameter).rest) {
+    if (source != BoundArguments::kUnassigned || parameters.at(*parameter).rest) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     source = index;
@@ -101,11 +87,11 @@ struct ArgumentBinding final {
 };
 
 std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
-                                               const HeapObject& arguments,
+                                               absl::FunctionRef<Value(std::uint32_t)> argument,
                                                const BoundArguments& bound,
                                                const ArrayLayout& type) {
   for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
-    if (!Heap::IsValueOfType(*Heap::GetElement(arguments, bound.rest_start + item), type.element)) {
+    if (!Heap::IsValueOfType(argument(bound.rest_start + item), type.element)) {
       return std::unexpected(ExecutionStatus::InvalidCast);
     }
   }
@@ -114,10 +100,75 @@ std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
-    const auto value = *Heap::GetElement(arguments, bound.rest_start + item);
+    const auto value = argument(bound.rest_start + item);
     std::ignore = heap.SetElement(*array, item, UnboxDynamicValue(value, type.element));
   }
   return Value::Object(array);
+}
+
+std::expected<void, ExecutionStatus> CheckRequiredArguments(const CallSignature& signature,
+                                                            const BoundArguments& bound) {
+  for (std::size_t index = 0; index < bound.source_indices.size(); ++index) {
+    const auto& parameter = signature.parameters[bound.skipped + index];
+    if (bound.source_indices[index] == BoundArguments::kUnassigned && !parameter.optional &&
+        !parameter.rest) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+  }
+  return {};
+}
+
+template <class NameAt>
+std::expected<BoundArguments, ExecutionStatus> BindArguments(const CallSignature& signature,
+                                                             std::uint32_t count,
+                                                             std::uint32_t skipped,
+                                                             DynamicCallStyle style,
+                                                             const NameAt& name_at) {
+  const auto& parameters = signature.parameters;
+  if (parameters.size() < skipped) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  BoundArguments bound{
+      .source_indices =
+          BoundArguments::SourceIndices(parameters.size() - skipped, BoundArguments::kUnassigned),
+      .skipped = skipped,
+      .rest_start = count,
+  };
+  ArgumentBinding binding{.signature = &signature, .bound = &bound, .style = style};
+  for (std::uint32_t index = 0; index < count; ++index) {
+    const auto name = name_at(index);
+    if (!name) {
+      return std::unexpected(name.error());
+    }
+    if (const auto result = binding.Bind(*name, index); !result) {
+      return std::unexpected(result.error());
+    }
+  }
+  if (const auto checked = CheckRequiredArguments(signature, bound); !checked) {
+    return std::unexpected(checked.error());
+  }
+  return bound;
+}
+
+std::expected<Value, ExecutionStatus> ReadArgument(Heap& heap,
+                                                   const CallSignature& signature,
+                                                   std::span<const TypeConstraint> types,
+                                                   absl::FunctionRef<Value(std::uint32_t)> argument,
+                                                   const BoundArguments& bound,
+                                                   std::size_t index) {
+  const auto& parameter = signature.parameters[bound.skipped + index];
+  const auto& type = types[parameter.type];
+  if (parameter.rest) {
+    return PackRest(heap, argument, bound, *type.array);
+  }
+  const auto source = bound.source_indices[index];
+  if (source == BoundArguments::kUnassigned) {
+    return Value::Null();
+  }
+  const auto value = argument(source);
+  return Heap::IsValueOfType(value, type)
+             ? std::expected<Value, ExecutionStatus>(UnboxDynamicValue(value, type))
+             : std::unexpected(ExecutionStatus::InvalidCast);
 }
 
 }  // namespace
@@ -139,33 +190,31 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }
-  const auto skipped = hidden - signature.hidden_parameters;
-  const auto& parameters = signature.parameters;
-  if (parameters.size() < skipped) {
+  return BindArguments(
+      signature, *count, hidden - signature.hidden_parameters, style,
+      [&](std::uint32_t index) -> std::expected<std::string_view, ExecutionStatus> {
+        if (names == nullptr) {
+          return std::string_view{};
+        }
+        const auto value = *Heap::GetElement(*names, index);
+        return value.IsString()
+                   ? std::expected<std::string_view, ExecutionStatus>(value.AsString()->value())
+                   : std::unexpected(ExecutionStatus::TypeError);
+      });
+}
+
+std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
+    const CallSignature& signature,
+    std::span<const std::string_view> names,
+    DynamicCallStyle style) {
+  if (names.size() > BoundArguments::kUnassigned) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  BoundArguments bound{
-      .source_indices = BoundArguments::SourceIndices(parameters.size() - skipped, kUnassigned),
-      .skipped = skipped,
-      .rest_start = *count,
-  };
-  ArgumentBinding binding{.signature = &signature, .bound = &bound, .style = style};
-  if (names == nullptr) {
-    for (std::uint32_t index = 0; index < *count; ++index) {
-      if (const auto result = binding.Bind({}, index); !result) {
-        return std::unexpected(result.error());
-      }
-    }
-  } else if (const auto result = binding.BindNames(*names, *count); !result) {
-    return std::unexpected(result.error());
-  }
-  for (std::size_t index = 0; index < bound.source_indices.size(); ++index) {
-    const auto& parameter = parameters.at(skipped + index);
-    if (bound.source_indices.at(index) == kUnassigned && !parameter.optional && !parameter.rest) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-  }
-  return bound;
+  return BindArguments(
+      signature, static_cast<std::uint32_t>(names.size()), 0, style,
+      [&](std::uint32_t index) -> std::expected<std::string_view, ExecutionStatus> {
+        return names[index];
+      });
 }
 
 std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
@@ -174,19 +223,19 @@ std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
                                                           const HeapObject& arguments,
                                                           const BoundArguments& bound,
                                                           std::size_t index) {
-  const auto& parameter = signature.parameters.at(bound.skipped + index);
-  const auto& type = types.subspan(parameter.type).front();
-  if (parameter.rest) {
-    return PackRest(heap, arguments, bound, *type.array);
-  }
-  const auto source = bound.source_indices.at(index);
-  if (source == kUnassigned) {
-    return Value::Null();
-  }
-  const auto value = *Heap::GetElement(arguments, source);
-  return Heap::IsValueOfType(value, type)
-             ? std::expected<Value, ExecutionStatus>(UnboxDynamicValue(value, type))
-             : std::unexpected(ExecutionStatus::InvalidCast);
+  return ReadArgument(
+      heap, signature, types, [&](auto source) { return *Heap::GetElement(arguments, source); },
+      bound, index);
+}
+
+std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
+                                                          const CallSignature& signature,
+                                                          std::span<const TypeConstraint> types,
+                                                          std::span<const Value> arguments,
+                                                          const BoundArguments& bound,
+                                                          std::size_t index) {
+  return ReadArgument(
+      heap, signature, types, [&](auto source) { return arguments[source]; }, bound, index);
 }
 
 }  // namespace vela::runtime

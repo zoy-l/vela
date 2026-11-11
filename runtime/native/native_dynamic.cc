@@ -1,23 +1,20 @@
 #include "runtime/native/native_dynamic.h"
 
-#include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "runtime/dynamic/dynamic_array.h"
 #include "runtime/dynamic/dynamic_call.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
@@ -32,6 +29,11 @@
 
 namespace vela::runtime {
 namespace {
+
+DeclarationId FieldDeclaration(const ClassLayout& layout, std::uint32_t slot) {
+  return layout.storage() == ClassStorage::Reloadable ? layout.field_declarations()[slot]
+                                                      : DeclarationId{};
+}
 
 template <class Action>
 auto InCurrentInstance(NativeExecution& execution, const Action& action) {
@@ -71,37 +73,12 @@ std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
                                                     DynamicCallStyle style) {
   const auto& instance = execution.instance();
   const auto& signature = instance.call_signature(callable.function);
-  const auto types = std::span(instance.layouts().types);
   const auto bound = BindDynamicArguments(signature, callable, arguments, names, style);
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  const auto hidden = callable.implicit ? 1U : 0U;
-  auto& heap = execution.isolate().heap();
-  constexpr std::size_t kInlineArguments = 8;
-  NativeBuffer<Value, kInlineArguments> storage(heap, bound->source_indices.size() + hidden);
-  if (!storage.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  const auto values = storage.values();
-  std::uninitialized_value_construct_n(values.data(), values.size());
-  const RootRange roots(heap, values.data(), values.size(), std::nullopt);
-  if (callable.implicit) {
-    values.front() = *callable.implicit;
-  }
-  for (std::size_t index = 0; index < bound->source_indices.size(); ++index) {
-    const auto value = ReadDynamicArgument(heap, signature, types, arguments, *bound, index);
-    if (!value) {
-      return std::unexpected(value.error());
-    }
-    values.subspan(index + hidden).front() = *value;
-  }
-  NativeBuffer<NativeValue, kInlineArguments> input(heap, values.size());
-  if (!input.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  std::ranges::transform(values, input.values().begin(), EncodeNativeValue);
-  return InvokeNativeTarget(execution, callable.function, input.values());
+  return InvokeBoundNativeTarget(execution, callable.function, signature, *bound, arguments,
+                                 callable.implicit);
 }
 
 std::expected<Value, ExecutionStatus> InvokeFunction(NativeExecution& execution,
@@ -130,16 +107,9 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       const auto& type = member.type;
       auto& object = *receiver.AsObject();
       const auto* layout = Heap::ClassOf(object);
-      auto* dispatch = instance.dispatch();
-      const auto loaded =
-          layout->storage() == ClassStorage::Reloadable
-              ? dispatch->LoadField(execution, object,
-                                    layout->field_declarations().subspan(member.target).front())
-              : std::expected<Value, ExecutionStatus>(Heap::LoadField(object, member.target));
-      if (!loaded) {
-        return std::unexpected(loaded.error());
-      }
-      value = BoxDynamicValue(execution.isolate().heap(), *loaded, layouts.types.at(*type));
+      const auto declaration = FieldDeclaration(*layout, member.target);
+      value =
+          ReadNativeField(execution, receiver, member.target, declaration, layouts.types.at(*type));
       break;
     }
     case MemberKind::Method: {
@@ -184,24 +154,16 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
   } else {
     return std::unexpected(ExecutionStatus::TypeError);
   }
+  if (member.kind == MemberKind::Field) {
+    auto& object = *receiver.AsObject();
+    const auto* layout = Heap::ClassOf(object);
+    const auto declaration = FieldDeclaration(*layout, member.target);
+    return WriteNativeField(execution, receiver, member.target, declaration, original, *type);
+  }
   if (!Heap::IsValueOfType(original, *type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
   const auto value = UnboxDynamicValue(original, *type);
-  if (member.kind == MemberKind::Field) {
-    auto& object = *receiver.AsObject();
-    const auto* layout = Heap::ClassOf(object);
-    if (layout->storage() == ClassStorage::Reloadable) {
-      auto* dispatch = instance.dispatch();
-      const auto stored = dispatch->StoreField(
-          object, layout->field_declarations().subspan(member.target).front(), value);
-      return stored ? std::expected<Value, ExecutionStatus>(original)
-                    : std::unexpected(stored.error());
-    }
-    return execution.isolate().heap().SetField(object, member.target, value).transform([original] {
-      return original;
-    });
-  }
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
   const auto result = InvokeNativeTarget(execution, *setter, input);
   return result ? std::expected<Value, ExecutionStatus>(original) : std::unexpected(result.error());
@@ -241,6 +203,45 @@ std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
 }
 
 }  // namespace
+
+std::expected<Value, ExecutionStatus> ReadNativeField(NativeExecution& execution,
+                                                      Value receiver,
+                                                      std::uint32_t field,
+                                                      DeclarationId declaration,
+                                                      const TypeConstraint& type) {
+  auto& object = *receiver.AsObject();
+  const auto* layout = Heap::ClassOf(object);
+  const auto loaded =
+      layout->storage() == ClassStorage::Reloadable
+          ? execution.instance().dispatch()->LoadField(execution, object, declaration)
+          : std::expected<Value, ExecutionStatus>(Heap::LoadField(object, field));
+  if (!loaded) {
+    return std::unexpected(loaded.error());
+  }
+  return BoxDynamicValue(execution.isolate().heap(), *loaded, type);
+}
+
+std::expected<Value, ExecutionStatus> WriteNativeField(NativeExecution& execution,
+                                                       Value receiver,
+                                                       std::uint32_t field,
+                                                       DeclarationId declaration,
+                                                       Value original,
+                                                       const TypeConstraint& type) {
+  if (!Heap::IsValueOfType(original, type)) {
+    return std::unexpected(ExecutionStatus::InvalidCast);
+  }
+  const auto value = UnboxDynamicValue(original, type);
+  auto& object = *receiver.AsObject();
+  const auto* layout = Heap::ClassOf(object);
+  if (layout->storage() == ClassStorage::Reloadable) {
+    const auto stored = execution.instance().dispatch()->StoreField(object, declaration, value);
+    return stored ? std::expected<Value, ExecutionStatus>(original)
+                  : std::unexpected(stored.error());
+  }
+  return execution.isolate().heap().SetField(object, field, value).transform([original] {
+    return original;
+  });
+}
 
 std::expected<Value, ExecutionStatus> ReadNativeMember(NativeExecution& execution,
                                                        Value receiver,

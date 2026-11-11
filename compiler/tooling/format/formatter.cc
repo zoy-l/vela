@@ -349,6 +349,10 @@ void Formatter::Close(const FormatItem& item, TokenKind next) {
     Newline();
   }
   Text(item.text);
+  if (item.role == TokenRole::AttributeDelimiter) {
+    Newline();
+    return;
+  }
   if (item.kind != TokenKind::RightBrace || scope.role == TokenRole::MapDelimiter) {
     return;
   }
@@ -392,9 +396,13 @@ void Formatter::Comment(const FormatItem& item, std::size_t index) {
     text.remove_suffix(1);
   }
   // 注释文本可以跨行；统一 CRLF 为 LF，保留其余原文。
-  std::string normalized(text);
-  std::erase(normalized, '\r');
-  Text(normalized);
+  if (text.contains('\r')) {
+    std::string normalized(text);
+    std::erase(normalized, '\r');
+    Text(normalized);
+  } else {
+    Text(text);
+  }
   if (item.item == ItemKind::LineComment || text.contains('\n')) {
     Newline();
   } else {
@@ -405,6 +413,8 @@ void Formatter::Comment(const FormatItem& item, std::size_t index) {
 void Formatter::Separate(std::size_t index) {
   const auto& item = items_[index];
   const auto kind = item.kind;
+  const auto declaration = IsDeclarationStart(kind) || (kind == TokenKind::LeftBracket &&
+                                                        item.role == TokenRole::AttributeDelimiter);
   if (index != 0 && output_.ends_with('\n') && !IsClosing(item)) {
     const auto& previous = items_[index - 1];
     const auto previous_end = previous.offset + previous.text.size();
@@ -412,13 +422,13 @@ void Formatter::Separate(std::size_t index) {
     if (gap.find('\n') != gap.rfind('\n')) {
       Blankline();
     }
-    if (scopes_.empty() && previous.item == ItemKind::Syntax && IsDeclarationStart(kind) &&
+    if (scopes_.empty() && previous.item == ItemKind::Syntax && declaration &&
         (previous.kind == TokenKind::Semicolon || previous.kind == TokenKind::RightBrace) &&
         (kind != TokenKind::Import || top_level_kind_ != TokenKind::Import)) {
       Blankline();
     }
   }
-  if (scopes_.empty() && IsDeclarationStart(kind)) {
+  if (scopes_.empty() && declaration) {
     top_level_kind_ = kind;
   }
 }

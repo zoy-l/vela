@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +17,30 @@
 
 namespace vela::compiler::jit {
 namespace {
+
+std::optional<std::vector<ReuseFunction>> ResolveReusableCode(const CodeReuseCache::Source& source,
+                                                              const CodeReuseCache& cache) {
+  std::vector<ReuseFunction> entries;
+  entries.reserve(source.symbols.size());
+  for (const auto& name : source.symbols) {
+    const auto found = cache.functions.find(name);
+    if (found == cache.functions.end()) {
+      return std::nullopt;
+    }
+    const auto& cached = found->second;
+    auto resource = cached.resource.lock();
+    if (!resource) {
+      return std::nullopt;
+    }
+    entries.push_back({
+        .name = name,
+        .symbol = cached.symbol,
+        .resource = std::move(resource),
+        .address = cached.address,
+    });
+  }
+  return entries;
+}
 
 void InvalidateCallers(const std::vector<std::vector<std::size_t>>& callers,
                        std::vector<std::size_t>& changed,
@@ -38,26 +65,18 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
   plan.inputs = std::move(inputs);
   const auto count = plan.inputs.size();
   plan.reused.resize(count);
+  plan.retained.resize(count);
   std::vector<std::vector<std::size_t>> callers(count);
   std::vector<std::size_t> changed;
   for (std::size_t index = 0; index < count; ++index) {
     const auto& input = plan.inputs[index];
     const auto* source = index < cache.sources.size() ? &cache.sources[index] : nullptr;
-    auto reusable = source != nullptr && source->fingerprint == input.fingerprint;
-    if (reusable) {
-      for (const auto& name : source->symbols) {
-        const auto found = cache.functions.find(name);
-        if (found == cache.functions.end()) {
-          reusable = false;
-          break;
-        }
-        auto resource = found->second.resource.lock();
-        if (!resource) {
-          reusable = false;
-          break;
-        }
-        plan.retained.push_back(std::move(resource));
-      }
+    auto retained = source != nullptr && source->fingerprint == input.fingerprint
+                        ? ResolveReusableCode(*source, cache)
+                        : std::nullopt;
+    const auto reusable = retained.has_value();
+    if (retained) {
+      plan.retained[index] = std::move(*retained);
     }
     plan.reused[index] = reusable ? 1 : 0;
     if (!reusable) {
@@ -69,37 +88,45 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
     }
   }
   InvalidateCallers(callers, changed, plan);
+  for (std::size_t index = 0; index < count; ++index) {
+    if (plan.reused[index] == 0) {
+      plan.retained[index].clear();
+    }
+  }
   return plan;
 }
 
 void BindReusableCode(llvm::Module& module,
-                      const CodeReuseCache& cache,
                       const std::vector<std::vector<std::string>>& symbols,
                       std::uint64_t batch,
                       CodeReusePlan& plan) {
+  auto retained = std::move(plan.retained);
+  const auto suffix = "_batch_" + std::to_string(batch);
   for (std::size_t index = 0; index < symbols.size(); ++index) {
     const auto reused = plan.reused[index] != 0;
-    if (!reused) {
+    const auto first = plan.functions.size();
+    if (reused) {
+      auto& entries = retained[index];
+      plan.functions.insert(plan.functions.end(), std::make_move_iterator(entries.begin()),
+                            std::make_move_iterator(entries.end()));
+    } else {
       ++plan.compiled_functions;
-    }
-    for (const auto& name : symbols[index]) {
-      ReuseFunction entry{.name = name, .symbol = {}, .resource = {}};
-      if (reused) {
-        const auto& cached = cache.functions.at(name);
-        entry.resource = cached.resource.lock();
-        entry.address = cached.address;
-        entry.symbol = cached.symbol;
-      } else {
-        entry.symbol = name + "_batch_" + std::to_string(batch);
+      for (const auto& name : symbols[index]) {
+        plan.functions.push_back({
+            .name = name,
+            .symbol = name + suffix,
+            .resource = {},
+        });
       }
-      if (auto* function = module.getFunction(name)) {
+    }
+    for (auto& entry : std::span(plan.functions).subspan(first)) {
+      if (auto* function = module.getFunction(entry.name)) {
         if (reused) {
           function->removeFnAttr(llvm::Attribute::AlwaysInline);
         }
         function->setName(entry.symbol);
         function->setLinkage(llvm::GlobalValue::ExternalLinkage);
       }
-      plan.functions.push_back(std::move(entry));
     }
   }
 }

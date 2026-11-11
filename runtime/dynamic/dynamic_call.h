@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
@@ -31,6 +33,7 @@ struct DynamicCallPlan final {
 [[nodiscard]] DynamicCallPlan ReadDynamicCallPlan(Value value);
 
 struct BoundArguments final {
+  static constexpr auto kUnassigned = std::numeric_limits<std::uint32_t>::max();
   static constexpr std::size_t kInlineCapacity = 8;
   using SourceIndices = absl::InlinedVector<std::uint32_t, kInlineCapacity>;
   SourceIndices source_indices;
@@ -46,12 +49,23 @@ struct BoundArguments final {
     const HeapObject& arguments,
     const HeapObject* names,
     DynamicCallStyle style);
+[[nodiscard]] std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
+    const CallSignature& signature,
+    std::span<const std::string_view> names,
+    DynamicCallStyle style);
 // 返回原生调用参数表示，包含 enum 解箱、缺省空值和 rest 数组分配。
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(
     Heap& heap,
     const CallSignature& signature,
     std::span<const TypeConstraint> types,
     const HeapObject& arguments,
+    const BoundArguments& bound,
+    std::size_t index);
+[[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(
+    Heap& heap,
+    const CallSignature& signature,
+    std::span<const TypeConstraint> types,
+    std::span<const Value> arguments,
     const BoundArguments& bound,
     std::size_t index);
 

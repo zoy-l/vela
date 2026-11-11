@@ -49,6 +49,9 @@ using Diagnostics = std::vector<Diagnostic>;
 void WriteDiagnostic(std::ostream& output,
                      const Diagnostic& diagnostic,
                      std::string_view default_path = {});
+void WriteDiagnostics(std::ostream& output,
+                      std::span<const Diagnostic> diagnostics,
+                      std::string_view default_path = {});
 [[nodiscard]] std::string DiagnosticsText(std::span<const Diagnostic> diagnostics);
 
 }  // namespace vela::frontend

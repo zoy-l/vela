@@ -26,25 +26,11 @@ namespace {
 class TypedJSONProgramTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(TypedJSONProgramTest, ExecutesAndReleasesSessionStateWithGC) {
-  runtime::Isolate isolate(1);
-  const auto baseline = isolate.heap().allocated_bytes();
-  {
-    const auto compiled = test::CompileSource(GetParam(), isolate);
-    ASSERT_FALSE(frontend::HasErrors(compiled.diagnostics))
-        << frontend::DiagnosticsText(compiled.diagnostics);
-    ASSERT_TRUE(compiled.Succeeded());
-    test::ExpectAnswer(*compiled.instance);
-  }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().allocated_bytes(), baseline);
+  test::ExpectReleasedAnswer(GetParam());
 }
 
 TEST_P(TypedJSONProgramTest, RestoresWithoutCompilerState) {
-  runtime::Isolate isolate(1);
-  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
-  ASSERT_TRUE(loaded) << loaded.error();
-  test::ExpectAnswer(**loaded);
+  test::ExpectRestoredAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -259,9 +245,7 @@ TEST(TypedJSONExecutionTest, PreservesPresenceMasksAcrossMultipleWords) {
     return value.field1 == 1 && value.field68 == 1 ? value.field0 + value.field69 : 0;
   })";
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(source, isolate);
 }
 
 TEST(TypedJSONExecutionTest, MaterializesDeepRecursiveClassesWithBoundedNativeStack) {
@@ -284,9 +268,7 @@ func main(): int {
   return count == 1500 ? 42 : 0;
 })";
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(source, isolate);
 }
 
 TEST(TypedJSONExecutionTest, ReleasesFailedAllocationsAndReusesTheSameInstance) {
@@ -419,11 +401,7 @@ export func plain(): int { return JSON.parse<int>('42'); }
 }
 
 TEST_P(TypedJSONDiagnosticTest, RejectsInvalidTargetAndAPIContracts) {
-  runtime::Isolate isolate;
-  const auto compiled = test::CompileSource(GetParam(), isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(frontend::HasErrors(compiled.diagnostics))
-      << frontend::DiagnosticsText(compiled.diagnostics);
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

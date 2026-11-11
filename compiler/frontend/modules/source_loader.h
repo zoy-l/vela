@@ -12,9 +12,14 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/module_binding.h"
 #include "compiler/frontend/modules/source_file.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 
 namespace vela::frontend {
+
+[[nodiscard]] bool IsFileModule(std::string_view module);
+[[nodiscard]] std::vector<std::string> ReflectionFileModules(
+    std::span<const ReflectionSelection> selections);
 
 struct SourceInput final {
   std::string_view path;
@@ -38,6 +43,7 @@ struct ModuleGraph final {
   std::vector<FileResolution> file_resolutions;
   Diagnostics diagnostics;
   Diagnostics syntax_diagnostics;
+  std::vector<ReflectionSelection> standard_reflection;
 };
 
 struct CapturedSources final {
@@ -53,6 +59,12 @@ struct CapturedSources final {
                                                  std::span<const SourceInput> overlays,
                                                  const ModuleCache* accepted = nullptr);
 
+// 已解析的根来自内存；路径只定义模块身份和相对导入基址，磁盘依赖仍通过文件边界验证。
+[[nodiscard]] CapturedSources CapturePreparedSourceFiles(std::string_view path,
+                                                         std::shared_ptr<const ParsedSource> source,
+                                                         ModuleCache& cache,
+                                                         const ModuleCache* accepted = nullptr);
+
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::string_view path);
 [[nodiscard]] ParseResult BindModuleGraph(
     ModuleGraph graph,
@@ -62,24 +74,25 @@ struct CapturedSources final {
 [[nodiscard]] std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
                                                       std::filesystem::path imported);
 
-[[nodiscard]] ParseResult LoadPreparedProgram(std::string_view path,
-                                              ParsedSource source,
-                                              ModuleCache& cache);
-
 // 路径使用 UTF-8；覆盖内容只在加载期间借用，可用于编辑器未保存的模块。
 [[nodiscard]] ParseResult LoadProgram(std::string_view path,
                                       std::span<const SourceInput> overlays = {},
-                                      SourceLoadMode mode = SourceLoadMode::Compilation);
+                                      SourceLoadMode mode = SourceLoadMode::Compilation,
+                                      std::span<const ReflectionSelection> reflection = {});
 // 一批根模块共享不可变解析快照；编辑变化由新的 cache 批次隔离。
 [[nodiscard]] ParseResult LoadProgram(std::string_view path,
                                       ModuleCache& cache,
                                       std::span<const SourceInput> overlays,
-                                      SourceLoadMode mode = SourceLoadMode::Compilation);
+                                      SourceLoadMode mode = SourceLoadMode::Compilation,
+                                      std::span<const ReflectionSelection> reflection = {});
 // 内存模块只从给定输入解析依赖，不隐式读取磁盘；entry 的模块编号为零。
-[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry);
+[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
+                                      std::string_view entry,
+                                      std::span<const ReflectionSelection> reflection = {});
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
                                       std::span<const std::string> roots,
                                       ModuleCache& cache,
-                                      std::span<const std::string> retained_standard_names = {});
+                                      std::span<const std::string> retained_standard_names = {},
+                                      std::span<const ReflectionSelection> reflection = {});
 
 }  // namespace vela::frontend

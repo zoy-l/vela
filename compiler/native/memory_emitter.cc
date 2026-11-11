@@ -187,18 +187,23 @@ llvm::Value* FunctionEmitter::ReadStoredValue(StoredValueAddress address, const 
   return MakeOptional(builder_, present, value, type);
 }
 
-void FunctionEmitter::WriteHeapValue(llvm::Value* address,
-                                     ir::RegisterId reg,
-                                     MemoryRegion region) {
-  WriteStoredValue(RecordAddress(address, region), reg);
+FunctionEmitter::StoredValue FunctionEmitter::LoadStoredValue(ir::RegisterId reg) {
+  return {.type = &source_.value_types.at(reg), .value = Load(reg), .encoded = nullptr};
+}
+
+llvm::Value* FunctionEmitter::EncodeStoredValue(StoredValue& value) {
+  if (value.encoded == nullptr) {
+    value.encoded = EncodeValue(builder_, value.value, *value.type);
+  }
+  return value.encoded;
 }
 
 void FunctionEmitter::WriteStoredValue(StoredValueAddress address,
-                                       ir::RegisterId reg,
+                                       StoredValue& stored,
                                        FieldKindWrite kind_write) {
-  const auto& type = source_.value_types.at(reg);
-  auto* value = Load(reg);
-  auto* encoded = EncodeValue(builder_, value, type);
+  const auto& type = *stored.type;
+  auto* value = stored.value;
+  auto* encoded = EncodeStoredValue(stored);
   if (IsReferenceKind(type.kind)) {
     // 用指针类型保留别名信息；不能将托管指针经整数运算后再写入对象。
     StoreMemory(value, address.payload, address.payload_region);
@@ -210,15 +215,15 @@ void FunctionEmitter::WriteStoredValue(StoredValueAddress address,
   }
 }
 
-void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) {
+void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, StoredValue& stored) {
   using runtime::NativeMemoryLayout;
-  const auto& type = source_.value_types.at(reg);
+  const auto& type = *stored.type;
   const auto kind = type.kind;
   if (kind != Kind::Dynamic && !IsReferenceKind(kind)) {
     return;
   }
-  auto* value = Load(reg);
-  auto* encoded = EncodeValue(builder_, value, type);
+  auto* value = stored.value;
+  auto* encoded = EncodeStoredValue(stored);
   llvm::Value* reference = nullptr;
   if (kind == Kind::Dynamic) {
     auto* tag = builder_.CreateExtractValue(encoded, 1);
@@ -281,8 +286,9 @@ void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
     const auto& type = source_.value_types.at(instruction.dst);
     Store(instruction.dst, ReadStoredValue(address, type), type);
   } else {
-    WriteStoredValue(address, instruction.lhs, field_kind_writes_.at(instruction_index_));
-    EmitWriteBarrier(object, instruction.lhs);
+    auto value = LoadStoredValue(instruction.lhs);
+    WriteStoredValue(address, value, field_kind_writes_.at(instruction_index_));
+    EmitWriteBarrier(object, value);
   }
 }
 
@@ -639,21 +645,21 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
     }
     Store(instruction.dst, value, tagged ? type : ElementValueType(element));
   } else {
-    WriteElement(address, element, instruction.rhs);
-    EmitWriteBarrier(array, instruction.rhs);
+    auto value = LoadStoredValue(instruction.rhs);
+    WriteElement(address, element, value);
+    EmitWriteBarrier(array, value);
   }
 }
 
 void FunctionEmitter::WriteElement(llvm::Value* address,
                                    const layout::Type& element,
-                                   ir::RegisterId reg) {
+                                   StoredValue& stored) {
   auto* storage = ElementStorage(element);
   if (storage == NativeRecordType(module_.getContext())) {
-    WriteHeapValue(address, reg);
+    WriteStoredValue(RecordAddress(address, MemoryRegion::Values), stored);
     return;
   }
-  auto* value =
-      Convert(builder_, Load(reg), source_.value_types.at(reg), ElementValueType(element));
+  auto* value = Convert(builder_, stored.value, *stored.type, ElementValueType(element));
   if (storage == builder_.getInt8Ty()) {
     value = builder_.CreateZExt(value, storage);
   }
@@ -716,14 +722,15 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   auto* storage = ElementStorage(element);
   auto* address = builder_.CreateGEP(
       storage, data, builder_.CreateZExt(length, builder_.getInt64Ty()), "array.element");
-  WriteElement(address, element, reg);
+  auto value = LoadStoredValue(reg);
+  WriteElement(address, element, value);
   auto* next_length = builder_.CreateNUWAdd(length, builder_.getInt32(1));
   StoreMemory(next_length, length_address, MemoryRegion::HeapHeader);
   auto* mutation_address = ByteAddress(array, NativeMemoryLayout::kArrayMutation);
   auto* mutation = LoadMemory(builder_.getInt64Ty(), mutation_address, MemoryRegion::HeapHeader);
   StoreMemory(builder_.CreateAdd(mutation, builder_.getInt64(1)), mutation_address,
               MemoryRegion::HeapHeader);
-  EmitWriteBarrier(array, reg);
+  EmitWriteBarrier(array, value);
   Store(instruction.dst, builder_.CreateZExt(next_length, builder_.getInt64Ty()),
         {.kind = Kind::Int, .name = frontend::kIntTypeName});
   builder_.CreateBr(done);

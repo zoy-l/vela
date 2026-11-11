@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -22,13 +23,7 @@ TEST_P(DynamicArrayExecutionTest, RunsTypedGrowthAndMutationThroughNativeImagesA
   auto& heap = isolate.heap();
   heap.FinishCollection();
   heap.Collect();
-  const auto baseline = heap.object_count();
-  const auto result = test::ExecuteInteger(**program);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-  heap.FinishCollection();
-  heap.Collect();
-  EXPECT_EQ(heap.object_count(), baseline);
+  test::ExpectStableAnswer(**program);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionPaths,

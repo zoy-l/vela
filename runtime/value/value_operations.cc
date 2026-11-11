@@ -1,4 +1,5 @@
 #include "runtime/value/value_operations.h"
+#include "runtime/reflection/reflection_handle.h"
 
 #include <array>
 #include <cstdint>
@@ -66,6 +67,9 @@ bool IsEqualValue(Value left, Value right) noexcept {
       const auto* left_object = left.AsObject();
       const auto* right_object = right.AsObject();
       const auto* layout = Heap::ClassOf(*left_object);
+      if (layout != nullptr && layout->HasReflectionIdentity()) {
+        return IsEqualReflectionIdentity(*left_object, *right_object);
+      }
       if (layout != nullptr && layout->IsEnum()) {
         const auto* right_layout = Heap::ClassOf(*right_object);
         return right_layout != nullptr &&

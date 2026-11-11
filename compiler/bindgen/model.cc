@@ -40,7 +40,7 @@ std::string_view TypeName(const layout::Program& program, const layout::Type& ty
     case Kind::Timer:
       return layout::ScalarTypeName(type.kind);
     case Kind::Instance:
-      return program.classes.at(type.index).kind == layout::Class::Kind::Host ? "host" : "object";
+      return program.classes[type.index].kind == layout::Class::Kind::Host ? "host" : "object";
     case Kind::Enum:
       return "enum";
     case Kind::Interface:
@@ -48,7 +48,7 @@ std::string_view TypeName(const layout::Program& program, const layout::Type& ty
     case Kind::Array:
       return "array";
     case Kind::Collection:
-      return program.collections.at(type.index).value ? "map" : "set";
+      return program.collections[type.index].value ? "map" : "set";
     case Kind::Callable:
       return "function";
     case Kind::Future:
@@ -103,7 +103,7 @@ llvm::json::Object SerializeShape(const layout::Program& program,
   switch (type->kind) {
     case Kind::Instance:
     case Kind::Enum: {
-      const auto& nominal = program.classes.at(type->index);
+      const auto& nominal = program.classes[type->index];
       result["key"] = nominal.native_key.empty() ? nominal.name : nominal.native_key;
       if (nominal.kind != layout::Class::Kind::Host) {
         describe_origin(nominal.name);
@@ -111,16 +111,16 @@ llvm::json::Object SerializeShape(const layout::Program& program,
       break;
     }
     case Kind::Interface: {
-      const auto& key = program.interfaces.at(type->index);
+      const auto& key = program.interfaces[type->index];
       result["key"] = key;
       describe_origin(key);
       break;
     }
     case Kind::Array:
-      result["element"] = SerializeShape(program, program.arrays.at(type->index).element);
+      result["element"] = SerializeShape(program, program.arrays[type->index].element);
       break;
     case Kind::Collection: {
-      const auto& collection = program.collections.at(type->index);
+      const auto& collection = program.collections[type->index];
       result["key_type"] = SerializeShape(program, collection.key);
       if (collection.value) {
         result["value_type"] = SerializeShape(program, collection.value);
@@ -130,7 +130,7 @@ llvm::json::Object SerializeShape(const layout::Program& program,
     case Kind::Callable:
     case Kind::Future:
     case Kind::Completer: {
-      const auto& signature = program.signatures.at(type->index);
+      const auto& signature = program.signatures[type->index];
       llvm::json::Array parameters;
       for (const auto& parameter : signature.parameters) {
         parameters.push_back(SerializeShape(program, parameter.type));

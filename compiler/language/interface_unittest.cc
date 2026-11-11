@@ -3,7 +3,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -21,14 +21,12 @@ class Answer implements Used { read(): int { return 42; } }
 func main(): int { const answer: Used = Answer(); return answer.read(); }
 )";
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(source, isolate);
 }
 
 TEST(InterfaceTest, DispatchesConcreteImplementationsAndBindsMethodValues) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 interface Measurable { measure(): int; }
 class Rectangle implements Measurable {
   width: int;
@@ -47,16 +45,13 @@ func main(): int {
   return area(items[0]) + bound();
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 class InterfaceErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InterfaceErrorTest, RejectsMissingOrIncompatibleExplicitImplementations) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

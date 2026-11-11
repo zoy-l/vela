@@ -122,10 +122,7 @@ func forever(): int {
   while (true) { for (const value in [1]) { break; } }
 }
 )");
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(ControlFlowTest, ForEachRejectsNullableCollectionsAndInvalidatesCapturedFacts) {
@@ -146,10 +143,7 @@ class CompleteReturnTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(CompleteReturnTest, AcceptsAllFiniteExitsReturningAValue) {
   const auto checked = CheckTestSource(GetParam());
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -196,10 +190,7 @@ TEST(ControlFlowTest, IntersectsConstructorFieldsAcrossBitmapWords) {
     source += "} } }";
     const auto checked = CheckTestSource(source);
     if (omitted < 0) {
-      for (const auto& diagnostic : checked.diagnostics) {
-        ADD_FAILURE() << diagnostic.message;
-      }
-      EXPECT_TRUE(checked.Succeeded());
+      EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
     } else {
       ASSERT_EQ(checked.diagnostics.size(), 1U);
       EXPECT_TRUE(checked.diagnostics.front().message.contains(

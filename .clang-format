@@ -1,5 +1,6 @@
 BasedOnStyle: Chromium
 ColumnLimit: 100
+LineEnding: LF
 DerivePointerAlignment: false
 FixNamespaceComments: false
 PointerAlignment: Left

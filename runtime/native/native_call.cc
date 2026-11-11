@@ -15,6 +15,7 @@
 #include "runtime/async/future.h"
 #include "runtime/async/future_composition.h"
 #include "runtime/async/future_operations.h"
+#include "runtime/dynamic/dynamic_call.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
@@ -30,6 +31,50 @@
 
 namespace vela::runtime {
 namespace {
+
+template <class Arguments>
+std::expected<Value, ExecutionStatus> InvokeBoundTarget(NativeExecution& execution,
+                                                        std::uint32_t function,
+                                                        const CallSignature& signature,
+                                                        const BoundArguments& bound,
+                                                        const Arguments& input,
+                                                        std::optional<Value> receiver,
+                                                        NativeArgumentPresence presence) {
+  auto& heap = execution.isolate().heap();
+  const auto count = bound.source_indices.size();
+  const auto hidden = receiver ? 1U : 0U;
+  const auto append_presence = presence == NativeArgumentPresence::Included;
+  constexpr std::size_t kInlineArguments = 8;
+  NativeBuffer<Value, kInlineArguments> storage(heap,
+                                                hidden + count + (append_presence ? count : 0));
+  if (!storage.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto values = storage.values();
+  std::uninitialized_value_construct_n(values.data(), values.size());
+  const RootRange roots(heap, values.data(), values.size(), std::nullopt);
+  if (receiver) {
+    values.front() = *receiver;
+  }
+  const auto& types = execution.instance().layouts().types;
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto value = ReadDynamicArgument(heap, signature, types, input, bound, index);
+    if (!value) {
+      return std::unexpected(value.error());
+    }
+    values[hidden + index] = *value;
+    if (append_presence) {
+      values[hidden + count + index] =
+          Value::Boolean(bound.source_indices[index] != BoundArguments::kUnassigned);
+    }
+  }
+  NativeBuffer<NativeValue, kInlineArguments> encoded(heap, values.size());
+  if (!encoded.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  std::ranges::transform(values, encoded.values().begin(), EncodeNativeValue);
+  return InvokeNativeTarget(execution, function, encoded.values());
+}
 
 struct NativeCallDomain final {
   Isolate* isolate;
@@ -236,6 +281,26 @@ std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& exec
 }
 
 }  // namespace
+
+std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(NativeExecution& execution,
+                                                              std::uint32_t function,
+                                                              const CallSignature& signature,
+                                                              const BoundArguments& bound,
+                                                              const HeapObject& arguments,
+                                                              std::optional<Value> receiver) {
+  return InvokeBoundTarget(execution, function, signature, bound, arguments, receiver,
+                           NativeArgumentPresence::Absent);
+}
+
+std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(NativeExecution& execution,
+                                                              std::uint32_t function,
+                                                              const CallSignature& signature,
+                                                              const BoundArguments& bound,
+                                                              std::span<const Value> arguments,
+                                                              std::optional<Value> receiver,
+                                                              NativeArgumentPresence presence) {
+  return InvokeBoundTarget(execution, function, signature, bound, arguments, receiver, presence);
+}
 
 std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
     NativeExecution& execution,

@@ -3,15 +3,103 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <gtest/gtest.h>
 
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/parser.h"
 #include "compiler/tooling/semantic/semantic_index.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
 namespace {
+
+TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutAnImport) {
+  const std::string source = "func main(): void { Reflect.typeI; }";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto completions = index.Complete(source.find("typeI") + 5);
+  const auto function = std::ranges::find(completions, "typeInfo", &Completion::label);
+  ASSERT_NE(function, completions.end());
+  EXPECT_EQ(function->kind, CompletionKind::Method);
+  EXPECT_NE(function->detail.find("<T>"), std::string::npos);
+  EXPECT_FALSE(function->documentation.empty());
+}
+
+TEST(SemanticAttributeTest, ResolvesAttributeTypesArgumentsAndCommentsThroughNormalSymbols) {
+  const std::string source = R"(
+/// Labels a method.
+class Button extends Reflect { label: string = ''; }
+class Counter {
+  /// Runs the action.
+  [Button(label: 'run')]
+  run(): void {}
+}
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto type = index.FindDefinition(source.find("[Button") + 1, PositionEncoding::Utf8);
+  const auto field = index.FindDefinition(source.find("label: 'run'"), PositionEncoding::Utf8);
+  if (!type || !field) {
+    ADD_FAILURE() << "missing attribute type or argument definition";
+    return;
+  }
+  const auto text = SourceText::Create(source);
+  ASSERT_TRUE(text);
+  EXPECT_EQ(type->range.start,
+            text->PositionAt(source.find("class Button") + 6, PositionEncoding::Utf8));
+  EXPECT_EQ(field->range.start,
+            text->PositionAt(source.find("label: string"), PositionEncoding::Utf8));
+  const auto hover = index.FindHover(source.find("run():"), PositionEncoding::Utf8);
+  if (!hover) {
+    ADD_FAILURE() << "missing annotated method hover";
+    return;
+  }
+  EXPECT_EQ(hover->documentation, "Runs the action.");
+  const auto argument = index.FindHover(source.find("label: 'run'"), PositionEncoding::Utf8);
+  if (!argument) {
+    ADD_FAILURE() << "missing attribute argument hover";
+    return;
+  }
+  EXPECT_TRUE(argument->signature.contains("Button.label"));
+  const auto tokens = index.SemanticTokens(PositionEncoding::Utf8);
+  const auto position = text->PositionAt(source.find("[Button") + 1, PositionEncoding::Utf8);
+  const auto annotation = std::ranges::find(tokens, position, &SemanticToken::position);
+  ASSERT_NE(annotation, tokens.end());
+  EXPECT_EQ(annotation->kind, SemanticTokenKind::Class);
+}
+
+TEST(SemanticAttributeTest, CompletesNamedDataUsingGeneratedConstructorSignatures) {
+  const std::string header =
+      "class Button extends Reflect { label: string = ''; enabled: bool = true; } "
+      "class Tag<T> extends Reflect { value: T; } ";
+  const auto cases = std::to_array<std::pair<std::string_view, std::string_view>>({
+      {"[Button(la|)] class Counter {}", "label:"},
+      {"[Button(label: 'x', |)] class Counter {}", "enabled:"},
+      {"[Button(en|] class Counter {}", "enabled:"},
+      {"[Tag<int>(va|)] class Counter {}", "value:"},
+  });
+  for (const auto& [annotation, expected] : cases) {
+    auto source = header + std::string(annotation);
+    const auto offset = source.find('|');
+    source.erase(offset, 1);
+    const auto parsed = frontend::ParseSourceSnapshot(source);
+    const auto query = PrepareArgumentCompletion(*parsed.source, offset);
+    if (!query) {
+      ADD_FAILURE() << "missing attribute argument query: " << source;
+      continue;
+    }
+    const frontend::SourceInput input{.path = "main.vela", .text = query->source};
+    const SemanticIndex index(input.path, std::span(&input, 1));
+    const auto completions = index.CompleteArguments(*query);
+    ASSERT_EQ(completions.size(), 1U) << query->source;
+    EXPECT_EQ(completions.front().label, expected);
+    if (expected == "value:") {
+      EXPECT_TRUE(completions.front().detail.contains("int"));
+    }
+  }
+}
 
 TEST(SemanticCompletionTest, LocalShadowingAndBuiltinConstructorsKeepTheirDetails) {
   const std::string source = "func main(): void { const sleep = 42; sleep; ByteArray(1); }";

@@ -33,6 +33,8 @@ source_set("base") {
     "path.cc",
     "path.h",
     "process_exit.h",
+    "reflection.h",
+    "reflection_operation.h",
     "regexp.h",
     "source_lines.cc",
     "source_lines.h",
@@ -89,6 +91,7 @@ source_set("temporary_directory") {
 
 source_set("test_directory") {
   testonly = true
+  deps = [ ":base" ]
   sources = [
     "testing/directory.cc",
     "testing/directory.h",

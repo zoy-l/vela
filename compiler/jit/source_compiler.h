@@ -2,9 +2,11 @@
 
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/jit/compiler.h"
 
@@ -13,6 +15,7 @@ namespace vela::compiler::jit {
 struct SourceOptions final {
   frontend::DiagnosticOptions diagnostics;
   CompileOptions compilation;
+  std::vector<frontend::ReflectionSelection> reflection;
 };
 
 struct SourceResult final {

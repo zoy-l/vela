@@ -80,6 +80,11 @@ TypeChecker::Type TypeChecker::MakeFutureType(const Expression& expression, cons
   });
 }
 
+bool TypeChecker::IsVoidCallbackResult(const Type& type) const {
+  return type.kind == Kind::Void || (type.kind == Kind::Future && !type.nullable &&
+                                     generic_arguments_.at(type.name).front().kind == Kind::Void);
+}
+
 TypeChecker::Type TypeChecker::CheckAsyncCallback(const Expression& expression,
                                                   std::span<const Type> parameters,
                                                   CallbackPresence presence,
@@ -217,8 +222,7 @@ void TypeChecker::AddFutureCleanup(const Expression& expression,
     if (callback.parameters.size() == 1 && !CanAssign(callback.parameters.front().type, element)) {
       AddDiagnostic(expression.location, "cleanUp parameter must accept the input element type");
     }
-    if (callback.return_type.kind != Kind::Void &&
-        !IsSameType(callback.return_type, MakeFutureType(expression, kVoid))) {
+    if (!IsVoidCallbackResult(callback.return_type)) {
       AddDiagnostic(expression.location, "cleanUp must return void or Future<void>");
     }
     callback_type = NullableType(*type);
@@ -342,7 +346,7 @@ TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
     return type;
   }
   const auto returned = function_types_.at(type.name).return_type;
-  if (returned.kind != Kind::Void && !IsSameType(returned, MakeFutureType(expression, kVoid))) {
+  if (!IsVoidCallbackResult(returned)) {
     AddDiagnostic(expression.location, "Timer callback must return void or Future<void>");
   }
   auto signature = MakeAsyncSignature(*contract, types_.at(kTimerTypeName), std::array{kInt, type});
@@ -358,19 +362,17 @@ TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
 
 TypeChecker::Type TypeChecker::CheckAsyncProperty(const Expression& expression,
                                                   const Type& receiver) {
-  FunctionInfo signature;
+  Type result;
   AsyncOperation operation = AsyncOperation::Count;
   if (receiver.kind == Kind::Completer && expression.text == "future") {
-    signature.return_type =
-        MakeFutureType(expression, generic_arguments_.at(receiver.name).front());
+    result = MakeFutureType(expression, generic_arguments_.at(receiver.name).front());
     operation = AsyncOperation::CompleterFuture;
   } else {
-    signature.return_type = kBool;
+    result = kBool;
     operation = receiver.kind == Kind::Completer ? AsyncOperation::CompleterIsCompleted
                                                  : AsyncOperation::CancellationIsCancelled;
   }
-  const auto result = signature.return_type;
-  signature = MakeAsyncSignature(
+  auto signature = MakeAsyncSignature(
       *FindAsyncMember(receiver.kind, MemberStorage::Instance, expression.text), result, {});
   facts_.async_calls.insert_or_assign(&expression, AsyncCallDescriptor{
                                                        .operation = operation,
@@ -384,7 +386,7 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
                                                     const Type& receiver) {
   const bool error = expression.callee->text == "completeError";
   const auto element = generic_arguments_.at(receiver.name).front();
-  static_cast<void>(MakeFutureType(expression, element));
+  const auto future = MakeFutureType(expression, element);
   AsyncCallDescriptor descriptor{
       .operation = error ? AsyncOperation::CompleterError : AsyncOperation::CompleterComplete,
       .signature = {},
@@ -401,7 +403,7 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
       checked.at(*input) = type;
       const bool valid = error ? IsThrowable(type)
                                : type.kind == Kind::Dynamic || CanAssign(element, type) ||
-                                     IsSameType(MakeFutureType(expression, element), type);
+                                     IsSameType(future, type);
       if (!valid) {
         AddDiagnostic(expression.location, "Completer payload does not match its contract");
       }
@@ -415,6 +417,7 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
 
 TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
                                             FunctionInfo& signature,
+                                            const Type& on_value,
                                             std::vector<std::optional<Type>>& checked) {
   auto error_type = types_.at(kErrorTypeName);
   FunctionInfo context;
@@ -434,8 +437,7 @@ TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
     callback = NullableType(*type);
   }
   signature = MakeAsyncSignature(*FindAsyncMember(Kind::Future, MemberStorage::Instance, "then"),
-                                 signature.return_type,
-                                 std::array{signature.parameters.front().type, callback});
+                                 signature.return_type, std::array{on_value, callback});
   return error_type;
 }
 
@@ -488,17 +490,19 @@ TypeChecker::Type TypeChecker::CheckFutureCallback(const Expression& expression,
   if (!then && !cleanup && !CanAssign(receiver, output)) {
     AddDiagnostic(expression.location, "catchError callback must return the Future value type");
   }
-  if (cleanup && !IsSameType(output, MakeFutureType(expression, kVoid))) {
+  if (cleanup && !IsVoidCallbackResult(callback_signature.return_type)) {
     AddDiagnostic(expression.location, "whenComplete action must return void or Future<void>");
   }
-  signature = MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, method),
-                                 signature.return_type, std::array{callback});
+  if (!then) {
+    signature = MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, method),
+                                   signature.return_type, std::array{callback});
+  }
   std::vector<std::optional<Type>> checked(expression.arguments.size());
   checked.at(*input) = callback;
   if (!cleanup) {
     auto error_type = types_.at(kErrorTypeName);
     if (then) {
-      error_type = AddThenError(expression, signature, checked);
+      error_type = AddThenError(expression, signature, callback, checked);
     } else if (callback_signature.parameters.size() == 1) {
       error_type = callback_signature.parameters.front().type;
     }

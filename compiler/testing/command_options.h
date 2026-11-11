@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <iosfwd>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,5 +34,6 @@ struct TestCommandOptions final {
 
 [[nodiscard]] std::expected<TestCommandOptions, std::string> ParseTestCommandOptions(
     std::span<const std::string_view> arguments);
+void WriteTestCommandHelp(std::ostream& output);
 
 }  // namespace vela::testing

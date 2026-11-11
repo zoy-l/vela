@@ -21,6 +21,7 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 
 namespace vela::compiler {
 
@@ -49,6 +50,7 @@ class DevelopmentFiles final {
  private:
   enum class GraphTracking : std::uint8_t { Existing, Expanded };
   std::expected<void, frontend::Diagnostics> Track(const std::string& path);
+  std::expected<void, frontend::Diagnostics> TrackReferences();
   std::expected<void, frontend::Diagnostics> WatchDirectories(
       const std::string& path,
       std::span<const std::filesystem::path> directories);
@@ -78,6 +80,8 @@ class DevelopmentFiles final {
       const CompiledSourceSnapshot& previous);
   std::expected<SourceUpdate, frontend::Diagnostics> CaptureAll(
       const CompiledSourceSnapshot& previous);
+  std::expected<void, frontend::Diagnostics> ReadReflectionConfiguration();
+  [[nodiscard]] bool HasPending() const;
   std::optional<std::string_view> CapturedText(const CompiledSourceSnapshot& previous,
                                                const std::string& path) const;
   std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> CaptureChanges(
@@ -111,6 +115,10 @@ class DevelopmentFiles final {
   absl::flat_hash_map<std::string, std::size_t> pending_indices_;
   absl::flat_hash_map<std::string, std::string> aliases_;
   bool rebase_pending_ = false;
+  std::vector<frontend::ReflectionSelection> reflection_;
+  bool reflection_changed_ = false;
+  absl::flat_hash_set<std::string> configuration_paths_;
+  bool configuration_invalid_ = false;
 };
 
 }  // namespace vela::compiler

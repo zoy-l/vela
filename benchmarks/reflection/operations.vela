@@ -1,0 +1,86 @@
+const info = Reflect.typeInfo<Counter>();
+const module = info.module as string;
+const field = info.findField('value') as FieldInfo;
+const method = info.findMethod('add') as MethodInfo;
+const ctor = info.getConstructor() as ConstructorInfo;
+const argument = CallArgument(value: 0);
+const arguments = CallArguments(items: [argument]);
+export func reflectedField(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { field.setValue(object, values[i]); sum += field.getValue(object) as int; }
+  return sum;
+}
+export func reflectedCall(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    argument.value = values[i];
+    sum += method.invoke(object, arguments) as int;
+  }
+  return sum;
+}
+export func packedCall(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += method.invoke(object, CallArguments(items: [CallArgument(value: values[i])])) as int;
+  }
+  return sum;
+}
+export func memberField(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    const selected = info.findField('value') as FieldInfo;
+    selected.setValue(object, values[i]);
+    sum += selected.getValue(object) as int;
+  }
+  return sum;
+}
+export func typeMemberField(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    const selectedType = Reflect.findType(module, 'Counter') as TypeInfo;
+    const selected = selectedType.findField('value') as FieldInfo;
+    selected.setValue(object, values[i]);
+    sum += selected.getValue(object) as int;
+  }
+  return sum;
+}
+export func memberCall(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    const selected = info.findMethod('add') as MethodInfo;
+    sum += selected.invoke(object, CallArguments(items: [CallArgument(value: values[i])])) as int;
+  }
+  return sum;
+}
+export func typeMemberCall(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    const selectedType = Reflect.findType(module, 'Counter') as TypeInfo;
+    const selected = selectedType.findMethod('add') as MethodInfo;
+    sum += selected.invoke(object, CallArguments(items: [CallArgument(value: values[i])])) as int;
+  }
+  return sum;
+}
+export func reflectedConstruct(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    const created = ctor.invoke(CallArguments(items: [CallArgument(value: values[i], name: 'value')]));
+    sum += field.getValue(created) as int;
+  }
+  return sum;
+}
+export func typeLookup(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { if (Reflect.findType(module, 'Counter') != null) { sum++; } }
+  return sum;
+}
+export func memberLookup(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { if (info.findField('value') != null) { sum++; } }
+  return sum;
+}
+export func metadata(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { sum += info.getFields().length; }
+  return sum;
+}

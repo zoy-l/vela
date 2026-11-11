@@ -77,12 +77,6 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
   return result;
 }
 
-void PrintDiagnostics(std::ostream& errors, const frontend::Diagnostics& diagnostics) {
-  for (const auto& diagnostic : diagnostics) {
-    frontend::WriteDiagnostic(errors, diagnostic);
-  }
-}
-
 std::expected<void, std::string> PublishBuild(const BuildArguments& arguments,
                                               const NativeArtifact& artifact,
                                               std::span<const std::byte> binary,
@@ -108,7 +102,12 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
     }
     target_support = &support.emplace(std::move(*loaded));
   }
-  auto parsed = frontend::LoadProgram(arguments.source);
+  const auto configuration = ReadSourceConfiguration(Utf8Path(arguments.source), errors);
+  if (!configuration) {
+    return configuration.error().exit_code;
+  }
+  auto parsed = frontend::LoadProgram(arguments.source, {}, frontend::SourceLoadMode::Compilation,
+                                      configuration->reflection);
   BinaryWriter identity;
   for (const auto& file : parsed.program.sources) {
     identity.Write(file.path);
@@ -116,18 +115,14 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   }
   auto& options = arguments.options;
   options.module_name += '_' + ContentFingerprint(identity.bytes()).Hex();
-  const auto diagnostics = ReadSourceDiagnosticOptions(Utf8Path(arguments.source), errors);
-  if (!diagnostics) {
-    return diagnostics.error().exit_code;
-  }
-  auto prepared = ir::PrepareParsed(std::move(parsed), *diagnostics);
-  PrintDiagnostics(errors, prepared.diagnostics);
+  auto prepared = ir::PrepareParsed(std::move(parsed), configuration->diagnostics);
+  frontend::WriteDiagnostics(errors, prepared.diagnostics);
   if (!prepared.Succeeded()) {
     return kSourceErrorExitCode;
   }
   auto artifact = Compile(std::move(prepared.program), options);
   if (!artifact) {
-    PrintDiagnostics(errors, artifact.error());
+    frontend::WriteDiagnostics(errors, artifact.error());
     return kSourceErrorExitCode;
   }
   auto binary =

@@ -12,6 +12,10 @@
 namespace vela::compiler {
 namespace {
 
+constexpr std::string_view kRemainderFunctions =
+    "func remainder(left: int, right: int): int { return left % right; }"
+    "func dynamicRemainder(left: dynamic, right: dynamic): dynamic { return left % right; }";
+
 struct RemainderExpression final {
   std::string_view source;
   std::int64_t expected;
@@ -22,11 +26,8 @@ class RemainderExecutionTest : public testing::TestWithParam<RemainderExpression
 TEST_P(RemainderExecutionTest, ExecutesSignedRemaindersWithMultiplicativePrecedence) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
-  const std::string source =
-      "func remainder(left: int, right: int): int { return left % right; }"
-      "func dynamicRemainder(left: dynamic, right: dynamic): dynamic { return left % right; }"
-      "func main(): int { return " +
-      std::string(parameter.source) + "; }";
+  const std::string source = std::string(kRemainderFunctions) + "func main(): int { return " +
+                             std::string(parameter.source) + "; }";
   runtime::Isolate isolate;
   const auto result = test::RunInteger(source, isolate);
   ASSERT_TRUE(result) << result.error();
@@ -108,10 +109,8 @@ TEST_P(RemainderFailureTest, PreservesErrorsEvenWhenTheResultIsUnused) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.expression);
   const std::string source =
-      "func remainder(left: int, right: int): int { return left % right; }"
-      "func dynamicRemainder(left: dynamic, right: dynamic): dynamic { return left % right; }"
-      "func main(): int { const unused = " +
-      std::string(parameter.expression) + "; return 42; }";
+      std::string(kRemainderFunctions) +
+      "func main(): int { const unused = " + std::string(parameter.expression) + "; return 42; }";
   runtime::Isolate isolate;
   const auto compiled = test::CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());

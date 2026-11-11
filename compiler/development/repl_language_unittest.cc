@@ -1,22 +1,13 @@
 #include "compiler/development/development_repl.h"
 
 #include <cstdint>
-#include <filesystem>
-#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 
-#include <memory>
-#include <utility>
-#include "base/file.h"
-#include "base/path.h"
-#include "base/testing/directory.h"
-#include "compiler/development/development_files.h"
 #include "compiler/development/development_session.h"
-#include "compiler/development/source_session.h"
-#include "compiler/frontend/diagnostic.h"
 #include "compiler/repl/repl_source.h"
+#include "compiler/test_support/development_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "gtest/gtest.h"
 
@@ -36,68 +27,30 @@ std::int64_t PersistentHostAnswer() noexcept {
   return kAnswer;
 }
 
-class ReplLanguageTest : public ::vela::test::DirectoryTest {
+class ReplLanguageTest : public test::DevelopmentReplTest {
  protected:
   void SetUp() override {
-    ::vela::test::DirectoryTest::SetUp();
-    ASSERT_FALSE(HasFatalFailure());
-    const auto entry = PathText(directory() / "__repl_host__.vela");
-    Write("__repl_host__.vela", "func main(): void {}");
     runtime::Isolate bindings;
     ASSERT_TRUE(bindings.RegisterNative(
         runtime::NativeFunction::Bind<PersistentHostAnswer>("host.answer")));
-    DevelopmentOptions options;
-    options.gc_threshold = 1;
-    auto created = DevelopmentSession::Create(entry, bindings.FreezeBindings(), options);
-    ASSERT_TRUE(created);
-    session_ = std::move(*created);
-    session_->isolate().SetOutput(output_);
-    files_ = std::make_unique<DevelopmentFiles>(entry);
-    const CompiledSourceSnapshot empty;
-    auto update = files_->Capture(empty);
-    ASSERT_TRUE(update);
-    auto candidate = session_->Prepare(std::move(*update), DevelopmentOperation::Load);
-    ASSERT_TRUE(candidate);
-    (void)session_->Submit(std::move(*candidate));
-    ASSERT_EQ(session_->Pump().status, DevelopmentStatus::Accepted);
-    repl_ =
-        std::make_unique<DevelopmentRepl>(*session_, PathText(directory() / "__vela_repl__.vela"));
+    test::DevelopmentReplTest::SetUp(bindings.FreezeBindings());
   }
-  void Write(std::string_view name, std::string_view text) {
-    ASSERT_TRUE(WriteFileAtomically(directory() / name, std::as_bytes(std::span(text))));
-  }
-  void Execute(std::string_view text) {
-    const auto result = repl_->Submit(text);
-    for (const auto& diagnostic : result.diagnostics) {
-      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error) << diagnostic.message;
-    }
-    if (result.update) {
-      EXPECT_FALSE(frontend::HasErrors(result.update->diagnostics))
-          << frontend::DiagnosticsText(result.update->diagnostics);
-    }
-    EXPECT_EQ(result.status, SubmissionStatus::Executed)
-        << (result.runtime_diagnostic ? result.runtime_diagnostic->message : "");
-  }
-  DevelopmentResult Reset() {
-    auto update = files_->Capture(*session_->snapshot());
-    EXPECT_TRUE(update);
-    if (!update) {
-      DevelopmentResult error;
-      error.status = DevelopmentStatus::SourceError;
-      return error;
-    }
-    return repl_->Reset(std::move(*update));
-  }
-  DevelopmentSession& session() { return *session_; }
-  DevelopmentRepl& repl() { return *repl_; }
-  std::ostringstream& output() { return output_; }
-
- private:
-  std::ostringstream output_;
-  std::unique_ptr<DevelopmentFiles> files_;
-  std::unique_ptr<DevelopmentSession> session_;
-  std::unique_ptr<DevelopmentRepl> repl_;
 };
+
+TEST_F(ReplLanguageTest, GlobalReflectionDescriptorsFollowTheReplPublication) {
+  Execute("class Box { value: int = 42; }");
+  Execute("const info = Reflect.typeInfo<Box>();");
+  Execute("info.name");
+  Execute("info.isRegistered");
+  Execute("const before = Reflect.revision();");
+  Execute("Reflect.revision() > before");
+  Execute(
+      "func shadow(): int { const Reflect = (value: int): int => value + 1; return Reflect(41); }");
+  Execute("shadow()");
+  EXPECT_EQ(output().str(), "Box\nfalse\ntrue\n42\n");
+  session().isolate().heap().Collect();
+  EXPECT_EQ(session().code_resources().images, 1U);
+}
 
 TEST_F(ReplLanguageTest, BoundedGenericMethodsAndInterfacesPersistAcrossSubmissions) {
   Execute("interface Reader<E> { read(): E; }");
@@ -339,12 +292,22 @@ TEST_F(ReplLanguageTest, IncompleteInputAndResetHaveNoEffects) {
   EXPECT_EQ(repl().Submit("func value(): int {").status, SubmissionStatus::Incomplete);
   EXPECT_TRUE(repl().source().empty());
   Execute("const value = 42;");
-  ASSERT_EQ(Reset().status, DevelopmentStatus::Accepted);
+  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
   session().isolate().SetOutput(output());
   EXPECT_EQ(repl().Submit("value").status, SubmissionStatus::Rejected);
   Execute("const value = 3;");
   Execute("value");
   EXPECT_EQ(output().str(), "3\n");
+}
+
+TEST_F(ReplLanguageTest, SourceAttributesRegisterInteractiveDeclarationsWithoutChangingArrays) {
+  Execute("class Button extends Reflect { label: string = 'run'; }");
+  Execute(
+      "[Reflect] class Counter { value: int = 42; [Button] read(): int { return this.value; } }");
+  Execute("Reflect.findMethods<Button>()[0].attribute.label");
+  Execute("Reflect.typeInfo<Counter>().getFields().length");
+  Execute("[40, 2][0] + 2");
+  EXPECT_EQ(output().str(), "run\n1\n42\n");
 }
 
 TEST_F(ReplLanguageTest, ResetRejectsHostRootsAndKeepsTheCurrentSessionRunning) {
@@ -355,14 +318,15 @@ TEST_F(ReplLanguageTest, ResetRejectsHostRootsAndKeepsTheCurrentSessionRunning) 
         runtime::HostRoot::Create(session().isolate(), runtime::Value::Null());
     ASSERT_TRUE(root_storage);
     const auto reset = Reset();
-    ASSERT_EQ(reset.status, DevelopmentStatus::WaitingForRelease);
-    ASSERT_EQ(reset.blockers.size(), 1U);
-    EXPECT_EQ(reset.blockers.front().kind, runtime::ExternalResourceKind::Persistent);
+    ASSERT_TRUE(reset);
+    ASSERT_EQ(reset->status, DevelopmentStatus::WaitingForRelease);
+    ASSERT_EQ(reset->blockers.size(), 1U);
+    EXPECT_EQ(reset->blockers.front().kind, runtime::ExternalResourceKind::Persistent);
     ASSERT_TRUE(session().Cancel());
     EXPECT_EQ(repl().source(), source);
     Execute("value + 2");
   }
-  ASSERT_EQ(Reset().status, DevelopmentStatus::Accepted);
+  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
   EXPECT_TRUE(repl().source().empty());
   EXPECT_EQ(output().str(), "42\n");
 }
@@ -371,19 +335,20 @@ TEST_F(ReplLanguageTest, ExternalNativeInstancesBlockResetEvenWithoutGlobals) {
   auto compiled = test::CompileSource("func answer(): int { return 42; }", session().isolate());
   ASSERT_TRUE(compiled.Succeeded());
   const auto refused = Reset();
-  ASSERT_EQ(refused.status, DevelopmentStatus::WaitingForRelease);
-  ASSERT_EQ(refused.blockers.size(), 1U);
-  EXPECT_EQ(refused.blockers.front().kind, runtime::ExternalResourceKind::NativeInstance);
+  ASSERT_TRUE(refused);
+  ASSERT_EQ(refused->status, DevelopmentStatus::WaitingForRelease);
+  ASSERT_EQ(refused->blockers.size(), 1U);
+  EXPECT_EQ(refused->blockers.front().kind, runtime::ExternalResourceKind::NativeInstance);
   ASSERT_TRUE(session().Cancel());
   compiled.instance.reset();
-  EXPECT_EQ(Reset().status, DevelopmentStatus::Accepted);
+  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
 }
 
 TEST_F(ReplLanguageTest, ResetStopsSuspendedTimersWithoutTreatingInternalRootsAsHostHandles) {
   Execute("async func wait(): Future<void> { await sleep(10000); }");
   Execute("const pending = wait();");
   EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 1U);
-  ASSERT_EQ(Reset().status, DevelopmentStatus::Accepted);
+  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
   EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 0U);
   EXPECT_TRUE(session().isolate().ReloadBlockers().empty());
 }
@@ -396,7 +361,7 @@ TEST_F(ReplLanguageTest, ResetPreservesTheFixedNativeBindingSnapshot) {
       runtime::NativeFunction::Bind<PersistentHostAnswer>("host.other"));
   ASSERT_FALSE(refused);
   EXPECT_EQ(refused.error(), runtime::NativeRegistrationError::BindingsFrozen);
-  ASSERT_EQ(Reset().status, DevelopmentStatus::Accepted);
+  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
   session().isolate().SetOutput(output());
   Execute("external func answer(): int = 'host.answer';");
   Execute("answer()");
@@ -426,9 +391,7 @@ TEST_F(ReplLanguageTest, TrailingCommentsAndBlockLambdaExpressionsKeepTheirSynta
   EXPECT_TRUE(output().str().ends_with("42\n"));
 }
 
-class ReplModuleSessionTest : public ReplLanguageTest {};
-
-TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsChangeLoadOrder) {
+TEST_F(ReplLanguageTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsChangeLoadOrder) {
   Write("leaf.vela",
         "export class Box { value: int; } "
         "export func read(): int { return 40; }");
@@ -445,7 +408,7 @@ TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsC
     Execute("import \"added.vela\" as added;");
     Execute("saved() + added.get()");
     EXPECT_EQ(output().str(), "42\n");
-    ASSERT_EQ(Reset().status, DevelopmentStatus::Accepted);
+    ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
     session().isolate().SetOutput(output());
     Execute("import \"parent.vela\" as parent;");
     Execute("parent.get()");
@@ -453,7 +416,7 @@ TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsC
   }
 }
 
-TEST_F(ReplModuleSessionTest, FailedCompilationDoesNotPinNewModuleSources) {
+TEST_F(ReplLanguageTest, FailedCompilationDoesNotPinNewModuleSources) {
   Write("leaf.vela", "export func read(): int { return true; }");
   EXPECT_EQ(repl().Submit("import \"leaf.vela\" as leaf;").status, SubmissionStatus::Rejected);
   Write("leaf.vela", "export func read(): int { return 42; }");

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <utility>
 
 namespace vela {
@@ -14,6 +16,15 @@ struct DeclarationId final {
     return H::combine(std::move(state), identity.value);
   }
 };
+
+// 声明目录由生产端按 identity 排序，消费者共享同一存在性查询。
+template <class Entry>
+[[nodiscard]] const Entry* FindDeclaration(std::span<const Entry> declarations,
+                                           DeclarationId identity) noexcept {
+  const auto found = std::ranges::lower_bound(
+      declarations, identity.value, {}, [](const auto& entry) { return entry.identity.value; });
+  return found != declarations.end() && found->identity == identity ? &*found : nullptr;
+}
 
 enum class DeclarationKind : std::uint8_t {
   Module,
@@ -32,6 +43,8 @@ enum class DeclarationKind : std::uint8_t {
   Global,
   Selector,
   Initializer,
+  Property,
+  EnumMember,
 };
 
 enum class GlobalFlag : std::uint8_t { Constant = 1, Private = 2 };

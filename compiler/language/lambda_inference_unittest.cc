@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
@@ -16,10 +17,7 @@ namespace {
 class LambdaInferenceTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(LambdaInferenceTest, ChecksAndExecutesWithPreciseTypesUnderCollectionPressure) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -108,8 +106,7 @@ INSTANTIATE_TEST_SUITE_P(
 class LambdaInferenceErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(LambdaInferenceErrorTest, RejectsMissingContextAndInconsistentConstraints) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

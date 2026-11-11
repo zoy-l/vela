@@ -52,14 +52,13 @@ struct CodeReusePlan final {
   std::vector<FunctionCodeInputs> inputs;
   std::vector<std::uint8_t> reused;
   std::vector<ReuseFunction> functions;
-  // 从规划开始就固定弱索引命中的资源，覆盖后台生成期间旧候选被释放的窗口。
-  std::vector<std::shared_ptr<void>> retained;
+  // 按源函数保存待绑定的实际符号及 owner；失效组释放，命中组在绑定时移入 functions。
+  std::vector<std::vector<ReuseFunction>> retained;
   std::size_t compiled_functions = 0;
 };
 
 CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeReuseCache& cache);
 void BindReusableCode(llvm::Module& module,
-                      const CodeReuseCache& cache,
                       const std::vector<std::vector<std::string>>& symbols,
                       std::uint64_t batch,
                       CodeReusePlan& plan);

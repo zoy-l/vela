@@ -18,7 +18,7 @@ namespace {
 struct SDKBinding final {
   std::string_view name;
   Builtin builtin;
-  std::uint32_t operation;
+  std::optional<std::uint32_t> operation;
 };
 
 constexpr SDKBinding BindOperation(std::string_view name, Builtin builtin, auto operation) {
@@ -30,6 +30,8 @@ constexpr SDKBinding BindOperation(std::string_view name, Builtin builtin, auto 
 }
 
 constexpr auto kBindings = std::to_array<SDKBinding>({
+    {.name = "publishRegistration", .builtin = Builtin::TestRegister, .operation = std::nullopt},
+    {.name = "sameValue", .builtin = Builtin::TestSame, .operation = std::nullopt},
     BindOperation("kindOfValue", Builtin::TestInspect, TestInspection::Kind),
     BindOperation("displayValue", Builtin::TestInspect, TestInspection::Display),
     BindOperation("trackExpectation", Builtin::TestControl, TestControl::TrackExpectation),
@@ -76,12 +78,6 @@ void BindSdkDeclarations(Program& program) {
     if (binding != kBindings.end()) {
       function.intrinsic = binding->builtin;
       function.intrinsic_operation = binding->operation;
-      function.native_symbol.clear();
-    } else if (function.name == "publishRegistration") {
-      function.intrinsic = Builtin::TestRegister;
-      function.native_symbol.clear();
-    } else if (function.name == "sameValue") {
-      function.intrinsic = Builtin::TestSame;
       function.native_symbol.clear();
     } else if (function.name == "test" || function.name == "group") {
       function.optional_parameters = {"skip", "timeout", "tags"};

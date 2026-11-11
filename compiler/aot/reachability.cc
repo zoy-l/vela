@@ -19,6 +19,7 @@
 #include "base/layout_description.h"
 #include "base/member.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -345,6 +346,12 @@ void Reachability::Trace() {
   while (!pending_.empty()) {
     const auto node = pending_.back();
     pending_.pop_back();
+    // Host 访问覆盖同一节点的 Internal 闭包；内部标记仍供裁剪查询使用。
+    if (node.exposure == TypeExposure::Internal &&
+        reached_.contains(
+            {.kind = node.kind, .index = node.index, .exposure = TypeExposure::Host})) {
+      continue;
+    }
     Visit(node);
   }
 }
@@ -398,6 +405,15 @@ std::vector<std::uint32_t> Reachability::PruneJSONPlans(
   return plan_mapping;
 }
 
+void RemapReflectedTargets(ir::Program& program, std::span<const std::uint32_t> mapping) {
+  for (auto& member : program.reflection_members) {
+    if (member.target != kInvalidFunctionTarget && reflection::IsCallable(member.kind) &&
+        program.layouts.types.at(member.declaring_type).kind != layout::Type::Kind::Interface) {
+      member.target = mapping[member.target];
+    }
+  }
+}
+
 void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& main) const {
   std::vector<std::uint32_t> mapping(program.functions.size(), kInvalidFunctionTarget);
   std::vector<ir::Function> functions;
@@ -447,6 +463,7 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
       member.setter = mapping.at(*member.setter);
     }
   }
+  RemapReflectedTargets(program, mapping);
 }
 
 }  // namespace
@@ -463,6 +480,20 @@ void PruneNativeProgram(ir::Program& program, std::optional<std::uint32_t>& main
   }
   if (main) {
     reachability.Mark(NodeKind::Function, *main);
+  }
+  for (const auto& member : program.reflection_members) {
+    if ((member.flags & reflection::kRegistered) == 0 ||
+        (member.flags & reflection::kPrivate) != 0 || member.target == kInvalidFunctionTarget) {
+      continue;
+    }
+    if (reflection::IsCallable(member.kind)) {
+      const auto& owner = program.layouts.types.at(member.declaring_type);
+      if (owner.kind == layout::Type::Kind::Interface) {
+        reachability.Mark(NodeKind::Interface, owner.index);
+      } else {
+        reachability.Mark(NodeKind::Function, member.target);
+      }
+    }
   }
   reachability.Trace();
   reachability.Prune(program, main);

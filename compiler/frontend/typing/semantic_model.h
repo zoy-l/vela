@@ -17,6 +17,7 @@
 #include "base/array_algorithm.h"
 #include "base/async_operation.h"
 #include "base/builtin.h"
+#include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -86,7 +87,7 @@ struct FunctionDescriptor final {
   MemberStorage storage = MemberStorage::Instance;
   bool is_getter = false;
   bool is_setter = false;
-  bool is_generic_application = false;
+  std::vector<TypeDescriptor> type_arguments;
   std::optional<TypeDescriptor> setter_parameter_type;
   std::optional<TypeDescriptor> setter_return_type;
   // 所属执行声明；继承签名保留原始所有者，调用与接口实现不再重新搜索 AST。
@@ -150,6 +151,7 @@ struct ClassDescriptor final {
 
 struct InterfaceDescriptor final {
   TypeDescriptor type;
+  const Interface* declaration = nullptr;
   absl::node_hash_map<std::string, FunctionDescriptor> methods;
   absl::flat_hash_map<std::string, MethodTemplate> method_templates;
   std::uint32_t index = 0;
@@ -191,8 +193,33 @@ struct JSONDecodeRequest final {
   SourceLocation location;
 };
 
+struct ReflectionMemberBinding final {
+  ReflectionMemberKind kind = ReflectionMemberKind::Field;
+  std::string name;
+  std::vector<TypeDescriptor> type_arguments;
+};
+
+struct ReflectionBinding final {
+  TypeDescriptor type;
+  std::vector<ReflectionMemberBinding> members;
+};
+
+using reflection::AttributeScalar;
+
+struct AttributeValue final {
+  TypeDescriptor type;
+  AttributeScalar value;
+};
+
+struct AttributeBinding final {
+  const void* target = nullptr;
+  TypeDescriptor type;
+  std::vector<AttributeValue> fields;
+};
+
 // 以 AST 节点为键的检查事实。泛型模板按抽象参数检查时写入独立的一组，执行降级只读取具体声明的事实。
 struct NodeFacts {
+  absl::flat_hash_map<const Attribute*, TypeDescriptor> attribute_types;
   absl::node_hash_map<const Expression*, CallDescriptor> call_targets;
   std::vector<LambdaDescriptor> lambdas;
   absl::flat_hash_map<const Expression*, std::size_t> lambda_indices;
@@ -236,6 +263,8 @@ struct SemanticModel final : NodeFacts {
   absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests;
   std::vector<JSONDecodePlan> json_decode_plans;
   absl::flat_hash_map<std::string, std::uint32_t> json_decode_entries;
+  std::vector<ReflectionBinding> reflection;
+  std::vector<AttributeBinding> attributes;
   // 泛型模板定义检查的节点事实；节点属于 Program::templates 与 class/interface 的方法模板。
   NodeFacts definitions;
 };

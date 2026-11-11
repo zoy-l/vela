@@ -50,6 +50,9 @@ class NominalType final {
   [[nodiscard]] bool IsEnum() const noexcept { return kind_ == NominalKind::Enum; }
   [[nodiscard]] bool IsCallable() const noexcept { return kind_ == NominalKind::Callable; }
   [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
+  [[nodiscard]] bool IsSubtypeOf(const NominalType& target) const noexcept;
+  [[nodiscard]] const NominalType* base() const noexcept { return base_; }
+  void BindBase(const NominalType& base) noexcept;
   [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
     return interfaces_;
   }
@@ -65,6 +68,7 @@ class NominalType final {
   std::vector<const InterfaceType*> interfaces_;
   ClassLayout* fixed_layout_ = nullptr;
   DeclarationId declaration_;
+  const NominalType* base_ = nullptr;
   // Heap 管理的弱实例链；稳定身份覆盖实例寿命，登记无需分配哈希节点。
   InstanceStorage* instances_ = nullptr;
 };
@@ -76,6 +80,8 @@ struct ClassLayoutOptions final {
   std::vector<const InterfaceType*> interfaces;
   std::vector<std::uint32_t> dispatch_targets;
   bool is_enum = false;
+  bool is_metadata = false;
+  bool reflection_identity = false;
   const TypeSignature* callable_type = nullptr;
   NominalType* nominal = nullptr;
   ClassStorage storage = ClassStorage::Inline;
@@ -98,6 +104,8 @@ class ClassLayout final {
   [[nodiscard]] const NominalType& nominal_type() const noexcept { return *nominal_; }
   [[nodiscard]] NominalType& nominal_type() noexcept { return *nominal_; }
   [[nodiscard]] ClassStorage storage() const noexcept { return storage_; }
+  [[nodiscard]] bool IsMetadata() const noexcept { return is_metadata_; }
+  [[nodiscard]] bool HasReflectionIdentity() const noexcept { return reflection_identity_; }
   [[nodiscard]] std::optional<std::uint32_t> FieldIndex(DeclarationId field) const noexcept;
   [[nodiscard]] std::span<const DeclarationId> field_declarations() const noexcept {
     return field_declarations_;
@@ -132,6 +140,8 @@ class ClassLayout final {
   std::optional<CallableTarget> callable_;
   NominalType* nominal_ = nullptr;
   ClassStorage storage_ = ClassStorage::Inline;
+  bool is_metadata_ = false;
+  bool reflection_identity_ = false;
   std::vector<DeclarationId> field_declarations_;
   absl::flat_hash_map<DeclarationId, std::uint32_t> field_indices_;
   std::vector<std::uint32_t> dispatch_targets_;
@@ -159,6 +169,7 @@ enum class ObjectKind : std::uint8_t {
   RegExpMatch,
   ValueSlots,
   NativeProgram,
+  Reflection,
 };
 
 struct CollectionLayout;

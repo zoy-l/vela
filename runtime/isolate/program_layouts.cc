@@ -226,6 +226,9 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
   options.interfaces = std::move(interfaces);
   options.dispatch_targets = description.dispatch_targets;
   options.is_enum = description.kind == layout::Class::Kind::Enum;
+  options.is_metadata = description.kind == layout::Class::Kind::Metadata ||
+                        description.kind == layout::Class::Kind::ReflectionIdentity;
+  options.reflection_identity = description.kind == layout::Class::Kind::ReflectionIdentity;
   auto* stored = isolate_->CreateClassLayout(description.field_count, description.reference_fields,
                                              std::move(options));
   cache_->classes.emplace(description.name, stored);

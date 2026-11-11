@@ -39,6 +39,7 @@ struct BuiltinParameter final {
 [[nodiscard]] std::span<const std::pair<std::string_view, ArrayAlgorithm>>
 ArrayAlgorithms() noexcept;
 [[nodiscard]] std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept;
+[[nodiscard]] std::optional<Builtin> FindArrayMethod(std::string_view name);
 [[nodiscard]] FunctionDescriptor ArrayMethodSignature(Builtin builtin,
                                                       const TypeDescriptor& element);
 struct CollectionMethod final {

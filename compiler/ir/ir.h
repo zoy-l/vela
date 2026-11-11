@@ -13,6 +13,7 @@
 #include "base/member.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -56,7 +57,16 @@ struct Class final {
     frontend::Visibility visibility = frontend::Visibility::Public;
     std::uint32_t initializer = kInvalidFunctionTarget;
   };
-  enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum, CaptureCell, Host };
+  enum class Kind : std::uint8_t {
+    Instance,
+    RuntimeError,
+    DateParts,
+    Enum,
+    CaptureCell,
+    Host,
+    Metadata,
+    ReflectionIdentity,
+  };
   std::string name;
   std::vector<frontend::TypeDescriptor> field_types;
   std::optional<CallableTarget> callable;
@@ -145,6 +155,9 @@ struct Program final {
   NativeProgramMode native_mode = NativeProgramMode::Closed;
   std::vector<std::uint32_t> global_flags;
   std::vector<JSONDecodePlan> json_decode_plans;
+  std::vector<reflection::Type> reflection_types;
+  std::vector<reflection::Member> reflection_members;
+  std::vector<reflection::Attribute> attributes;
 };
 
 [[nodiscard]] std::vector<std::uint32_t> JSONDecodeClosure(const Program& program,

@@ -25,13 +25,6 @@ namespace {
 
 using protocol::kInvalidParams;
 
-yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
-  auto* value = yyjson_mut_obj(document);
-  AddJsonField(document, value, protocol::kStart, JsonPosition(document, range.start));
-  AddJsonField(document, value, protocol::kEnd, JsonPosition(document, range.end));
-  return value;
-}
-
 yyjson_mut_val* JsonCompletion(yyjson_mut_doc* document,
                                const Completion& completion,
                                TextRange range) {
@@ -224,10 +217,10 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     auto begin = *offset;
     auto end = *offset;
     const auto text = source.text();
-    while (begin > 0 && frontend::IsIdentifierPart(text.at(begin - 1))) {
+    while (begin > 0 && frontend::IsIdentifierPart(text[begin - 1])) {
       --begin;
     }
-    while (end < text.size() && frontend::IsIdentifierPart(text.at(end))) {
+    while (end < text.size() && frontend::IsIdentifierPart(text[end])) {
       ++end;
     }
     const TextRange range{

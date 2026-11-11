@@ -8,9 +8,11 @@
 #include <utility>
 
 #include "base/builtin.h"
+#include "base/reflection_operation.h"
 #include "base/regexp.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_names.h"
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -22,6 +24,23 @@ void Lowerer::LowerIntrinsicFunction(Function function,
   BeginFunctionBody(function, owner);
   auto result = function.parameter_count;
   RegisterId argument_start = 0;
+  const auto is_type_info = builtin == Builtin::ReflectionTypeInfo;
+  const auto is_find_attributed =
+      source.intrinsic_operation &&
+      *source.intrinsic_operation ==
+          static_cast<std::uint32_t>(reflection::Operation::FindAttributedMethods);
+  const auto* reflection_signature = is_type_info || is_find_attributed
+                                         ? &model_.classes.at(owner->name).methods.at(source.name)
+                                         : nullptr;
+  if (is_type_info) {
+    const auto& type = reflection_signature->type_arguments.front();
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result++,
+        .immediate = DescribeReflectionArgument(type),
+        .location = source.location,
+    });
+  }
   if (source.intrinsic_operation) {
     argument_start = result;
     Emit({
@@ -30,6 +49,17 @@ void Lowerer::LowerIntrinsicFunction(Function function,
         .immediate = *source.intrinsic_operation,
         .location = source.location,
     });
+    if (is_find_attributed) {
+      const auto& signature = *reflection_signature;
+      for (const auto type : {signature.type_arguments.front(), signature.return_type}) {
+        Emit({
+            .opcode = Opcode::LoadInt,
+            .dst = result++,
+            .immediate = RegisterRuntimeType(type),
+            .location = source.location,
+        });
+      }
+    }
     for (RegisterId parameter = 0; parameter < function.parameter_count; ++parameter) {
       Emit({
           .opcode = Opcode::Move,
@@ -43,12 +73,13 @@ void Lowerer::LowerIntrinsicFunction(Function function,
     }
   }
   if (builtin == Builtin::JsonTypedParse || builtin == Builtin::JsonSafeParse) {
-    const auto key = owner->name + '.' + source.name;
-    function.json_decode_plan = model_.json_decode_entries.at(key);
+    const auto key = QualifiedMemberKey({.owner = owner->name, .name = source.name});
+    const auto plan = model_.json_decode_entries.at(key);
+    function.json_decode_plan = plan;
     Emit({
         .opcode = Opcode::LoadInt,
         .dst = result,
-        .immediate = model_.json_decode_entries.at(key),
+        .immediate = plan,
         .location = source.location,
     });
     ++result;

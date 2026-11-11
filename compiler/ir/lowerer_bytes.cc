@@ -47,21 +47,21 @@ void Lowerer::EmitIndexRead(RegisterId result,
                             RegisterId index,
                             frontend::SourceLocation location) {
   using Kind = frontend::TypeDescriptor::Kind;
-  if (receiver.type.kind == Kind::Array) {
+  const auto kind = receiver.type.kind;
+  const auto dynamic = kind == Kind::Dynamic;
+  const auto byte_array = kind == Kind::ByteArray;
+  if (kind == Kind::Array) {
     const auto name = frontend::NonNullableTypeName(receiver.type);
     RecordValueType(result, model_.array_elements.at(name));
-  } else if (receiver.type.kind == Kind::ByteArray) {
+  } else if (byte_array) {
     RecordValueType(result, {.kind = Kind::Int, .name = frontend::kIntTypeName});
-  } else if (receiver.type.kind == Kind::Dynamic) {
+  } else if (dynamic) {
     RecordValueType(result, {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName});
   }
-  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
-      receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+  if (byte_array || dynamic) {
     const std::array values{receiver.reg, index};
-    EmitBuiltinCall(receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic
-                        ? Builtin::DynamicIndexRead
-                        : Builtin::ByteArrayGetIndex,
-                    result, values, location);
+    EmitBuiltinCall(dynamic ? Builtin::DynamicIndexRead : Builtin::ByteArrayGetIndex, result,
+                    values, location);
   } else {
     Emit({
         .opcode = Opcode::GetIndex,
@@ -77,14 +77,13 @@ void Lowerer::EmitIndexWrite(const LoweredValue& receiver,
                              RegisterId index,
                              RegisterId value,
                              frontend::SourceLocation location) {
-  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
-      receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+  const auto kind = receiver.type.kind;
+  const auto dynamic = kind == frontend::TypeDescriptor::Kind::Dynamic;
+  if (kind == frontend::TypeDescriptor::Kind::ByteArray || dynamic) {
     const auto result = AllocateRegister(location);
     const std::array values{receiver.reg, index, value};
-    EmitBuiltinCall(receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic
-                        ? Builtin::DynamicIndexWrite
-                        : Builtin::ByteArraySetIndex,
-                    result, values, location);
+    EmitBuiltinCall(dynamic ? Builtin::DynamicIndexWrite : Builtin::ByteArraySetIndex, result,
+                    values, location);
   } else {
     Emit({
         .opcode = Opcode::SetIndex,

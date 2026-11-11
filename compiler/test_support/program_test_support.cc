@@ -36,15 +36,12 @@ std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> Clean(Insta
 
 InstanceResult CompileParsed(frontend::ParseResult parsed,
                              runtime::Isolate& isolate,
-                             frontend::DiagnosticOptions options,
-                             jit::CompileOptions compilation) {
+                             const jit::SourceOptions& options) {
   auto compiler = jit::Compiler::Create();
   if (!compiler) {
     return {.instance = {}, .diagnostics = std::move(compiler.error())};
   }
-  auto compiled =
-      jit::CompileParsed(**compiler, std::move(parsed),
-                         {.diagnostics = options, .compilation = std::move(compilation)});
+  auto compiled = jit::CompileParsed(**compiler, std::move(parsed), options);
   InstanceResult result{.instance = {}, .diagnostics = std::move(compiled.diagnostics)};
   if (!compiled.Succeeded()) {
     return result;
@@ -63,26 +60,32 @@ InstanceResult CompileSource(std::string_view source,
                              runtime::Isolate& isolate,
                              frontend::DiagnosticOptions options) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileModules(std::span(&input, 1), input.path, isolate, options);
+  return CompileModules(std::span(&input, 1), input.path, isolate,
+                        {.diagnostics = options, .compilation = {}, .reflection = {}});
 }
 
 InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& isolate) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate, {},
-                       {.debugging = native::NativeDebugging::Instructions});
+  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate,
+                       {
+                           .diagnostics = {},
+                           .compilation = {.debugging = native::NativeDebugging::Instructions},
+                           .reflection = {},
+                       });
 }
 
 InstanceResult CompileModules(std::span<const frontend::SourceInput> sources,
                               std::string_view entry,
                               runtime::Isolate& isolate,
-                              frontend::DiagnosticOptions options) {
-  return CompileParsed(frontend::LoadSources(sources, entry), isolate, options);
+                              const jit::SourceOptions& options) {
+  return CompileParsed(frontend::LoadSources(sources, entry, options.reflection), isolate, options);
 }
 
 InstanceResult CompileFile(std::string_view path,
                            runtime::Isolate& isolate,
                            frontend::DiagnosticOptions options) {
-  return CompileParsed(frontend::LoadProgram(path), isolate, options);
+  return CompileParsed(frontend::LoadProgram(path), isolate,
+                       {.diagnostics = options, .compilation = {}, .reflection = {}});
 }
 
 std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanSource(

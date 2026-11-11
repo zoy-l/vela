@@ -2,8 +2,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
-#include "runtime/heap/heap.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -13,24 +12,11 @@ class BuiltinFunctionValueTest : public testing::TestWithParam<std::string_view>
 
 TEST_P(BuiltinFunctionValueTest, PreservesReceiversAndReleasesThemAfterExecution) {
   runtime::Isolate isolate(1);
-  const auto retained = isolate.heap().object_count();
-  {
-    const auto result = test::RunInteger(GetParam(), isolate);
-    ASSERT_TRUE(result) << result.error();
-    EXPECT_EQ(*result, 42);
-  }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), retained);
+  test::ExpectStableAnswer(GetParam(), isolate);
 }
 
 TEST_P(BuiltinFunctionValueTest, ReloadsInFreshIsolateWithoutCompilerMetadata) {
-  runtime::Isolate isolate(1);
-  const auto program = test::ReinstantiateSource(GetParam(), isolate);
-  ASSERT_TRUE(program) << program.error();
-  const auto result = test::ExecuteInteger(**program);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRestoredAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionPaths,
@@ -253,10 +239,7 @@ func main(): int {
 class InvalidBuiltinFunctionValueTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InvalidBuiltinFunctionValueTest, RejectsUnresolvedOrIncompatibleSignatures) {
-  runtime::Isolate isolate;
-  const auto compiled = test::CompileSource(GetParam(), isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_FALSE(compiled.diagnostics.empty());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

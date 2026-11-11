@@ -1,19 +1,25 @@
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <new>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <vela/host.h>
 
 #include "base/native_binding.h"
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/project/project_config.h"
+#include "compiler/test_support/reflection_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
@@ -177,13 +183,14 @@ export func loopedBorrow(): int {
 }
 )";
 
-class NativeClassJitTest : public testing::TestWithParam<NativeCodeTier> {};
+class NativeClassJitTest : public ::testing::TestWithParam<NativeCodeTier> {};
 
 TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCallsAndBoundMethods) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler.has_value());
   const auto compiled =
-      CompileSource(**compiler, kSource, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+      CompileSource(**compiler, kSource,
+                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(RegisterCounter(isolate).has_value());
@@ -207,7 +214,8 @@ TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublica
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler.has_value());
   const auto compiled =
-      CompileSource(**compiler, kSource, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+      CompileSource(**compiler, kSource,
+                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate missing;
   const auto absent = runtime::NativeInstance::Instantiate(missing, compiled.code.image);
@@ -219,7 +227,8 @@ TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublica
   ASSERT_NE(parameter, std::string::npos);
   source.replace(parameter, std::string_view("add(delta: int)").size(), "add(amount: int)");
   const auto changed =
-      CompileSource(**compiler, source, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+      CompileSource(**compiler, source,
+                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
   ASSERT_TRUE(changed.Succeeded()) << frontend::DiagnosticsText(changed.diagnostics);
   runtime::Isolate isolate;
   ASSERT_TRUE(RegisterCounter(isolate).has_value());
@@ -236,7 +245,8 @@ TEST_P(NativeClassJitTest, RejectsDriftInUnusedMembersAsPartOfTheWholeClassContr
   ASSERT_NE(method, std::string::npos);
   source.insert(method, "  unused(value: bool): bool;\n");
   const auto compiled =
-      CompileSource(**compiler, source, {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+      CompileSource(**compiler, source,
+                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate;
   ASSERT_TRUE(RegisterCounter(isolate));
@@ -246,9 +256,63 @@ TEST_P(NativeClassJitTest, RejectsDriftInUnusedMembersAsPartOfTheWholeClassContr
   EXPECT_TRUE(instance.error().message.contains("class contract"));
 }
 
+TEST_P(NativeClassJitTest, ReflectionUsesBoundNativeConstructionPropertiesAndGcCheckedMethods) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
+    {"module":"main","type":"Counter","members":[{"kind":"constructor"},
+      {"kind":"method","name":"gcAdd"},{"kind":"getter","name":"value"},
+      {"kind":"setter","name":"value"}]}
+  ]})");
+  ASSERT_TRUE(configuration);
+  const frontend::SourceInput source{.path = "main.vela", .text = kSource};
+  SourceOptions options;
+  options.compilation.tier = GetParam();
+  options.reflection = configuration->reflection;
+  const auto compiled = CompileModules(**compiler, std::span(&source, 1), source.path, options);
+  ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(RegisterCounter(isolate));
+  auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  ASSERT_TRUE(instance) << instance.error().message;
+  const auto reflection = Reflection::Bind(**instance);
+  ASSERT_TRUE(reflection);
+  const auto type = test::RequireReflectionValue(reflection->FindType("main.vela", "Counter"));
+  ASSERT_TRUE(type) << type.error();
+  const auto bound = Type<Host<Counter>>::Bind(**instance);
+  ASSERT_TRUE(bound);
+  const auto described = bound->Describe();
+  ASSERT_TRUE(described);
+  EXPECT_EQ(described->id(), type->id());
+  const auto fields = type->GetFields();
+  ASSERT_TRUE(fields) << fields.error().message;
+  EXPECT_TRUE(fields->empty());
+  const auto constructor = test::RequireReflectionValue(type->GetConstructor());
+  ASSERT_TRUE(constructor) << constructor.error();
+  const auto method = test::RequireReflectionValue(type->FindMethod("gcAdd"));
+  ASSERT_TRUE(method) << method.error();
+  const auto property = test::RequireReflectionValue(type->FindProperty("value"));
+  ASSERT_TRUE(property) << property.error();
+  HandleScope scope(isolate);
+  const auto initial = CreateValue<std::int64_t>(scope, 40);
+  const auto delta = CreateValue<std::int64_t>(scope, 2);
+  ASSERT_TRUE(initial && delta);
+  const std::array parameters{CallArgument(*initial, "initial")};
+  const auto object = constructor->Invoke(scope, parameters);
+  ASSERT_TRUE(object) << object.error().message;
+  const std::array arguments{CallArgument(*delta, "delta")};
+  const auto value = method->Invoke(scope, *object, arguments);
+  ASSERT_TRUE(value) << value.error().message;
+  EXPECT_EQ(internal::HandleAccess::Read(*value).AsInteger(), 42);
+  ASSERT_TRUE(property->SetValue(scope, *object, *initial));
+  const auto read = property->GetValue(scope, *object);
+  ASSERT_TRUE(read);
+  EXPECT_EQ(internal::HandleAccess::Read(*read).AsInteger(), 40);
+}
+
 INSTANTIATE_TEST_SUITE_P(Tiers,
                          NativeClassJitTest,
-                         testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
+                         ::testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
 
 }  // namespace
 }  // namespace vela::compiler::jit

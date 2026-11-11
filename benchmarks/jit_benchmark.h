@@ -12,6 +12,7 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
+#include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/compiler.h"
@@ -24,6 +25,17 @@ class State;
 }
 
 namespace vela::benchmarks {
+
+[[nodiscard]] std::expected<compiler::DevelopmentCandidate, std::string> PrepareDevelopment(
+    compiler::DevelopmentSession& session,
+    std::string path,
+    std::string source,
+    compiler::DevelopmentOperation operation);
+[[nodiscard]] std::expected<compiler::DevelopmentResult, std::string> PublishDevelopment(
+    compiler::DevelopmentSession& session,
+    std::string path,
+    std::string source,
+    compiler::DevelopmentOperation operation);
 
 struct JitProgram final {
   std::string entry;

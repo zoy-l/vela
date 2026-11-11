@@ -121,8 +121,11 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   const auto temporary_field = static_cast<unsigned>(fields.size());
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), temporary_count));
   fields.push_back(NativeRecordType(context));
-  auto* debug_storage = llvm::ArrayType::get(
-      llvm::Type::getInt8Ty(context), function.register_count * sizeof(runtime::NativeDebugValue));
+  auto* debug_storage =
+      roots.debug_values
+          ? llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
+                                 function.register_count * sizeof(runtime::NativeDebugValue))
+          : nullptr;
   std::vector<llvm::Type*> recovery_fields{
       fields.at(temporary_field),
       fields.at(temporary_field + 1),

@@ -73,6 +73,11 @@ class NativeInstance final {
   [[nodiscard]] const NativeImage& image() const noexcept { return *data_->image; }
   [[nodiscard]] NativeProgramState& program() const noexcept { return *data_; }
   [[nodiscard]] NativeDispatch* dispatch() const noexcept { return data_->dispatch; }
+  [[nodiscard]] Value context_anchor() const noexcept {
+    return data_->dispatch == nullptr ? anchor_ : Value::Null();
+  }
+  [[nodiscard]] HeapObject& current_state() const noexcept;
+  [[nodiscard]] std::uint64_t current_revision() const noexcept;
   [[nodiscard]] std::optional<std::uint32_t> FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] const ProgramLayouts& layouts() const noexcept { return data_->layouts; }
   [[nodiscard]] const MemberTable& members() const noexcept { return data_->members; }

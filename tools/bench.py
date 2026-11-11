@@ -15,6 +15,7 @@ from tools.benchmark_report import aot_comparison_report, comparison_report, jit
 from tools.escape_benchmark_report import escape_comparison_report
 from tools.gc_benchmark_report import gc_report
 from tools.native_class_benchmark_report import native_class_comparison_report
+from tools.reflection_benchmark_report import reflection_comparison_report
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
@@ -56,6 +57,9 @@ REPORT_MODES = {
     "gc_report": ReportMode(
         "gc_report.json", "^gc/cohort/", gc_report, "vela_benchmarks",
         "Report Vela collector cycles, step latency and heap reclamation"),
+    "reflection_compare": ReportMode(
+        "reflection_comparison.json", "^reflection/", reflection_comparison_report, "vela_benchmarks",
+        "Compare AOT/JIT reflection with ordinary/dynamic access and a hand-registered C++ reference"),
 }
 
 

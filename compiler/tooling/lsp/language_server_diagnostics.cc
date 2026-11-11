@@ -34,10 +34,9 @@ struct OpenSource final {
 };
 
 JsonOutput DiagnosticNotification(std::string_view uri) {
-  JsonOutput output;
+  auto output = RpcMessage();
   auto* document = output.document();
   auto* root = output.root();
-  AddJsonField(document, root, protocol::kJsonRpc, yyjson_mut_str(document, "2.0"));
   AddJsonField(document, root, protocol::kMethod,
                yyjson_mut_str(document, "textDocument/publishDiagnostics"));
   auto* params = yyjson_mut_obj(document);
@@ -50,10 +49,8 @@ JsonOutput DiagnosticNotification(std::string_view uri) {
 
 yyjson_mut_val* JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic& diagnostic) {
   auto* diagnostic_object = yyjson_mut_obj(document);
-  auto* range = yyjson_mut_obj(document);
-  AddJsonField(document, range, protocol::kStart, JsonPosition(document, diagnostic.position));
-  AddJsonField(document, range, protocol::kEnd, JsonPosition(document, diagnostic.position));
-  AddJsonField(document, diagnostic_object, protocol::kRange, range);
+  AddJsonField(document, diagnostic_object, protocol::kRange,
+               JsonRange(document, {.start = diagnostic.position, .end = diagnostic.position}));
   AddJsonField(document, diagnostic_object, protocol::kSeverity,
                yyjson_mut_sint(document,
                                diagnostic.severity == frontend::DiagnosticSeverity::Error ? 1 : 2));
@@ -109,7 +106,7 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
     return;
   }
   auto loaded = frontend::LoadProgram(path, *modules_, overlays_, frontend::SourceLoadMode::Editor);
-  const auto options = compiler::LoadSourceDiagnosticOptions(Utf8Path(path));
+  const auto options = compiler::LoadSourceConfiguration(Utf8Path(path));
   if (!options) {
     if (loaded.diagnostics.empty()) {
       loaded.diagnostics.push_back(compiler::ConfigurationDiagnostic(options.error()));
@@ -118,7 +115,8 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
     return;
   }
   const auto& index =
-      indices_->try_emplace(std::string(uri), std::move(loaded), *options).first->second;
+      indices_->try_emplace(std::string(uri), std::move(loaded), options->diagnostics)
+          .first->second;
   CollectDiagnostics(index.diagnostics(), index.source_files(), path);
 }
 
@@ -184,7 +182,7 @@ void LanguageServer::PublishDiagnostics(std::optional<std::string_view> changed_
   }
   std::ranges::sort(entries);
   for (const auto entry : entries) {
-    collected.Collect(entry, documents_.at(std::string(entry)));
+    collected.Collect(entry, documents_.at(entry));
   }
   // 上一轮可能诊断过已移除的依赖；发空数组才能清除客户端残留。
   for (const auto& [uri, previous] : published_) {
@@ -202,7 +200,7 @@ void LanguageServer::PublishDiagnostics(std::optional<std::string_view> changed_
     PublishedDiagnostics next{
         .version =
             opened == documents_.end() ? std::nullopt : std::optional(opened->second.version),
-        .diagnostics = buckets.at(std::string(uri)),
+        .diagnostics = buckets.at(uri),
     };
     const auto previous = published_.find(uri);
     if (previous != published_.end() && previous->second == next) {
@@ -220,9 +218,9 @@ void LanguageServer::PublishDiagnostics(std::optional<std::string_view> changed_
     }
     Send(notification);
     if (!next.version && next.diagnostics.empty()) {
-      published_.erase(std::string(uri));
+      published_.erase(uri);
     } else {
-      published_.insert_or_assign(std::string(uri), std::move(next));
+      published_.insert_or_assign(uri, std::move(next));
     }
   }
 }

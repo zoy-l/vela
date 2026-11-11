@@ -9,8 +9,9 @@ import subprocess
 import sys
 import unittest
 
-from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
-from tools.test_support import CommandTestCase, native_command
+from tools.config import ROOT, executable_name, toolchain_tools
+from tools.test_support import (CommandTestCase, compile_native_host, native_command,
+                                native_test_libraries)
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
@@ -1366,41 +1367,25 @@ export async func calculate(): Future<int> {
                             + "\n" + c_host,
                             encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("host")
-        runtime = self.output / "obj/runtime" / static_library_name("vela_runtime")
-        gtest = [self.output / "obj/third_party" / static_library_name(name)
-                 for name in ("gtest_main", "gtest")]
+        runtime, *gtest = native_test_libraries(self.output)
         includes = [ROOT, ROOT / "include", ROOT / "third_party/googletest/googletest/include",
                     ROOT / "third_party/abseil-cpp"]
         if sys.platform == "win32":
             self.command([self.tools["cxx"], "/nologo", "/TC", "/W4", "/WX", "/c", c_source,
                           f"/I{ROOT}", f"/Fo{self.directory / 'headers.obj'}"])
-            flags = ["/nologo", "/MT", "/O2", "/clang:-std=c++23", "/D_ITERATOR_DEBUG_LEVEL=0",
-                     "/D_HAS_EXCEPTIONS=0", "/c",
-                     f"/Fo{self.directory / 'host.obj'}", *[f"/I{path}" for path in includes]]
-            self.command([self.tools["cxx"], *flags, source_file])
-            self.command([self.tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", f"/Fe{executable}",
-                          self.directory / "host.obj", *objects, runtime, *gtest])
-            c_executable = self.directory / executable_name("c_host")
-            self.command([self.tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", f"/Fe{c_executable}",
-                          self.directory / "headers.obj", *objects, runtime])
+            c_object = self.directory / "headers.obj"
         else:
             c_compile_flags = ["-std=c17", "-Werror", "-c"]
             if sys.platform == "darwin":
                 c_compile_flags.extend(["-isysroot", str(self.tools["sysroot"])])
             self.command([self.tools["cc"], *c_compile_flags, c_source,
                           f"-I{ROOT}", "-o", self.directory / "headers.o"])
-            flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
-                     "-fuse-ld=" + str(self.tools["linker"]),
-                     "-o", str(executable), *[f"-I{path}" for path in includes]]
-            if sys.platform == "darwin":
-                flags.extend(["-isysroot", str(self.tools["sysroot"]), "-nostdinc++",
-                              "-isystem", str(self.tools["sysroot"] / "usr/include/c++/v1"),
-                              "-framework", "CoreFoundation"])
-            self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
-            c_executable = self.directory / executable_name("c_host")
-            c_flags = flags[:]
-            c_flags[c_flags.index(str(executable))] = str(c_executable)
-            self.command([self.tools["cxx"], *c_flags, self.directory / "headers.o", *objects, runtime])
+            c_object = self.directory / "headers.o"
+        compile_native_host(self, [source_file], executable, [*objects, runtime, *gtest],
+                            includes, cwd=self.directory)
+        c_executable = self.directory / executable_name("c_host")
+        compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
+                            cwd=self.directory)
         executed = self.command([executable])
         self.assertIn("[  PASSED  ] 78 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")

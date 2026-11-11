@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <type_traits>
 #include <utility>
 
@@ -11,6 +12,7 @@
 #include <vela/error.h>
 #include <vela/handles.h>
 #include <vela/objects.h>
+#include <vela/reflection.h>
 #include <vela/regexp.h>
 #include <vela/strings.h>
 #include <vela/type.h>
@@ -21,6 +23,15 @@
 #include "runtime/native/host_value.h"
 
 namespace vela {
+
+template <class T>
+Result<Local<Value>> CreateValue(HandleScope& scope, const HostValue<T>& value) {
+  auto encoded = internal::EncodeHostValue<T>(scope, value);
+  if (!encoded) {
+    return std::unexpected(std::move(encoded.error()));
+  }
+  return internal::HandleAccess::Root<Value>(scope, *encoded);
+}
 
 template <class T>
 Local<Value> Local<T>::ToValue() const noexcept {

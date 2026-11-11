@@ -204,6 +204,7 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
   void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override;
 
  private:
+  using SourceLines = absl::flat_hash_map<std::string, absl::btree_set<std::uint32_t>>;
   [[nodiscard]] bool ShouldStop(const Point& point) const;
   [[nodiscard]] bool IsBreakpoint(const Point& point) const;
   ConsoleAction Prompt(const runtime::NativeDebugContext& context);
@@ -211,7 +212,8 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
                                std::string_view arguments,
                                const runtime::NativeDebugContext& context,
                                runtime::NativeDebugFrame& selected);
-  [[nodiscard]] std::expected<std::string, std::string> ResolveSource(std::string_view text) const;
+  [[nodiscard]] std::expected<SourceLines::const_iterator, std::string> ResolveSource(
+      std::string_view text) const;
   void AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame);
   void AddSourceBreakpoint(std::string_view path, std::uint32_t line);
   void DeleteBreakpoint(std::string_view text);
@@ -234,7 +236,7 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
   std::size_t next_breakpoint_ = 1;
   std::vector<Breakpoint> breakpoints_;
   absl::flat_hash_set<std::string_view> functions_;
-  absl::flat_hash_map<std::string, absl::btree_set<std::uint32_t>> source_lines_;
+  SourceLines source_lines_;
   absl::flat_hash_map<std::string, std::vector<std::string_view>> source_names_;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::uint32_t>> source_breakpoints_;
   absl::flat_hash_set<std::string> function_breakpoints_;
@@ -369,19 +371,19 @@ ConsoleAction ConsoleDebugger::ExecuteCommand(Command command,
   return ConsoleAction::Prompt;
 }
 
-std::expected<std::string, std::string> ConsoleDebugger::ResolveSource(
-    std::string_view text) const {
+std::expected<ConsoleDebugger::SourceLines::const_iterator, std::string>
+ConsoleDebugger::ResolveSource(std::string_view text) const {
   text = Unquote(text);
-  if (source_lines_.contains(text)) {
-    return std::string(text);
+  if (const auto found = source_lines_.find(text); found != source_lines_.end()) {
+    return found;
   }
   const auto requested = Utf8Path(text);
   std::error_code error;
   const auto canonical = std::filesystem::weakly_canonical(requested, error);
   if (!error) {
     auto normalized = PathText(canonical);
-    if (source_lines_.contains(normalized)) {
-      return normalized;
+    if (const auto found = source_lines_.find(normalized); found != source_lines_.end()) {
+      return found;
     }
   }
   if (!requested.has_parent_path()) {
@@ -390,7 +392,7 @@ std::expected<std::string, std::string> ConsoleDebugger::ResolveSource(
       if (found->second.size() != 1) {
         return std::unexpected("source filename is ambiguous; use its full path");
       }
-      return std::string(found->second.front());
+      return source_lines_.find(found->second.front());
     }
   }
   return std::unexpected("source has no executable locations in this program");
@@ -402,13 +404,13 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
     *output_ << source.error() << '\n';
     return;
   }
-  const auto& lines = source_lines_.at(*source);
+  const auto& [source_path, lines] = **source;
   const auto executable = lines.lower_bound(line);
   if (line == 0 || executable == lines.end()) {
     *output_ << "no executable line at or after the requested line\n";
     return;
   }
-  auto& selected = source_breakpoints_.try_emplace(*source).first->second;
+  auto& selected = source_breakpoints_.try_emplace(source_path).first->second;
   if (!selected.insert(*executable).second) {
     *output_ << "breakpoint already exists\n";
     return;
@@ -416,11 +418,11 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
   const auto identity = next_breakpoint_++;
   breakpoints_.push_back({
       .identity = identity,
-      .path = *source,
+      .path = source_path,
       .line = *executable,
       .function = std::string(),
   });
-  *output_ << "breakpoint " << identity << " at " << *source << ':' << *executable << '\n';
+  *output_ << "breakpoint " << identity << " at " << source_path << ':' << *executable << '\n';
 }
 
 void ConsoleDebugger::AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame) {

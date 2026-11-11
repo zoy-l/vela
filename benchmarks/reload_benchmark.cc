@@ -19,6 +19,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/test_support/checkpoint_publication.h"
+#include "benchmarks/jit_benchmark.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -78,38 +79,6 @@ std::string Source(RetainedState retained, std::int64_t version) {
   return source;
 }
 
-std::expected<compiler::DevelopmentCandidate, std::string> Prepare(DevelopmentSession& session,
-                                                                   std::string source,
-                                                                   DevelopmentOperation operation) {
-  auto candidate = session.Prepare(
-      {
-          .base_revision = session.snapshot()->revision,
-          .changes = {{.path = std::string(kModule), .text = std::move(source)}},
-          .added_roots = {},
-      },
-      operation);
-  if (!candidate) {
-    const auto& error = candidate.error();
-    return std::unexpected(error.message + '\n' + frontend::DiagnosticsText(error.diagnostics));
-  }
-  return std::move(*candidate);
-}
-
-std::expected<DevelopmentResult, std::string> Apply(DevelopmentSession& session,
-                                                    std::string source,
-                                                    DevelopmentOperation operation) {
-  auto candidate = Prepare(session, std::move(source), operation);
-  if (!candidate) {
-    return std::unexpected(std::move(candidate.error()));
-  }
-  (void)session.Submit(std::move(*candidate));
-  auto result = session.Pump();
-  if (result.status != DevelopmentStatus::Accepted) {
-    return std::unexpected(result.message);
-  }
-  return result;
-}
-
 void AddDuration(benchmark::State& state, const char* name, std::chrono::nanoseconds duration) {
   state.counters[name] += static_cast<double>(duration.count());
 }
@@ -123,7 +92,8 @@ std::expected<std::unique_ptr<DevelopmentSession>, std::string> LoadSession(Nati
     return std::unexpected("cannot create development session\n" +
                            frontend::DiagnosticsText(created.error()));
   }
-  if (const auto loaded = Apply(**created, std::move(source), DevelopmentOperation::Load);
+  if (const auto loaded = PublishDevelopment(**created, std::string(kModule), std::move(source),
+                                             DevelopmentOperation::Load);
       !loaded) {
     return std::unexpected(loaded.error());
   }
@@ -297,7 +267,8 @@ void Reload(benchmark::State& state, NativeCodeTier tier, RetainedState retained
     const auto started = Clock::now();
     for (std::int64_t edit = 0; edit < edits; ++edit) {
       const auto updated =
-          Apply(session, Source(retained, ++version), DevelopmentOperation::HotReload);
+          PublishDevelopment(session, std::string(kModule), Source(retained, ++version),
+                             DevelopmentOperation::HotReload);
       if (!updated) {
         state.SkipWithError(updated.error());
         return;
@@ -335,7 +306,8 @@ void ActiveReload(benchmark::State& state, NativeCodeTier tier) {
     benchmark::DoNotOptimize(iteration);
     const auto started = Clock::now();
     auto candidate =
-        Prepare(session, Source(RetainedState::None, ++version), DevelopmentOperation::HotReload);
+        PrepareDevelopment(session, std::string(kModule), Source(RetainedState::None, ++version),
+                           DevelopmentOperation::HotReload);
     if (!candidate) {
       state.SkipWithError(candidate.error());
       return;
@@ -373,7 +345,8 @@ void Rebuild(benchmark::State& state, NativeCodeTier tier) {
     benchmark::DoNotOptimize(iteration);
     const auto started = Clock::now();
     const auto updated =
-        Apply(session, Source(RetainedState::None, ++version), DevelopmentOperation::Reload);
+        PublishDevelopment(session, std::string(kModule), Source(RetainedState::None, ++version),
+                           DevelopmentOperation::Reload);
     state.SetIterationTime(std::chrono::duration<double>(Clock::now() - started).count());
     if (!updated || session.entry_value().AsInteger() != version) {
       state.SkipWithError(updated ? "Reload entry checksum mismatch" : updated.error());
@@ -410,7 +383,8 @@ void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
     const auto started = Clock::now();
-    auto candidate = Prepare(session, VirtualSource(++version), DevelopmentOperation::HotReload);
+    auto candidate = PrepareDevelopment(session, std::string(kModule), VirtualSource(++version),
+                                        DevelopmentOperation::HotReload);
     if (!candidate) {
       state.SkipWithError(candidate.error());
       return;

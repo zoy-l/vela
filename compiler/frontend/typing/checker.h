@@ -23,6 +23,7 @@ struct CheckResult final {
 [[nodiscard]] CheckResult CheckProgram(Program& program, DiagnosticOptions options = {});
 [[nodiscard]] CheckResult CheckFile(std::string_view path,
                                     std::span<const SourceInput> overlays = {},
-                                    DiagnosticOptions options = {});
+                                    DiagnosticOptions options = {},
+                                    std::span<const ReflectionSelection> reflection = {});
 
 }  // namespace vela::frontend

@@ -1,4 +1,5 @@
 #include "runtime/native/native_operations.h"
+#include "runtime/reflection/script_reflection.h"
 
 #include <array>
 #include <cstddef>
@@ -217,6 +218,9 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
   }
   if (builtin == Builtin::MockInspect) {
     return StoreNativeResult(result, ExecuteNativeMock(*execution, decoded));
+  }
+  if (builtin == Builtin::Reflection || builtin == Builtin::ReflectionTypeInfo) {
+    return StoreNativeResult(result, ExecuteNativeReflection(*execution, builtin, decoded));
   }
   if (builtin >= Builtin::DynamicBinary && builtin <= Builtin::DynamicIndexWrite) {
     return StoreNativeResult(result, ExecuteDynamicValue(builtin, decoded, heap));

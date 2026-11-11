@@ -1,4 +1,5 @@
 #include "runtime/heap/heap.h"
+#include "runtime/reflection/reflection_handle.h"
 
 #include <algorithm>
 #include <bit>
@@ -122,6 +123,9 @@ std::size_t HashKey(Value value) noexcept {
     case ValueKind::Object: {
       const auto& object = *value.AsObject();
       const auto* layout = Heap::ClassOf(object);
+      if (layout != nullptr && layout->HasReflectionIdentity()) {
+        return HashReflectionIdentity(object);
+      }
       if (layout != nullptr && layout->IsEnum()) {
         return absl::HashOf(&layout->nominal_type(), EnumOrdinal(object));
       }

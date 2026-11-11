@@ -1,4 +1,5 @@
 #include "runtime/native/host_entry.h"
+#include "runtime/native/native_abi.h"
 
 #include <cstddef>
 #include <expected>
@@ -149,7 +150,7 @@ Result<void> HostEntry::Invoke(HandleScope& scope,
   }
   auto instance = NativeInstance::Borrow(*target->state);
   auto* parent = owner.native_control().state().host_execution;
-  if (parent != nullptr && (&parent->instance().code_identity() != &instance.code_identity())) {
+  if (!CanReenterNativeProgram(parent, instance.code_identity())) {
     return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   NativeExecution execution(instance, parent);

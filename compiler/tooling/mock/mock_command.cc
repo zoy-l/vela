@@ -1,5 +1,3 @@
-#include "compiler/frontend/builtins/sdk_modules.h"
-#include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/tooling/mock/mock_generator.h"
 
 #include <expected>
@@ -87,12 +85,6 @@ std::expected<MockOptions, std::string> ParseOptions(std::span<char*> arguments)
   return options;
 }
 
-void Diagnostics(std::ostream& errors, const frontend::Diagnostics& diagnostics) {
-  for (const auto& diagnostic : diagnostics) {
-    frontend::WriteDiagnostic(errors, diagnostic);
-  }
-}
-
 int DiagnosticExit(const frontend::Diagnostics& diagnostics) {
   for (const auto& diagnostic : diagnostics) {
     if (diagnostic.kind == frontend::DiagnosticKind::Io) {
@@ -165,7 +157,7 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
   frontend::ModuleCache cache;
   auto parsed = frontend::LoadProgram(options->input, cache, {});
   if (!parsed.diagnostics.empty()) {
-    Diagnostics(errors, parsed.diagnostics);
+    frontend::WriteDiagnostics(errors, parsed.diagnostics);
     return DiagnosticExit(parsed.diagnostics);
   }
   const auto& program = parsed.program;
@@ -174,8 +166,7 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     return ReportFsError(errors, error);
   }
   for (const auto& source : program.sources) {
-    if (source.path.starts_with(frontend::kSdkSourcePrefix) ||
-        source.path.starts_with(frontend::kStandardSourcePrefix)) {
+    if (!frontend::IsFileModule(source.path)) {
       continue;
     }
     const bool same =
@@ -183,33 +174,33 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     if (error) {
       return ReportFsError(errors, error);
     }
-    if (same || Utf8Path(source.path) == destination) {
+    if (same) {
       errors << "vela mock: output cannot replace the API file or its dependencies\n";
       return kUsageExitCode;
     }
   }
   // 同一个不可变模块缓存分别提供检查用 AST 和保留公开别名的生成用 AST。
-  const auto diagnostics = compiler::ReadSourceDiagnosticOptions(Utf8Path(options->input), errors);
-  if (!diagnostics) {
-    return diagnostics.error().exit_code;
+  const auto configuration = compiler::ReadSourceConfiguration(Utf8Path(options->input), errors);
+  if (!configuration) {
+    return configuration.error().exit_code;
   }
-  const auto checked =
-      frontend::CheckParsed(frontend::LoadProgram(options->input, cache, {}), *diagnostics);
-  Diagnostics(errors, checked.diagnostics);
+  const auto checked = frontend::CheckParsed(frontend::LoadProgram(options->input, cache, {}),
+                                             configuration->diagnostics);
+  frontend::WriteDiagnostics(errors, checked.diagnostics);
   if (!checked.Succeeded()) {
     return DiagnosticExit(checked.diagnostics);
   }
   const auto generated = GenerateMocks(program, options->interfaces, destination);
   if (!generated) {
-    Diagnostics(errors, generated.error());
+    frontend::WriteDiagnostics(errors, generated.error());
     return DiagnosticExit(generated.error());
   }
   const auto output_path = PathText(destination);
   const frontend::SourceInput overlay{.path = output_path, .text = *generated};
-  const auto artifact =
-      frontend::CheckParsed(frontend::LoadProgram(output_path, cache, {&overlay, 1}), *diagnostics);
+  const auto artifact = frontend::CheckParsed(
+      frontend::LoadProgram(output_path, cache, {&overlay, 1}), configuration->diagnostics);
   if (!artifact.Succeeded()) {
-    Diagnostics(errors, artifact.diagnostics);
+    frontend::WriteDiagnostics(errors, artifact.diagnostics);
     return DiagnosticExit(artifact.diagnostics) == kIoErrorExitCode ? kIoErrorExitCode
                                                                     : kRuntimeErrorExitCode;
   }

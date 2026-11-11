@@ -8,6 +8,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -632,10 +633,7 @@ async func main(): Future<int> {
 class AsyncTypeErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(AsyncTypeErrorTest, RejectsInvalidContract) {
-  runtime::Isolate isolate;
-  const auto compiled = test::CompileSource(GetParam(), isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_FALSE(compiled.diagnostics.empty());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

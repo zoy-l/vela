@@ -66,6 +66,8 @@ class AstCloner final {
   std::unique_ptr<Statement> CloneStatement(const Statement* source);
   std::unique_ptr<Statement> CloneScopedStatement(const Statement* source);
   Field CloneField(const Field& source);
+  std::vector<CallArgument> CloneCallArguments(const std::vector<CallArgument>& source);
+  std::vector<Attribute> CloneAttributes(const std::vector<Attribute>& source);
   std::optional<SourceLocation> origin_;
   AstCloneTransform* transform_;
   Bodies bodies_;
@@ -88,7 +90,6 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
   result->arms.reserve(source->arms.size());
   result->elements.reserve(source->elements.size());
   result->entries.reserve(source->entries.size());
-  result->arguments.reserve(source->arguments.size());
   result->type = CloneType(source->type);
   for (const auto& type : source->type_arguments) {
     result->type_arguments.push_back(CloneType(type));
@@ -111,13 +112,7 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
         .value = CloneExpression(entry.value.get()),
     });
   }
-  for (const auto& argument : source->arguments) {
-    result->arguments.push_back({
-        .name = argument.name,
-        .location = Relocate(argument.location),
-        .value = CloneExpression(argument.value.get()),
-    });
-  }
+  result->arguments = CloneCallArguments(source->arguments);
   for (const auto& arm : source->arms) {
     if (transform_ != nullptr) {
       transform_->BeginScope();
@@ -230,6 +225,7 @@ Function AstCloner::CloneFunction(const Function& source) {
   }
   Function result;
   result.name = source.name;
+  result.attributes = CloneAttributes(source.attributes);
   result.return_type = CloneType(source.return_type);
   result.parameters.reserve(source.parameters.size());
   for (const auto& parameter : source.parameters) {
@@ -277,14 +273,44 @@ Field AstCloner::CloneField(const Field& source) {
       .location = Relocate(source.location),
       .visibility = source.visibility,
       .storage = source.storage,
+      .binding = source.binding,
       .initializer = CloneExpression(source.initializer.get()),
+      .attributes = CloneAttributes(source.attributes),
   };
+}
+
+std::vector<CallArgument> AstCloner::CloneCallArguments(const std::vector<CallArgument>& source) {
+  std::vector<CallArgument> result;
+  result.reserve(source.size());
+  for (const auto& argument : source) {
+    result.push_back({
+        .name = argument.name,
+        .location = Relocate(argument.location),
+        .value = CloneExpression(argument.value.get()),
+    });
+  }
+  return result;
+}
+
+std::vector<Attribute> AstCloner::CloneAttributes(const std::vector<Attribute>& source) {
+  std::vector<Attribute> result;
+  result.reserve(source.size());
+  for (const auto& attribute : source) {
+    Attribute copied{
+        .type = CloneType(attribute.type),
+        .arguments = CloneCallArguments(attribute.arguments),
+        .location = Relocate(attribute.location),
+    };
+    result.push_back(std::move(copied));
+  }
+  return result;
 }
 
 Program AstCloner::CloneProgram(const Program& source) {
   Program result;
   result.functions.reserve(source.functions.size());
   result.classes.reserve(source.classes.size());
+  result.enums.reserve(source.enums.size());
   result.globals.reserve(source.globals.size());
   result.imports = source.imports;
   for (auto& imported : result.imports) {
@@ -295,12 +321,49 @@ Program AstCloner::CloneProgram(const Program& source) {
   result.file_resolutions = source.file_resolutions;
   result.standard_names = source.standard_names;
   result.origins = source.origins;
-  result.enums = source.enums;
-  for (auto& declaration : result.enums) {
-    declaration.location = Relocate(declaration.location);
-    for (auto& member : declaration.members) {
-      member.location = Relocate(member.location);
+  result.reflection.reserve(source.reflection.size());
+  for (const auto& selection : source.reflection) {
+    ReflectionSelection copied{
+        .module = selection.module,
+        .type = CloneType(selection.type),
+        .members = {},
+        .source_path = selection.source_path,
+        .location = Relocate(selection.location),
+        .source = selection.source,
+    };
+    copied.members.reserve(selection.members.size());
+    for (const auto& member : selection.members) {
+      copied.members.push_back({
+          .kind = member.kind,
+          .name = member.name,
+          .type_arguments = {},
+          .location = Relocate(member.location),
+      });
+      auto& arguments = copied.members.back().type_arguments;
+      arguments.reserve(member.type_arguments.size());
+      for (const auto& argument : member.type_arguments) {
+        arguments.push_back(CloneType(argument));
+      }
     }
+    result.reflection.push_back(std::move(copied));
+  }
+  for (const auto& declaration : source.enums) {
+    Enum copied{
+        .name = declaration.name,
+        .members = {},
+        .location = Relocate(declaration.location),
+        .export_kind = declaration.export_kind,
+        .attributes = CloneAttributes(declaration.attributes),
+    };
+    copied.members.reserve(declaration.members.size());
+    for (const auto& member : declaration.members) {
+      copied.members.push_back({
+          .name = member.name,
+          .location = Relocate(member.location),
+          .attributes = CloneAttributes(member.attributes),
+      });
+    }
+    result.enums.push_back(std::move(copied));
   }
   result.aliases.reserve(source.aliases.size());
   for (const auto& alias : source.aliases) {
@@ -337,6 +400,7 @@ Program AstCloner::CloneProgram(const Program& source) {
 
 Interface AstCloner::CloneInterface(const Interface& source) {
   Interface result;
+  result.attributes = CloneAttributes(source.attributes);
   result.name = source.name;
   result.location = Relocate(source.location);
   result.type_parameters = CloneTypeParameters(source.type_parameters);
@@ -352,11 +416,13 @@ Interface AstCloner::CloneInterface(const Interface& source) {
 
 Class AstCloner::CloneClass(const Class& source) {
   Class result;
+  result.attributes = CloneAttributes(source.attributes);
   result.name = source.name;
   result.native_key = source.native_key;
   result.location = Relocate(source.location);
   result.type_parameters = CloneTypeParameters(source.type_parameters);
   result.constructor_kind = source.constructor_kind;
+  result.reflection_role = source.reflection_role;
   result.export_kind = source.export_kind;
   result.interfaces.reserve(source.interfaces.size());
   result.fields.reserve(source.fields.size());

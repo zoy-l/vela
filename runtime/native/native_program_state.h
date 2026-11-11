@@ -27,6 +27,7 @@ class Isolate;
 class NativeDispatch;
 class NativeFunctionRoot;
 struct NativeGlobalCache;
+class ReflectionIndex;
 
 // 缓存属于 Isolate 内的具体函数版本；共享机器码不会跨线程写同一缓存。
 struct NativeFieldCache final {
@@ -45,7 +46,7 @@ struct NativeProgramState final {
   static constexpr std::size_t kGlobals = 1;
   static constexpr std::size_t kStateSlots = 2;
 
-  NativeProgramState() = default;
+  NativeProgramState();
   ~NativeProgramState();
   NativeProgramState(const NativeProgramState&) = delete;
   NativeProgramState& operator=(const NativeProgramState&) = delete;
@@ -61,6 +62,7 @@ struct NativeProgramState final {
   const NativeImage* image = nullptr;
   ProgramLayouts layouts;
   MemberTable members;
+  std::unique_ptr<ReflectionIndex> reflection;
   absl::flat_hash_map<const NominalType*, std::uint32_t> class_indices;
   absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::uint32_t> enum_members;
   absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;

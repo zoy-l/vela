@@ -3,12 +3,10 @@
 #include <chrono>
 #include <cstddef>
 #include <expected>
-#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <span>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -30,10 +28,6 @@
 
 namespace vela::compiler {
 namespace {
-
-std::string Normalize(std::string_view path) {
-  return PathText(Utf8Path(path).lexically_normal());
-}
 
 SourceCandidateError SourceError(frontend::Diagnostics diagnostics) {
   return {
@@ -148,7 +142,7 @@ std::expected<void, SourceCandidateError> ApplyChanges(CompiledSourceSnapshot& c
                                                        std::vector<SourceChange>& changes) {
   absl::flat_hash_set<std::string> changed;
   for (auto& change : changes) {
-    const auto path = Normalize(change.path);
+    const auto path = NormalizePath(change.path);
     if (!changed.insert(path).second) {
       return std::unexpected(SourceError({
           frontend::Diagnostic{
@@ -189,9 +183,8 @@ std::expected<void, SourceCandidateError> ApplyChanges(CompiledSourceSnapshot& c
   return {};
 }
 
-std::expected<std::vector<std::string>, frontend::Diagnostics> RetainedRoots(
-    const CompiledSourceSnapshot& candidate,
-    std::span<const DeclarationId> declarations) {
+std::vector<std::string> RetainedRoots(const CompiledSourceSnapshot& candidate,
+                                       std::span<const DeclarationId> declarations) {
   std::vector<std::string> roots = candidate.roots;
   absl::flat_hash_set<std::string> loaded(roots.begin(), roots.end());
   absl::flat_hash_set<DeclarationId> visited;
@@ -210,15 +203,6 @@ std::expected<std::vector<std::string>, frontend::Diagnostics> RetainedRoots(
     pending.pop_back();
     if (identity == DeclarationId{} || !visited.insert(identity).second) {
       continue;
-    }
-    if (identity.value >= records.size()) {
-      return std::unexpected(frontend::Diagnostics{
-          {
-              .location = {},
-              .message = "unknown retained declaration identity",
-              .source_path = {},
-          },
-      });
     }
     const auto& record = records[static_cast<std::size_t>(identity.value)];
     if (record.key.kind == DeclarationKind::Module && candidate.sources.contains(record.key.name) &&
@@ -239,11 +223,14 @@ SourceCandidate::SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> b
                                  std::shared_ptr<const CompiledSourceSnapshot> prepared)
     : base_(std::move(base)), prepared_(std::move(prepared)) {}
 
-SourceSession::SourceSession(const std::string& entry, frontend::DiagnosticOptions options)
+SourceSession::SourceSession(const std::string& entry,
+                             frontend::DiagnosticOptions options,
+                             std::vector<frontend::ReflectionSelection> reflection)
     : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
   initial->session = identity_;
-  initial->roots.push_back(Normalize(entry));
+  initial->roots.push_back(NormalizePath(entry));
+  initial->reflection = std::move(reflection);
   current_ = std::move(initial);
 }
 
@@ -273,13 +260,14 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   candidate->roots = base->roots;
   candidate->identities = base->identities;
   candidate->modules = base->modules;
+  candidate->reflection = update.reflection ? *update.reflection : base->reflection;
   const auto changed = ApplyChanges(*candidate, update.changes);
   if (!changed) {
     return std::unexpected(changed.error());
   }
   absl::flat_hash_set<std::string> roots(candidate->roots.begin(), candidate->roots.end());
   for (const auto& root : update.added_roots) {
-    const auto path = Normalize(root);
+    const auto path = NormalizePath(root);
     if (roots.insert(path).second) {
       candidate->roots.push_back(path);
     }
@@ -297,12 +285,9 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   for (const auto& [path, text] : candidate->sources) {
     inputs.push_back({.path = path, .text = *text});
   }
-  auto retained_roots = RetainedRoots(*candidate, retained);
-  if (!retained_roots) {
-    return std::unexpected(SourceError(std::move(retained_roots.error())));
-  }
-  auto parsed =
-      frontend::LoadSources(inputs, *retained_roots, candidate->modules, base->standard_names);
+  const auto retained_roots = RetainedRoots(*candidate, retained);
+  auto parsed = frontend::LoadSources(inputs, retained_roots, candidate->modules,
+                                      base->standard_names, candidate->reflection);
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(SourceError(std::move(parsed.diagnostics)));
   }

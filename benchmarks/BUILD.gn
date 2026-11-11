@@ -88,6 +88,85 @@ generated_file("native_class_paths") {
   ]
 }
 
+reflection_native_directory = "$target_gen_dir/reflection_native"
+reflection_compiler = "$root_out_dir/vela"
+reflection_extension = "o"
+if (target_os == "win") {
+  reflection_compiler += ".exe"
+  reflection_extension = "obj"
+}
+reflection_inputs = [
+  "//tools/aot_benchmarks.py",
+  "reflection/cases.json",
+  "reflection/operations.vela",
+  "reflection/plain.vela",
+  "reflection/query.vela.in",
+]
+reflection_programs = [
+  {
+    name = "plain"
+    sources = [ "main.vela" ]
+  },
+  {
+    name = "registered"
+    sources = [ "main.vela" ]
+  },
+  {
+    name = "reflected"
+    sources = [ "main.vela" ]
+  },
+]
+foreach(program_name,
+        [
+          "query_64_8",
+          "query_1024_8",
+          "query_1024_64",
+          "query_1024_256",
+          "query_1024_0",
+        ]) {
+  reflection_programs += [
+    {
+      name = program_name
+      sources = [
+        "attributes.vela",
+        "main.vela",
+        "targets.vela",
+      ]
+    },
+  ]
+}
+reflection_objects = []
+reflection_outputs = [ "$reflection_native_directory/entries.h" ]
+foreach(program, reflection_programs) {
+  name = program.name
+  directory = "$reflection_native_directory/$name"
+  object = "$directory/workload.$reflection_extension"
+  reflection_objects += [ object ]
+  reflection_outputs += [
+    object,
+    "$object.h",
+    "$object.aot.json",
+    "$directory/build_metrics.json",
+  ]
+  foreach(source, program.sources) {
+    reflection_outputs += [ "$directory/$source" ]
+  }
+}
+
+action("reflection_native_inputs") {
+  testonly = true
+  script = "//tools/reflection_benchmarks.py"
+  inputs = reflection_inputs
+  outputs = reflection_outputs
+  args = [
+    "--compiler",
+    rebase_path(reflection_compiler, root_build_dir),
+    "--output",
+    rebase_path(reflection_native_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
+}
+
 executable("vela_benchmarks") {
   testonly = true
   sources = [
@@ -98,8 +177,6 @@ executable("vela_benchmarks") {
     "execution_benchmark.cc",
     "file_capture_benchmark.cc",
     "gc_strategy_benchmark.cc",
-    "heap_metrics.cc",
-    "heap_metrics.h",
     "json_benchmark.cc",
     "liveness_benchmark.cc",
     "mock_benchmark.cc",
@@ -108,7 +185,9 @@ executable("vela_benchmarks") {
     "native_standard_workloads.h",
     "native_workloads.cc",
     "native_workloads.h",
-    "process_memory.h",
+    "reflection_benchmark.cc",
+    "reflection_benchmark.h",
+    "reflection_cpp_benchmark.cc",
     "regexp_benchmark.cc",
     "repl_benchmark.cc",
     "representative_benchmark.cc",
@@ -124,9 +203,13 @@ executable("vela_benchmarks") {
     "testing_benchmark.cc",
     "typed_json_benchmark.cc",
   ]
+  sources += reflection_objects
+  include_dirs = [ root_gen_dir ]
   benchmark_source_dir = rebase_path("//benchmarks", "")
   defines = [ "VELA_BENCHMARK_SOURCE_DIR=\"$benchmark_source_dir\"" ]
   deps = [
+    ":jit_benchmark_support",
+    ":reflection_native_inputs",
     "//base:json",
     "//base:temporary_directory",
     "//compiler:development",
@@ -140,13 +223,6 @@ executable("vela_benchmarks") {
     "//third_party:luajit",
     "//third_party:pcre2",
   ]
-  if (target_os == "win") {
-    sources += [ "process_memory_win.cc" ]
-  } else if (target_os == "mac") {
-    sources += [ "process_memory_mac.cc" ]
-  } else {
-    sources += [ "process_memory_linux.cc" ]
-  }
 }
 
 aot_native_directory = "$target_gen_dir/aot_native"

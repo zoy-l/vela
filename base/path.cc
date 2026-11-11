@@ -15,4 +15,8 @@ std::string PathText(const std::filesystem::path& path) {
   return {encoded.begin(), encoded.end()};
 }
 
+std::string NormalizePath(std::string_view text) {
+  return PathText(Utf8Path(text).lexically_normal());
+}
+
 }  // namespace vela

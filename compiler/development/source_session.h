@@ -17,6 +17,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/ir.h"
 
@@ -34,6 +35,12 @@ struct SourceUpdate final {
   std::uint64_t base_revision = 0;
   std::vector<SourceChange> changes;
   std::vector<std::string> added_roots;
+  // 存在时完整替换登记集合；空数组表示撤回全部登记。
+  std::optional<std::vector<frontend::ReflectionSelection>> reflection = std::nullopt;
+
+  [[nodiscard]] bool IsEmpty() const {
+    return changes.empty() && added_roots.empty() && !reflection;
+  }
 };
 
 struct SourceTimings final {
@@ -57,6 +64,7 @@ struct CompiledSourceSnapshot final {
   ir::Program program;
   SourceTimings timings;
   frontend::Diagnostics diagnostics;
+  std::vector<frontend::ReflectionSelection> reflection;
 };
 
 enum class SourceCandidateStatus : std::uint8_t {
@@ -89,8 +97,11 @@ class SourceCandidate final {
 // 开发会话才提交候选；失败候选和并行编译不会改变已提交基线。
 class SourceSession final {
  public:
-  explicit SourceSession(const std::string& entry, frontend::DiagnosticOptions options = {});
+  explicit SourceSession(const std::string& entry,
+                         frontend::DiagnosticOptions options = {},
+                         std::vector<frontend::ReflectionSelection> reflection = {});
   [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
+  // retained 必须来自本会话的已提交声明身份；候选继承同一单调增长的身份表。
   [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
       std::span<const DeclarationId> retained = {}) const;

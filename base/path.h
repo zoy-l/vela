@@ -8,5 +8,6 @@ namespace vela {
 
 [[nodiscard]] std::filesystem::path Utf8Path(std::string_view text);
 [[nodiscard]] std::string PathText(const std::filesystem::path& path);
+[[nodiscard]] std::string NormalizePath(std::string_view text);
 
 }  // namespace vela

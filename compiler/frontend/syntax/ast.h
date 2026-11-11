@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -42,7 +43,47 @@ struct TypeName final {
   TypeParameterId parameter;
 
   [[nodiscard]] std::string ToString() const;
+  void SetSourceId(std::uint32_t source_id);
 };
+
+enum class ReflectionMemberKind : std::uint8_t {
+  Field,
+  Getter,
+  Setter,
+  Method,
+  Constructor,
+  EnumMember,
+};
+
+struct ReflectionMemberSelection final {
+  ReflectionMemberKind kind = ReflectionMemberKind::Field;
+  std::string name;
+  std::vector<TypeName> type_arguments;
+  SourceLocation location;
+};
+
+// 编译输入保留配置位置；绑定后的类型名与普通声明使用相同的模块作用域和特化机制。
+struct ReflectionSelection final {
+  std::string module;
+  TypeName type;
+  std::vector<ReflectionMemberSelection> members;
+  std::string source_path;
+  SourceLocation location;
+  std::shared_ptr<const SourceSnapshot> source;
+};
+
+template <class Selection, class Visit>
+void ForEachReflectionType(Selection& selection, const Visit& visit) {
+  visit(selection.type);
+  for (auto& member : selection.members) {
+    for (auto& argument : member.type_arguments) {
+      visit(argument);
+    }
+  }
+}
+
+[[nodiscard]] bool IsSameReflectionSelections(std::span<const ReflectionSelection> left,
+                                              std::span<const ReflectionSelection> right);
 
 // 声明中的类型参数；上界与引用它的类型使用同一参数身份。
 struct TypeParameter final {
@@ -88,6 +129,8 @@ struct DeclarationOrigin final {
 struct Expression;
 struct Statement;
 struct Function;
+[[nodiscard]] ReflectionMemberKind ReflectedMethodKind(const Function& method);
+[[nodiscard]] const std::string& ReflectedMethodName(const Function& method);
 
 struct MatchArm final {
   enum class Kind : std::uint8_t { Constant, Binding, Wildcard };
@@ -172,6 +215,13 @@ struct Expression final {
   [[nodiscard]] std::optional<std::int64_t> IntegerValue() const noexcept;
 };
 
+// 特性保留类型及有序具名实参；绑定、特化和工具共用这些源码节点。
+struct Attribute final {
+  TypeName type;
+  std::vector<CallArgument> arguments;
+  SourceLocation location;
+};
+
 // 仅枚举六个可选操作数；元素、Map 条目、lambda、match 的遍历和作用域由访问者处理。
 template <class Node>
 [[nodiscard]] auto ExpressionOperands(Node& expression) noexcept {
@@ -193,7 +243,9 @@ struct Field final {
   SourceLocation location;
   Visibility visibility = Visibility::Public;
   MemberStorage storage = MemberStorage::Instance;
+  BindingKind binding = BindingKind::Mutable;
   std::unique_ptr<Expression> initializer;
+  std::vector<Attribute> attributes;
 };
 
 struct Statement final {
@@ -261,7 +313,7 @@ struct Function final {
   std::unique_ptr<Statement> body;
   SourceLocation location;
   std::vector<TypeParameter> type_parameters;
-  // 方法应用保留模板名及已验证实参；持久身份和工具直接读取，不从执行名称反向解析。
+  // 具体函数应用保留模板名及已验证实参；身份、intrinsic 和工具直接读取结构化事实。
   std::optional<Application> application;
   Visibility visibility = Visibility::Public;
   MemberStorage storage = MemberStorage::Instance;
@@ -278,6 +330,7 @@ struct Function final {
   bool is_override = false;
   bool is_getter = false;
   bool is_setter = false;
+  std::vector<Attribute> attributes;
 };
 
 struct Enum final {
@@ -285,13 +338,16 @@ struct Enum final {
   struct Member final {
     std::string name;
     SourceLocation location;
+    std::vector<Attribute> attributes;
   };
   std::vector<Member> members;
   SourceLocation location;
   ExportKind export_kind = ExportKind::Local;
+  std::vector<Attribute> attributes;
 };
 
 struct Class final {
+  enum class ReflectionRole : std::uint8_t { None, Metadata, Identity };
   std::string name;
   std::string native_key;
   std::vector<Field> fields;
@@ -302,9 +358,11 @@ struct Class final {
   std::vector<TypeParameter> type_parameters;
   std::unique_ptr<Function> constructor;
   ConstructorKind constructor_kind = ConstructorKind::Generated;
+  ReflectionRole reflection_role = ReflectionRole::None;
   std::vector<TypeName> interfaces;
   std::optional<TypeName> base_class;
   ExportKind export_kind = ExportKind::Local;
+  std::vector<Attribute> attributes;
 
   [[nodiscard]] bool IsConstructorField(const Field& field) const {
     return constructor_kind == ConstructorKind::Generated &&
@@ -319,6 +377,7 @@ struct Interface final {
   SourceLocation location;
   std::vector<TypeParameter> type_parameters;
   ExportKind export_kind = ExportKind::Local;
+  std::vector<Attribute> attributes;
 };
 
 struct Global final {
@@ -356,6 +415,7 @@ struct Program final {
   std::vector<Interface> interfaces;
   std::vector<Global> globals;
   absl::flat_hash_map<std::string, DeclarationOrigin> origins;
+  std::vector<ReflectionSelection> reflection;
   // 特化把泛型模板移出执行用声明；模板在特化初始化后不再增删，定义检查事实与工具共用这些节点。
   struct Templates final {
     std::vector<Function> functions;

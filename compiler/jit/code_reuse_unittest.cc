@@ -62,8 +62,7 @@ TEST_P(JitCodeFanoutTest, EditsReplaceOneTypedSlotAndPreserveEveryCaller) {
                              {.tier = NativeCodeTier::Optimized, .preserve_ir = true}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
-    const auto value = std::ranges::find(functions, "value",
-                                         [](const auto& function) { return function.name.text(); });
+    const auto value = test::FindImageFunction(functions, "value");
     ASSERT_NE(value, functions.end());
     ASSERT_NE(value->typed_entry, nullptr);
     if (version == 1) {
@@ -75,7 +74,7 @@ TEST_P(JitCodeFanoutTest, EditsReplaceOneTypedSlotAndPreserveEveryCaller) {
       EXPECT_EQ(compiled->compiled_functions, 1U);
       EXPECT_NE(value->typed_entry, target);
       for (std::size_t index = 0; index < functions.size(); ++index) {
-        const auto& function = functions.subspan(index).front();
+        const auto& function = functions[index];
         if (function.name.text().starts_with("caller")) {
           EXPECT_EQ(function.entry, entries.at(index));
         }
@@ -111,8 +110,7 @@ TEST_F(JitCodeReuseTest, RecursiveComponentEditsDoNotInvalidateItsOutsideCaller)
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
-    const auto answer = std::ranges::find(
-        functions, "answer", [](const auto& function) { return function.name.text(); });
+    const auto answer = test::FindImageFunction(functions, "answer");
     ASSERT_NE(answer, functions.end());
     if (version != 1) {
       EXPECT_EQ(compiled->compiled_functions, 2U);
@@ -229,8 +227,7 @@ TEST_F(JitCodeReuseTest, RepeatedPureCallsInvalidateTheirCallerAndTrackSlotTrans
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
-    const auto answer = std::ranges::find(
-        functions, "answer", [](const auto& function) { return function.name.text(); });
+    const auto answer = test::FindImageFunction(functions, "answer");
     ASSERT_NE(answer, functions.end());
     if (previous != nullptr) {
       EXPECT_EQ(compiled->compiled_functions, 2U);

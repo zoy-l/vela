@@ -655,6 +655,13 @@ std::expected<void, ExecutionStatus> NativeDispatch::CheckCurrent() const noexce
   return {};
 }
 
+std::expected<HeapObject*, ExecutionStatus> NativeDispatch::BorrowCurrentState() const noexcept {
+  if (const auto checked = CheckCurrent(); !checked) {
+    return std::unexpected(checked.error());
+  }
+  return &current_state();
+}
+
 std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::ResolveInterface(
     const NominalType& receiver,
     DeclarationId selector) const noexcept {

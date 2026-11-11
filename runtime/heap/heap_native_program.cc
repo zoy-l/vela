@@ -1,5 +1,6 @@
 #include "base/declaration.h"
 #include "runtime/heap/heap.h"
+#include "runtime/reflection/reflection_handle.h"
 
 #include <absl/functional/function_ref.h>
 
@@ -16,10 +17,13 @@
 #include "runtime/native/native_metadata.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/native/native_version.h"
+#include "runtime/reflection/reflection_index.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+
+NativeProgramState::NativeProgramState() = default;
 
 NativeProgramState::~NativeProgramState() {
   delete[] global_states;
@@ -138,6 +142,9 @@ void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
         }
         break;
       }
+      case ObjectKind::Reflection:
+        tracer.Mark(StorageAfter<ReflectionHandle>(*object)->type.constraint);
+        break;
       default:
         break;
     }

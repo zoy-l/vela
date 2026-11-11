@@ -322,7 +322,7 @@ extern "C" VelaAotStatus vela_aot_v2_invoke(VelaAotScope* scope,
     *error = nullptr;
   }
   auto* parent = scope->isolate().native_control().state().host_execution;
-  if (parent != nullptr && &parent->instance().code_identity() != &instance->code_identity()) {
+  if (!CanReenterNativeProgram(parent, instance->code_identity())) {
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
   NativeExecution execution(*instance, parent);

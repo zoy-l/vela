@@ -214,9 +214,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   const auto borrowed = escape_.borrowed_calls.empty()
                             ? std::optional<std::size_t>{}
                             : escape_.borrowed_calls.at(instruction_index_);
-  if (program_.native_mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
-      tier_ == NativeCodeTier::Baseline && callee.identity.local == 0 &&
-      callee.identity.declaration != DeclarationId{}) {
+  if (tier_ == NativeCodeTier::Baseline && IsNamedBaselineCall(callee, program_.native_mode)) {
     for (std::size_t index = 0; index < callee.parameter_count; ++index) {
       const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
       const auto& type = callee.value_types.at(index);

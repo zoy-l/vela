@@ -263,7 +263,7 @@ FunctionDescriptor MakeAsyncSignature(const AsyncMember& member,
   signature.is_getter = member.kind == MemberKind::Property;
   using Presence = FunctionDescriptor::ParameterPresence;
   for (std::size_t index = 0; index < parameters.size(); ++index) {
-    signature.AddParameter(std::string(member.parameters.at(index)), parameters[index],
+    signature.AddParameter(std::string(member.parameters[index]), parameters[index],
                            index < member.required ? Presence::Required : Presence::Optional);
   }
   return signature;

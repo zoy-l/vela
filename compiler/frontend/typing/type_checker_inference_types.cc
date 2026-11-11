@@ -70,8 +70,7 @@ std::vector<TypeName> TypeChecker::ProjectSupertypes(const Projection& projectio
     if (const auto* parameter = FindTypeParameter(current)) {
       static_cast<void>(ResolveParameterBound(*parameter));
     }
-    const auto parents = DirectSupertypes(current);
-    pending.insert(pending.end(), parents.begin(), parents.end());
+    AppendDirectSupertypes(current, pending);
   }
   return result;
 }

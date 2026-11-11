@@ -68,6 +68,7 @@ class EscapeFunction final {
 
 struct EscapePlan final {
   explicit EscapePlan(const ir::Function& source) : function(source) {}
+  void ResetOrigins();
   EscapeFunction function;
   std::vector<std::size_t> origins;
   std::vector<AllocationSite> allocations;

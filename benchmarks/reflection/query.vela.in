@@ -1,0 +1,41 @@
+import 'attributes' as tags;
+import 'targets' as targets;
+const targetModule = Reflect.typeInfo<targets.Actions>().module as string;
+[Reflect]
+class Background {
+$background
+}
+export func queryAll(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { sum += Reflect.findMethods<tags.Button>().length; }
+  return sum;
+}
+export func queryModule(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += Reflect.findMethods<tags.Button>(module: targetModule).length;
+  }
+  return sum;
+}
+export func queryMissing(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += Reflect.findMethods<tags.Button>(module: 'missing.vela').length;
+  }
+  return sum;
+}
+export func verify(): int {
+  const matches = Reflect.findMethods<tags.Button>();
+  if (matches.length != $matches) { return -1; }
+  for (let i = 0; i < matches.length; i++) {
+    const found = matches[i];
+    if (found.attribute.index != i || found.attribute.label != 'button' ||
+        found.method.declaringType.name != 'Actions' || !found.method.isStatic) { return -2; }
+    if (found.method.invoke(null, CallArguments()) as int != i) { return -3; }
+  }
+  if (matches.length > 0) {
+    matches[0].attribute.label = 'changed';
+    if (Reflect.findMethods<tags.Button>()[0].attribute.label != 'button') { return -4; }
+  }
+  return matches.length;
+}

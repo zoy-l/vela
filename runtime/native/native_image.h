@@ -17,6 +17,7 @@ namespace vela::runtime {
 inline constexpr std::uint32_t kNoNativeIndex = std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::uint32_t kNativeOptionalParameter = 1;
 inline constexpr std::uint32_t kNativeRestParameter = 2;
+inline constexpr std::uint32_t kNativeDefaultParameter = 4;
 inline constexpr std::uint32_t kNativeAsyncFunction = 1;
 inline constexpr std::uint32_t kNativeExportedFunction = 2;
 inline constexpr std::uint32_t kNativeTypedFunction = 4;
@@ -101,6 +102,9 @@ struct NativeCallParameter final {
   NativeText name;
   std::uint32_t type = 0;
   std::uint32_t flags = 0;
+  [[nodiscard]] bool IsOptional() const noexcept { return (flags & kNativeOptionalParameter) != 0; }
+  [[nodiscard]] bool IsRest() const noexcept { return (flags & kNativeRestParameter) != 0; }
+  [[nodiscard]] bool HasDefault() const noexcept { return (flags & kNativeDefaultParameter) != 0; }
 };
 
 using NativeEntry = std::uint8_t (*)(NativeExecution*,
@@ -192,6 +196,51 @@ struct NativeJSONDecodePlan final {
   std::uint32_t constructor = kNoNativeIndex;
 };
 
+struct NativeReflectionType final {
+  std::uint32_t type = 0;
+  NativeText module;
+  NativeText name;
+  NativeTable<std::uint32_t> arguments;
+  std::uint32_t base = kNoNativeIndex;
+  NativeTable<std::uint32_t> interfaces;
+  std::uint32_t flags = 0;
+};
+
+struct NativeReflectionMember final {
+  DeclarationId declaration;
+  std::uint32_t declaring_type = 0;
+  NativeText name;
+  std::uint32_t kind = 0;
+  std::uint32_t flags = 0;
+  std::uint32_t type = kNoNativeIndex;
+  std::uint32_t target = kNoNativeIndex;
+  DeclarationId getter;
+  DeclarationId setter;
+  NativeTable<NativeCallParameter> parameters;
+  NativeTable<std::uint32_t> type_arguments;
+};
+
+enum class NativeAttributeValueKind : std::uint8_t {
+  Null,
+  Integer,
+  Double,
+  Boolean,
+  String,
+};
+
+struct NativeAttributeValue final {
+  std::uint32_t type = 0;
+  std::uint32_t kind = static_cast<std::uint32_t>(NativeAttributeValueKind::Null);
+  std::uint64_t payload = 0;
+  NativeText text;
+};
+
+struct NativeAttribute final {
+  DeclarationId target;
+  std::uint32_t type = 0;
+  NativeTable<NativeAttributeValue> fields;
+};
+
 struct NativeImage final {
   std::uint32_t abi_version = kNativeAbiVersion;
   std::uint32_t record_bytes = sizeof(NativeImage);
@@ -219,6 +268,9 @@ struct NativeImage final {
   std::uint32_t native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
   NativeTable<std::uint32_t> global_flags;
   NativeTable<NativeJSONDecodePlan> json_decode_plans;
+  NativeTable<NativeReflectionType> reflection_types;
+  NativeTable<NativeReflectionMember> reflection_members;
+  NativeTable<NativeAttribute> attributes;
 
   [[nodiscard]] bool IsReloadable() const noexcept {
     return native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable);

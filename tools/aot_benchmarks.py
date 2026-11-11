@@ -27,6 +27,10 @@ def compile_workloads(compiler: Path, source: Path, exports: list[str], output: 
     return manifest
 
 
+def native_image_declaration(manifest: dict) -> str:
+    return 'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;"
+
+
 def native_function_fields(manifest: dict, function: int) -> str:
     metrics = manifest["functions"][function]
     return (f", .function = {function}, .shadow_slots = {metrics['shadow_slots']}"
@@ -37,7 +41,7 @@ def aot_entries(cases: list[dict], manifest: dict) -> list[str]:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>",
               '#include "benchmarks/aot_benchmark_types.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
+              native_image_declaration(manifest),
               "namespace vela::benchmarks {",
               "inline const auto* const kAotBenchmarkImage = " + manifest["image"] + "();",
               "inline constexpr std::uint32_t kAotPrepareNumeric = " + str(indices["prepareNumeric"]) + ";",
@@ -56,7 +60,7 @@ def algorithm_entries(cases: list[dict], manifest: dict) -> list[str]:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>",
               '#include "benchmarks/algorithms/workloads.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
+              native_image_declaration(manifest),
               "namespace vela::benchmarks::algorithms {",
               "inline const auto* const kImage = " + manifest["image"] + "();",
               "inline constexpr std::uint32_t kPrepare = " + str(indices["prepare"]) + ";",

@@ -5,6 +5,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -81,20 +82,18 @@ func main(): int { return first; }
 
 TEST(GlobalTest, InferredInitializersFollowDependenciesAndLocalsShadowGlobals) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 const first = second + 1;
 const second = 40;
 func add(first: int): int { return first + 1; }
 func main(): int { return add(first); }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GlobalTest, FailedInitializationRetriesAndReadyReadsObserveLaterWrites) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 let attempts = 0;
 let value = initialize();
 func initialize(): int {
@@ -112,16 +111,13 @@ func main(): int {
   return attempts == 2 && caught == 1 ? value : -3;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 class GlobalErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(GlobalErrorTest, RejectsInvalidBindingsAndInitializerContexts) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

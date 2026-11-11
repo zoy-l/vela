@@ -37,6 +37,7 @@ class SourceLineIndex final {
   [[nodiscard]] TextPosition PositionAt(std::string_view text,
                                         std::size_t offset,
                                         PositionEncoding encoding) const;
+  // 编译器位置转换为编辑器位置时，将超出文本范围的行列截到现有文本边界。
   [[nodiscard]] TextPosition PositionAt(std::string_view text,
                                         SourceLocation location,
                                         PositionEncoding encoding) const;

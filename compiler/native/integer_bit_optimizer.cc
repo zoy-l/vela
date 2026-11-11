@@ -91,7 +91,7 @@ std::optional<WordRotation> MatchRotation(llvm::Instruction& instruction) {
   const auto source_width = instruction.getType()->getIntegerBitWidth();
   const auto left_amount = left->amount->getLimitedValue(source_width);
   const auto right_amount = right->amount->getLimitedValue(source_width);
-  if (width == 0 || width >= source_width || left_amount == 0 || right_amount == 0 ||
+  if (width >= source_width || left_amount == 0 || right_amount == 0 ||
       left_amount + right_amount != width) {
     return std::nullopt;
   }

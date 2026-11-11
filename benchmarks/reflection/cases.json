@@ -1,0 +1,19 @@
+[
+  {"path": "field/direct", "entry": "directField", "program": "plain", "expected": 8128},
+  {"path": "field/dynamic", "entry": "dynamicField", "program": "plain", "expected": 8128},
+  {"path": "field/cached", "entry": "reflectedField", "program": "reflected", "expected": 8128},
+  {"path": "field/member_lookup", "entry": "memberField", "program": "reflected", "expected": 8128},
+  {"path": "field/type_member_lookup", "entry": "typeMemberField", "program": "reflected", "expected": 8128},
+  {"path": "call/direct", "entry": "directCall", "program": "plain", "expected": 8128},
+  {"path": "call/dynamic", "entry": "dynamicCall", "program": "plain", "expected": 8128},
+  {"path": "call/cached", "entry": "reflectedCall", "program": "reflected", "expected": 8128},
+  {"path": "call/packed", "entry": "packedCall", "program": "reflected", "expected": 8128},
+  {"path": "call/member_lookup", "entry": "memberCall", "program": "reflected", "expected": 8128},
+  {"path": "call/type_member_lookup", "entry": "typeMemberCall", "program": "reflected", "expected": 8128},
+  {"path": "construct/direct", "entry": "directConstruct", "program": "plain", "expected": 8128},
+  {"path": "construct/reflected", "entry": "reflectedConstruct", "program": "reflected", "expected": 8128},
+  {"path": "lookup/type", "entry": "typeLookup", "program": "reflected", "expected": 128},
+  {"path": "lookup/member", "entry": "memberLookup", "program": "reflected", "expected": 128},
+  {"path": "metadata/enumerate", "entry": "metadata", "program": "reflected", "expected": 128},
+  {"path": "unused/registered_direct", "entry": "directField", "program": "registered", "expected": 8128}
+]

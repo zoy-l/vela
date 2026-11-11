@@ -48,11 +48,8 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferBuiltinMethod(const T
     if (name == "join") {
       return BuiltinSignature(Builtin::ArrayJoin);
     }
-    const auto methods = ArrayMethods();
-    const auto found =
-        std::ranges::find_if(methods, [name](const auto& method) { return method.first == name; });
-    if (found != methods.end()) {
-      return ArrayMethodSignature(found->second, array_elements_.at(receiver.name));
+    if (const auto builtin = FindArrayMethod(name)) {
+      return ArrayMethodSignature(*builtin, array_elements_.at(receiver.name));
     }
   }
   if (receiver.kind == Type::Kind::Set || receiver.kind == Type::Kind::Map) {

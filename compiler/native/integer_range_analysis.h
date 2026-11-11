@@ -58,12 +58,16 @@ class IntegerRangeAnalysis final {
                  const ir::BasicBlock& block,
                  const State& state,
                  std::size_t successor);
-  void Transfer(std::size_t function, std::size_t position, State& state) const;
+  void Transfer(std::size_t function,
+                std::size_t position,
+                State& state,
+                std::span<const std::uint64_t> arrays) const;
   [[nodiscard]] std::optional<EdgeRanges> RefineEdge(std::size_t function_index,
                                                      const ir::BasicBlock& block,
                                                      std::size_t successor,
                                                      const State& state) const;
   void Publish(std::size_t index);
+  [[nodiscard]] std::span<const std::uint64_t> ArrayBits(std::size_t index) const;
 
   const ir::Program* program_;
   std::span<const std::uint8_t> roots_;

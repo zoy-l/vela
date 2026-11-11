@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,6 +61,7 @@ class ModuleBinding final {
   void EndScope();
   void DeclareLocal(std::string_view name);
   void BindType(TypeName& type);
+  void BindAttributes(std::span<Attribute> attributes);
   void BindExpression(Expression* expression);
   void BindStatement(Statement* statement);
   void BindScoped(Statement* statement);
@@ -411,6 +413,7 @@ void ModuleBinding::BindStatement(Statement* statement) {
 
 void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
   BeginTypeParameters(function.type_parameters, owner);
+  BindAttributes(function.attributes);
   BeginScope();
   BindType(function.return_type);
   for (auto& parameter : function.parameters) {
@@ -424,6 +427,7 @@ void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
 
 void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
   BeginTypeParameters(declaration.type_parameters, owner);
+  BindAttributes(declaration.attributes);
   if (declaration.base_class) {
     BindType(*declaration.base_class);
   }
@@ -431,6 +435,7 @@ void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
     BindType(interface);
   }
   for (auto& field : declaration.fields) {
+    BindAttributes(field.attributes);
     BindType(field.type);
     BindExpression(field.initializer.get());
   }
@@ -445,6 +450,7 @@ void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
 
 void ModuleBinding::BindInterface(Interface& declaration, const std::string& owner) {
   BeginTypeParameters(declaration.type_parameters, owner);
+  BindAttributes(declaration.attributes);
   for (auto& method : declaration.methods) {
     BindFunction(method, owner + '.' + method.name);
   }
@@ -452,6 +458,23 @@ void ModuleBinding::BindInterface(Interface& declaration, const std::string& own
 }
 
 void ModuleBinding::BindProgram(Program& program) {
+  for (auto& declaration : program.enums) {
+    BindAttributes(declaration.attributes);
+    for (auto& member : declaration.members) {
+      BindAttributes(member.attributes);
+    }
+  }
+  for (auto& selection : program.reflection) {
+    const auto begin = diagnostics_.size();
+    ForEachReflectionType(selection, [&](TypeName& type) {
+      type.SetSourceId(current_);
+      BindType(type);
+    });
+    for (auto& diagnostic : std::span(diagnostics_).subspan(begin)) {
+      diagnostic.location = selection.location;
+      diagnostic.source_path = selection.source_path;
+    }
+  }
   const auto target = [&](const auto& declaration) -> std::string {
     return scopes_.at(current_).declarations.at(declaration.name).target;
   };
@@ -489,6 +512,15 @@ void ModuleBinding::BindProgram(Program& program) {
   }
 }
 
+void ModuleBinding::BindAttributes(std::span<Attribute> attributes) {
+  for (auto& attribute : attributes) {
+    BindType(attribute.type);
+    for (auto& argument : attribute.arguments) {
+      BindExpression(argument.value.get());
+    }
+  }
+}
+
 ParseResult ModuleBinding::Run() {
   CollectDeclarations();
   if (diagnostics_.empty()) {
@@ -502,10 +534,10 @@ ParseResult ModuleBinding::Run() {
     if (can_bind) {
       BindProgram(module.program);
     }
+    module.program.imports.clear();
     AppendProgram(combined, std::move(module.program));
     ++current_;
   }
-  combined.imports.clear();
   combined.sources = std::move(sources_);
   return {.program = std::move(combined), .diagnostics = std::move(diagnostics_)};
 }

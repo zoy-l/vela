@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <vector>
 
 #include <benchmark/benchmark.h>
@@ -11,7 +12,7 @@
 namespace vela::benchmarks {
 namespace {
 
-enum class LivenessMode : std::uint8_t { All, Necessary };
+enum class LivenessMode : std::uint8_t { All, Necessary, Uniform };
 
 void LoopLiveness(benchmark::State& state, LivenessMode mode) {
   ir::Function function;
@@ -40,10 +41,16 @@ void LoopLiveness(benchmark::State& state, LivenessMode mode) {
   function.instructions.push_back(
       {.opcode = Opcode::Return, .dst = kDataRegisters, .location = {}});
   const auto graph = ir::BuildFlowGraph(function);
+  std::vector<ir::RegisterId> uniform;
+  if (mode == LivenessMode::Uniform) {
+    uniform.resize(kRegisterCount);
+    std::ranges::iota(uniform, 0U);
+  }
   for (auto iteration : state) {
-    if (mode == LivenessMode::All) {
-      auto live = ir::AnalyzeLiveness(function, graph, {});
-      if (live.empty() || !live.front().live_in.Has(0)) {
+    if (mode != LivenessMode::Necessary) {
+      auto live = ir::AnalyzeLiveness(function, graph, {}, {}, uniform);
+      if (live.empty() || !live.front().live_in.Has(0) ||
+          (mode == LivenessMode::Uniform && !live.front().live_in.Has(kDataRegisters))) {
         state.SkipWithError("Loop condition must remain live at entry");
         break;
       }
@@ -68,6 +75,11 @@ BENCHMARK_CAPTURE(LoopLiveness, All, LivenessMode::All)
     ->Args({64, 256});
 BENCHMARK_CAPTURE(LoopLiveness, Necessary, LivenessMode::Necessary)
     ->Name("analysis/liveness/necessary")
+    ->Args({8, 16})
+    ->Args({32, 64})
+    ->Args({64, 256});
+BENCHMARK_CAPTURE(LoopLiveness, Uniform, LivenessMode::Uniform)
+    ->Name("analysis/liveness/uniform")
     ->Args({8, 16})
     ->Args({32, 64})
     ->Args({64, 256});

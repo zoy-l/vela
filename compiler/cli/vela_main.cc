@@ -74,18 +74,17 @@ void PrintUsage(std::ostream& output) {
 }
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
-  for (const vela::frontend::Diagnostic& diagnostic : diagnostics) {
-    vela::frontend::WriteDiagnostic(std::cerr, diagnostic, path);
-  }
+  vela::frontend::WriteDiagnostics(std::cerr, diagnostics, path);
 }
 
 int CheckFile(std::string_view path_text) {
   const std::string path(path_text);
-  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
+  const auto options = vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }
-  const vela::frontend::CheckResult result = vela::frontend::CheckFile(path, {}, *options);
+  const vela::frontend::CheckResult result =
+      vela::frontend::CheckFile(path, {}, options->diagnostics, options->reflection);
   PrintDiagnostics(path, result.diagnostics);
   if (!result.Succeeded()) {
     return kSourceErrorExitCode;
@@ -97,10 +96,10 @@ int CheckFile(std::string_view path_text) {
 enum class ExecutionMode : std::uint8_t { Run, Debug };
 
 int RunFile(std::string_view path, ExecutionMode mode) {
-  const auto diagnostics =
-      vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
-  if (!diagnostics) {
-    return diagnostics.error().exit_code;
+  const auto configuration =
+      vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr);
+  if (!configuration) {
+    return configuration.error().exit_code;
   }
   auto compiler = vela::compiler::jit::Compiler::Create();
   if (!compiler) {
@@ -108,7 +107,8 @@ int RunFile(std::string_view path, ExecutionMode mode) {
     return kRuntimeErrorExitCode;
   }
   vela::compiler::jit::SourceOptions options;
-  options.diagnostics = *diagnostics;
+  options.diagnostics = configuration->diagnostics;
+  options.reflection = configuration->reflection;
   options.compilation.code_cache = ".cache/vela/native/run";
   if (mode == ExecutionMode::Debug) {
     options.compilation.debugging = vela::compiler::native::NativeDebugging::Instructions;
@@ -161,11 +161,11 @@ int PublishTextArtifact(const std::filesystem::path& path, std::string_view text
 }
 
 int DocumentFile(std::string_view path, const std::filesystem::path& output) {
-  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
+  const auto options = vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }
-  const auto documentation = vela::tooling::GenerateDocumentation(path, *options);
+  const auto documentation = vela::tooling::GenerateDocumentation(path, options->diagnostics);
   PrintDiagnostics(path, documentation.diagnostics);
   if (!documentation.Succeeded()) {
     return kSourceErrorExitCode;
@@ -208,11 +208,14 @@ int HostHeaderCommand(std::span<char*> arguments) {
     return kUsageExitCode;
   }
   const std::string_view path = arguments.front();
-  const auto options = vela::compiler::ReadSourceDiagnosticOptions(vela::Utf8Path(path), std::cerr);
+  const auto options = vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr);
   if (!options) {
     return options.error().exit_code;
   }
-  const auto prepared = vela::ir::PrepareParsed(vela::frontend::LoadProgram(path), *options);
+  const auto prepared = vela::ir::PrepareParsed(
+      vela::frontend::LoadProgram(path, {}, vela::frontend::SourceLoadMode::Compilation,
+                                  options->reflection),
+      options->diagnostics);
   PrintDiagnostics(path, prepared.diagnostics);
   if (!prepared.Succeeded()) {
     return kSourceErrorExitCode;

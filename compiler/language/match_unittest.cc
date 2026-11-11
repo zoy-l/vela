@@ -2,8 +2,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
-#include "runtime/isolate/isolate.h"
+#include "compiler/test_support/execution_expectations.h"
 
 namespace vela::compiler {
 namespace {
@@ -11,10 +10,7 @@ namespace {
 class MatchExpressionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(MatchExpressionTest, EvaluatesSelectorOnceAndExecutesOnlySelectedArm) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(ExhaustiveArms,
@@ -67,8 +63,7 @@ func main(): int {
 class MatchErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(MatchErrorTest, RejectsMissingDuplicateAndIncompatiblePatterns) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

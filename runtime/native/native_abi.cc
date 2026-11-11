@@ -88,6 +88,10 @@ NativeExecution::~NativeExecution() {
   }
 }
 
+bool CanReenterNativeProgram(const NativeExecution* parent, const CodeIdentity& identity) noexcept {
+  return parent == nullptr || &parent->instance().code_identity() == &identity;
+}
+
 NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
                                          NativeInstance& instance) noexcept
     : execution_(&execution), previous_(execution.instance_) {

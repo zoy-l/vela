@@ -10,6 +10,11 @@
 
 #include <gtest/gtest.h>
 
+#include "base/callable.h"
+#include "base/reflection.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/parser.h"
+
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/type_checker.h"
@@ -28,6 +33,71 @@ void PruneMain(ir::Program& program) {
   }
   std::optional<std::uint32_t> main;
   PruneNativeProgram(program, main);
+}
+
+TEST(ReachabilityTest, ReflectionRetainsSelectedPublicCodeAndRemapsTargets) {
+  const frontend::SourceInput source{
+      .path = "main.vela",
+      .text = R"(
+func unused(): int { return 0; }
+class Counter {
+  value: int = 1;
+  add(amount: int): int { return this.value + amount; }
+  private secret(): int { return 7; }
+}
+export func main(): int { return 1; }
+)",
+  };
+  const frontend::ReflectionSelection selection{
+      .module = "main.vela",
+      .type = *frontend::ParseTypeSource("Counter"),
+      .members =
+          {
+              {
+                  .kind = frontend::ReflectionMemberKind::Method,
+                  .name = "add",
+                  .type_arguments = {},
+                  .location = {},
+              },
+              {
+                  .kind = frontend::ReflectionMemberKind::Method,
+                  .name = "secret",
+                  .type_arguments = {},
+                  .location = {},
+              },
+              {
+                  .kind = frontend::ReflectionMemberKind::Constructor,
+                  .name = {},
+                  .type_arguments = {},
+                  .location = {},
+              },
+          },
+      .source_path = "vela.json",
+      .location = {},
+      .source = frontend::ParseSourceSnapshot("{}").source,
+  };
+  auto prepared = ir::PrepareParsed(
+      frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1)));
+  ASSERT_TRUE(prepared.Succeeded());
+  PruneMain(prepared.program);
+  const auto& program = prepared.program;
+  EXPECT_FALSE(std::ranges::any_of(program.functions, [](const auto& function) {
+    return function.name == "unused" || function.name == "Counter.secret";
+  }));
+  const auto add = std::ranges::find(program.reflection_members, "add", &reflection::Member::name);
+  ASSERT_NE(add, program.reflection_members.end());
+  ASSERT_NE(add->target, kInvalidFunctionTarget);
+  EXPECT_EQ(program.functions.at(add->target).name, "Counter.add");
+  const auto secret =
+      std::ranges::find(program.reflection_members, "secret", &reflection::Member::name);
+  ASSERT_NE(secret, program.reflection_members.end());
+  EXPECT_NE(secret->flags & reflection::kRegistered, 0U);
+  EXPECT_EQ(secret->target, kInvalidFunctionTarget);
+  const auto constructor =
+      std::ranges::find(program.reflection_members, "constructor", &reflection::Member::name);
+  ASSERT_NE(constructor, program.reflection_members.end());
+  ASSERT_NE(constructor->target, kInvalidFunctionTarget);
+  EXPECT_EQ(program.functions.at(constructor->target).name, "$construct.Counter");
 }
 
 TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDescriptions) {

@@ -44,6 +44,8 @@ source_set("frontend") {
     "frontend/builtins/builtins.h",
     "frontend/builtins/byte_builtins.cc",
     "frontend/builtins/byte_builtins.h",
+    "frontend/builtins/reflection_builtins.cc",
+    "frontend/builtins/reflection_builtins.h",
     "frontend/builtins/regexp_builtins.cc",
     "frontend/builtins/regexp_builtins.h",
     "frontend/builtins/sdk_modules.cc",
@@ -99,6 +101,7 @@ source_set("frontend") {
     "frontend/typing/type_checker.h",
     "frontend/typing/type_checker_array.cc",
     "frontend/typing/type_checker_async.cc",
+    "frontend/typing/type_checker_attributes.cc",
     "frontend/typing/type_checker_builtin_values.cc",
     "frontend/typing/type_checker_cast.cc",
     "frontend/typing/type_checker_classes.cc",
@@ -116,6 +119,7 @@ source_set("frontend") {
     "frontend/typing/type_checker_methods.cc",
     "frontend/typing/type_checker_null.cc",
     "frontend/typing/type_checker_refinements.cc",
+    "frontend/typing/type_checker_reflection.cc",
     "frontend/typing/type_checker_switch.cc",
     "frontend/typing/type_checker_types.cc",
     "frontend/typing/type_inference.cc",
@@ -160,6 +164,7 @@ source_set("ir") {
     "ir/lowerer_functions.cc",
     "ir/lowerer_json.cc",
     "ir/lowerer_match.cc",
+    "ir/lowerer_reflection.cc",
     "ir/lowerer_string.cc",
     "ir/lowerer_switch.cc",
     "ir/lowerer_types.cc",
@@ -180,6 +185,7 @@ executable("vela_ir_tests") {
   sources = [
     "ir/analysis_unittest.cc",
     "ir/preparation_unittest.cc",
+    "ir/reflection_unittest.cc",
   ]
   deps = [
     ":ir",
@@ -270,6 +276,7 @@ source_set("interactive") {
   ]
   public_deps = [ ":development" ]
   deps = [
+    ":development_diagnostics",
     ":project_configuration",
     "//base:json",
   ]
@@ -423,6 +430,7 @@ source_set("jit") {
 }
 
 source_set("development") {
+  deps = [ ":project_configuration" ]
   sources = [
     "development/development_files.cc",
     "development/development_files.h",
@@ -430,6 +438,8 @@ source_set("development") {
     "development/development_repl.h",
     "development/development_session.cc",
     "development/development_session.h",
+    "development/reflection_changes.cc",
+    "development/reflection_changes.h",
   ]
   if (target_os == "win") {
     sources += [ "development/development_watch_win.cc" ]
@@ -452,7 +462,21 @@ source_set("development_tools") {
     "cli/development_debugger.h",
   ]
   public_deps = [ ":development" ]
-  deps = [ ":project_configuration" ]
+  deps = [
+    ":development_diagnostics",
+    ":project_configuration",
+  ]
+}
+
+source_set("development_diagnostics") {
+  sources = [
+    "cli/development_diagnostics.cc",
+    "cli/development_diagnostics.h",
+  ]
+  public_deps = [
+    ":frontend",
+    "//runtime",
+  ]
 }
 
 source_set("checkpoint_publication") {
@@ -484,16 +508,21 @@ executable("vela_jit_tests") {
     "jit/native_class_unittest.cc",
     "jit/native_storage_unittest.cc",
     "jit/recursion_unittest.cc",
+    "jit/reflection_reload_unittest.cc",
+    "jit/runtime_reflection_unittest.cc",
     "jit/source_cache_unittest.cc",
     "jit/state_evolution_unittest.cc",
     "jit/test_support.cc",
     "jit/test_support.h",
+    "test_support/development_test_support.cc",
+    "test_support/development_test_support.h",
   ]
   deps = [
     ":checkpoint_publication",
     ":development",
     ":jit",
     ":program_test_support",
+    ":project_configuration",
     ":source_session",
     ":test_sources",
     "//base:test_directory",
@@ -565,11 +594,14 @@ executable("vela_aot_tests") {
     "native/map_analysis_unittest.cc",
     "native/native_roots_unittest.cc",
     "native/recursive_inliner_unittest.cc",
+    "native/reflection_unittest.cc",
   ]
   deps = [
     ":aot",
     ":native_pass_test_support",
     ":preparation_test_support",
+    ":project_configuration",
+    ":reflection_test_support",
     ":test_sources",
     "//runtime",
     "//third_party:gtest_main",
@@ -597,6 +629,7 @@ executable("vela_frontend_tests") {
     "frontend/diagnostic_unittest.cc",
     "frontend/flow/control_flow_unittest.cc",
     "frontend/frontend_unittest.cc",
+    "frontend/modules/source_loader_unittest.cc",
     "frontend/syntax/parser_unittest.cc",
     "frontend/typing/declarations_unittest.cc",
     "frontend/typing/generic_contract_unittest.cc",
@@ -604,6 +637,7 @@ executable("vela_frontend_tests") {
     "frontend/typing/map_literal_unittest.cc",
     "frontend/typing/native_class_unittest.cc",
     "frontend/typing/refinement_unittest.cc",
+    "frontend/typing/reflection_unittest.cc",
     "project/project_config_unittest.cc",
     "testing/settings_unittest.cc",
     "tooling/documentation/documentation_unittest.cc",
@@ -645,8 +679,15 @@ source_set("native_pass_test_support") {
   public_deps = [ "//third_party:llvm" ]
 }
 
+source_set("reflection_test_support") {
+  testonly = true
+  sources = [ "test_support/reflection_test_support.h" ]
+  public_deps = [ "//runtime" ]
+}
+
 source_set("program_test_support") {
   testonly = true
+  deps = [ ":checker_test_support" ]
   sources = [
     "test_support/execution_expectations.cc",
     "test_support/execution_expectations.h",
@@ -655,6 +696,7 @@ source_set("program_test_support") {
   ]
   public_deps = [
     ":jit",
+    ":reflection_test_support",
     "//third_party:gtest",
   ]
 }

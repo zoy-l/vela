@@ -36,6 +36,22 @@ RegisterId Lowerer::LowerConstantLabel(const frontend::Expression& source) {
   return label;
 }
 
+std::size_t Lowerer::LowerLabelMismatch(const LoweredValue& selector,
+                                        RegisterId label,
+                                        frontend::SourceLocation location) {
+  const auto equal = AllocateRegister(location);
+  Emit({
+      .opcode = SelectEqualityOpcode(selector.type),
+      .dst = equal,
+      .lhs = selector.reg,
+      .rhs = label,
+      .location = location,
+  });
+  const auto mismatch = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = equal, .location = location});
+  return mismatch;
+}
+
 void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   const auto value = LowerExpression(*statement.condition);
   std::vector<std::optional<std::size_t>> entries(statement.cases.size());
@@ -47,16 +63,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
       continue;
     }
     const auto label = LowerConstantLabel(*branch.label);
-    const auto equal = AllocateRegister(branch.location);
-    Emit({
-        .opcode = SelectEqualityOpcode(value.type),
-        .dst = equal,
-        .lhs = value.reg,
-        .rhs = label,
-        .location = branch.location,
-    });
-    const auto mismatch = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfFalse, .lhs = equal, .location = branch.location});
+    const auto mismatch = LowerLabelMismatch(value, label, branch.location);
     entries.at(index) = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = branch.location});
     BindJump(mismatch);

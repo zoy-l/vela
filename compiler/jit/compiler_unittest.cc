@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <semaphore>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -52,6 +53,7 @@ namespace {
 
 using frontend::DiagnosticsText;
 using test::CompileText;
+using test::FindImageFunction;
 
 struct RootedFailureCase final {
   std::string_view call;
@@ -454,8 +456,7 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
   EXPECT_NE(compiled->llvm_ir.find("@vela_native_v3_call_declaration"), std::string::npos);
   const auto functions = compiled->image->functions.values();
-  const auto target = std::ranges::find(functions, "answer",
-                                        [](const auto& function) { return function.name.text(); });
+  const auto target = FindImageFunction(functions, "answer");
   ASSERT_NE(target, functions.end());
   EXPECT_EQ(target->identity.revision, 1U);
   runtime::Isolate isolate(1);
@@ -484,8 +485,7 @@ TEST(JitCompilerTest, ReusesUnchangedCodeAcrossNamedCalleeEdits) {
                                                  {.tier = tier, .preserve_ir = true}, &reuse);
       ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
       const auto functions = compiled->image->functions.values();
-      const auto cold = std::ranges::find(
-          functions, "independent", [](const auto& function) { return function.name.text(); });
+      const auto cold = FindImageFunction(functions, "independent");
       ASSERT_NE(cold, functions.end());
       if (version == 1) {
         independent = cold->entry;
@@ -534,6 +534,42 @@ TEST(JitCompilerTest, ReusePlanningPinsCodeUntilTheCandidateOwnsItsEntries) {
   EXPECT_EQ((*compiler)->resource_counts().batches, 0U);
 }
 
+TEST(JitCompilerTest, ReusePlanningReleasesInvalidatedGroupsAndPinsIndependentCode) {
+  CodeReuseCache reuse;
+  // 三个 owner 表示分别来自不同编译批次的代码，缓存只拥有弱引用。
+  auto callee = std::make_shared<int>(0);
+  auto caller = std::make_shared<int>(0);
+  auto independent = std::make_shared<int>(0);
+  const std::weak_ptr<void> callee_owner = callee;
+  const std::weak_ptr<void> caller_owner = caller;
+  const std::weak_ptr<void> independent_owner = independent;
+  reuse.functions.emplace("callee", ReusableCode{.symbol = "callee_old", .resource = callee});
+  reuse.functions.emplace("caller", ReusableCode{.symbol = "caller_old", .resource = caller});
+  reuse.functions.emplace("independent",
+                          ReusableCode{.symbol = "independent_old", .resource = independent});
+  reuse.sources.resize(3);
+  reuse.sources[0].symbols = {"callee"};
+  reuse.sources[1].symbols = {"caller"};
+  reuse.sources[1].body_dependencies = {0};
+  reuse.sources[2].symbols = {"independent"};
+  {
+    std::vector<FunctionCodeInputs> inputs(3);
+    inputs[0].fingerprint.low = 1;
+    const auto plan = PlanCodeReuse(std::move(inputs), reuse);
+    ASSERT_EQ(plan.reused.size(), 3U);
+    EXPECT_EQ(plan.reused[0], 0U);
+    EXPECT_EQ(plan.reused[1], 0U);
+    EXPECT_EQ(plan.reused[2], 1U);
+    callee.reset();
+    caller.reset();
+    independent.reset();
+    EXPECT_TRUE(callee_owner.expired());
+    EXPECT_TRUE(caller_owner.expired());
+    EXPECT_FALSE(independent_owner.expired());
+  }
+  EXPECT_TRUE(independent_owner.expired());
+}
+
 TEST(JitCompilerTest, LayoutEditsInvalidateTheirUsersWithoutRecompilingIndependentFunctions) {
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();
@@ -556,8 +592,7 @@ TEST(JitCompilerTest, LayoutEditsInvalidateTheirUsersWithoutRecompilingIndepende
           (*compiler)->Compile(prepared->snapshot().program, {.tier = tier}, &reuse);
       ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
       const auto functions = compiled->image->functions.values();
-      const auto unchanged = std::ranges::find(
-          functions, "independent", [](const auto& function) { return function.name.text(); });
+      const auto unchanged = FindImageFunction(functions, "independent");
       ASSERT_NE(unchanged, functions.end());
       if (previous) {
         EXPECT_EQ(unchanged->entry, independent);
@@ -742,8 +777,7 @@ export func read(): int {
                                     NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   const auto functions = compiled->image->functions.values();
-  const auto found = std::ranges::find(functions, "read",
-                                       [](const auto& function) { return function.name.text(); });
+  const auto found = FindImageFunction(functions, "read");
   ASSERT_NE(found, functions.end());
   const auto index = static_cast<std::size_t>(found - functions.begin());
   EXPECT_EQ(compiled->function_metrics.at(index).eliminated_allocations, 1U);
@@ -797,8 +831,7 @@ export async func live(): Future<int> {
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto functions = compiled->image->functions.values();
   for (const auto* const name : {"dead", "live"}) {
-    const auto found = std::ranges::find(functions, name,
-                                         [](const auto& function) { return function.name.text(); });
+    const auto found = FindImageFunction(functions, name);
     ASSERT_NE(found, functions.end());
     const auto& metrics =
         compiled->function_metrics.at(static_cast<std::size_t>(found - functions.begin()));
@@ -1532,15 +1565,22 @@ export func subtractDescending(start: int, bound: int, initial: int): int {
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
     constexpr auto kMinimum = std::numeric_limits<std::int64_t>::min();
     constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
-    for (const auto& [name, start, bound, initial] : {
-             std::tuple{"ascending", -3, 4, kMinimum + 2},
-             std::tuple{"descending", 3, -4, kMaximum - 2},
-             std::tuple{"subtractAscending", -3, 4, kMaximum - 2},
-             std::tuple{"subtractDescending", 3, -4, kMinimum + 2},
+    auto& dispatch = isolate.native_dispatch();
+    const auto ascending = dispatch.FindEntry("main.vela", "ascending");
+    const auto descending = dispatch.FindEntry("main.vela", "descending");
+    const auto subtract_ascending = dispatch.FindEntry("main.vela", "subtractAscending");
+    const auto subtract_descending = dispatch.FindEntry("main.vela", "subtractDescending");
+    ASSERT_TRUE(ascending);
+    ASSERT_TRUE(descending);
+    ASSERT_TRUE(subtract_ascending);
+    ASSERT_TRUE(subtract_descending);
+    for (const auto& [name, entry, start, bound, initial] : {
+             std::tuple{"ascending", &*ascending, -3, 4, kMinimum + 2},
+             std::tuple{"descending", &*descending, 3, -4, kMaximum - 2},
+             std::tuple{"subtractAscending", &*subtract_ascending, -3, 4, kMaximum - 2},
+             std::tuple{"subtractDescending", &*subtract_descending, 3, -4, kMinimum + 2},
          }) {
       SCOPED_TRACE(name);
-      const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
-      ASSERT_TRUE(entry);
       const std::array safe{
           runtime::Value::Integer(start),
           runtime::Value::Integer(bound),
@@ -1562,10 +1602,6 @@ export func subtractDescending(start: int, bound: int, initial: int): int {
       };
       ASSERT_TRUE(test::ReturnsInteger(*entry, initial, empty));
     }
-    const auto ascending = isolate.native_dispatch().FindEntry("main.vela", "ascending");
-    const auto descending = isolate.native_dispatch().FindEntry("main.vela", "descending");
-    ASSERT_TRUE(ascending);
-    ASSERT_TRUE(descending);
     const std::array upper{
         runtime::Value::Integer(kMaximum - 1),
         runtime::Value::Integer(kMaximum),

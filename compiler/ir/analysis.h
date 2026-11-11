@@ -157,11 +157,17 @@ struct BlockLiveness final {
     const Function& function,
     const FlowGraph& graph,
     std::span<const Function> functions,
-    std::span<const std::vector<RegisterId>> required = {});
+    std::span<const std::vector<RegisterId>> required = {},
+    std::span<const RegisterId> uniform_required = {});
 [[nodiscard]] std::vector<std::uint8_t> AnalyzeNecessaryLiveness(
     const Function& function,
     const FlowGraph& graph,
     std::span<const Function> functions);
+struct LivenessRequirements final {
+  std::span<const RegisterId> at_instruction;
+  std::span<const RegisterId> uniform;
+};
+
 // 成功边上的定义覆盖旧值，异常边上的定义不生效；两个后端共用此传递规则。
 void TransferLiveness(const Function& function,
                       const FlowGraph& graph,
@@ -169,7 +175,7 @@ void TransferLiveness(const Function& function,
                       const Instruction& instruction,
                       const RegisterAccess& access,
                       RegisterSet& live,
-                      std::span<const RegisterId> required = {});
+                      LivenessRequirements requirements = {});
 void CompactInstructions(Function& function,
                          std::span<const std::uint8_t> keep,
                          std::vector<std::size_t>* origins = nullptr);

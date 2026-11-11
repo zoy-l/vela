@@ -19,6 +19,7 @@
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/process_memory.h"
 #include "compiler/development/development_files.h"
+#include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
@@ -92,6 +93,44 @@ std::expected<std::shared_ptr<JitProgram>, std::string> CompileWorkload(const st
 }
 
 }  // namespace
+
+std::expected<compiler::DevelopmentCandidate, std::string> PrepareDevelopment(
+    compiler::DevelopmentSession& session,
+    std::string path,
+    std::string source,
+    compiler::DevelopmentOperation operation) {
+  auto candidate = session.Prepare(
+      {
+          .base_revision = session.snapshot()->revision,
+          .changes = {{.path = std::move(path), .text = std::move(source)}},
+          .added_roots = {},
+      },
+      operation);
+  if (!candidate) {
+    const auto& error = candidate.error();
+    return std::unexpected(error.message + '\n' + frontend::DiagnosticsText(error.diagnostics));
+  }
+  return std::move(*candidate);
+}
+
+std::expected<compiler::DevelopmentResult, std::string> PublishDevelopment(
+    compiler::DevelopmentSession& session,
+    std::string path,
+    std::string source,
+    compiler::DevelopmentOperation operation) {
+  auto candidate = PrepareDevelopment(session, std::move(path), std::move(source), operation);
+  if (!candidate) {
+    return std::unexpected(std::move(candidate.error()));
+  }
+  auto result = session.Submit(std::move(*candidate));
+  if (result.status == compiler::DevelopmentStatus::WaitingForSafepoint) {
+    result = session.Pump();
+  }
+  if (result.status != compiler::DevelopmentStatus::Accepted) {
+    return std::unexpected(result.message + '\n' + frontend::DiagnosticsText(result.diagnostics));
+  }
+  return result;
+}
 
 JitWorkload::JitWorkload(std::string path, NativeCodeTier tier)
     : path_(std::move(path)), tier_(tier) {}

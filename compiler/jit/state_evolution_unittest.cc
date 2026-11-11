@@ -240,7 +240,7 @@ TEST_P(JitStateTest, RequiredNewFieldsRejectAtomicallyWhenAnInstanceIsReachable)
   EXPECT_EQ(source_.snapshot()->revision, 1U);
   EXPECT_EQ(runtime::Heap::ClassOf(*object.value().AsObject()), layout);
   const auto object_field_0 = runtime::Heap::GetField(*object.value().AsObject(), 0);
-  if (!object_field_0.has_value()) {
+  if (!object_field_0) {
     FAIL() << "Expected object_field_0 to have a value";
   }
   EXPECT_EQ(object_field_0->AsInteger(), 40);
@@ -299,7 +299,7 @@ TEST_P(JitStateTest, DeletedFieldsAreRejectedOnlyWhileAReachableOldClosureDepend
   ASSERT_TRUE(update) << update.error();
   EXPECT_FALSE(runtime::Heap::ClassOf(*object.value().AsObject())->FieldIndex(removed_field));
   const auto object_field_0 = runtime::Heap::GetField(*object.value().AsObject(), 0);
-  if (!object_field_0.has_value()) {
+  if (!object_field_0) {
     FAIL() << "Expected object_field_0 to have a value";
   }
   EXPECT_TRUE(object_field_0->IsNull());
@@ -659,12 +659,12 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   EXPECT_EQ(runtime::Heap::ClassOf(*first.value().AsObject()), original);
   EXPECT_EQ(runtime::Heap::ClassOf(*second.value().AsObject()), original);
   const auto first_field_0 = runtime::Heap::GetField(*first.value().AsObject(), 0);
-  if (!first_field_0.has_value()) {
+  if (!first_field_0) {
     FAIL() << "Expected first_field_0 to have a value";
   }
   EXPECT_EQ(first_field_0->AsInteger(), 40);
   const auto second_field_0 = runtime::Heap::GetField(*second.value().AsObject(), 0);
-  if (!second_field_0.has_value()) {
+  if (!second_field_0) {
     FAIL() << "Expected second_field_0 to have a value";
   }
   EXPECT_EQ(second_field_0->AsInteger(), 40);

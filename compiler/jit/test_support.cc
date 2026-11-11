@@ -1,10 +1,12 @@
 #include "compiler/jit/test_support.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/declaration.h"
@@ -22,6 +24,13 @@
 #include "runtime/value/value.h"
 
 namespace vela::compiler::jit::test {
+
+std::span<const runtime::NativeFunctionDescription>::iterator FindImageFunction(
+    std::span<const runtime::NativeFunctionDescription> functions,
+    std::string_view name) {
+  return std::ranges::find(functions, name,
+                           [](const auto& function) { return function.name.text(); });
+}
 
 std::expected<SourceCandidate, SourceCandidateError> PrepareText(
     const SourceSession& source,

@@ -17,6 +17,7 @@
 #include "base/execution_status.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/compiler.h"
@@ -66,6 +67,13 @@ struct DevelopmentTimings final {
 
 struct DevelopmentChanges final {
   std::size_t compiled_functions = 0;
+  std::vector<DeclarationId> registered_types;
+  std::vector<DeclarationId> withdrawn_types;
+  std::vector<DeclarationId> registered_members;
+  std::vector<DeclarationId> withdrawn_members;
+  std::vector<DeclarationId> changed_members;
+  std::vector<DeclarationId> deleted_types;
+  std::vector<DeclarationId> deleted_members;
 };
 
 struct DevelopmentResult final {
@@ -112,6 +120,7 @@ class DevelopmentCandidate final {
 
 struct DevelopmentOptions final {
   frontend::DiagnosticOptions diagnostics;
+  std::vector<frontend::ReflectionSelection> reflection;
   std::size_t gc_threshold = runtime::kDefaultGcThreshold;
   std::string entry = "main";
   jit::CompileOptions compilation;

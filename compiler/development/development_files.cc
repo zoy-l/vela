@@ -26,6 +26,8 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/project/project_config.h"
 
 namespace vela::compiler {
 namespace {
@@ -294,11 +296,15 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::StartWatching() {
   if (!watched) {
     return watched;
   }
+  return TrackReferences();
+}
+
+std::expected<void, frontend::Diagnostics> DevelopmentFiles::TrackReferences() {
   for (const auto& [path, count] : references_) {
     static_cast<void>(count);
-    const auto registered = Track(path);
-    if (!registered) {
-      return registered;
+    const auto tracked = Track(path);
+    if (!tracked) {
+      return tracked;
     }
   }
   return {};
@@ -332,9 +338,10 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Accept(
     diagnostics.insert(diagnostics.end(), errors.begin(), errors.end());
   }
   accepted_ = std::move(snapshot);
+  reflection_changed_ = !frontend::IsSameReflectionSelections(reflection_, accepted_->reflection);
   PrunePending(*accepted_);
   // 新基线必须重新发送尚未接纳的文本；不能依赖用户再保存一次来触发事件。
-  rebase_pending_ = !pending_.empty();
+  rebase_pending_ = HasPending();
   if (!diagnostics.empty()) {
     return std::unexpected(std::move(diagnostics));
   }
@@ -344,6 +351,8 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Accept(
 std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles::ReadGraph(
     const CompiledSourceSnapshot& previous) {
   absl::flat_hash_set<std::string> paths{entry_};
+  const auto reflection_roots = frontend::ReflectionFileModules(reflection_);
+  paths.insert(reflection_roots.begin(), reflection_roots.end());
   for (const auto& [path, source] : cache_.sources) {
     paths.insert(path);
   }
@@ -362,6 +371,7 @@ std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles
     inputs.push_back({.path = path, .text = text});
   }
   std::vector<std::string> roots{entry_};
+  roots.insert(roots.end(), reflection_roots.begin(), reflection_roots.end());
   for (const auto& [path, text] : previous.sources) {
     if (path != entry_ && texts.contains(path) && !previous.prepared_sources.contains(path)) {
       roots.push_back(path);
@@ -376,6 +386,10 @@ std::expected<DevelopmentFiles::GraphTracking, frontend::Diagnostics> Developmen
     const std::string& root,
     const frontend::CapturedSources& graph) {
   absl::flat_hash_set<std::string> paths{root};
+  if (root == entry_) {
+    const auto modules = frontend::ReflectionFileModules(reflection_);
+    paths.insert(modules.begin(), modules.end());
+  }
   for (const auto& source : graph.sources) {
     paths.insert(source.path);
     const auto syntax = cache_.sources.find(source.path);
@@ -439,12 +453,13 @@ std::expected<SourceUpdate, frontend::Diagnostics> DevelopmentFiles::Capture(
 
 std::expected<SourceUpdate, frontend::Diagnostics> DevelopmentFiles::CaptureAll(
     const CompiledSourceSnapshot& previous) {
-  for (const auto& [path, count] : references_) {
-    static_cast<void>(count);
-    const auto tracked = Track(path);
-    if (!tracked) {
-      return std::unexpected(tracked.error());
-    }
+  const auto configured = ReadReflectionConfiguration();
+  if (!configured) {
+    return std::unexpected(configured.error());
+  }
+  const auto references = TrackReferences();
+  if (!references) {
+    return std::unexpected(references.error());
   }
   auto loaded = ReadGraph(previous);
   if (!loaded) {
@@ -465,6 +480,9 @@ std::expected<SourceUpdate, frontend::Diagnostics> DevelopmentFiles::CaptureAll(
   }
   SourceUpdate update;
   update.base_revision = previous.revision;
+  if (!frontend::IsSameReflectionSelections(reflection_, previous.reflection)) {
+    update.reflection = reflection_;
+  }
   absl::flat_hash_set<std::string> captured;
   const absl::flat_hash_set<std::string> accepted_roots(previous.roots.begin(),
                                                         previous.roots.end());
@@ -546,6 +564,9 @@ SourceUpdate DevelopmentFiles::Pending(const CompiledSourceSnapshot& previous) {
   SourceUpdate update;
   update.base_revision = previous.revision;
   update.changes = pending_;
+  if (reflection_changed_) {
+    update.reflection = reflection_;
+  }
   for (const auto& change : pending_) {
     if (change.text && !previous.sources.contains(change.path)) {
       update.added_roots.push_back(change.path);
@@ -620,6 +641,10 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   return Pending(previous);
 }
 
+bool DevelopmentFiles::HasPending() const {
+  return !pending_.empty() || reflection_changed_;
+}
+
 std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFiles::Poll(
     std::chrono::milliseconds timeout) {
   const std::scoped_lock lock(mutex_);
@@ -628,14 +653,14 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
     rebase_pending_ = false;
     return Pending(previous);
   }
-  const auto had_pending = !pending_.empty();
+  const auto had_pending = HasPending();
   auto captured = CaptureEvents(previous, watcher_->Drain(timeout));
   if (!captured || !*captured) {
     return captured;
   }
   const auto& update = **captured;
   // efsw 可以重复通知同一次保存；仍需发送把未接纳编辑撤销到基线的空更新。
-  if (!had_pending && update.changes.empty() && update.added_roots.empty()) {
+  if (!had_pending && update.IsEmpty()) {
     return std::nullopt;
   }
   return captured;
@@ -677,10 +702,66 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   if (changed.empty()) {
     return std::nullopt;
   }
-  if (std::ranges::any_of(changed, [&](const auto& path) { return aliases_.contains(path); })) {
+  if (configuration_invalid_ || std::ranges::any_of(changed, [&](const auto& path) {
+        return aliases_.contains(path) || configuration_paths_.contains(path);
+      })) {
     return CaptureAll(previous);
   }
   return CaptureChanges(previous, std::vector<std::string>(changed.begin(), changed.end()));
+}
+
+std::expected<void, frontend::Diagnostics> DevelopmentFiles::ReadReflectionConfiguration() {
+  std::error_code error;
+  const auto entry = std::filesystem::absolute(Utf8Path(entry_), error);
+  if (error) {
+    return std::unexpected(FileError(entry_, error.message()));
+  }
+  const auto configuration_name = Utf8Path(kProjectConfigurationName);
+  const auto working_directory = entry.parent_path();
+  const auto group = PathText(working_directory / configuration_name);
+  absl::flat_hash_set<std::string> paths;
+  std::optional<std::filesystem::path> explicit_file;
+  for (auto directory = working_directory.lexically_normal();;) {
+    const auto candidate = directory / configuration_name;
+    paths.insert(PathText(candidate));
+    const auto status = std::filesystem::status(candidate, error);
+    // 最近的配置屏蔽祖先配置；保留该路径订阅，以便删除后重新发现上层配置。
+    if (std::filesystem::exists(status) ||
+        (error && error != std::errc::no_such_file_or_directory)) {
+      explicit_file = candidate;
+      break;
+    }
+    const auto parent = directory.parent_path();
+    if (parent == directory) {
+      break;
+    }
+    directory = parent;
+  }
+  configuration_paths_ = paths;
+  const auto tracked = WatchGroup(group, paths);
+  if (!tracked) {
+    return tracked;
+  }
+  ProjectConfiguration configuration;
+  if (explicit_file) {
+    auto loaded = LoadProjectConfiguration(working_directory, explicit_file);
+    if (!loaded) {
+      configuration_invalid_ = true;
+      return std::unexpected(frontend::Diagnostics{ConfigurationDiagnostic(loaded.error())});
+    }
+    configuration = std::move(*loaded);
+  }
+  if (!configuration.file.empty() && paths.insert(PathText(configuration.file)).second) {
+    configuration_paths_ = paths;
+    const auto canonical = WatchGroup(group, std::move(paths));
+    if (!canonical) {
+      return canonical;
+    }
+  }
+  reflection_ = std::move(configuration.reflection);
+  reflection_changed_ = !frontend::IsSameReflectionSelections(reflection_, accepted_->reflection);
+  configuration_invalid_ = false;
+  return {};
 }
 
 std::expected<void, frontend::Diagnostics> DevelopmentFiles::RefreshDirectory(

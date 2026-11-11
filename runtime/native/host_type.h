@@ -35,9 +35,14 @@ class HostType final {
                                                                      NativeType description);
   [[nodiscard]] static std::expected<HostType, ExecutionStatus> Bind(NativeDispatch& dispatch,
                                                                      NativeType description);
+  [[nodiscard]] static std::expected<HostType, ExecutionStatus> Bind(NativeInstance& instance,
+                                                                     TypeConstraint constraint);
+  [[nodiscard]] std::expected<HostType, ExecutionStatus> WithConstraint(
+      TypeConstraint constraint) const;
   [[nodiscard]] Isolate& isolate() const noexcept;
   [[nodiscard]] TypeConstraint constraint() const noexcept;
   [[nodiscard]] std::expected<HeapObject*, ExecutionStatus> program() const noexcept;
+  [[nodiscard]] const void* context_identity() const noexcept;
 
  private:
   struct Storage final {

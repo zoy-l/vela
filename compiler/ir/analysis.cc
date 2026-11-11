@@ -255,15 +255,16 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
   for (std::size_t index = 0; index < code.size(); ++index) {
     const auto& instruction = code[index];
     const auto opcode = instruction.opcode;
+    const auto is_jump = IsJumpOpcode(opcode);
     const auto effects = AnalyzeEffects(instruction);
-    if (opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull) {
+    if (is_jump) {
       if (instruction.index < code.size()) {
         starts.at(instruction.index) = 1;
       }
     }
-    if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull ||
-         opcode == Opcode::Return || opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
-         effects.may_suspend || (instruction.handler && effects.may_fail)) &&
+    if ((is_jump || opcode == Opcode::Return || opcode == Opcode::Throw ||
+         opcode == Opcode::Rethrow || effects.may_suspend ||
+         (instruction.handler && effects.may_fail)) &&
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;
     }
@@ -297,9 +298,7 @@ FlowGraph BuildFlowGraph(const Function& function) {
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
     auto& block = graph.blocks.at(index);
     const auto& last = code.at(block.end - 1);
-    if ((last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse ||
-         last.opcode == Opcode::JumpIfNull) &&
-        last.index < code.size()) {
+    if (IsJumpOpcode(last.opcode) && last.index < code.size()) {
       block.successors.push_back(graph.instruction_blocks.at(last.index));
     }
     if (last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
@@ -378,12 +377,17 @@ struct BlockTransfer final {
 std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
                                            const FlowGraph& graph,
                                            std::span<const Function> functions,
-                                           std::span<const std::vector<RegisterId>> required) {
+                                           std::span<const std::vector<RegisterId>> required,
+                                           std::span<const RegisterId> uniform_required) {
   std::vector<BlockTransfer> transfers;
   transfers.reserve(graph.blocks.size());
+  RegisterSet uniform(function.register_count);
+  for (const auto reg : uniform_required) {
+    uniform.Insert(reg);
+  }
   for (const auto& block : graph.blocks) {
     BlockTransfer transfer{
-        .generated = RegisterSet(function.register_count),
+        .generated = uniform,
         .killed = RegisterSet(function.register_count),
         .exceptional = std::nullopt,
     };
@@ -406,10 +410,9 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
         }
       };
       ForEachUse(instruction, access, record_use);
-      if (!required.empty()) {
-        for (const auto reg : required[position]) {
-          record_use(reg);
-        }
+      const auto extra_uses = required.empty() ? std::span<const RegisterId>{} : required[position];
+      for (const auto reg : extra_uses) {
+        record_use(reg);
       }
       if (access.defines_value) {
         transfer.killed.Insert(instruction.dst);
@@ -420,7 +423,9 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
   return transfers;
 }
 
-template <typename TransferBlock>
+enum class LivenessStorage : std::uint8_t { Inputs, InputsAndOutputs };
+
+template <LivenessStorage Storage, typename TransferBlock>
 std::vector<BlockLiveness> SolveLiveness(const Function& function,
                                          const FlowGraph& graph,
                                          const TransferBlock& transfer_block) {
@@ -432,7 +437,8 @@ std::vector<BlockLiveness> SolveLiveness(const Function& function,
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
     live.push_back({
         .live_in = RegisterSet(function.register_count),
-        .live_out = RegisterSet(function.register_count),
+        .live_out =
+            RegisterSet(Storage == LivenessStorage::InputsAndOutputs ? function.register_count : 0),
     });
     work.push_back(index);
   }
@@ -451,7 +457,9 @@ std::vector<BlockLiveness> SolveLiveness(const Function& function,
     }
     live_in = live_out;
     transfer_block(index, live, live_in);
-    current.live_out.Swap(live_out);
+    if constexpr (Storage == LivenessStorage::InputsAndOutputs) {
+      current.live_out.Swap(live_out);
+    }
     if (current.live_in == live_in) {
       continue;
     }
@@ -471,19 +479,21 @@ std::vector<BlockLiveness> SolveLiveness(const Function& function,
 std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
                                            const FlowGraph& graph,
                                            std::span<const Function> functions,
-                                           std::span<const std::vector<RegisterId>> required) {
-  const auto transfers = SummarizeBlocks(function, graph, functions, required);
-  return SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
-    const auto& transfer = transfers.at(index);
-    live_in.Subtract(transfer.killed);
-    live_in.UnionWith(transfer.generated);
-    if (transfer.exceptional) {
-      const auto& exceptional = *transfer.exceptional;
-      if (live.at(exceptional.successor).live_in.Has(exceptional.destination)) {
-        live_in.Insert(exceptional.destination);
-      }
-    }
-  });
+                                           std::span<const std::vector<RegisterId>> required,
+                                           std::span<const RegisterId> uniform_required) {
+  const auto transfers = SummarizeBlocks(function, graph, functions, required, uniform_required);
+  return SolveLiveness<LivenessStorage::InputsAndOutputs>(
+      function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
+        const auto& transfer = transfers.at(index);
+        live_in.Subtract(transfer.killed);
+        live_in.UnionWith(transfer.generated);
+        if (transfer.exceptional) {
+          const auto& exceptional = *transfer.exceptional;
+          if (live.at(exceptional.successor).live_in.Has(exceptional.destination)) {
+            live_in.Insert(exceptional.destination);
+          }
+        }
+      });
 }
 
 std::vector<std::uint8_t> AnalyzeNecessaryLiveness(const Function& function,
@@ -505,8 +515,8 @@ std::vector<std::uint8_t> AnalyzeNecessaryLiveness(const Function& function,
     });
   }
   std::vector<std::uint8_t> keep(function.instructions.size(), 0);
-  static_cast<void>(
-      SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
+  static_cast<void>(SolveLiveness<LivenessStorage::Inputs>(
+      function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
         // 死指令是否产生 uses 依赖当前活性；随每轮传递覆盖标记，收敛后直接用于压缩。
         const auto& block = graph.blocks.at(index);
         for (auto position = block.end; position > block.begin;) {
@@ -529,12 +539,15 @@ void TransferLiveness(const Function& function,
                       const Instruction& instruction,
                       const RegisterAccess& access,
                       RegisterSet& live,
-                      std::span<const RegisterId> required) {
+                      LivenessRequirements requirements) {
   const auto exceptional = instruction.handler ? ExceptionalBlock(function, graph, instruction,
                                                                   AnalyzeEffects(instruction))
                                                : std::nullopt;
   TransferInstruction(instruction, access, exceptional, blocks, live);
-  for (const auto reg : required) {
+  for (const auto reg : requirements.at_instruction) {
+    live.Insert(reg);
+  }
+  for (const auto reg : requirements.uniform) {
     live.Insert(reg);
   }
 }

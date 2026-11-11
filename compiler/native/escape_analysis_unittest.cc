@@ -149,14 +149,14 @@ export func size(text: string): int {
   const auto roots = PlanNativeRoots(plan.function.get(), program.program.functions,
                                      program.program.native_mode, NativeDebugging::Safepoints);
   ASSERT_EQ(allocation.fields.size(), 1U);
-  const auto text = std::ranges::find(plan.function.get().instructions, Opcode::StringConcat,
-                                      &ir::Instruction::opcode);
-  ASSERT_NE(text, plan.function.get().instructions.end());
+  const auto& instructions = plan.function.get().instructions;
+  const auto text = std::ranges::find(instructions, Opcode::StringConcat, &ir::Instruction::opcode);
+  ASSERT_NE(text, instructions.end());
   const auto field = text->dst;
   EXPECT_TRUE(roots.slots.at(field));
   bool rooted = false;
-  for (std::size_t index = 0; index < plan.function.get().instructions.size(); ++index) {
-    if (plan.function.get().instructions.at(index).opcode == Opcode::Call) {
+  for (std::size_t index = 0; index < instructions.size(); ++index) {
+    if (instructions.at(index).opcode == Opcode::Call) {
       rooted = std::ranges::find(roots.stores.at(index), field) != roots.stores.at(index).end();
     }
   }
@@ -303,9 +303,9 @@ export func read(): int {
   const auto scalar = aot::Compile(
       program.program, {.exports = {"read"}, .escape = EscapeOptimization::ScalarReplacement});
   ASSERT_TRUE(scalar) << scalar.error().front().message;
-  EXPECT_EQ(scalar->function_metrics.at(FunctionIndex(scalar->program, "read")).stack_records, 0U);
-  EXPECT_EQ(scalar->function_metrics.at(FunctionIndex(scalar->program, "read")).sunk_allocations,
-            1U);
+  const auto& scalar_metrics = scalar->function_metrics.at(FunctionIndex(scalar->program, "read"));
+  EXPECT_EQ(scalar_metrics.stack_records, 0U);
+  EXPECT_EQ(scalar_metrics.sunk_allocations, 1U);
 }
 
 TEST(EscapeAnalysisTest, BorrowProofRejectsIdentityPublicationCaptureAndAsync) {

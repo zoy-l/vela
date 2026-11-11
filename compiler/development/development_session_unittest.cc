@@ -11,7 +11,6 @@
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -19,6 +18,7 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
+#include "compiler/test_support/development_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
@@ -47,12 +47,7 @@ SourceUpdate Edit(const DevelopmentSession& session, std::string source) {
 DevelopmentResult Apply(DevelopmentSession& session,
                         std::string source,
                         DevelopmentOperation operation = DevelopmentOperation::HotReload) {
-  auto candidate = session.Prepare(Edit(session, std::move(source)), operation);
-  if (!candidate) {
-    return std::move(candidate.error());
-  }
-  auto submitted = session.Submit(std::move(*candidate));
-  return submitted.status == DevelopmentStatus::WaitingForSafepoint ? session.Pump() : submitted;
+  return test::ApplyUpdate(session, Edit(session, std::move(source)), operation);
 }
 
 void ExpectInteger(const std::expected<runtime::Value, ExecutionStatus>& result,

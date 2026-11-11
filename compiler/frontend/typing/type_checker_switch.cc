@@ -1,7 +1,6 @@
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
-#include <optional>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -15,12 +14,11 @@
 
 namespace vela::frontend {
 
-std::optional<ConstantValue> TypeChecker::CheckConstantLabel(
-    const Expression& label,
-    const Type& selector_type,
-    absl::flat_hash_set<std::string>& labels,
-    SourceLocation location,
-    ConstantLabelKind kind) {
+TypeChecker::CheckStatus TypeChecker::CheckConstantLabel(const Expression& label,
+                                                         const Type& selector_type,
+                                                         absl::flat_hash_set<std::string>& labels,
+                                                         SourceLocation location,
+                                                         ConstantLabelKind kind) {
   const bool match = kind == ConstantLabelKind::Match;
   const auto actual = CheckExpression(label, &selector_type);
   if (IsValid(actual) && !IsSameType(selector_type, actual)) {
@@ -31,14 +29,14 @@ std::optional<ConstantValue> TypeChecker::CheckConstantLabel(
   if (!constant) {
     AddDiagnostic(location, match ? "match pattern must be a compile-time constant"
                                   : "case label must be a compile-time constant");
-    return std::nullopt;
+    return CheckStatus::Failed;
   }
   const auto key = ConstantKey(*constant);
   if (!labels.insert(key).second) {
     AddDiagnostic(location, match ? "duplicate match pattern" : "duplicate case label");
   }
   facts_.case_values.insert_or_assign(&label, *constant);
-  return constant;
+  return CheckStatus::Succeeded;
 }
 
 StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type) {

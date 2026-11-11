@@ -13,8 +13,38 @@
 
 namespace vela::frontend {
 
+std::optional<std::vector<Attribute>> Parser::ParseAttributes() {
+  std::vector<Attribute> attributes;
+  while (Match(TokenKind::LeftBracket)) {
+    AnnotatePrevious(TokenRole::AttributeDelimiter);
+    const auto location = Previous().location;
+    auto type = ParseType();
+    if (!type) {
+      return std::nullopt;
+    }
+    Attribute attribute{.type = std::move(*type), .arguments = {}, .location = location};
+    if (Match(TokenKind::LeftParen)) {
+      attribute.arguments = ParseArguments();
+      for (const auto& argument : attribute.arguments) {
+        if (argument.name.empty()) {
+          AddDiagnostic(argument.location, "attribute arguments must be named");
+          return std::nullopt;
+        }
+      }
+      if (Expect(TokenKind::RightParen, "expected ')' after attribute arguments") == nullptr) {
+        return std::nullopt;
+      }
+    }
+    if (Expect(TokenKind::RightBracket, "expected ']' after attribute") == nullptr) {
+      return std::nullopt;
+    }
+    AnnotatePrevious(TokenRole::AttributeDelimiter);
+    attributes.push_back(std::move(attribute));
+  }
+  return attributes;
+}
+
 std::optional<Enum> Parser::ParseEnum() {
-  const Token name = Peek();
   const auto* name_token = Expect(TokenKind::Identifier, "expected enum name");
   if (name_token == nullptr) {
     return std::nullopt;
@@ -25,13 +55,21 @@ std::optional<Enum> Parser::ParseEnum() {
 
   Enum declaration;
   declaration.name = name_token->lexeme;
-  declaration.location = name.location;
+  declaration.location = name_token->location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
+    auto attributes = ParseAttributes();
+    if (!attributes) {
+      return std::nullopt;
+    }
     const auto* member = Expect(TokenKind::Identifier, "expected enum member name");
     if (member == nullptr) {
       return std::nullopt;
     }
-    declaration.members.push_back({.name = member->lexeme, .location = member->location});
+    declaration.members.push_back({
+        .name = member->lexeme,
+        .location = member->location,
+        .attributes = std::move(*attributes),
+    });
     if (!Match(TokenKind::Comma)) {
       break;
     }
@@ -55,7 +93,10 @@ std::optional<Class> Parser::ParseClassHeader(ClassKind kind) {
       return std::nullopt;
     }
     const auto* const key = Expect(TokenKind::StringLiteral, "expected native class key string");
-    if ((key == nullptr) || !IsNativeTypeKey(key->lexeme)) {
+    if (key == nullptr) {
+      return std::nullopt;
+    }
+    if (!IsNativeTypeKey(key->lexeme)) {
       AddDiagnostic(name->location,
                     "native class key requires dot-separated non-keyword identifiers");
       return std::nullopt;
@@ -121,7 +162,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   bool has_visibility = false;
   bool has_storage = false;
   const auto is_accessor_modifier = [&]() {
-    return (Check(TokenKind::Get) || Check(TokenKind::Set)) && current_ + 1 < tokens_.size() &&
+    return (Check(TokenKind::Get) || Check(TokenKind::Set)) &&
            IsMemberName(tokens_[current_ + 1].kind);
   };
   while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
@@ -150,6 +191,20 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   return modifiers;
 }
 
+std::unique_ptr<Function> Parser::CreateConstructor(SourceLocation location) {
+  auto constructor = std::make_unique<Function>();
+  constructor->name = kConstructorName;
+  constructor->location = location;
+  constructor->return_type = {
+      .name = std::string(kVoidTypeName),
+      .location = location,
+      .kind = TypeName::Kind::Named,
+      .arguments = {},
+      .parameter = {},
+  };
+  return constructor;
+}
+
 std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers) {
   const auto visibility = modifiers.visibility;
   const auto storage = modifiers.storage;
@@ -157,13 +212,8 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
     AddDiagnostic(Previous().location, "invalid or duplicate constructor declaration");
     return nullptr;
   }
-  auto constructor = std::make_unique<Function>();
-  constructor->name = kConstructorName;
-  constructor->location = Previous().location;
+  auto constructor = CreateConstructor(Previous().location);
   constructor->visibility = visibility;
-  constructor->return_type.name = kVoidTypeName;
-  constructor->return_type.kind = TypeName::Kind::Named;
-  constructor->return_type.location = constructor->location;
   if (Match(TokenKind::LeftParen)) {
     declaration.constructor_kind = ConstructorKind::Explicit;
     auto parameters = ParseParameters();
@@ -180,12 +230,17 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
 }
 
 Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
+  auto attributes = ParseAttributes();
+  if (!attributes) {
+    return MemberParseResult::Failed;
+  }
   if (!declaration.native_key.empty()) {
-    return ParseNativeClassMember(declaration);
+    return ParseNativeClassMember(declaration, std::move(*attributes));
   }
   const auto modifiers = ParseMemberModifiers();
   const bool is_async = Match(TokenKind::Async);
-  const auto append_method = [&declaration, modifiers](Function method) -> void {
+  const auto append_method = [&declaration, &attributes, modifiers](Function method) -> void {
+    method.attributes = std::move(*attributes);
     method.visibility = modifiers.visibility;
     method.storage = modifiers.storage;
     method.is_override = modifiers.is_override;
@@ -213,6 +268,7 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     if (!constructor) {
       return MemberParseResult::Failed;
     }
+    constructor->attributes = std::move(*attributes);
     declaration.constructor = std::move(constructor);
     return MemberParseResult::Parsed;
   }
@@ -241,6 +297,7 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
   if (!field) {
     return MemberParseResult::Failed;
   }
+  field->attributes = std::move(*attributes);
   declaration.fields.push_back(std::move(*field));
   return MemberParseResult::Parsed;
 }
@@ -270,6 +327,7 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
       .visibility = modifiers.visibility,
       .storage = modifiers.storage,
       .initializer = std::move(initializer),
+      .attributes = {},
   };
 }
 
@@ -288,10 +346,15 @@ std::optional<Interface> Parser::ParseInterface() {
   }
   declaration.type_parameters = std::move(*type_parameters);
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
+    auto attributes = ParseAttributes();
+    if (!attributes) {
+      return std::nullopt;
+    }
     auto method = ParseInterfaceMethod();
     if (!method) {
       return std::nullopt;
     }
+    method->attributes = std::move(*attributes);
     declaration.methods.push_back(std::move(*method));
   }
   if (Expect(TokenKind::RightBrace, "expected '}' after interface body") == nullptr) {
@@ -382,10 +445,16 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
     return std::nullopt;
   }
   auto& function = *signature;
+  if (context_ == SyntaxContext::Standard && Match(TokenKind::Semicolon)) {
+    return std::move(function);
+  }
   if (!function.native_symbol.empty()) {
     if (Match(TokenKind::Equal)) {
       const auto* const symbol = Expect(TokenKind::StringLiteral, "expected native symbol string");
-      if ((symbol == nullptr) || symbol->lexeme.empty() || symbol->lexeme.contains('\0')) {
+      if (symbol == nullptr) {
+        return std::nullopt;
+      }
+      if (symbol->lexeme.empty() || symbol->lexeme.contains('\0')) {
         AddDiagnostic(name.location, "native symbol must be nonempty and contain no null byte");
         return std::nullopt;
       }

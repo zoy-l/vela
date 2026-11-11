@@ -18,6 +18,7 @@
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/checker.h"
+#include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
 namespace {
@@ -67,6 +68,7 @@ struct Declaration final {
   std::size_t index = 0;
   SourceLocation location;
   std::string_view name;
+  std::span<const frontend::Attribute> attributes;
 };
 
 template <class T>
@@ -81,6 +83,7 @@ void AddDeclarations(std::vector<Declaration>& output,
           .index = index,
           .location = declaration.location,
           .name = declaration.name,
+          .attributes = DeclarationAttributes(declaration),
       });
     }
   }
@@ -94,11 +97,14 @@ class Documentation final {
 
  private:
   void Comment(SourceLocation location);
+  void Attributes(std::span<const frontend::Attribute> attributes, std::string_view indent = "");
   void Class(const frontend::Class& declaration);
   void ClassDeclaration(const frontend::Class& declaration);
   void Constructor(const frontend::Class& declaration);
   void FieldDeclaration(const frontend::Field& field);
   void Initializer(const frontend::Expression& expression);
+  [[nodiscard]] std::string_view SourceText(const frontend::Token& first,
+                                            const frontend::Token& last) const;
   void Method(const frontend::Function& method);
   void Emit(Declaration declaration);
 
@@ -114,10 +120,25 @@ void Documentation::Comment(SourceLocation location) {
   }
 }
 
+void Documentation::Attributes(std::span<const frontend::Attribute> attributes,
+                               std::string_view indent) {
+  const auto& tokens = source_->tokens;
+  for (const auto& attribute : attributes) {
+    const auto begin =
+        tokens.begin() + static_cast<std::ptrdiff_t>(TokenIndexAt(tokens, attribute.location));
+    const auto end = std::find_if(begin + 1, tokens.end(), [](const auto& token) {
+      return token.kind == frontend::TokenKind::RightBracket &&
+             token.role == frontend::TokenRole::AttributeDelimiter;
+    });
+    output_ << indent << SourceText(*begin, *end) << '\n';
+  }
+}
+
 void Documentation::Method(const frontend::Function& method) {
   output_ << "### `" << method.name << "`\n\n";
-  Comment(method.location);
+  Comment(DocumentationLocation(method));
   output_ << "```vela\n";
+  Attributes(method.attributes);
   if (method.storage == frontend::MemberStorage::Static) {
     output_ << "static ";
   }
@@ -136,6 +157,9 @@ void Documentation::ClassDeclaration(const frontend::Class& declaration) {
     output_ << " = '" << native_key << '\'';
   }
   TypeParameters(output_, declaration.type_parameters);
+  if (declaration.base_class) {
+    output_ << " extends " << declaration.base_class->ToString();
+  }
   if (!declaration.interfaces.empty()) {
     output_ << " implements ";
     for (std::size_t index = 0; index < declaration.interfaces.size(); ++index) {
@@ -153,6 +177,7 @@ void Documentation::ClassDeclaration(const frontend::Class& declaration) {
     FieldDeclaration(field);
   }
   if (constructor != nullptr) {
+    Attributes(constructor->attributes, "  ");
     output_ << "  ";
     if (constructor->visibility != frontend::Visibility::Public) {
       output_ << "private ";
@@ -177,7 +202,7 @@ void Documentation::Class(const frontend::Class& declaration) {
       continue;
     }
     output_ << "### `" << field.name << "`\n\n";
-    Comment(field.location);
+    Comment(DocumentationLocation(field));
     output_ << "Type: `" << field.type.ToString() << "`";
     if (public_constructor && declaration.IsConstructorField(field)) {
       output_ << "; named constructor parameter";
@@ -195,6 +220,7 @@ void Documentation::Class(const frontend::Class& declaration) {
 }
 
 void Documentation::FieldDeclaration(const frontend::Field& field) {
+  Attributes(field.attributes, "  ");
   output_ << "  ";
   if (field.storage == frontend::MemberStorage::Static) {
     output_ << "static ";
@@ -213,10 +239,8 @@ void Documentation::Initializer(const frontend::Expression& expression) {
     return;
   }
   const auto& tokens = source_->tokens;
-  const auto location = expression.location;
-  const auto start = std::ranges::lower_bound(
-      tokens, std::pair(location.line, location.column), {},
-      [](const auto& token) { return std::pair(token.location.line, token.location.column); });
+  const auto start =
+      tokens.begin() + static_cast<std::ptrdiff_t>(TokenIndexAt(tokens, expression.location));
   auto end = start + 1;
   std::size_t depth = 1;
   while (depth != 0) {
@@ -228,8 +252,13 @@ void Documentation::Initializer(const frontend::Expression& expression) {
     ++end;
   }
   const auto& last = *(end - 1);
-  output_ << std::string_view(source_->text)
-                 .substr(start->offset, last.offset + last.length - start->offset);
+  output_ << SourceText(*start, last);
+}
+
+std::string_view Documentation::SourceText(const frontend::Token& first,
+                                           const frontend::Token& last) const {
+  return std::string_view(source_->text)
+      .substr(first.offset, last.offset + last.length - first.offset);
 }
 
 void Documentation::Constructor(const frontend::Class& declaration) {
@@ -266,8 +295,9 @@ void Documentation::Constructor(const frontend::Class& declaration) {
 void Documentation::Emit(Declaration declaration) {
   const auto& program = *program_;
   output_ << "## `" << declaration.name << "`\n\n";
-  Comment(declaration.location);
+  Comment(DocumentationLocation(declaration));
   output_ << "```vela\n";
+  Attributes(declaration.attributes);
   switch (declaration.kind) {
     case Declaration::Kind::Function: {
       const auto& function = program.functions.at(declaration.index);
@@ -288,6 +318,7 @@ void Documentation::Emit(Declaration declaration) {
       TypeParameters(output_, interface.type_parameters);
       output_ << " {\n";
       for (const auto& method : interface.methods) {
+        Attributes(method.attributes, "  ");
         output_ << "  ";
         Signature(output_, method);
         output_ << ";\n";
@@ -302,6 +333,7 @@ void Documentation::Emit(Declaration declaration) {
       const auto& enumeration = program.enums.at(declaration.index);
       output_ << "enum " << enumeration.name << " {\n";
       for (const auto& member : enumeration.members) {
+        Attributes(member.attributes, "  ");
         output_ << "  " << member.name << ",\n";
       }
       output_ << "}\n";

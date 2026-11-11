@@ -3,6 +3,7 @@
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,9 @@
 namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, VoidTypePolicy void_type) {
+  if (type_name.kind == TypeName::Kind::Named && type_name.name == kNullTypeName) {
+    return {.kind = Type::Kind::Null, .name = kNullTypeName};
+  }
   if (type_name.kind == TypeName::Kind::Parameter) {
     return type_parameters_.at(type_name.parameter).type;
   }
@@ -136,6 +140,7 @@ bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
 
 bool TypeChecker::IsSubtypeThroughParents(std::vector<Type> pending, const Type& supertype) const {
   absl::flat_hash_set<std::string_view> visited;
+  const auto nonnullable_supertype = NonNullable(supertype);
   while (!pending.empty()) {
     const auto current = pending.back();
     pending.pop_back();
@@ -151,28 +156,28 @@ bool TypeChecker::IsSubtypeThroughParents(std::vector<Type> pending, const Type&
     if (current.nullable && !supertype.nullable) {
       continue;
     }
-    if (IsSameType(NonNullable(current), NonNullable(supertype))) {
+    const auto nonnullable_current = NonNullable(current);
+    if (IsSameType(nonnullable_current, nonnullable_supertype)) {
       return true;
     }
     if (current.kind == Type::Kind::Dynamic || supertype.kind == Type::Kind::Dynamic) {
       continue;
     }
     if (current.kind == Type::Kind::Future && supertype.kind == Type::Kind::Future) {
-      const auto& payload = generic_arguments_.at(NonNullable(current).name).front();
-      const auto& expected = generic_arguments_.at(NonNullable(supertype).name).front();
+      const auto& payload = generic_arguments_.at(nonnullable_current.name).front();
+      const auto& expected = generic_arguments_.at(nonnullable_supertype.name).front();
       // Future 沿用载荷适配契约；dynamic 载荷不能证明其它载荷类型。
       return (payload.kind != Type::Kind::Dynamic || expected.kind == Type::Kind::Dynamic) &&
              CanAssign(expected, payload);
     }
-    const auto parents = DirectSupertypes(current);
-    pending.insert(pending.end(), parents.begin(), parents.end());
+    AppendDirectSupertypes(current, pending);
   }
   // 重复的参数转发或继承路径不能提供新的静态证明。
   return false;
 }
 
-std::vector<TypeChecker::Type> TypeChecker::DirectSupertypes(const Type& type) const {
-  std::vector<Type> result;
+void TypeChecker::AppendDirectSupertypes(const Type& type, std::vector<Type>& result) const {
+  const auto start = result.size();
   if (const auto* parameter = FindTypeParameter(type)) {
     if (parameter->bound) {
       result.push_back(*parameter->bound);
@@ -186,14 +191,13 @@ std::vector<TypeChecker::Type> TypeChecker::DirectSupertypes(const Type& type) c
       result.push_back(types_.at(interface));
     }
   }
-  for (auto& parent : result) {
+  for (auto& parent : std::span(result).subspan(start)) {
     if (type.known_non_null) {
       parent = NonNullable(parent);
     } else if (type.nullable) {
       parent = MakeNullableType(parent);
     }
   }
-  return result;
 }
 
 void TypeChecker::RecordConversion(const Expression& expression,

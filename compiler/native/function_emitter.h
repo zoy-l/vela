@@ -73,6 +73,7 @@ struct FunctionEmissionFacts final {
   NativeCodePlacement placement;
   const FieldTargets* field_targets = nullptr;
   std::size_t temporary_count = 0;
+  std::size_t suspension_capacity = 0;
   std::vector<std::optional<std::uint32_t>> field_accesses;
   std::vector<FieldKindWrite> field_kind_writes;
   std::vector<std::optional<CallableTarget>> direct_calls;
@@ -104,6 +105,7 @@ class FunctionEmitter final {
         placement_(facts.placement),
         field_targets_(*facts.field_targets),
         temporary_count_(facts.temporary_count),
+        suspension_capacity_(facts.suspension_capacity),
         field_accesses_(facts.field_accesses),
         field_kind_writes_(facts.field_kind_writes),
         direct_calls_(facts.direct_calls),
@@ -211,6 +213,7 @@ class FunctionEmitter final {
   void Poll();
   bool IsBoundaryPollRequired(std::size_t index) const;
   bool HasInlineRuntimePath(std::size_t index) const;
+  void CacheRuntimeCalls();
   void PollAfterRuntimeCall();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
   [[nodiscard]] bool IsRecovering() const noexcept;
@@ -250,19 +253,24 @@ class FunctionEmitter final {
     MemoryRegion payload_region;
     MemoryRegion kind_region;
   };
+  struct StoredValue final {
+    const SourceType* type;
+    llvm::Value* value;
+    llvm::Value* encoded;
+  };
+  StoredValue LoadStoredValue(ir::RegisterId reg);
+  void StoreRootValue(ir::RegisterId reg, llvm::Value* address);
+  llvm::Value* EncodeStoredValue(StoredValue& value);
   StoredValueAddress RecordAddress(llvm::Value* address, MemoryRegion region);
   StoredValueAddress FieldAddress(llvm::Value* storage,
                                   llvm::Value& index,
                                   llvm::Value* kind_offset);
   llvm::Value* ReadStoredValue(StoredValueAddress address, const SourceType& type);
   void WriteStoredValue(StoredValueAddress address,
-                        ir::RegisterId reg,
+                        StoredValue& stored,
                         FieldKindWrite kind_write = FieldKindWrite::Required);
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
-  void WriteHeapValue(llvm::Value* address,
-                      ir::RegisterId reg,
-                      MemoryRegion region = MemoryRegion::Values);
-  void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
+  void EmitWriteBarrier(llvm::Value* object, StoredValue& stored);
   void EmitFieldAccess(const ir::Instruction& instruction,
                        llvm::Value* object,
                        const StoredValueAddress& address);
@@ -280,7 +288,7 @@ class FunctionEmitter final {
   void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
-  void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);
+  void WriteElement(llvm::Value* address, const layout::Type& element, StoredValue& stored);
   void EmitIndex(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitStringCodePointAt(const ir::Instruction& instruction);
@@ -359,6 +367,8 @@ class FunctionEmitter final {
   std::size_t instruction_index_ = 0;
   const FieldTargets& field_targets_;
   std::size_t temporary_count_;
+  std::size_t suspension_capacity_;
+  std::vector<std::uint8_t> runtime_calls_;
   const std::vector<std::optional<std::uint32_t>>& field_accesses_;
   const std::vector<FieldKindWrite>& field_kind_writes_;
   const std::vector<std::optional<CallableTarget>>& direct_calls_;

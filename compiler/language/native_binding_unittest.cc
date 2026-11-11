@@ -17,6 +17,7 @@
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
 #include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -412,9 +413,8 @@ TEST(NativeBindingTest, RejectsMissingBindingsAndAllSignatureMismatchesBeforeExe
       "external func scale<T>(value: T): T;",
   });
   for (const auto source : invalid) {
-    const auto compiled = test::CompileSource(source, isolate);
-    EXPECT_FALSE(compiled.Succeeded()) << source;
-    EXPECT_FALSE(compiled.diagnostics.empty());
+    SCOPED_TRACE(source);
+    test::ExpectRejectedSource(source, isolate);
   }
 }
 
@@ -606,7 +606,7 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
   PendingFetchCompleter() = &completer;
   auto root = StartNativeFetch(isolate);
   ASSERT_TRUE(root.has_value());
-  auto root_future = root.value_or(runtime::Future{});
+  auto& root_future = *root;
   ASSERT_EQ(root_future.state(), runtime::FutureState::Pending);
   ASSERT_TRUE(CompleteNativeFuture(completer));
   ASSERT_EQ(isolate.scheduler().PumpUntil(root_future), runtime::FuturePumpResult::Completed);

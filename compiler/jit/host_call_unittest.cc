@@ -28,8 +28,6 @@ namespace {
 
 class ScalarHostCallTest : public testing::TestWithParam<std::tuple<NativeCodeTier, bool>> {
  protected:
-  void TearDown() override { execution_ = nullptr; }
-
   static void Observe(std::string_view name) {
     const auto* frame = execution_->current_frame();
     ASSERT_NE(frame, nullptr);
@@ -101,7 +99,8 @@ TEST_P(ScalarHostCallTest, PreservesFramesReentryRootsCheckedFailuresAndDepthLim
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler.has_value());
   const auto [tier, with_context] = GetParam();
-  const auto compiled = CompileSource(**compiler, R"(
+  const auto compiled =
+      CompileSource(**compiler, R"(
 external func step(value: int): int;
 external func flip(value: bool): bool;
 external func half(value: double): double;
@@ -125,7 +124,7 @@ export func caught(): int {
 }
 export func boundary(): void { touch(); }
 )",
-                                      {.diagnostics = {}, .compilation = {.tier = tier}});
+                    {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(with_context

@@ -39,11 +39,9 @@ Result<runtime::HeapObject*> ResolveHostProgram(HandleScope& scope, const runtim
     return std::unexpected(Error::FromStatus(program.error()));
   }
   auto* parent = scope.isolate().native_control().state().host_execution;
-  if (parent != nullptr) {
-    const auto& state = runtime::Heap::NativeProgram(**program);
-    if (state.code_identity != &parent->instance().code_identity()) {
-      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
-    }
+  const auto& state = runtime::Heap::NativeProgram(**program);
+  if (!runtime::CanReenterNativeProgram(parent, *state.code_identity)) {
+    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   return *program;
 }

@@ -23,6 +23,11 @@
 #include "compiler/native/native_values.h"
 
 namespace vela::compiler::native {
+
+std::span<const std::uint64_t> IntegerRangeAnalysis::ArrayBits(std::size_t index) const {
+  return array_bits_.empty() ? std::span<const std::uint64_t>() : array_bits_[index];
+}
+
 namespace {
 
 using Range = llvm::ConstantRange;
@@ -82,7 +87,7 @@ std::vector<std::int64_t> WideningThresholds(const ir::Program& program) {
 RangeChange MergeRange(Range& destination,
                        const Range& added,
                        std::span<const std::int64_t> thresholds) {
-  if (added.isEmptySet() || destination.contains(added)) {
+  if (destination.contains(added)) {
     return RangeChange::Unchanged;
   }
   if (destination.isEmptySet()) {
@@ -279,6 +284,7 @@ void IntegerRangeAnalysis::Solve(std::size_t function_index) {
   flow.work.push_back(0);
   flow.queued.front() = 1;
   auto& state = flow.scratch;
+  const auto arrays = ArrayBits(function_index);
   while (!flow.work.empty()) {
     const auto index = flow.work.back();
     flow.work.pop_back();
@@ -290,7 +296,7 @@ void IntegerRangeAnalysis::Solve(std::size_t function_index) {
       if (instruction.opcode == Opcode::Call) {
         MergeCall(instruction, state);
       }
-      Transfer(function_index, position, state);
+      Transfer(function_index, position, state, arrays);
     }
     for (const auto successor : block.successors) {
       MergeEdge(function_index, block, state, successor);
@@ -330,12 +336,11 @@ void IntegerRangeAnalysis::MergeEdge(std::size_t function_index,
 
 void IntegerRangeAnalysis::Transfer(std::size_t function_index,
                                     std::size_t position,
-                                    State& state) const {
+                                    State& state,
+                                    std::span<const std::uint64_t> arrays) const {
   const auto& function = program_->functions[function_index];
   const auto& instruction = function.instructions[position];
   if (accesses_[function_index][position].defines_value) {
-    const auto arrays =
-        array_bits_.empty() ? std::span<const std::uint64_t>() : array_bits_[function_index];
     state[instruction.dst] =
         IsInteger(function, instruction.dst) ? ResultRange(instruction, state, arrays) : Full();
   }
@@ -407,6 +412,7 @@ void IntegerRangeAnalysis::Publish(std::size_t index) {
   }
   auto& flow = *flows_[index];
   auto& state = flow.scratch;
+  const auto arrays = ArrayBits(index);
   for (std::size_t block_index = 0; block_index < flow.graph.blocks.size(); ++block_index) {
     if (flow.reachable[block_index] == 0) {
       continue;
@@ -424,7 +430,7 @@ void IntegerRangeAnalysis::Publish(std::size_t index) {
       if (opcode == Opcode::SetIndex) {
         result.writes[position] = state[instruction.rhs];
       }
-      Transfer(index, position, state);
+      Transfer(index, position, state, arrays);
     }
   }
 }

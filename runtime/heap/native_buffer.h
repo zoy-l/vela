@@ -28,7 +28,7 @@ class NativeBuffer final {
   }
   ~NativeBuffer() {
     if (count_ > InlineCapacity) {
-      heap_->FreeNative(data_);
+      heap_->FreeNative(static_cast<void*>(data_));
     }
   }
   NativeBuffer(const NativeBuffer&) = delete;

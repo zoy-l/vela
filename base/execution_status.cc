@@ -21,6 +21,13 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
       return {.code = "TargetDeleted", .message = "named declaration has been deleted"};
     case ExecutionStatus::ExecutionTimedOut:
       return {.code = "ExecutionTimedOut", .message = "execution timed out"};
+    case ExecutionStatus::ReflectionUnavailable:
+      return {
+          .code = "ReflectionUnavailable",
+          .message = "declaration is not registered for reflection",
+      };
+    case ExecutionStatus::ReflectionAccessDenied:
+      return {.code = "ReflectionAccessDenied", .message = "reflection access is not public"};
     case ExecutionStatus::RegExpSyntaxError:
       return {.code = "RegExpSyntaxError", .message = "invalid regular expression"};
     case ExecutionStatus::RegExpGroupError:

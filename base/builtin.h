@@ -9,6 +9,7 @@ namespace vela {
 
 inline constexpr std::size_t kUtcComponentCount = 7;
 inline constexpr std::size_t kDynamicOperationArity = 5;
+inline constexpr std::size_t kReflectionOperationArity = 5;
 inline constexpr std::size_t kTestRegistrationArity = 8;
 
 // 编译器与运行时共享的内建调用编号，不携带前端或运行时对象。
@@ -144,6 +145,8 @@ enum class Builtin : std::uint8_t {
   TestSame,
   TestControl,
   MockInspect,
+  Reflection,
+  ReflectionTypeInfo,
   ScalarTextLength,
   StringCodePointAt,
   MutableStringAppendCodePoint,
@@ -198,6 +201,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayClear:
     case Builtin::ArrayMutation:
     case Builtin::ArraySortDefault:
+    case Builtin::ReflectionTypeInfo:
       return 1;
     case Builtin::ArrayJoin:
     case Builtin::DynamicIndexRead:
@@ -293,6 +297,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::DynamicAsync:
     case Builtin::TestControl:
       return kDynamicOperationArity;
+    case Builtin::Reflection:
+      return kReflectionOperationArity;
     case Builtin::Count:
       return 0;
   }

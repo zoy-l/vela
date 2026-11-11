@@ -1,6 +1,4 @@
 #include "compiler/testing/report.h"
-#include "compiler/frontend/builtins/sdk_modules.h"
-#include "compiler/frontend/builtins/standard_environment.h"
 
 #include <chrono>
 #include <cstddef>
@@ -17,6 +15,7 @@
 
 #include "base/json.h"
 #include "base/mock_operation.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
 #include "runtime/async/future.h"
@@ -129,8 +128,7 @@ yyjson_mut_val* JsonDifference(yyjson_mut_doc* document, const Difference& diffe
 
 const runtime::FutureTraceFrame* UserLocation(std::span<const runtime::FutureTraceFrame> trace) {
   for (const auto& frame : trace) {
-    if (!frame.source_path.starts_with(frontend::kSdkSourcePrefix) &&
-        !frame.source_path.starts_with(frontend::kStandardSourcePrefix)) {
+    if (frontend::IsFileModule(frame.source_path)) {
       return &frame;
     }
   }

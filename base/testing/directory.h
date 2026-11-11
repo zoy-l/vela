@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -11,6 +13,8 @@ class DirectoryTest : public ::testing::Test {
  protected:
   void SetUp() override;
   void TearDown() override;
+  void Write(std::string_view path, std::string_view source) const;
+  [[nodiscard]] std::string Path(std::string_view path) const;
   [[nodiscard]] const std::filesystem::path& directory() const noexcept { return directory_; }
 
  private:

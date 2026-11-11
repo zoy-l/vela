@@ -121,22 +121,30 @@ std::expected<HostType, ExecutionStatus> HostType::Bind(Isolate& isolate, Native
 
 std::expected<HostType, ExecutionStatus> HostType::Bind(NativeInstance& instance,
                                                         NativeType description) {
-  auto& isolate = instance.isolate();
   const auto constraint = ResolveInstanceNativeType(instance, description);
   if (!constraint) {
     return std::unexpected(constraint.error());
   }
-  auto* dispatch = instance.dispatch();
-  const auto anchor = dispatch == nullptr ? instance.state().front() : Value::Null();
-  return Create(isolate, *constraint, anchor, dispatch);
+  return Bind(instance, *constraint);
+}
+
+std::expected<HostType, ExecutionStatus> HostType::Bind(NativeInstance& instance,
+                                                        TypeConstraint constraint) {
+  auto& isolate = instance.isolate();
+  return Create(isolate, constraint, instance.context_anchor(), instance.dispatch());
+}
+
+std::expected<HostType, ExecutionStatus> HostType::WithConstraint(TypeConstraint constraint) const {
+  return Create(isolate(), constraint, storage_->anchor, storage_->dispatch);
 }
 
 std::expected<HostType, ExecutionStatus> HostType::Bind(NativeDispatch& dispatch,
                                                         NativeType description) {
-  if (dispatch.revision() == 0) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
+  const auto state = dispatch.BorrowCurrentState();
+  if (!state) {
+    return std::unexpected(state.error());
   }
-  auto instance = NativeInstance::Borrow(dispatch.current_state());
+  auto instance = NativeInstance::Borrow(**state);
   return Bind(instance, description);
 }
 
@@ -199,16 +207,23 @@ TypeConstraint HostType::constraint() const noexcept {
 
 std::expected<HeapObject*, ExecutionStatus> HostType::program() const noexcept {
   assert(isolate().scheduler().IsOwnerThread());
+  if (const auto status = isolate().native_control().Poll(); status != ExecutionStatus::Returned) {
+    return std::unexpected(status);
+  }
   if (const auto* dispatch = storage_->dispatch) {
-    if (dispatch->revision() == 0) {
-      return std::unexpected(ExecutionStatus::ExecutionStopped);
-    }
-    return &dispatch->current_state();
+    return dispatch->BorrowCurrentState();
   }
   if (storage_->anchor.IsNull()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
   return storage_->anchor.AsObject();
+}
+
+const void* HostType::context_identity() const noexcept {
+  if (storage_->dispatch != nullptr) {
+    return storage_->dispatch;
+  }
+  return storage_->anchor.IsNull() ? nullptr : storage_->anchor.AsObject();
 }
 
 }  // namespace vela::runtime

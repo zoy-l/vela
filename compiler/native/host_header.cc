@@ -229,21 +229,25 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
   return {};
 }
 
+struct ExportedNominal final {
+  layout::Type type;
+  std::string_view name;
+  std::string_view alias;
+  std::string_view native_key;
+};
+
 std::expected<void, std::string> EmitMembers(std::ostringstream& output,
                                              const ir::Program& program,
                                              std::string_view name_space,
-                                             layout::Type receiver,
-                                             std::string_view name,
+                                             const ExportedNominal& nominal,
+                                             std::string_view logical,
                                              std::span<const MemberDefinition* const> members) {
-  const auto logical = HostLogicalType(program.layouts, receiver, name_space);
-  if (!logical) {
-    return std::unexpected(logical.error());
-  }
-  output << "struct Type_" << HostIdentifier(name) << "Members final {\n";
+  const auto receiver = nominal.type;
+  output << "struct Type_" << HostIdentifier(nominal.alias) << "Members final {\n";
   if (receiver.kind == layout::Type::Kind::Enum) {
     for (const auto& member : program.classes.at(receiver.index).enum_members) {
-      output << "  static vela::Result<vela::HostValue<" << *logical << ">> Member_"
-             << HostIdentifier(member) << "(const vela::Type<" << *logical
+      output << "  static vela::Result<vela::HostValue<" << logical << ">> Member_"
+             << HostIdentifier(member) << "(const vela::Type<" << logical
              << ">& type, vela::HandleScope& scope) { return type.Member(scope, " << Literal(member)
              << "); }\n";
     }
@@ -251,14 +255,14 @@ std::expected<void, std::string> EmitMembers(std::ostringstream& output,
     const auto constructor = program.classes.at(receiver.index).constructor;
     if (constructor != kInvalidFunctionTarget) {
       auto emitted =
-          EmitConstructor(output, program, name_space, program.functions.at(constructor), *logical);
+          EmitConstructor(output, program, name_space, program.functions.at(constructor), logical);
       if (!emitted) {
         return emitted;
       }
     }
   }
   for (const auto* member : members) {
-    auto emitted = EmitMember(output, program, name_space, *member, *logical);
+    auto emitted = EmitMember(output, program, name_space, *member, logical);
     if (!emitted) {
       return emitted;
     }
@@ -365,13 +369,6 @@ std::expected<std::string, std::string> SignatureLogicalType(const layout::Progr
   return *result + ")>";
 }
 
-struct ExportedNominal final {
-  layout::Type type;
-  std::string_view name;
-  std::string_view alias;
-  std::string_view native_key;
-};
-
 std::vector<ExportedNominal> ExportedNominals(const ir::Program& program) {
   std::vector<ExportedNominal> result;
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
@@ -421,7 +418,7 @@ std::expected<void, std::string> EmitNominalTraits(std::ostringstream& output,
                                                    std::string_view name,
                                                    layout::Type::Kind kind,
                                                    std::string_view native_key) {
-  const auto& nominal = program.layouts.nominals.at(std::string(name));
+  const auto& nominal = program.layouts.nominals.find(name)->second;
   std::string_view kind_name = native_key.empty() ? "Class" : "Host";
   if (kind == layout::Type::Kind::Enum) {
     kind_name = "Enum";
@@ -483,7 +480,7 @@ std::expected<void, std::string> EmitAliases(std::ostringstream& output,
       return std::unexpected(logical.error());
     }
     output << "using Type_" << HostIdentifier(nominal.alias) << " = " << *logical << ";\n";
-    const auto members = EmitMembers(output, program, name_space, receiver, nominal.alias,
+    const auto members = EmitMembers(output, program, name_space, nominal, *logical,
                                      members_by_receiver[{receiver.kind, receiver.index}]);
     if (!members) {
       return std::unexpected(members.error());

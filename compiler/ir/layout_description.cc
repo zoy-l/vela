@@ -71,10 +71,12 @@ std::string LayoutDescription::Nominal(const std::string& name) {
       .arguments = {},
       .exported = exported_.at(name),
   };
-  for (const auto& argument : declaration.arguments) {
-    const auto type = Type(model_->types.at(frontend::CanonicalTypeText(argument)));
-    Canonicalize(type);
-    nominal.arguments.push_back(type);
+  if (!declaration.arguments.empty()) {
+    for (const auto& argument : model_->generic_arguments.at(name)) {
+      const auto type = Type(argument);
+      Canonicalize(type);
+      nominal.arguments.push_back(type);
+    }
   }
   auto key = layout::NominalKey(result_, nominal);
   result_.nominals.emplace(key, std::move(nominal));
@@ -322,6 +324,12 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
       break;
     case Class::Kind::Host:
       descriptor.kind = layout::Class::Kind::Host;
+      break;
+    case Class::Kind::Metadata:
+      descriptor.kind = layout::Class::Kind::Metadata;
+      break;
+    case Class::Kind::ReflectionIdentity:
+      descriptor.kind = layout::Class::Kind::ReflectionIdentity;
       break;
   }
   for (std::size_t index = 0; index < type.field_types.size(); ++index) {

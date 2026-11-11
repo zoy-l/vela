@@ -11,9 +11,9 @@ import unittest
 
 from tools.clang_sdk import sdk_directory
 from tools.bindgen import fingerprints, generate, verify_manifest
-from tools.package import create_package, package_bindgen
+from tools.package import package_bindgen
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools, xcode_path
-from tools.test_support import CommandTestCase
+from tools.test_support import CommandTestCase, compile_native_host, create_native_package
 
 
 class BindingCollectorTest(CommandTestCase):
@@ -460,11 +460,8 @@ class VELA_CLASS("app.Service") Service { public:
     @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
                          "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
     def test_aot_exports_use_typed_rooted_host_handles_and_run_without_source(self) -> None:
-        runtime = self.executable.parent / "obj/runtime" / static_library_name("vela_runtime")
-        tools = toolchain_tools()
         package = self.directory / "aot_package"
-        specification = os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")
-        create_package(self.executable, runtime, package, Path(specification) if specification else None)
+        create_native_package(self.executable, package)
         runtime = package / json.loads((package / "share/vela/target.json").read_text())["runtime"]
         self.arguments.remove("-I" + str(ROOT / "include"))
         self.arguments[1:1] = ["-I" + str(package / "include")]
@@ -546,29 +543,8 @@ int main() {
                 executable = self.directory / executable_name("host_main")
                 includes = [package / "include"]
                 generated = manifest.parent / "app_bindings.cc"
-                if sys.platform == "win32":
-                    flags = ["/nologo", "/MT", "/O2", "/clang:-std=c++23", "/D_ITERATOR_DEBUG_LEVEL=0",
-                             "/D_HAS_EXCEPTIONS=0", *["/I" + str(path) for path in includes]]
-                    for source in (host, generated):
-                        result = subprocess.run([str(tools["cxx"]), *flags, "/c", str(source),
-                                                 "/Fo" + str(self.directory / (source.stem + ".obj"))],
-                                                capture_output=True, text=True, check=False)
-                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    arguments = [str(tools["cxx"]), "/nologo", "/MT", "-fuse-ld=lld",
-                                 "/Fe" + str(executable), str(self.directory / "host_main.obj"),
-                                 str(self.directory / "app_bindings.obj"), str(library), str(runtime)]
-                else:
-                    flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
-                             "-fuse-ld=" + str(tools["linker"])]
-                    if sys.platform == "darwin":
-                        flags += ["-isysroot", str(tools["sysroot"]),
-                                  "-nostdinc++", "-isystem", str(tools["sysroot"] / "usr/include/c++/v1"),
-                                  "-framework", "CoreFoundation"]
-                    arguments = [str(tools["cxx"]), *flags, *["-I" + str(path) for path in includes],
-                                 str(host), str(generated), str(library), str(runtime), "-o", str(executable)]
-                linked = subprocess.run(arguments, cwd=self.directory, capture_output=True,
-                                        text=True, check=False)
-                self.assertEqual(linked.returncode, 0, linked.stdout + linked.stderr)
+                compile_native_host(self, [host, generated], executable, [library, runtime],
+                                    includes, cwd=self.directory)
                 # 独立目录及空 PATH 验证运行时不查找源码、清单、Clang 或编译器。
                 backup = script.read_bytes()
                 script.unlink()

@@ -21,8 +21,8 @@ bool TypeChecker::IsMatchComplete(const Type& selector, const MatchCoverage& cov
 void TypeChecker::CheckMatchConstant(const MatchArm& arm,
                                      const Type& base,
                                      MatchCoverage& coverage) {
-  if (!CheckConstantLabel(*arm.pattern, base, coverage.labels, arm.location,
-                          ConstantLabelKind::Match)) {
+  if (CheckConstantLabel(*arm.pattern, base, coverage.labels, arm.location,
+                         ConstantLabelKind::Match) == CheckStatus::Failed) {
     return;
   }
   if (base.kind == Type::Kind::Bool) {

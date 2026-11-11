@@ -16,9 +16,137 @@ from tools.benchmark_report import aot_comparison_report, comparison_report, jit
 from tools.escape_benchmark_report import aggregate_escape_results
 from tools.gc_benchmark_report import gc_report
 from tools.native_class_benchmark_report import aggregate_native_class_results
+from tools.reflection_benchmark_report import aggregate_reflection_results, reflection_comparison_report
 
 
 BACKENDS = ("cpp", "jit", "luajit_interp", "luajit")
+
+
+class ReflectionReportTest(unittest.TestCase):
+    def rows(self, repetitions: int = 3) -> tuple[list[str], list[dict]]:
+        names = [f"reflection/{backend}/field/{strategy}/real_time"
+                 for backend, strategies in (("baseline", ("direct", "dynamic", "cached")),
+                                              ("cpp", ("cached",))) for strategy in strategies]
+        query = "reflection/optimized/query/all/background:1024/matches:8/real_time"
+        names += [query, "reflection/reload/resources/iterations:1/real_time"]
+        rows = []
+        for position, name in enumerate(names):
+            operations = 8 if name == query else 16 if "/reload/" in name else 128
+            result = 64 if name == query else 16 if "/reload/" in name else 8128
+            for index in range(repetitions):
+                rows.append(dict(name=name, real_time=operations * (position + 1) * (index + 1),
+                                 cpu_time=999999, time_unit="ns", operations=operations,
+                                 repetitions=repetitions, repetition_index=index,
+                                 result=result, expected_result=result, reflection_members=0,
+                                 allocation_bytes_per_op=80, baseline_bytes=100, allocated_bytes=200,
+                                 retained_bytes=100, committed_bytes=256, image_bytes=1024,
+                                 executable_bytes=256, reflection_types=1, retained_images=1,
+                                 background_members=1024, matches_per_query=8,
+                                 reflection_index_prepared=int(name == query or "/cached/" in name)))
+        return names, rows
+
+    def test_uses_wall_time_and_batch_units_for_comparisons_and_queries(self) -> None:
+        names, rows = self.rows()
+        summary = aggregate_reflection_results({"benchmarks": rows}, names, 3)
+        self.assertEqual(summary[names[2]]["ns_per_operation"], 6)
+        self.assertEqual(summary[names[2]]["ratios"],
+                         {"direct": 3, "dynamic": 1.5, "cpp_reference": 0.75})
+        self.assertAlmostEqual(summary[names[2]]["wall_cv"], 0.5)
+        self.assertEqual(summary[names[4]]["ns_per_operation"], 10)
+        self.assertEqual(summary[names[4]]["counters"]["allocation_bytes_per_op"], 80)
+        text = reflection_comparison_report({"benchmarks": rows}, names, 3)
+        self.assertIn("| baseline/field/cached | 6.000 | 50.0% | 3.00x | 1.50x | 0.75x | 80 |", text)
+        self.assertIn("| optimized / all | 1024 | 8 | 10.000 | 50.0% | 80 |", text)
+        self.assertIn("contract differences", text)
+        self.assertIn("no overhead is subtracted", text)
+        self.assertIn("only one image may remain", text)
+
+    def test_rejects_failed_incomplete_and_invalid_measurements(self) -> None:
+        names, rows = self.rows()
+        for field, value, diagnostic in (("result", 1, "checksum mismatch"),
+                                         ("operations", 0, "operations"),
+                                         ("allocation_bytes_per_op", float("nan"), "allocation"),
+                                         ("reflection_index_prepared", 1, "reflection index"),
+                                         ("reflection_members", 1, "unregistered")):
+            invalid = [dict(row) for row in rows]
+            invalid[0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, diagnostic):
+                aggregate_reflection_results({"benchmarks": invalid}, names, 3)
+        for field, value, diagnostic in (("background_members", 64, "cardinality"),
+                                         ("matches_per_query", 1, "cardinality")):
+            invalid = [dict(row) for row in rows]
+            invalid[-4][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, diagnostic):
+                aggregate_reflection_results({"benchmarks": invalid}, names, 3)
+        rows[-1]["retained_images"] = 2
+        with self.assertRaisesRegex(ValueError, "retired code image"):
+            aggregate_reflection_results({"benchmarks": rows}, names, 3)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            aggregate_reflection_results({"benchmarks": rows[:-1]}, names, 3)
+
+    def test_reflection_runner_uses_registry_and_writes_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-reflection-bench-") as temporary:
+            report = Path(temporary) / "reflection.json"
+            parsed = parse_arguments(["--reflection-compare", "--report", str(report)])
+
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
+                self.assertEqual(Path(command[0]).stem, "vela_benchmarks")
+                self.assertIn("--benchmark_filter=^reflection/", command)
+                names, rows = self.rows(7)
+                if "--benchmark_list_tests=true" in command:
+                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
+                self.assertIn("--benchmark_repetitions=7", command)
+                self.assertIn("--benchmark_enable_random_interleaving=true", command)
+                report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
+                with redirect_stdout(io.StringIO()):
+                    run(parsed)
+            self.assertIn("Runtime reflection (Release)", report.with_suffix(".md").read_text(encoding="utf-8"))
+
+    def test_registered_unused_control_keeps_index_lazy(self) -> None:
+        names, rows = self.rows()
+        unused = "reflection/baseline/unused/registered_direct/real_time"
+        selected = rows[:3] + [dict(row, name=unused, reflection_members=3,
+                                  reflection_index_prepared=0) for row in rows[6:9]]
+        summary = aggregate_reflection_results({"benchmarks": selected}, [names[0], unused], 3)
+        self.assertEqual(summary[unused]["ratios"]["direct"], 3)
+        self.assertEqual(summary[unused]["counters"]["reflection_index_prepared"], 0)
+        selected[-1]["reflection_index_prepared"] = 1
+        with self.assertRaisesRegex(ValueError, "reflection index"):
+            aggregate_reflection_results({"benchmarks": selected}, [names[0], unused], 3)
+
+    def test_aot_pairs_operations_and_queries_with_offline_object_sizes(self) -> None:
+        names, rows = self.rows()
+        selected = []
+        for row in rows:
+            name = row["name"]
+            if "/baseline/" in name or "/query/" in name:
+                item = dict(row, name=name.replace("/baseline/", "/aot/").replace("/optimized/", "/aot/"),
+                            aot_object_bytes=4096)
+                del item["image_bytes"]
+                del item["executable_bytes"]
+                selected.append(item)
+            elif "/cpp/" in name:
+                selected.append(row)
+        expected = list(dict.fromkeys(row["name"] for row in selected))
+        summary = aggregate_reflection_results({"benchmarks": selected}, expected, 3)
+        cached = names[2].replace("/baseline/", "/aot/")
+        self.assertEqual(summary[cached]["ns_per_operation"], 6)
+        self.assertEqual(summary[cached]["ratios"]["cpp_reference"], 0.75)
+        self.assertEqual(summary[cached]["counters"]["aot_object_bytes"], 4096)
+        self.assertNotIn("executable_bytes", summary[cached]["counters"])
+        text = reflection_comparison_report({"benchmarks": selected}, expected, 3)
+        self.assertIn("| aot/field/cached | 6.000", text)
+        self.assertIn("| aot / all | 1024 | 8 | 10.000", text)
+        self.assertIn("| field/cached | 4096 |", text)
+        self.assertIn("vela build --emit=obj", text)
+        for size in (0, float("nan")):
+            invalid = [dict(row) for row in selected]
+            invalid[0]["aot_object_bytes"] = size
+            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "AOT object|aot_object"):
+                aggregate_reflection_results({"benchmarks": invalid}, expected, 3)
 
 
 class NativeClassReportTest(unittest.TestCase):

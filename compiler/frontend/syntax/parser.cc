@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <expected>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #include "base/source_lines.h"
@@ -59,6 +61,14 @@ ParseResult ParseSource(std::string_view source, std::uint32_t source_id) {
   return Parser(lexed.tokens).Parse();
 }
 
+std::expected<TypeName, Diagnostics> ParseTypeSource(std::string_view source) {
+  auto lexed = Lexer(source).Tokenize();
+  if (!lexed.diagnostics.empty()) {
+    return std::unexpected(std::move(lexed.diagnostics));
+  }
+  return Parser(lexed.tokens).ParseTypeExpression();
+}
+
 ParsedSource ParseSourceSnapshot(std::string source,
                                  std::uint32_t source_id,
                                  SyntaxContext context) {
@@ -93,6 +103,7 @@ void AppendProgram(Program& destination, Program source) {
   std::ranges::move(source.interfaces, std::back_inserter(destination.interfaces));
   std::ranges::move(source.globals, std::back_inserter(destination.globals));
   std::ranges::move(source.standard_names, std::back_inserter(destination.standard_names));
+  std::ranges::move(source.reflection, std::back_inserter(destination.reflection));
 }
 
 ParseResult Parser::Parse() {
@@ -104,9 +115,26 @@ ParseResult Parser::Parse() {
 }
 
 void Parser::ParseDeclaration(Program& program) {
+  auto attributes = ParseAttributes();
+  if (!attributes) {
+    Synchronize();
+    return;
+  }
   const auto export_kind = Match(TokenKind::Export) ? ExportKind::Exported : ExportKind::Local;
-  const auto append = [this, export_kind](auto declaration, auto& destination) -> void {
+  const auto reject_attributes = [&](std::string message) {
+    if (!attributes->empty()) {
+      AddDiagnostic(attributes->front().location, std::move(message));
+    }
+  };
+  const auto append = [this, export_kind, &attributes, &reject_attributes](
+                          auto declaration, auto& destination) -> void {
     if (declaration) {
+      if constexpr (std::is_same_v<typename decltype(declaration)::value_type,
+                                   Program::TypeAlias>) {
+        reject_attributes("attributes are not supported on this declaration");
+      } else {
+        declaration->attributes = std::move(*attributes);
+      }
       declaration->export_kind = export_kind;
       destination.push_back(std::move(*declaration));
     } else {
@@ -116,7 +144,7 @@ void Parser::ParseDeclaration(Program& program) {
   const auto kind = Peek().kind;
   switch (kind) {
     case TokenKind::External:
-      if (current_ + 1 < tokens_.size() && tokens_[current_ + 1].kind == TokenKind::Class) {
+      if (tokens_[current_ + 1].kind == TokenKind::Class) {
         Advance();
         Advance();
         append(ParseClass(ClassKind::Native), program.classes);
@@ -137,6 +165,7 @@ void Parser::ParseDeclaration(Program& program) {
       break;
     case TokenKind::Import:
       Advance();
+      reject_attributes("attributes cannot annotate import directives");
       if (export_kind == ExportKind::Exported) {
         AddDiagnostic(Previous().location, "export applies to declarations, not import directives");
       }
@@ -156,6 +185,7 @@ void Parser::ParseDeclaration(Program& program) {
       break;
     case TokenKind::Let:
     case TokenKind::Const: {
+      reject_attributes("attributes are not supported on global variables");
       auto declaration = ParseVariableDeclaration();
       if (!declaration) {
         Synchronize();
@@ -244,11 +274,11 @@ const Token* Parser::TakeName() {
   return nullptr;
 }
 
-const Token* Parser::Expect(TokenKind kind, std::string message) {
+const Token* Parser::Expect(TokenKind kind, std::string_view message) {
   if (Check(kind)) {
     return &Advance();
   }
-  AddDiagnostic(Peek().location, std::move(message));
+  AddDiagnostic(Peek().location, std::string(message));
   return nullptr;
 }
 
@@ -333,10 +363,10 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
     return ParseSwitchStatement();
   }
   if (Match(TokenKind::Break)) {
-    return ParseBreakStatement();
+    return ParseJumpStatement(Statement::Kind::Break, "expected ';' after break");
   }
   if (Match(TokenKind::Continue)) {
-    return ParseContinueStatement();
+    return ParseJumpStatement(Statement::Kind::Continue, "expected ';' after continue");
   }
   if (IsVariableDeclaration()) {
     return ParseVariableDeclaration();
@@ -459,21 +489,12 @@ std::unique_ptr<Statement> Parser::ParseSwitchStatement() {
   return statement;
 }
 
-std::unique_ptr<Statement> Parser::ParseBreakStatement() {
+std::unique_ptr<Statement> Parser::ParseJumpStatement(Statement::Kind kind,
+                                                      std::string_view message) {
   auto statement = std::make_unique<Statement>();
-  statement->kind = Statement::Kind::Break;
+  statement->kind = kind;
   statement->location = Previous().location;
-  if (Expect(TokenKind::Semicolon, "expected ';' after break") == nullptr) {
-    return nullptr;
-  }
-  return statement;
-}
-
-std::unique_ptr<Statement> Parser::ParseContinueStatement() {
-  auto statement = std::make_unique<Statement>();
-  statement->kind = Statement::Kind::Continue;
-  statement->location = Previous().location;
-  if (Expect(TokenKind::Semicolon, "expected ';' after continue") == nullptr) {
+  if (Expect(TokenKind::Semicolon, message) == nullptr) {
     return nullptr;
   }
   return statement;
@@ -1104,8 +1125,7 @@ std::vector<CallArgument> Parser::ParseArguments() {
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
     CallArgument argument;
     argument.location = Peek().location;
-    if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
-        tokens_[current_ + 1].kind == TokenKind::Colon) {
+    if (Check(TokenKind::Identifier) && tokens_[current_ + 1].kind == TokenKind::Colon) {
       argument.name = Advance().lexeme;
       Advance();
     }

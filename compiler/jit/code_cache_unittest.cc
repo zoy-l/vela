@@ -1,5 +1,6 @@
 #include "compiler/jit/code_cache.h"
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -16,15 +17,21 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/project/project_config.h"
+#include "compiler/test_support/execution_expectations.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_execution.h"
 
 namespace vela::compiler::jit {
 namespace {
 
-class JitCodeCacheTest : public test::DirectoryTest {
+class JitCodeCacheTest : public vela::test::DirectoryTest {
  public:
   std::expected<CompiledImage, frontend::Diagnostics> Compile(Compiler& compiler,
                                                               const CompileOptions& options) {
@@ -50,6 +57,13 @@ class JitCodeCacheTest : public test::DirectoryTest {
     return compiler.Compile(prepared->snapshot().program, cached);
   }
   void SetDependency(std::string source) { dependency_ = std::move(source); }
+  static void ExpectImageInteger(std::shared_ptr<const runtime::NativeImage> image,
+                                 std::int64_t expected) {
+    runtime::Isolate isolate(1);
+    auto instance = runtime::NativeInstance::Instantiate(isolate, std::move(image));
+    ASSERT_TRUE(instance) << instance.error().message;
+    test::ExpectInteger(**instance, expected, "answer");
+  }
 
  private:
   std::string dependency_ = "export func value(): int { return 40; }";
@@ -202,6 +216,74 @@ TEST_F(JitCodeCacheTest, CacheWriteFailureLeavesTheRunningSessionUntouched) {
   const auto value = (*session)->Invoke("main.vela", "answer");
   ASSERT_TRUE(value);
   EXPECT_EQ(value->AsInteger(), 42);
+}
+
+TEST_F(JitCodeCacheTest, AttributeMetadataSurvivesCacheHitsAndDataChanges) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    for (const auto value : {40, 42}) {
+      const auto source =
+          "class Tag extends Reflect { value: int; } class Box { [Tag(value: " +
+          std::to_string(value) +
+          ")] static run(): void {} } "
+          "export func answer(): int { return Reflect.findMethods<Tag>()[0].attribute.value; }";
+      const frontend::SourceInput input{.path = "main.vela", .text = source};
+      for (const auto expected : {CodeCacheStatus::Miss, CodeCacheStatus::Hit}) {
+        auto compiler = Compiler::Create();
+        ASSERT_TRUE(compiler);
+        SourceOptions options;
+        options.compilation.tier = tier;
+        options.compilation.code_cache =
+            directory() / std::to_string(static_cast<std::uint32_t>(tier));
+        const auto compiled = CompileModules(**compiler, std::span(&input, 1), input.path, options);
+        ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+        EXPECT_EQ(compiled.code.cache, expected);
+        ASSERT_NO_FATAL_FAILURE(ExpectImageInteger(compiled.code.image, value));
+      }
+    }
+  }
+}
+
+TEST_F(JitCodeCacheTest, ReflectionRegistrationChangesAreVisibleAfterCacheHits) {
+  const frontend::SourceInput source{
+      .path = "main.vela",
+      .text = R"(
+class Box { value: int = 42; read(): int { return this.value; } }
+export func registered(): bool { return Reflect.typeInfo<Box>().isRegistered; }
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('read') as MethodInfo;
+  return method.invoke(Box(), CallArguments()) as int;
+}
+)",
+  };
+  const auto selected = ParseProjectConfiguration("vela.json", R"({"reflection":[
+    {"module":"main","type":"Box","members":[{"kind":"method","name":"read"}]}
+  ]})");
+  ASSERT_TRUE(selected);
+  for (const auto registered : {false, true}) {
+    for (const auto expected : {CodeCacheStatus::Miss, CodeCacheStatus::Hit}) {
+      auto compiler = Compiler::Create();
+      ASSERT_TRUE(compiler);
+      SourceOptions options;
+      options.compilation.code_cache = directory();
+      options.compilation.tier = NativeCodeTier::Optimized;
+      if (registered) {
+        options.reflection = selected->reflection;
+      }
+      const auto compiled = CompileModules(**compiler, std::span(&source, 1), source.path, options);
+      ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+      EXPECT_EQ(compiled.code.cache, expected);
+      if (registered) {
+        ASSERT_NO_FATAL_FAILURE(ExpectImageInteger(compiled.code.image, 42));
+        continue;
+      }
+      runtime::Isolate isolate(1);
+      auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+      ASSERT_TRUE(instance) << instance.error().message;
+      const auto result = compiler::test::Execute(**instance, "registered");
+      ASSERT_TRUE(result.Succeeded()) << result.message;
+      EXPECT_FALSE(result.value.AsBoolean());
+    }
+  }
 }
 
 }  // namespace

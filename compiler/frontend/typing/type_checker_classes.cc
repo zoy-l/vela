@@ -203,6 +203,7 @@ void TypeChecker::ResolveClassMethods(const Class& class_declaration, ClassInfo&
 void TypeChecker::ResolveClassMethod(const Function& method, ClassInfo& info) {
   FunctionInfo method_info = ResolveSignature(method);
   method_info.member_owner = info.type.name;
+  CheckAccessor(method, method_info);
   if (info.fields.contains(method.name) || info.static_fields.contains(method.name)) {
     AddDiagnostic(method.location, "member name is already used by a field");
   }
@@ -219,7 +220,6 @@ void TypeChecker::ResolveClassMethod(const Function& method, ClassInfo& info) {
   } else {
     AddDiagnostic(method.location, "duplicate method '" + method.name + "'");
   }
-  CheckAccessor(method);
 }
 
 void TypeChecker::MergeAccessor(FunctionInfo& existing,
@@ -248,13 +248,12 @@ void TypeChecker::MergeAccessor(FunctionInfo& existing,
   }
 }
 
-void TypeChecker::CheckAccessor(const Function& method) {
+void TypeChecker::CheckAccessor(const Function& method, const FunctionInfo& signature) {
   if (method.is_getter && !method.parameters.empty()) {
     AddDiagnostic(method.location, "getter must not declare parameters");
   }
   if (method.is_setter &&
-      (method.parameters.size() != 1 ||
-       ResolveType(method.return_type, VoidTypePolicy::Allowed).kind != Type::Kind::Void)) {
+      (method.parameters.size() != 1 || signature.return_type.kind != Type::Kind::Void)) {
     AddDiagnostic(method.location, "setter must declare one parameter and return void");
   }
 }
@@ -348,12 +347,8 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
 
   auto object = CheckExpression(*expression.object, nullptr);
   object = ParameterCapability(object, expression.object->location);
-  if (object.nullable) {
-    if (!expression.null_safe) {
-      AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
-      return InvalidType();
-    }
-    object = NonNullable(object);
+  if (CheckReceiverNullability(expression, object) == CheckStatus::Failed) {
+    return InvalidType();
   }
   const auto result = CheckObjectMember(expression, object, expected);
   return expression.null_safe && IsValid(result) ? NullableType(result) : result;
@@ -510,7 +505,10 @@ void TypeChecker::CheckFieldInitializers(const Class& owner, const ClassInfo& in
       const auto& expected = field.storage == MemberStorage::Static
                                  ? info.static_fields.at(field.name).type
                                  : info.fields.at(field.name).type;
-      const auto actual = CheckExpression(*field.initializer, &expected);
+      const auto checked = facts_.expression_types.find(field.initializer.get());
+      const auto actual = checked == facts_.expression_types.end()
+                              ? CheckExpression(*field.initializer, &expected)
+                              : checked->second;
       RecordConversion(*field.initializer, expected, actual);
       if (IsValid(actual) && !CanAssign(expected, actual)) {
         AddDiagnostic(field.location, "field initializer does not match its declared type");

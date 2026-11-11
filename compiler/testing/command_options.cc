@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -29,6 +30,23 @@ enum class OptionKind : std::uint8_t {
   Tags,
   ExcludeTags,
 };
+
+struct NamedOption final {
+  std::string_view name;
+  OptionKind kind;
+  std::string_view value;
+};
+
+constexpr auto kOptions = std::to_array<NamedOption>({
+    {.name = "--config", .kind = OptionKind::Config, .value = "FILE"},
+    {.name = "--timeout", .kind = OptionKind::Timeout, .value = "DURATION"},
+    {.name = "--reporter", .kind = OptionKind::Reporter, .value = "compact|expanded|json"},
+    {.name = "--concurrency", .kind = OptionKind::Concurrency, .value = "N"},
+    {.name = "--name", .kind = OptionKind::Name, .value = "REGEX"},
+    {.name = "--plain-name", .kind = OptionKind::PlainName, .value = "TEXT"},
+    {.name = "--tags", .kind = OptionKind::Tags, .value = "EXPR"},
+    {.name = "--exclude-tags", .kind = OptionKind::ExcludeTags, .value = "EXPR"},
+});
 
 std::expected<void, std::string> ReadOption(TestCommandOptions& options,
                                             OptionKind kind,
@@ -95,21 +113,10 @@ std::expected<void, std::string> ReadOption(TestCommandOptions& options,
 std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
                                                  std::span<const std::string_view> arguments,
                                                  std::size_t& index) {
-  using NamedOption = std::pair<std::string_view, OptionKind>;
-  constexpr auto kOptions = std::to_array<NamedOption>({
-      {"--config", OptionKind::Config},
-      {"--timeout", OptionKind::Timeout},
-      {"--reporter", OptionKind::Reporter},
-      {"--concurrency", OptionKind::Concurrency},
-      {"--name", OptionKind::Name},
-      {"--plain-name", OptionKind::PlainName},
-      {"--tags", OptionKind::Tags},
-      {"--exclude-tags", OptionKind::ExcludeTags},
-  });
   const auto argument = arguments[index];
   const auto separator = argument.find('=');
   const auto name = argument.substr(0, separator);
-  const auto found = std::ranges::find(kOptions, name, &NamedOption::first);
+  const auto found = std::ranges::find(kOptions, name, &NamedOption::name);
   if (found == kOptions.end()) {
     return std::unexpected("unknown test option: " + std::string(name));
   }
@@ -122,10 +129,18 @@ std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
     }
     value = arguments[index];
   }
-  return ReadOption(options, found->second, value);
+  return ReadOption(options, found->kind, value);
 }
 
 }  // namespace
+
+void WriteTestCommandHelp(std::ostream& output) {
+  output << "Usage: vela test [paths...] [options]\n";
+  for (const auto& option : kOptions) {
+    output << "  " << option.name << ' ' << option.value << '\n';
+  }
+  output << "  --list\n  --help, -h\n";
+}
 
 std::expected<TestCommandOptions, std::string> ParseTestCommandOptions(
     std::span<const std::string_view> arguments) {

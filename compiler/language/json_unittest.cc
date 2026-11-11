@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <string_view>
 
-#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/execution_expectations.h"
@@ -20,10 +19,7 @@ class JsonProgramTest : public testing::TestWithParam<std::string_view> {};
 class DynamicDiagnosticTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(DynamicDiagnosticTest, RejectsInvalidInferenceAndStaticContainerConversions) {
-  runtime::Isolate isolate;
-  const auto compiled = test::CompileSource(GetParam(), isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_FALSE(compiled.diagnostics.empty());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -82,25 +78,11 @@ func main(): (Marker) => int { return accept; }
 )"));
 
 TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
-  runtime::Isolate isolate(1);
-  const auto baseline = isolate.heap().allocated_bytes();
-  {
-    const auto compiled = test::CompileSource(GetParam(), isolate);
-    EXPECT_FALSE(frontend::HasErrors(compiled.diagnostics))
-        << frontend::DiagnosticsText(compiled.diagnostics);
-    ASSERT_TRUE(compiled.Succeeded());
-    test::ExpectAnswer(*compiled.instance);
-  }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().allocated_bytes(), baseline);
+  test::ExpectReleasedAnswer(GetParam());
 }
 
 TEST_P(JsonProgramTest, RestoresImageInFreshIsolate) {
-  runtime::Isolate isolate(1);
-  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
-  ASSERT_TRUE(loaded) << loaded.error();
-  test::ExpectAnswer(**loaded);
+  test::ExpectRestoredAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,

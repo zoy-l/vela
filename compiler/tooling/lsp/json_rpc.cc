@@ -13,6 +13,8 @@
 #include <system_error>
 #include <utility>
 
+#include <absl/strings/ascii.h>
+
 #include "base/json.h"
 
 namespace vela::tooling {
@@ -59,11 +61,7 @@ std::expected<std::size_t, RpcError> ReadLength(std::istream& input) {
       return std::unexpected(RpcError{.message = "invalid RPC header field"});
     }
     auto name = line->substr(0, colon);
-    for (auto& character : name) {
-      if (character >= 'A' && character <= 'Z') {
-        character = static_cast<char>(character - 'A' + 'a');
-      }
-    }
+    absl::AsciiStrToLower(&name);
     if (name != "content-length") {
       continue;
     }

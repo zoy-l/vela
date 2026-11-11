@@ -13,6 +13,7 @@
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/member.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -46,7 +47,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
     const auto& signature = descriptor.methods.at(name);
     if (name == frontend::kConstructorName ||
         signature.storage != frontend::MemberStorage::Instance ||
-        signature.is_generic_application) {
+        !signature.type_arguments.empty()) {
       continue;
     }
     const auto& owner = signature.member_owner;
@@ -54,9 +55,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
       RegisterClassProperty(receiver, *FindClass(owner), name);
       continue;
     }
-    auto key = owner;
-    key += '.';
-    key += name;
+    const auto key = MethodKey(owner, DeclarationKind::Method, name);
     const auto target = function_ids_.find(key);
     if (signature.visibility != frontend::Visibility::Public || target == function_ids_.end()) {
       continue;

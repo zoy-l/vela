@@ -1,6 +1,7 @@
 #include "compiler/tooling/semantic/semantic_index.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +24,7 @@ namespace {
 using frontend::Token;
 using frontend::TokenKind;
 using frontend::TokenRole;
+enum class ArgumentContext : std::uint8_t { Call, Attribute };
 
 std::optional<TokenKind> ArgumentClosing(const Token& token) {
   switch (token.kind) {
@@ -60,16 +62,19 @@ std::optional<std::size_t> CalleeToken(const std::vector<Token>& tokens, std::si
     --index;
   }
   const auto kind = tokens[index].kind;
-  return frontend::IsMemberName(kind) || kind == TokenKind::Print ? std::optional(index)
-                                                                  : std::nullopt;
+  return IsNameLikeToken(kind) ? std::optional(index) : std::nullopt;
+}
+
+bool IsArgumentBoundary(TokenKind kind) {
+  return kind == TokenKind::Comma || kind == TokenKind::RightParen ||
+         kind == TokenKind::RightBracket || kind == TokenKind::RightBrace ||
+         kind == TokenKind::Semicolon || kind == TokenKind::EndOfFile;
 }
 
 const Token& ArgumentEnd(std::span<const Token> arguments) {
   std::vector<TokenKind> closing;
   for (const auto& token : arguments) {
-    if (closing.empty() &&
-        (token.kind == TokenKind::RightParen || token.kind == TokenKind::RightBrace ||
-         token.kind == TokenKind::Semicolon)) {
+    if (closing.empty() && token.kind != TokenKind::Comma && IsArgumentBoundary(token.kind)) {
       return token;
     }
     TrackDelimiter(closing, token.kind, ArgumentClosing(token));
@@ -80,7 +85,8 @@ const Token& ArgumentEnd(std::span<const Token> arguments) {
 std::string ArgumentSource(const frontend::SourceSnapshot& snapshot,
                            std::span<const Token> arguments,
                            const Token& opening,
-                           std::size_t offset) {
+                           std::size_t offset,
+                           ArgumentContext context) {
   const auto source = std::string_view(snapshot.text);
   const auto& tokens = snapshot.tokens;
   const auto& end = ArgumentEnd(arguments);
@@ -90,12 +96,13 @@ std::string ArgumentSource(const frontend::SourceSnapshot& snapshot,
   for (const auto character : source.substr(begin, offset - begin)) {
     text += character == '\n' ? '\n' : ' ';
   }
-  text += "__vela_completion__)";
+  text += kCompletionMarker;
+  text += context == ArgumentContext::Attribute ? ": null)" : ")";
   if (end.kind == TokenKind::RightBrace) {
     text += ';';
   }
   text += source.substr(suffix);
-  // 实参尚未输入时也构造真正的 Call AST；实参错误不应阻止展示声明契约。
+  // 实参尚未输入时也构造调用或特性的 AST；实参错误不应阻止展示声明契约。
   std::vector<TokenKind> closing;
   for (const auto& token : tokens) {
     if (token.offset < begin) {
@@ -175,9 +182,7 @@ std::optional<ArgumentCompletionQuery> ReadArgumentSlots(std::span<const Token> 
   bool selected = false;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const auto& token = arguments[index];
-    const auto boundary = token.kind == TokenKind::Comma || token.kind == TokenKind::RightParen ||
-                          token.kind == TokenKind::RightBrace ||
-                          token.kind == TokenKind::Semicolon || token.kind == TokenKind::EndOfFile;
+    const auto boundary = IsArgumentBoundary(token.kind);
     if (closing.empty() && boundary) {
       const auto argument = arguments.subspan(argument_start, index - argument_start);
       auto name = ArgumentName(argument);
@@ -228,7 +233,12 @@ std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
   }
   auto query = ReadArgumentSlots(std::span(tokens).subspan(start + 1), offset);
   if (query) {
-    query->source = ArgumentSource(snapshot, std::span(tokens).subspan(start + 1), open, offset);
+    const auto context = opening->size() > 1 && tokens[opening->at(opening->size() - 2)].role ==
+                                                    TokenRole::AttributeDelimiter
+                             ? ArgumentContext::Attribute
+                             : ArgumentContext::Call;
+    query->source =
+        ArgumentSource(snapshot, std::span(tokens).subspan(start + 1), open, offset, context);
     query->callee_offset = tokens[*callee].offset;
   }
   return query;
@@ -236,7 +246,19 @@ std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
 
 const frontend::FunctionDescriptor* SemanticIndex::FindCallParameters(
     std::size_t callee_offset) const {
-  const auto found = calls_.find(Key{0, callee_offset});
+  const Key key{0, callee_offset};
+  if (const auto attribute = attribute_calls_.find(key); attribute != attribute_calls_.end()) {
+    const auto& definitions = model_.definitions.attribute_types;
+    const frontend::TypeDescriptor* type = nullptr;
+    if (const auto defined = definitions.find(attribute->second); defined != definitions.end()) {
+      type = &defined->second;
+    } else if (const auto checked = model_.attribute_types.find(attribute->second);
+               checked != model_.attribute_types.end()) {
+      type = &checked->second;
+    }
+    return type == nullptr ? nullptr : &model_.classes.at(type->name).constructor;
+  }
+  const auto found = calls_.find(key);
   if (found == calls_.end()) {
     return nullptr;
   }

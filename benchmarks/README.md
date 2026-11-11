@@ -16,12 +16,75 @@ python -m tools.vl bench --aot-compare
 python -m tools.vl bench --jit-compare
 python -m tools.vl bench --escape-compare
 python -m tools.vl bench --gc-report
+python -m tools.vl bench --reflection-compare
 ```
 
 The runner builds Release by default. Arguments after `--` are passed to Google
 Benchmark. Report modes default to seven repetitions, a 0.2-second minimum
 measurement and random interleaving. `--report=PATH.json` selects their JSON
 destination; the matching Markdown report separates time and memory.
+
+## Runtime reflection
+
+`python -m tools.vl bench --reflection-compare` measures ordinary access, `dynamic`,
+reflection and a hand-registered C++ reference across offline AOT and three JIT modes.
+The generated report is `out/benchmarks/reflection_comparison.md`; raw JSON remains beside it. To select
+a smaller comparison, pass a Google Benchmark filter after `--`:
+
+```powershell
+python -m tools.vl bench --reflection-compare -- --benchmark_filter=^reflection/optimized/field/
+```
+
+[reflection_benchmark.cc](reflection_benchmark.cc) uses the shared sources and case definitions in
+[reflection/](reflection/), with annotations `[Reflect]` and `Button extends Reflect`.
+`aot` links native objects emitted through `vela build --emit=obj`; `closed` uses closed-program JIT;
+`baseline` and `optimized` use reloadable SourceSession images and published
+named entries. Compilation, publication, runtime input preparation and warm-up
+are excluded from steady measurements. Each sample uses a fresh Isolate and a
+shared immutable image. Automatic GC remains timed.
+
+All four modes use identical generated sources, inputs and result checks. Module filters use the
+actual module name from type metadata, including absolute AOT source paths. Offline object sizes
+are reported separately from JIT image/executable memory and managed allocation counters. Cases
+sharing one source program share its object; their reported object sizes must not be summed.
+
+| Strategy | Work inside each operation |
+| --- | --- |
+| `field/direct`, `field/dynamic` | Write and read one int field |
+| `call/direct`, `call/dynamic` | Call one method with an int and consume its int result |
+| `cached` | Reuse the member descriptor; calls also reuse `CallArguments` |
+| `call/packed` | Reuse the descriptor; create arguments for each call |
+| `member_lookup` | Find the member, then access it; calls create arguments |
+| `type_member_lookup` | Find the type and member, then access it; calls create arguments |
+| `query/*` | Run `Reflect.findMethods<Button>()` and consume the result count |
+| `unused/registered_direct` | Add only `[Reflect]` to the ordinary source; record metadata and index retention |
+
+Lookup, metadata enumeration and construction have separate cases. Queries
+hold eight matches constant while varying background registered methods from
+64 to 1,024; they then hold 1,024 background methods constant while varying
+matches from zero to 256. Module and missing-module filters are also measured.
+An untimed verifier checks result order, method invocation and independent
+attribute data copies. Timed queries include result materialization.
+
+Reported ns/op includes loop work, result checks and one Vela host entry per
+128 operations (eight for queries). It is an amortized workload cost. Managed
+B/op counts Vela Heap allocations, including accounted external blocks. No host
+overhead is subtracted. Direct controls retain normal compiler optimization.
+Registered images prepare their reflection index during instantiation; this
+setup is outside steady timing and remains visible in heap counters. Unregistered
+controls must contain neither a runtime reflection index nor a member directory.
+
+[reflection_cpp_benchmark.cc](reflection_cpp_benchmark.cc) uses hash tables,
+accessor/invoke function pointers, tagged ints and success/error checks. Its
+fixed `Counter&` receiver and single positional int signature omit Vela's GC,
+reload lifecycle, named/default arguments and general type checks. Its ratios
+are qualified reference comparisons. Vela's C++ host reflection API is outside the steady suite.
+
+The resource case times 16 source publications, old-handle invocation and forced
+collection per sample, checking that only one image remains. Its first submission
+repeats the initial source. It includes compilation and
+publication; compare it separately from steady operations. Verified aggregates
+follow the [result retention rules](../.agents/benchmark_results.md).
 
 ## Source execution and runtime workloads
 

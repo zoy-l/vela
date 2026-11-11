@@ -33,8 +33,7 @@ void Lowerer::RegisterBuiltinMembers() {
     if (expression->kind != frontend::Expression::Kind::Member) {
       continue;
     }
-    const auto object = model_.expression_types.find(expression->object.get());
-    if (object != model_.expression_types.end() && object->second.kind == Kind::Dynamic) {
+    if (IsDynamicExpression(*expression->object)) {
       requested.insert(expression->text);
     }
   }
@@ -126,7 +125,6 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
   using Kind = frontend::TypeDescriptor::Kind;
   Function function;
   function.name = std::string("$dynamic.") + std::string(receiver.name) + "." + std::string(name);
-  static_cast<void>(AddFunctionId(function.name));
   function.return_type = signature.return_type;
   function.parameter_count = static_cast<std::uint32_t>(signature.parameters.size() + 1);
   function.value_types.push_back(receiver);
@@ -211,7 +209,7 @@ void Lowerer::PublishMemberFunction(const frontend::TypeDescriptor& receiver,
                                     std::string_view name,
                                     MemberKind kind,
                                     Function function) {
-  const auto target = function_ids_.at(function.name);
+  const auto target = AddFunctionId(function.name);
   StoreFunction(std::move(function));
   current_function_ = nullptr;
   const auto receiver_type = RegisterRuntimeType(receiver);

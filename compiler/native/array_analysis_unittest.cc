@@ -18,6 +18,23 @@
 namespace vela::compiler::native {
 namespace {
 
+template <class Visitor>
+std::size_t VisitArrayReads(const ir::Program& program,
+                            const ProgramArrayAccessFacts& facts,
+                            const Visitor& visitor) {
+  std::size_t reads = 0;
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    const auto& function_facts = facts.generic[index];
+    for (const auto& instruction : program.functions[index].instructions) {
+      if (instruction.opcode == Opcode::GetIndex) {
+        visitor(function_facts, instruction.lhs);
+        ++reads;
+      }
+    }
+  }
+  return reads;
+}
+
 TEST(ArrayAnalysisTest, CombinesAliasesBranchesAndEveryLoopWrite) {
   const auto prepared = ir::test::Prepare(R"(
 export func sum(value: int, choose: bool): int {
@@ -134,18 +151,12 @@ export func sum(): int {
     const auto analysis_mode = mode == NativeProgramMode::Closed ? ArrayAnalysisMode::FixedStorage
                                                                  : ArrayAnalysisMode::Elements;
     const auto facts = AnalyzeArrayAccess(program, analysis_mode);
-    std::size_t reads = 0;
-    for (std::size_t index = 0; index < program.functions.size(); ++index) {
-      for (const auto& instruction : program.functions.at(index).instructions) {
-        if (instruction.opcode == Opcode::GetIndex) {
-          const auto expected = mode == NativeProgramMode::Closed
-                                    ? std::uint64_t{1023}
-                                    : std::numeric_limits<std::uint64_t>::max();
-          EXPECT_EQ(facts.generic.at(index).element_bits.at(instruction.lhs), expected);
-          ++reads;
-        }
-      }
-    }
+    const auto expected = mode == NativeProgramMode::Closed
+                              ? std::uint64_t{1023}
+                              : std::numeric_limits<std::uint64_t>::max();
+    const auto reads = VisitArrayReads(program, facts, [&](const auto& result, ir::RegisterId reg) {
+      EXPECT_EQ(result.element_bits.at(reg), expected);
+    });
     EXPECT_EQ(reads, 2U);
   }
 }
@@ -170,16 +181,9 @@ TEST(ArrayAnalysisTest, EscapedOrUnknownGlobalAliasesInvalidateEveryReader) {
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto& program = prepared.program;
     const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-    std::size_t reads = 0;
-    for (std::size_t index = 0; index < program.functions.size(); ++index) {
-      for (const auto& instruction : program.functions.at(index).instructions) {
-        if (instruction.opcode == Opcode::GetIndex) {
-          EXPECT_EQ(facts.generic.at(index).element_bits.at(instruction.lhs),
-                    std::numeric_limits<std::uint64_t>::max());
-          ++reads;
-        }
-      }
-    }
+    const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+      EXPECT_EQ(result.element_bits.at(reg), std::numeric_limits<std::uint64_t>::max());
+    });
     EXPECT_GT(reads, 0U);
   }
 }
@@ -198,13 +202,9 @@ export func sum(): int {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    for (const auto& instruction : program.functions[index].instructions) {
-      if (instruction.opcode == Opcode::GetIndex) {
-        EXPECT_EQ(facts.generic[index].element_bits.at(instruction.lhs), 7U);
-      }
-    }
-  }
+  VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+    EXPECT_EQ(result.element_bits.at(reg), 7U);
+  });
 }
 
 TEST(ArrayAnalysisTest, UnknownGlobalWritesPropagateThroughArrayCopies) {
@@ -218,14 +218,9 @@ export func sum(): int {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    for (const auto& instruction : program.functions[index].instructions) {
-      if (instruction.opcode == Opcode::GetIndex) {
-        EXPECT_EQ(facts.generic[index].element_bits.at(instruction.lhs),
-                  std::numeric_limits<std::uint64_t>::max());
-      }
-    }
-  }
+  VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+    EXPECT_EQ(result.element_bits.at(reg), std::numeric_limits<std::uint64_t>::max());
+  });
 }
 
 TEST(ArrayStorageAnalysisTest, KeepsFreshSnapshotsAndSwappedScratchBuffersFixedUnderElementWrites) {
@@ -241,15 +236,9 @@ export func sum(choose: bool): int {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  std::size_t reads = 0;
-  for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    for (const auto& instruction : program.functions[index].instructions) {
-      if (instruction.opcode == Opcode::GetIndex) {
-        EXPECT_EQ(facts.generic[index].fixed_storage[instruction.lhs], 1);
-        ++reads;
-      }
-    }
-  }
+  const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+    EXPECT_EQ(result.fixed_storage[reg], 1);
+  });
   EXPECT_EQ(reads, 3U);
 }
 
@@ -278,13 +267,9 @@ TEST(ArrayStorageAnalysisTest,
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto& program = prepared.program;
     const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-    for (std::size_t index = 0; index < program.functions.size(); ++index) {
-      for (const auto& instruction : program.functions[index].instructions) {
-        if (instruction.opcode == Opcode::GetIndex) {
-          EXPECT_EQ(facts.generic[index].fixed_storage[instruction.lhs], 0);
-        }
-      }
-    }
+    VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+      EXPECT_EQ(result.fixed_storage[reg], 0);
+    });
   }
 }
 

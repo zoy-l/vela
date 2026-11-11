@@ -14,7 +14,6 @@
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/repl/repl_source.h"
 #include "runtime/async/future.h"
@@ -22,7 +21,7 @@
 namespace vela::compiler {
 
 DevelopmentRepl::DevelopmentRepl(DevelopmentSession& session, const std::string& path)
-    : session_(&session), path_(PathText(Utf8Path(path).lexically_normal())) {}
+    : session_(&session), path_(NormalizePath(path)) {}
 
 void DevelopmentRepl::Synchronize() {
   const auto snapshot = session_->snapshot();
@@ -95,14 +94,7 @@ DevelopmentSubmission DevelopmentRepl::Submit(std::string_view input) {
   }
   auto modules = snapshot->modules;
   // 已接纳模块来自固定缓存；只在本次导入首次出现时读取文件，随后请求仅用此快照。
-  auto imported =
-      frontend::LoadPreparedProgram(path_,
-                                    {
-                                        .source = syntax->source,
-                                        .program = frontend::CloneProgram(syntax->program, {}),
-                                        .diagnostics = {},
-                                    },
-                                    modules);
+  auto imported = frontend::CapturePreparedSourceFiles(path_, syntax, modules, &snapshot->modules);
   if (!imported.diagnostics.empty()) {
     Remap(imported.diagnostics, entry);
     return {

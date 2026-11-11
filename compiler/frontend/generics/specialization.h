@@ -151,6 +151,12 @@ class Specializer final : public AstCloneTransform {
                          SourceLocation location);
   void Normalize(TypeName& type, const TypeSubstitutions& substitutions);
   void NormalizeType(TypeName& type, const TypeSubstitutions& substitutions);
+  struct AliasExpansion final {
+    std::string key;
+    TypeSubstitutions substitutions;
+  };
+  std::optional<AliasExpansion> BeginAliasExpansion(const TypeName& type,
+                                                    const Program::TypeAlias& alias);
   void NormalizeTypeHead(TypeName& type);
   TypeName CloneNormalizedType(const TypeName& source, const TypeSubstitutions& substitutions);
   void NormalizeExpressionHead(Expression& expression,
@@ -163,6 +169,7 @@ class Specializer final : public AstCloneTransform {
   void Declare(const std::string& name) override;
   void Normalize(Expression* expression, const TypeSubstitutions& substitutions);
   void Normalize(Statement* statement, const TypeSubstitutions& substitutions);
+  void NormalizeAttributes(std::span<Attribute> attributes, const TypeSubstitutions& substitutions);
   void Normalize(Function& function, const TypeSubstitutions& substitutions);
   void Normalize(Class& owner, const TypeSubstitutions& substitutions);
   void NormalizeScoped(Statement* statement, const TypeSubstitutions& substitutions);

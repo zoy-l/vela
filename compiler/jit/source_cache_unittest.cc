@@ -331,7 +331,6 @@ TEST_F(NativeSourceCacheTest, PreservesWarningsOnHitsAndRechecksChangedSeverity)
   Write("main.vela", "func main(): int { const value: dynamic = 42; return value; }");
   const auto first = Compile();
   ASSERT_TRUE(first.Succeeded()) << frontend::DiagnosticsText(first.diagnostics);
-  ASSERT_TRUE(first.Succeeded());
   ASSERT_EQ(first.diagnostics.size(), 1U);
   const auto hit = Compile();
   ASSERT_TRUE(hit.Succeeded()) << frontend::DiagnosticsText(hit.diagnostics);

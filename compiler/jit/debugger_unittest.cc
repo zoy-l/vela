@@ -717,7 +717,8 @@ TEST_P(JitDebuggerTest, LargeFramesRestoreFromStorageReservedBeforePublication) 
   compiler::test::CheckpointPublication publication(*session_);
   publication.Stage(std::move(*candidate));
   paused_ = [&](const runtime::NativeDebugContext& context) {
-    if (context.top_frame().name() == "checkpoint" && publication.HasPending()) {
+    if (context.top_frame().name() == compiler::test::kCheckpointFunction &&
+        publication.HasPending()) {
       publication.PublishPending();
       for (const auto& frame : context.frames()) {
         EXPECT_EQ(frame.tier(), NativeCodeTier::Baseline);
@@ -750,7 +751,8 @@ TEST_P(JitDebuggerTest, RejectedPublicationLeavesOptimizationAndLogicalFramesUnc
   compiler::test::CheckpointPublication publication(*session_);
   publication.Stage(std::move(*candidate));
   paused_ = [&](const runtime::NativeDebugContext& context) {
-    if (context.top_frame().name() == "checkpoint" && publication.HasPending()) {
+    if (context.top_frame().name() == compiler::test::kCheckpointFunction &&
+        publication.HasPending()) {
       publication.PublishPending();
       EXPECT_EQ(context.top_frame().tier(), GetParam());
     }
@@ -840,7 +842,8 @@ TEST_P(JitDebuggerTest, FailedMaterializationPreparationLeavesTheOldVirtualFrame
   publication.Stage(std::move(*candidate));
   const auto& published = publication.result();
   paused_ = [&](const runtime::NativeDebugContext& context) {
-    if (context.top_frame().name() == "checkpoint" && publication.HasPending()) {
+    if (context.top_frame().name() == compiler::test::kCheckpointFunction &&
+        publication.HasPending()) {
       auto& heap = session_->isolate().heap();
       heap.Collect();
       heap.SetAllocationLimit(heap.allocated_bytes());

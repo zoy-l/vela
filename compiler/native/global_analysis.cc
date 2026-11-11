@@ -8,7 +8,9 @@
 
 #include <llvm/ADT/BitVector.h>
 
+#include "base/declaration.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
@@ -125,6 +127,23 @@ std::vector<std::uint8_t> FindInitializedAccesses(const ir::Function& function,
 
 }  // namespace
 
+namespace {
+
+void AccountReflectedGlobalWrites(const ir::Program& program,
+                                  std::vector<std::uint8_t>& readonly_slots) {
+  for (const auto& member : program.reflection_members) {
+    if (member.kind == reflection::MemberKind::Field &&
+        (member.flags & (reflection::kRegistered | reflection::kStatic | reflection::kPrivate)) ==
+            (reflection::kRegistered | reflection::kStatic) &&
+        (program.global_flags[member.target] & static_cast<std::uint32_t>(GlobalFlag::Constant)) ==
+            0) {
+      readonly_slots[member.target] = 0;
+    }
+  }
+}
+
+}  // namespace
+
 GlobalAccessFacts AnalyzeGlobalAccess(const ir::Program& program, NativeCodePlacement placement) {
   if (!IsClosedLinkedProgram(program.native_mode, placement)) {
     return {};
@@ -135,6 +154,7 @@ GlobalAccessFacts AnalyzeGlobalAccess(const ir::Program& program, NativeCodePlac
       .initialized_on_return = std::vector<std::vector<std::uint32_t>>(program.functions.size()),
       .initialized_accesses = std::vector<std::vector<std::uint8_t>>(program.functions.size()),
   };
+  AccountReflectedGlobalWrites(program, result.readonly_slots);
   std::vector<GlobalFunction> functions(program.functions.size());
   std::vector<std::size_t> work;
   std::vector<std::uint8_t> queued(functions.size());

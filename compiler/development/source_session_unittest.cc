@@ -6,11 +6,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "base/callable.h"
 #include "base/declaration.h"
+#include "base/reflection.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler {
@@ -34,6 +38,70 @@ DeclarationId Field(const CompiledSourceSnapshot& snapshot,
     return records[field.declaration.value].key.name == name;
   });
   return found->declaration;
+}
+
+TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExistingDeclarations) {
+  SourceSession session("main.vela");
+  const frontend::ReflectionSelection selection{
+      .module = "main.vela",
+      .type = *frontend::ParseTypeSource("Counter"),
+      .members =
+          {
+              {
+                  .kind = frontend::ReflectionMemberKind::Field,
+                  .name = "value",
+                  .type_arguments = {},
+                  .location = {},
+              },
+          },
+      .source_path = "vela.json",
+      .location = {},
+      .source = frontend::ParseSourceSnapshot("{}").source,
+  };
+  const auto first = session.Prepare({
+      .changes = {{.path = "main.vela", .text = "class Counter { value: int = 1; }"}},
+      .added_roots = {},
+      .reflection = std::vector{selection},
+  });
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(session.Commit(*first));
+  const auto accepted = session.snapshot();
+  const auto field =
+      std::ranges::find(accepted->program.reflection_members, "value", &reflection::Member::name);
+  ASSERT_NE(field, accepted->program.reflection_members.end());
+  const auto identity = field->declaration;
+  auto invalid_selection = selection;
+  invalid_selection.members.front().name = "missing";
+  const auto failed = session.Prepare({
+      .base_revision = 1,
+      .changes = {},
+      .added_roots = {},
+      .reflection = std::vector{invalid_selection},
+  });
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(session.snapshot(), accepted);
+  const auto withdrawn = session.Prepare({
+      .base_revision = 1,
+      .changes = {},
+      .added_roots = {},
+      .reflection = std::vector<frontend::ReflectionSelection>{},
+  });
+  ASSERT_TRUE(withdrawn);
+  ASSERT_TRUE(session.Commit(*withdrawn));
+  EXPECT_TRUE(session.snapshot()->reflection.empty());
+  EXPECT_TRUE(session.snapshot()->program.reflection_members.empty());
+  const auto restored = session.Prepare({
+      .base_revision = 2,
+      .changes = {},
+      .added_roots = {},
+      .reflection = std::vector{selection},
+  });
+  ASSERT_TRUE(restored);
+  const auto& members = restored->snapshot().program.reflection_members;
+  const auto current = std::ranges::find(members, "value", &reflection::Member::name);
+  ASSERT_NE(current, members.end());
+  EXPECT_EQ(current->declaration, identity);
+  EXPECT_NE(current->flags & reflection::kRegistered, 0U);
 }
 
 TEST(SourceSessionTest, PreparingAndDroppingCandidateLeavesTheCommittedSnapshotUntouched) {

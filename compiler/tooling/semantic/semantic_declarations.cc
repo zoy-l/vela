@@ -13,6 +13,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/documentation/builtin_documentation.h"
 #include "compiler/tooling/documentation/documentation.h"
+#include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
 namespace {
@@ -73,13 +74,21 @@ std::string GenericName(std::string_view source_name,
 }  // namespace
 
 template <class Declaration, class Detail>
+std::size_t SemanticIndex::DeclareSourceSymbol(const Declaration& declaration,
+                                               CompletionKind kind,
+                                               Detail detail) {
+  const auto existing = declarations_.find(KeyAt(declaration.location));
+  const auto documentation = DocumentationLocation(declaration);
+  return existing == declarations_.end()
+             ? AddSymbol(declaration.location, kind, detail(), documentation)
+             : existing->second;
+}
+
+template <class Declaration, class Detail>
 std::size_t SemanticIndex::DeclareSymbol(const Declaration& declaration,
                                          CompletionKind kind,
                                          Detail detail) {
-  const auto existing = declarations_.find(KeyAt(declaration.location));
-  const auto symbol_id = existing == declarations_.end()
-                             ? AddSymbol(declaration.location, kind, detail())
-                             : existing->second;
+  const auto symbol_id = DeclareSourceSymbol(declaration, kind, detail);
   symbols_[symbol_id].export_kind = declaration.export_kind;
   names_.insert_or_assign(declaration.name, symbol_id);
   return symbol_id;
@@ -90,10 +99,7 @@ std::size_t SemanticIndex::DeclareMember(std::string_view owner,
                                          const Declaration& declaration,
                                          CompletionKind kind,
                                          Detail detail) {
-  const auto existing = declarations_.find(KeyAt(declaration.location));
-  const auto symbol_id = existing == declarations_.end()
-                             ? AddSymbol(declaration.location, kind, detail())
-                             : existing->second;
+  const auto symbol_id = DeclareSourceSymbol(declaration, kind, detail);
   auto& symbol = symbols_[symbol_id];
   if (symbol.owner.empty()) {
     symbol.owner = DisplaySymbolName(owner);

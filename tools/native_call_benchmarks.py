@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from aot_benchmarks import compile_workloads
+from aot_benchmarks import compile_workloads, native_image_declaration
 
 
 BATCH_SIZES = (64, 4096)
@@ -48,7 +48,7 @@ def generate(compiler: Path, output: Path) -> None:
     manifest = compile_workloads(compiler, source, exports, output)
     header = ["#pragma once", "#include <array>", "#include <cstdint>",
               "#include <string_view>", '#include "runtime/native/native_image.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
+              native_image_declaration(manifest),
               "namespace vela::benchmarks::native_call {",
               "inline const auto* const kImage = " + manifest["image"] + "();",
               "inline constexpr std::string_view kSource = " + json.dumps(source.as_posix(), ensure_ascii=False) + ";",

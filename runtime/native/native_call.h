@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 
 #include "base/callable.h"
@@ -16,6 +17,26 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+
+struct BoundArguments;
+enum class NativeArgumentPresence : std::uint8_t { Absent, Included };
+
+// 源实参与隐式接收者由调用方保根；适配器拥有缺省/rest 值、根槽和 ABI 缓冲，直到调用返回。
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(
+    NativeExecution& execution,
+    std::uint32_t function,
+    const CallSignature& signature,
+    const BoundArguments& bound,
+    const HeapObject& arguments,
+    std::optional<Value> receiver);
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(
+    NativeExecution& execution,
+    std::uint32_t function,
+    const CallSignature& signature,
+    const BoundArguments& bound,
+    std::span<const Value> arguments,
+    std::optional<Value> receiver,
+    NativeArgumentPresence presence);
 
 [[nodiscard]] std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
     NativeExecution& execution,

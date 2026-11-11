@@ -146,8 +146,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
         return std::nullopt;
       }
       const auto replacement = BorrowedInstruction(plan, program, original, values, marker);
-      if (replacement.opcode != original.opcode || replacement.dst != original.dst ||
-          replacement.lhs != original.lhs) {
+      if (replacement.opcode != original.opcode) {
         changes.emplace_back(position, replacement);
       }
       Transfer(original, access, std::nullopt, plan, program, values);
@@ -160,9 +159,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
   for (const auto& [position, instruction] : changes) {
     rewritten.instructions[position] = instruction;
   }
-  for (std::size_t index = 0; index < source.instructions.size(); ++index) {
-    plan.origins.push_back(index);
-  }
+  plan.ResetOrigins();
   plan.allocations.clear();
   return BorrowedFunction{.type = type, .plan = std::move(plan)};
 }

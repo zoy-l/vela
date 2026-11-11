@@ -1,7 +1,6 @@
 #include "compiler/tooling/lsp/language_server_internal.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -22,7 +21,7 @@ namespace vela::tooling::internal {
 namespace {
 
 using protocol::kInvalidParams;
-constexpr std::int64_t kRequestFailed = -32803;
+using protocol::kRequestFailed;
 
 std::expected<TextRange, std::string> ChangeRange(const yyjson_val* value) {
   const auto start = ReadTextPosition(GetJsonField(value, protocol::kStart));

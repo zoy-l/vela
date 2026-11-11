@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -24,6 +25,7 @@
 #include "base/source_location.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/tooling/format/formatter.h"
@@ -34,6 +36,7 @@ namespace {
 constexpr std::string_view kGeneratorVersion = "1";
 constexpr std::string_view kDescriptorVersion = "1";
 enum class AdapterKind : std::uint8_t { Implementation, Pattern };
+enum class TypeExpansion : std::uint8_t { Required, Complete };
 
 enum class AliasBinding : std::uint8_t { Matched, Mismatch };
 using AliasArguments = absl::flat_hash_map<std::string, std::optional<frontend::TypeName>>;
@@ -71,8 +74,7 @@ AliasBinding BindAliasType(const frontend::TypeName& pattern,
 }
 
 std::string RelativeModule(std::string_view module, const std::filesystem::path& directory) {
-  if (module.starts_with(frontend::kSdkSourcePrefix) ||
-      module.starts_with(frontend::kStandardSourcePrefix)) {
+  if (!frontend::IsFileModule(module)) {
     return std::string(module);
   }
   return PathText(Utf8Path(module).lexically_relative(directory));
@@ -89,7 +91,8 @@ class MockGenerator final {
   void Error(SourceLocation location, std::string message);
   [[nodiscard]] frontend::TypeName Expand(const frontend::TypeName& type) const;
   frontend::TypeName NameType(const frontend::TypeName& type);
-  std::optional<frontend::TypeName> FindTypeName(const frontend::TypeName& type);
+  std::optional<frontend::TypeName> FindTypeName(const frontend::TypeName& type,
+                                                 TypeExpansion expansion = TypeExpansion::Required);
   void RegisterPublicAlias(const frontend::Program::TypeAlias& alias);
   std::optional<frontend::TypeName> NameGenericAlias(const frontend::TypeName& type);
   std::string PublicName(const std::string& name, SourceLocation location);
@@ -112,7 +115,7 @@ class MockGenerator final {
   absl::flat_hash_map<std::pair<frontend::TypeName::Kind, std::string>, std::vector<GenericAlias>>
       generic_aliases_;
   absl::flat_hash_set<std::string> naming_aliases_;
-  std::map<std::string, std::string> imports_;
+  std::map<std::string, std::string, std::less<>> imports_;
   std::string sdk_;
   std::ostringstream body_;
   frontend::Diagnostics diagnostics_;
@@ -222,10 +225,7 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
     bool complete = true;
     for (const auto& parameter : alias.parameters) {
       const auto& bound = arguments.at(parameter);
-      if (!bound) {
-        std::unreachable();
-      }
-      auto argument = FindTypeName(*bound);
+      auto argument = FindTypeName(*bound, TypeExpansion::Complete);
       if (!argument) {
         complete = false;
         break;
@@ -250,7 +250,7 @@ std::string MockGenerator::AllocateName(std::string_view preferred) {
 }
 
 std::string MockGenerator::Import(std::string_view module) {
-  const auto found = imports_.find(std::string(module));
+  const auto found = imports_.find(module);
   if (found != imports_.end()) {
     return found->second;
   }
@@ -318,13 +318,14 @@ frontend::TypeName MockGenerator::NameType(const frontend::TypeName& type) {
   return qualify(qualify, std::move(*named));
 }
 
-std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::TypeName& type) {
+std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::TypeName& type,
+                                                              TypeExpansion expansion) {
   const auto origin = program_->origins.find(type.name);
   if (origin != program_->origins.end() && exported_.contains(type.name)) {
     auto result = type;
     bool complete = true;
     for (auto& argument : result.arguments) {
-      auto named = FindTypeName(argument);
+      auto named = FindTypeName(argument, expansion);
       if (!named) {
         complete = false;
         break;
@@ -335,7 +336,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
       return result;
     }
   }
-  const auto expanded = Expand(type);
+  const auto expanded = expansion == TypeExpansion::Required ? Expand(type) : type;
   const auto alias = public_aliases_.find(expanded.ToString());
   if (alias != public_aliases_.end()) {
     return frontend::TypeName{
@@ -360,7 +361,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
     }
   }
   for (auto& argument : result.arguments) {
-    auto named = FindTypeName(argument);
+    auto named = FindTypeName(argument, TypeExpansion::Complete);
     if (!named) {
       return std::nullopt;
     }

@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -75,13 +76,10 @@ const MethodTemplate* TypeChecker::InferenceMethod(const Expression& member) {
   }
   receiver = ParameterCapability(receiver, member.object->location);
   receiver = NonNullable(receiver);
-  if (receiver.kind == Type::Kind::Class) {
-    const auto& methods = classes_.at(receiver.name).method_templates;
-    const auto method = methods.find(member.text);
-    return method == methods.end() ? nullptr : &method->second;
-  }
-  if (receiver.kind == Type::Kind::Interface) {
-    const auto& methods = interfaces_.at(receiver.name).method_templates;
+  if (receiver.kind == Type::Kind::Class || receiver.kind == Type::Kind::Interface) {
+    const auto& methods = receiver.kind == Type::Kind::Class
+                              ? classes_.at(receiver.name).method_templates
+                              : interfaces_.at(receiver.name).method_templates;
     const auto method = methods.find(member.text);
     return method == methods.end() ? nullptr : &method->second;
   }
@@ -283,7 +281,8 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
         "$definition.json." + std::string(target.name),
         JSONDecodeRequest{.type = target, .location = member.location});
   }
-  const bool abstract = checking_definitions_ || types_.at(method.owner).is_abstract ||
+  const auto owner_type = types_.at(method.owner);
+  const bool abstract = checking_definitions_ || owner_type.is_abstract ||
                         std::ranges::any_of(arguments, HasTypeParameters);
   if (!abstract) {
     const auto target = MaterializeMethod(method, arguments, member.location);
@@ -300,7 +299,7 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
               .location = member.location,
           });
     }
-    if (types_.at(method.owner).kind == Type::Kind::Interface) {
+    if (owner_type.kind == Type::Kind::Interface) {
       facts_.interface_members.insert_or_assign(node, *target);
     } else if (access == MethodAccess::Static) {
       facts_.static_members.insert_or_assign(node, *target);
@@ -342,11 +341,8 @@ void TypeChecker::RegisterMethodApplications() {
 void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
                                         const std::string& interface,
                                         const Function& method) {
-  const auto& specialized = method.application;
-  const auto& application = *specialized;
   const auto interface_name = interfaces_.at(interface).type.name;
-  if (!interface_method_templates_.contains({owner.type.name, interface, application.name}) ||
-      !queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
+  if (!queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
     return;
   }
   interface_bindings_.push_back({
@@ -377,6 +373,36 @@ void TypeChecker::DrainInterfaceBindings() {
   }
 }
 
+std::optional<std::vector<TypeChecker::Type>> TypeChecker::ApplyMethod(
+    const MethodTemplate& method,
+    std::span<const TypeName> arguments,
+    SourceLocation location,
+    std::string_view count_error) {
+  const auto& declaration = *method.declaration;
+  if (arguments.size() != declaration.type_parameters.size()) {
+    AddDiagnostic(location, std::string(count_error));
+    return std::nullopt;
+  }
+  BoundCheck check{
+      .owner = method.owner + '.' + declaration.name,
+      .parameters = declaration.type_parameters,
+      .arguments = ResolveTypeArguments(arguments),
+      .location = location,
+  };
+  if (!CheckTypeArguments(check)) {
+    return std::nullopt;
+  }
+  if (declaration.type_parameters.empty()) {
+    return std::move(check.arguments);
+  }
+  const auto target = MaterializeMethod(method, arguments, location);
+  if (!target) {
+    AddDiagnostic(target.error().location, target.error().message);
+    return std::nullopt;
+  }
+  return std::move(check.arguments);
+}
+
 void TypeChecker::RestoreMethodSpecializations(std::span<const GenericSpecialization> retained) {
   for (const auto& request : retained) {
     if (!request.method) {
@@ -403,28 +429,9 @@ void TypeChecker::RestoreMethodSpecializations(std::span<const GenericSpecializa
     if (method == templates->end()) {
       continue;
     }
-    if (application.arguments.size() != method->second.declaration->type_parameters.size()) {
-      AddDiagnostic({},
-                    "retained generic method argument count does not match type parameter count");
-      continue;
-    }
-    std::vector<Type> arguments;
-    arguments.reserve(application.arguments.size());
-    for (const auto& argument : application.arguments) {
-      arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
-    }
-    if (!CheckTypeArguments({
-            .owner = method->second.owner + '.' + name,
-            .parameters = method->second.declaration->type_parameters,
-            .arguments = std::move(arguments),
-            .location = {},
-        })) {
-      continue;
-    }
-    const auto materialized = MaterializeMethod(method->second, application.arguments, {});
-    if (!materialized) {
-      AddDiagnostic(materialized.error().location, materialized.error().message);
-    }
+    static_cast<void>(
+        ApplyMethod(method->second, application.arguments, {},
+                    "retained generic method argument count does not match type parameter count"));
   }
 }
 

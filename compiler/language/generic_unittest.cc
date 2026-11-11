@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
@@ -55,7 +56,7 @@ class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST(GenericTest, ExecutesBoundedDefinitionsWithConcreteInterfaceApplications) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 interface Comparable<T> { compareTo(other: T): int; }
 class Score implements Comparable<Score> {
   value: int;
@@ -71,9 +72,7 @@ func main(): int {
   return operation(left, right);
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, InfersPayloadsAndUsesTheProvenFBoundParentSpecialization) {
@@ -101,7 +100,7 @@ func main(): int { return read(C()) + map(value => value + 2, IntReader()); }
 
 TEST(GenericTest, BoundEvidenceDoesNotRepeatArgumentsOrDeferTheirRuntimeEffects) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 interface Reader<E> { read(): E; }
 class IntReader implements Reader<int> { read(): int { return 41; } }
 let calls: int = 0;
@@ -114,14 +113,12 @@ func main(): int {
   return value + (calls - 1) * 100;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, NestedOutputVariablesWaitForOuterArgumentEvidence) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func create<T, U>(value: T): U[] { return []; }
 func maybe<T, U>(value: T): U[]? { return null; }
 func identity<T>(value: T): T { return value; }
@@ -136,9 +133,7 @@ func main(): int {
   return choose(maybe(0) ?? [], matched);
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, InferredAndExplicitUsesHaveTheSameTypedIR) {
@@ -183,7 +178,7 @@ func main(): int {
 
 TEST(GenericTest, PreservesNestedTypeStructureAndInfersGenericCallbackValues) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 class Box<T> { value: T; }
 func identity<T>(value: T): T { return value; }
 func unbox<T>(box: Box<T[]>): T[] { return box.value; }
@@ -196,14 +191,12 @@ func main(): int {
   return apply(identity, copy[0] + copy[1]);
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, InfersVoidOnlyInPositionsThatPermitVoid) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func main(): int {
   let total = 0;
@@ -211,9 +204,7 @@ func main(): int {
   return total;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, InfersCallsConstructorsFunctionValuesAndRecursiveBodies) {
@@ -244,7 +235,7 @@ func main(): int {
 
 TEST(GenericTest, InfersCallbacksAfterIndependentArgumentsAndPropagatesNestedContexts) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func identity<T>(value: T): T { return value; }
 func empty<T>(): T[] { return []; }
@@ -257,14 +248,12 @@ func main(): int {
   return result + nested(1)(1) - 2 + make().value.length + arrays[0].length;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, SharesArrayAndOrdinaryCallbackInference) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func main(): int {
   const items = [19, 20];
@@ -273,14 +262,12 @@ func main(): int {
   return apply(value => value, total);
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, InfersTransparentGenericConstructorsAndExplicitConstructorParameters) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 class Box<T> { value: T; constructor(input: T) { this.value = input; } }
 type Alias<Item> = Box<Item>;
 type Dictionary<Value> = Map<string, Value>;
@@ -291,14 +278,12 @@ func main(): int {
   return values.get('answer') ?? 0;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, DeferredInferenceKeepsEarlierArgumentsBeforeLaterMutation) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 let mutate: () => void = (): void => {};
 func create<T>(): T[] { mutate(); return []; }
 func choose<T>(first: T, second: T[]): T { return first; }
@@ -309,9 +294,7 @@ func main(): int {
   return 0;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCodeFromImage) {
@@ -352,7 +335,7 @@ TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCode
 
 TEST(GenericTest, PreservesLoopBindingsAndAccessorFlagsWhenCloningTemplates) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func identity<T>(value: T): T { return value; }
 func collect<T>(values: T[]): (() => T)[] {
   const result: (() => T)[] = [];
@@ -387,14 +370,11 @@ func main(): int {
   return box.value + callbacks[0]();
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST_P(GenericErrorTest, RejectsInvalidInstantiationAndExpandingRecursion) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -424,7 +404,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(GenericTest, ConstructsGenericAliasesAndKeepsTemplateBodiesInTheirDeclarationScope) {
   runtime::Isolate isolate;
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func identity<T>(value: T): T { return value; }
 func forward<T>(value: T): T { return identity<T>(value); }
 class Box<T> { value: T; }
@@ -434,9 +414,7 @@ func main(): int {
   return Alias<int>(value: forward<int>(42)).value;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) {
@@ -451,7 +429,7 @@ TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) 
 
 TEST(GenericTest, FusedInstantiationPreservesMatchCatchFinallyAndLambdaScopes) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func identity<T>(value: T): T { return value; }
 class Failure<T> { value: T; }
 func inspect<T>(value: T, flag: bool): T {
@@ -473,14 +451,12 @@ func inspect<T>(value: T, flag: bool): T {
 }
 func main(): int { return inspect<int>(20, true) + inspect<int>(22, false); }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, FusedClassInstantiationPreservesGenericBasesConstructorsAndOverrides) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 func identity<T>(value: T): T { return value; }
 class Base<T> { value: T; read(): T { return this.value; } }
 class Derived<T> extends Base<T> {
@@ -493,9 +469,7 @@ func main(): int {
   return derived.read() + derived.value;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(GenericTest, FusedInstantiationRejectsTypeArgumentsOnShadowingBindings) {

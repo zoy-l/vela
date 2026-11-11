@@ -13,8 +13,9 @@ import tempfile
 import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
-from tools.test_support import closed_output_command, native_command, pending_command, vela_executable
-from tools.package import create_package
+from tools.test_support import (closed_output_command, compile_native_host, create_native_package,
+                                native_command, native_test_libraries, pending_command,
+                                vela_executable)
 from tools.aot_c_fixture import host_source as c_host_source
 from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
                                     PROGRAM_CASES)
@@ -23,12 +24,6 @@ from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX
 @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
                      "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
 class NativeDistributionTest(unittest.TestCase):
-    def package(self, original: Path, destination: Path) -> dict[str, str]:
-        specification = os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")
-        return create_package(original, original.parent / "obj/runtime" /
-                              static_library_name("vela_runtime"), destination,
-                              Path(specification) if specification else None)
-
     def test_existing_language_corpus_matches_jit(self) -> None:
         categories = [
             "class", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
@@ -45,7 +40,7 @@ class NativeDistributionTest(unittest.TestCase):
             work = Path(temporary)
             original = vela_executable()
             package = work / "toolchain"
-            roots = self.package(original, package)
+            roots = create_native_package(original, package)
             environment = dict(os.environ, **roots)
             environment["PATH"] = ""
             compiler = package / "bin" / executable_name("vela")
@@ -97,7 +92,7 @@ class NativeDistributionTest(unittest.TestCase):
             original = vela_executable()
             output = original.parent
             package = work / "toolchain 中"
-            roots = self.package(original, package)
+            roots = create_native_package(original, package)
             environment = {key: value for key, value in os.environ.items()
                            if key.upper() not in {"PATH", "INCLUDE", "LIB", "LIBPATH", "VCTOOLSINSTALLDIR", "WINDOWSSDKDIR"}}
             environment.update(roots)
@@ -201,25 +196,10 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
                 .replace("NUMBERS", namespaces[0]).replace("STRINGS", namespaces[1]), encoding="utf-8", newline="\n")
             host = work / executable_name("embedding")
             runtime = package / json.loads((package / "share/vela/target.json").read_text())["runtime"]
-            gtest = [output / "obj/third_party" / static_library_name(name)
-                     for name in ("gtest_main", "gtest")]
+            test_libraries = native_test_libraries(output, runtime)
             includes = [package / "include", ROOT / "third_party/googletest/googletest/include"]
-            if sys.platform == "win32":
-                host_object = work / "embedding.obj"
-                run([tools["cxx"], "/nologo", "/MT", "/O2", "/clang:-std=c++23",
-                 "/D_ITERATOR_DEBUG_LEVEL=0", "/D_HAS_EXCEPTIONS=0", "/c", host_source,
-                 "/Fo" + str(host_object), *["/I" + str(path) for path in includes]], env=None)
-                run([tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", "/Fe" + str(host), host_object,
-                     *libraries, runtime, *gtest], env=None)
-            else:
-                flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
-                         "-fuse-ld=" + str(tools["linker"])]
-                if sys.platform == "darwin":
-                    flags += ["-isysroot", str(tools["sysroot"]), "-nostdinc++",
-                              "-isystem", str(tools["sysroot"] / "usr/include/c++/v1"),
-                              "-framework", "CoreFoundation"]
-                run([tools["cxx"], *flags, *["-I" + str(path) for path in includes],
-                     host_source, *libraries, runtime, *gtest, "-o", host], env=None)
+            compile_native_host(self, [host_source], host, [*libraries, *test_libraries],
+                                includes, cwd=work)
             self.assertIn("[  PASSED  ] 1 test.", run([host]).stdout)
 
             c_source = work / "embedding.c"
@@ -230,15 +210,13 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
             if sys.platform == "win32":
                 run([tools["cxx"], "/nologo", "/MT", "/TC", "/W4", "/WX", "/c", c_source,
                      "/I" + str(package / "include"), "/Fo" + str(c_object)], env=None)
-                run([tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", "/Fe" + str(c_host),
-                     c_object, libraries[1], runtime], env=None)
             else:
                 c_flags = ["-std=c17", "-Werror", "-c"]
                 if sys.platform == "darwin":
                     c_flags += ["-isysroot", str(tools["sysroot"])]
                 run([tools["cc"], *c_flags, "-I" + str(package / "include"), c_source,
                      "-o", c_object], env=None)
-                run([tools["cxx"], *flags, c_object, libraries[1], runtime, "-o", c_host], env=None)
+            compile_native_host(self, [], c_host, [c_object, libraries[1], runtime], [], cwd=work)
             self.assertEqual(run([c_host]).stdout, "C host passed\n")
 
             header = Path(str(libraries[0]) + ".h")
@@ -283,6 +261,16 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
             without_sdk = {key: value for key, value in without_sdk.items() if key not in target_roots}
             run([compiler, "build", sources[0], "--emit=obj", "-o", work / "sdkless.obj"], env=without_sdk)
             run([compiler, "build", sources[0], "--emit=staticlib", "-o", work / "sdkless.lib"], env=without_sdk)
+            archive_only = {key: value for key, value in target.items()
+                            if key not in {"link_arguments", "linker", "runtime"}}
+            target_path.write_text(json.dumps(archive_only), encoding="utf-8")
+            run([compiler, "build", sources[0], "--emit=staticlib", "-o",
+                 work / "archive-only.lib"], env=without_sdk)
+            executable_only = {key: value for key, value in target.items()
+                               if key not in {"archive_arguments", "archiver"}}
+            target_path.write_text(json.dumps(executable_only), encoding="utf-8")
+            run([compiler, "build", sources[0], "-o", work / executable_name("link-only")])
+            target_path.write_text(json.dumps(target), encoding="utf-8")
             if target_roots:
                 self.assertIn(target_roots[0], run([compiler, "build", work / "missing.vela", "-o",
                               work / executable_name("missing")], 74, without_sdk).stderr)

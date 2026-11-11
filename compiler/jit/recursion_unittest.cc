@@ -37,8 +37,8 @@ class RecursiveCallTest
     ASSERT_TRUE(compiler);
     const auto [mode, tier] = GetParam();
     if (mode == NativeProgramMode::Closed) {
-      const auto compiled =
-          CompileSource(**compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}});
+      const auto compiled = CompileSource(
+          **compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}});
       ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
       auto instance = runtime::NativeInstance::Instantiate(isolate_, compiled.code.image);
       ASSERT_TRUE(instance);
@@ -201,7 +201,7 @@ TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions
   if (!identity) {
     FAIL() << "missing identity entry";
   }
-  const auto entry = instance.image().functions.values().subspan(*identity).front().entry;
+  const auto entry = instance.image().functions.values()[*identity].entry;
   const std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(42))};
   runtime::NativeValue result;
   EXPECT_EQ(entry(nullptr, arguments.data(), arguments.size(), &result),

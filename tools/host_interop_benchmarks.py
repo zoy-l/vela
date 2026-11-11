@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from aot_benchmarks import compile_workloads
+from aot_benchmarks import compile_workloads, native_image_declaration
 
 
 def generate(compiler: Path, source: Path, output: Path) -> None:
@@ -17,7 +17,7 @@ def generate(compiler: Path, source: Path, output: Path) -> None:
     header = ["#pragma once", "#include <string_view>",
               '#include "' + interface + '" // IWYU pragma: export',
               '#include "runtime/native/native_image.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + '() noexcept;',
+              native_image_declaration(manifest),
               "namespace vela::benchmarks::interop {", f"namespace api = {module};",
               "inline const auto* const kImage = " + manifest["image"] + "();",
               "inline constexpr std::string_view kSource = " + json.dumps(source.as_posix()) + ";",

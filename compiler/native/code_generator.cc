@@ -81,10 +81,13 @@ bool HasUnrollableRecursion(const ir::Function& function, std::size_t function_i
   return calls > 0 && std::cmp_less_equal(calls, kMaximumRecursiveCalls);
 }
 
+bool HasScalarRecursiveFrame(const ir::Function& function) {
+  return function.parameter_count <= kMaximumInlineInstructions && IsScalar(function.return_type) &&
+         std::ranges::all_of(function.value_types, IsScalar);
+}
+
 bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index) {
-  if (!HasUnrollableRecursion(function, function_index) ||
-      function.parameter_count > kMaximumInlineInstructions || !IsScalar(function.return_type) ||
-      !std::ranges::all_of(function.value_types, IsScalar)) {
+  if (!HasScalarRecursiveFrame(function)) {
     return false;
   }
   return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
@@ -95,7 +98,7 @@ bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index
 }
 
 bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_index) {
-  if (!CanUnrollRecursion(function, function_index)) {
+  if (!HasUnrollableRecursion(function, function_index) || !HasScalarRecursiveFrame(function)) {
     return false;
   }
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
@@ -112,22 +115,19 @@ bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_inde
       continue;
     }
     const auto effects = ir::AnalyzeEffects(instruction);
-    if (effects.reads_state || effects.writes_state || effects.may_suspend ||
-        effects.changes_control) {
+    if (effects.MayCollectOnSuccess() || effects.reads_state || effects.writes_state ||
+        effects.may_suspend || effects.changes_control) {
       return false;
     }
   }
   return true;
 }
 
-bool CanUnrollManagedRecursion(const ir::Function& function,
-                               std::size_t function_index,
-                               const NativeFunctionMetrics& metrics) {
-  // 仅复制完整入口，不省略根、错误位置或逻辑深度。限制自调用数量和帧大小，
-  // 由已有 LLVM 指令预算约束展开后的代码体积。
+bool CanUnrollManagedRecursion(const ir::Function& function, const NativeFunctionMetrics& metrics) {
+  // 仅复制完整入口，不省略根、错误位置或逻辑深度。此处限制寄存器数量和帧大小，
+  // 递归形状由调用方验证，展开后的代码体积由已有 LLVM 指令预算约束。
   constexpr std::size_t kMaximumExpandedFrameBytes = kMaximumNativeStackBytes / 8;
-  return HasUnrollableRecursion(function, function_index) &&
-         function.register_count <= kMaximumInlineInstructions &&
+  return function.register_count <= kMaximumInlineInstructions &&
          metrics.frame_bytes <= kMaximumExpandedFrameBytes;
 }
 
@@ -140,9 +140,11 @@ bool CanExpandRecursion(const ir::Program& program,
     return false;
   }
   const auto& function = program.functions[index];
+  if (!HasUnrollableRecursion(function, index)) {
+    return false;
+  }
   return CanUnrollRecursion(function, index) ||
-         (placement == NativeCodePlacement::Linked &&
-          CanUnrollManagedRecursion(function, index, metrics));
+         (placement == NativeCodePlacement::Linked && CanUnrollManagedRecursion(function, metrics));
 }
 
 bool HasVersionAssumptions(const ir::Function& function, const ir::Program& program) {

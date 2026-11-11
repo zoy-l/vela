@@ -240,10 +240,10 @@ class Manifest final {
     if (support != nullptr) {
       Add(target_support, "identity", Text(support->identity));
       auto* arguments = Array();
-      for (const auto& argument : support->link_arguments) {
+      for (const auto& argument : support->archive_arguments) {
         Append(arguments, Text(argument));
       }
-      Add(target_support, "link_arguments", arguments);
+      Add(target_support, "archive_arguments", arguments);
     }
     Add(root, "target_support", target_support);
     auto serialized = json_.Serialize();

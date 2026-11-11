@@ -137,6 +137,7 @@ struct ArrayFunctionFlow final {
   std::vector<std::size_t> definitions;
   std::vector<std::size_t> writes;
   std::vector<std::uint64_t> bits;
+  std::vector<std::uint64_t> array_bits;
   std::vector<std::size_t> work;
   std::vector<std::uint8_t> queued;
 };
@@ -267,19 +268,19 @@ ArrayStorageFacts CollectArrayStorageFacts(const ir::Program& program,
                                            std::span<const ArrayStorageState> states,
                                            ArrayCallDomain domain);
 
-std::vector<std::uint64_t> ArrayRegisterBits(const ir::Function& function,
-                                             std::size_t function_index,
-                                             ArrayAliases& aliases,
-                                             std::span<const ArrayElementState> arrays) {
+void ArrayRegisterBits(const ir::Function& function,
+                       std::size_t function_index,
+                       ArrayAliases& aliases,
+                       std::span<const ArrayElementState> arrays,
+                       std::vector<std::uint64_t>& bits) {
   const auto count = function.register_count;
-  std::vector<std::uint64_t> bits(count, kUnknownArrayElementBits);
+  bits.assign(count, kUnknownArrayElementBits);
   for (ir::RegisterId reg = 0; reg < count; ++reg) {
     const auto& array = arrays[aliases.Find(aliases.Node(function_index, reg))];
     if (array.local && !array.escaped) {
       bits.at(reg) = array.bits;
     }
   }
-  return bits;
 }
 
 bool IsArrayWrite(const ir::Instruction& instruction) {
@@ -329,7 +330,8 @@ class ArrayDomainAnalysis final {
     std::vector<std::vector<std::uint64_t>> result;
     result.reserve(program_->functions.size());
     for (std::size_t index = 0; index < program_->functions.size(); ++index) {
-      result.push_back(ArrayRegisterBits(program_->functions[index], index, aliases_, arrays_));
+      ArrayRegisterBits(program_->functions[index], index, aliases_, arrays_,
+                        result.emplace_back());
     }
     return {
         .bits = std::move(result),
@@ -440,9 +442,9 @@ class ArrayDomainAnalysis final {
 
   void PropagateFunction(std::size_t index) {
     const auto& function = program_->functions[index];
-    const auto array_bits = ArrayRegisterBits(function, index, aliases_, arrays_);
     auto& flow = flows_[index];
-    const auto values = IntegerBits(function, flow, array_bits);
+    ArrayRegisterBits(function, index, aliases_, arrays_, flow.array_bits);
+    const auto values = IntegerBits(function, flow, flow.array_bits);
     for (const auto position : flow.writes) {
       const auto& instruction = function.instructions[position];
       const auto indexed = instruction.opcode == Opcode::SetIndex;

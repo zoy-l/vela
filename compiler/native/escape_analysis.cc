@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <utility>
@@ -551,6 +552,11 @@ ir::Function& EscapeFunction::Rewrite() {
   return std::get<ir::Function>(function_);
 }
 
+void EscapePlan::ResetOrigins() {
+  origins.resize(function.get().instructions.size());
+  std::ranges::iota(origins, std::size_t{0});
+}
+
 EscapePlan PlanEscapes(const ir::Program& program,
                        std::size_t function_index,
                        EscapeOptimization optimization,
@@ -566,9 +572,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
   const auto state_size = IndexAllocations(plan, program, optimization, tier, allocations);
   const auto preserve = [&] {
     plan.borrowable = {};
-    for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-      plan.origins.push_back(index);
-    }
+    plan.ResetOrigins();
   };
   if (EligibleCount(plan) == 0) {
     preserve();

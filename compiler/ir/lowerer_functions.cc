@@ -1,5 +1,6 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/names.h"
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/lowerer.h"
 
 #include <array>
@@ -51,18 +52,7 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   layout.name = "$callable" + std::to_string(key);
   layout.callable = CallableTarget{.function = function_id, .mode = mode};
   if (interface_signature != nullptr) {
-    auto& signature = layout.callable_type.emplace();
-    for (const auto& parameter : interface_signature->parameters) {
-      signature.parameters.push_back({
-          .name = parameter.name,
-          .type = RegisterRuntimeType(parameter.type),
-          .optional = interface_signature->optional_parameters.contains(parameter.name),
-          .rest = parameter.rest,
-      });
-    }
-    if (interface_signature->return_type.kind != frontend::TypeDescriptor::Kind::Void) {
-      signature.result = RegisterRuntimeType(interface_signature->return_type);
-    }
+    layout.callable_type = DescribeCallSignature(*interface_signature);
   }
   for (const auto& capture : captures) {
     layout.field_types.push_back(
@@ -97,19 +87,23 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
     if (super != model_.super_members.end()) {
       const auto* self = FindLocal(frontend::kReceiverName);
       receiver = ReadLocal(*self, expression.location);
-      target = function_ids_.at(super->second.owner + "." + super->second.member);
+      target = function_ids_.at(
+          QualifiedMemberKey({.owner = super->second.owner, .name = super->second.member}));
     } else {
       receiver = LowerExpression(*expression.object);
       if (builtin != model_.builtin_method_values.end()) {
         target = function_ids_.at(model_.generated_functions.at(builtin->second).declaration->name);
       } else if (interface != model_.interface_members.end()) {
-        target = interface_method_ids_.at(interface->second.owner + "." + interface->second.member);
+        target = interface_method_ids_.at(QualifiedMemberKey(
+            {.owner = interface->second.owner, .name = interface->second.member}));
       } else {
-        target = function_ids_.at(instance->second.owner + "." + instance->second.member);
+        target = function_ids_.at(
+            QualifiedMemberKey({.owner = instance->second.owner, .name = instance->second.member}));
       }
     }
   } else if (static_member != model_.static_members.end()) {
-    target = function_ids_.at(static_member->second.owner + "." + static_member->second.member);
+    target = function_ids_.at(QualifiedMemberKey(
+        {.owner = static_member->second.owner, .name = static_member->second.member}));
   } else {
     const auto application = model_.generic_applications.find(&expression);
     target = function_ids_.at(
@@ -119,8 +113,20 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
     plan.mode = CallableMode::Closure;
   } else if (interface != model_.interface_members.end()) {
     plan.mode = CallableMode::InterfaceMethod;
+    plan.interface_signature =
+        &model_.interfaces.at(interface->second.owner).methods.at(interface->second.member);
   } else if (method) {
     plan.mode = CallableMode::BoundMethod;
+  }
+  if (receiver && plan.mode == CallableMode::BoundMethod) {
+    auto name = frontend::NonNullableTypeName(receiver->type);
+    if (super != model_.super_members.end()) {
+      name = *model_.classes.at(name).base_class;
+    }
+    const auto owner = declarations_->classes.find(name);
+    if (owner != declarations_->classes.end()) {
+      plan.binding_receiver = owner->second.declaration;
+    }
   }
   return plan;
 }
@@ -134,12 +140,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   const auto captures =
       receiver ? std::span<const frontend::Capture>(receiver_captures) : plan.captures;
   const auto mode = plan.mode;
-  const auto interface = model_.interface_members.find(&expression);
-  const auto* signature =
-      interface == model_.interface_members.end()
-          ? nullptr
-          : &model_.interfaces.at(interface->second.owner).methods.at(interface->second.member);
-  const auto layout = CallableClass(plan.target, mode, captures, signature);
+  const auto layout = CallableClass(plan.target, mode, captures, plan.interface_signature);
   const auto object = AllocateRegister(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {
@@ -151,20 +152,8 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
       .index = layout,
       .location = expression.location,
   });
-  if (declarations_ != nullptr && receiver && mode == CallableMode::BoundMethod) {
-    const auto& type = receiver->type;
-    auto name = frontend::NonNullableTypeName(type);
-    if (model_.super_members.contains(&expression)) {
-      const auto& parent = model_.classes.at(name).base_class;
-      if (!parent) {
-        std::unreachable();
-      }
-      name = *parent;
-    }
-    const auto owner = declarations_->classes.find(name);
-    if (owner != declarations_->classes.end()) {
-      current_function_->instructions.back().binding_receiver = owner->second.declaration;
-    }
+  if (receiver && mode == CallableMode::BoundMethod) {
+    current_function_->instructions.back().binding_receiver = plan.binding_receiver;
   }
   for (std::size_t index = 0; index < captures.size(); ++index) {
     const auto reg = receiver ? receiver->reg : binding_registers_.at(captures[index].binding);
@@ -209,9 +198,10 @@ Lowerer::LoweredValue Lowerer::LowerInterfaceCall(const frontend::Expression& ex
   const auto& member = model_.interface_members.at(&expression);
   const auto receiver = LowerExpression(*expression.callee->object);
   const auto& signature = model_.interfaces.at(member.owner).methods.at(member.member);
-  return LowerInvocation(expression, signature,
-                         interface_method_ids_.at(member.owner + "." + member.member), &receiver,
-                         Opcode::CallInterface);
+  return LowerInvocation(
+      expression, signature,
+      interface_method_ids_.at(QualifiedMemberKey({.owner = member.owner, .name = member.member})),
+      &receiver, Opcode::CallInterface);
 }
 
 }  // namespace vela::ir

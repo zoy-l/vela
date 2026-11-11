@@ -39,6 +39,8 @@ enum class ExecutionStatus : std::uint8_t {
   ExecutionStopped,
   TargetDeleted,
   ExecutionTimedOut,
+  ReflectionUnavailable,
+  ReflectionAccessDenied,
 };
 
 [[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;

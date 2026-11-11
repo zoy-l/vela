@@ -1,12 +1,13 @@
 #include "compiler/tooling/lsp/file_uri.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include <absl/strings/match.h>
 
 #include "base/path.h"
 #include "base/utf8.h"
@@ -21,15 +22,6 @@ std::string SourceUri(std::string_view path) {
 namespace {
 
 constexpr int kHexLetterOffset = 10;
-
-char AsciiLower(char character) {
-  return character >= 'A' && character <= 'Z' ? static_cast<char>(character - 'A' + 'a')
-                                              : character;
-}
-
-bool IsSameAscii(std::string_view left, std::string_view right) {
-  return std::ranges::equal(left, right, {}, AsciiLower, AsciiLower);
-}
 
 int HexDigit(char character) {
   if (character >= '0' && character <= '9') {
@@ -48,7 +40,7 @@ std::expected<std::string, std::string> Decode(std::string_view text) {
   std::string decoded;
   decoded.reserve(text.size());
   for (std::size_t index = 0; index < text.size(); ++index) {
-    const auto character = text.at(index);
+    const auto character = text[index];
     if (character != '%') {
       decoded.push_back(character);
       continue;
@@ -56,8 +48,8 @@ std::expected<std::string, std::string> Decode(std::string_view text) {
     if (text.size() - index < 3) {
       return std::unexpected("truncated URI escape");
     }
-    const auto high = HexDigit(text.at(index + 1));
-    const auto low = HexDigit(text.at(index + 2));
+    const auto high = HexDigit(text[index + 1]);
+    const auto low = HexDigit(text[index + 2]);
     if (high < 0 || low < 0) {
       return std::unexpected("invalid URI escape");
     }
@@ -81,7 +73,7 @@ bool IsUriPathCharacter(unsigned char character) {
 
 std::expected<std::filesystem::path, std::string> FileUriPath(std::string_view uri) {
   constexpr std::string_view kScheme = "file://";
-  if (!IsSameAscii(uri.substr(0, kScheme.size()), kScheme)) {
+  if (!absl::EqualsIgnoreCase(uri.substr(0, kScheme.size()), kScheme)) {
     return std::unexpected("only absolute file:// document URIs are supported");
   }
   const auto suffix = uri.substr(kScheme.size());
@@ -101,7 +93,7 @@ std::expected<std::filesystem::path, std::string> FileUriPath(std::string_view u
     return std::unexpected(decoded.error());
   }
   auto text = std::move(*decoded);
-  const auto is_local = authority->empty() || IsSameAscii(*authority, "localhost");
+  const auto is_local = authority->empty() || absl::EqualsIgnoreCase(*authority, "localhost");
   if (!is_local) {
     if (authority->contains('/') || authority->contains('@') || authority->contains(':') ||
         authority->contains('\\')) {

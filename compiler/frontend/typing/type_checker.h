@@ -115,8 +115,9 @@ class TypeChecker final : private InferenceTypeRelations {
   struct TypeParameterInfo final {
     const TypeParameter* declaration = nullptr;
     TypeDescriptor type;
-    std::optional<TypeDescriptor> bound;
-    bool resolved = false;
+    // 上界是声明的惰性解析缓存，借用描述不改变声明身份。
+    mutable std::optional<TypeDescriptor> bound;
+    mutable bool resolved = false;
   };
   void RegisterTypeParameters(std::span<const TypeParameter> parameters);
   void RegisterMethodTemplates(std::span<const Function> methods);
@@ -132,18 +133,19 @@ class TypeChecker final : private InferenceTypeRelations {
   // 类型应用的上界验证在声明关系建立后统一执行；推导结果在调用点立即验证。
   struct BoundCheck final {
     std::string owner;
-    std::vector<TypeParameter> parameters;
+    std::span<const TypeParameter> parameters;
     std::vector<Type> arguments;
     SourceLocation location;
   };
   void QueueBoundCheck(std::string owner,
-                       std::vector<TypeParameter> parameters,
+                       std::span<const TypeParameter> parameters,
                        std::vector<Type> arguments,
                        SourceLocation location);
   bool CheckTypeArguments(const BoundCheck& check);
+  std::vector<Type> ResolveTypeArguments(std::span<const TypeName> arguments);
   struct PendingApplication final {
     std::string owner;
-    std::vector<TypeParameter> parameters;
+    std::span<const TypeParameter> parameters;
     std::vector<TypeName> arguments;
     SourceLocation location;
   };
@@ -190,12 +192,54 @@ class TypeChecker final : private InferenceTypeRelations {
   std::expected<MemberReference, Diagnostic> MaterializeMethod(const MethodTemplate& method,
                                                                std::span<const TypeName> arguments,
                                                                SourceLocation location);
+  std::optional<std::vector<Type>> ApplyMethod(const MethodTemplate& method,
+                                               std::span<const TypeName> arguments,
+                                               SourceLocation location,
+                                               std::string_view count_error);
   void RegisterMethodApplications();
   void QueueInterfaceBinding(const ClassInfo& owner,
                              const std::string& interface,
                              const Function& method);
   void DrainInterfaceBindings();
   void RestoreMethodSpecializations(std::span<const GenericSpecialization> retained);
+  void CheckReflectionSelections(const Program& program);
+  void CheckAttributes(const Program& program);
+  void CheckClassAttributes(const Class& owner, const Type& type);
+  void CheckInterfaceAttributes(const Interface& owner, const Type& type);
+  void CheckMethodAttributes(
+      std::span<const Function> methods,
+      const Type& type,
+      const absl::node_hash_map<std::string, FunctionDescriptor>& signatures);
+  void CheckInterfaceTemplateAttributes(const Interface& owner, const Type& type);
+  void CheckTopLevelFunctionAttributes(const Function& function);
+  void CheckAttributeTarget(std::span<const Attribute> attributes,
+                            Type type,
+                            const void* target,
+                            const std::optional<ReflectionMemberBinding>& member = std::nullopt);
+  std::optional<AttributeBinding> BindAttribute(const Attribute& attribute);
+  std::optional<AttributeBinding> ResolveAttribute(const Attribute& attribute);
+  using AttributeArguments = absl::flat_hash_map<std::string_view, const Expression*>;
+  void BindAttributeFields(const ClassInfo& owner,
+                           const AttributeArguments& arguments,
+                           SourceLocation location,
+                           std::span<AttributeValue> values);
+  void RegisterAttributeReflection(const Type& type,
+                                   const std::optional<ReflectionMemberBinding>& member);
+  enum class AttributeValueSource : std::uint8_t { Argument, Default };
+  std::optional<AttributeValue> AttributeData(const Expression& expression,
+                                              const Type& expected,
+                                              AttributeValueSource source);
+  [[nodiscard]] bool IsAttributeSubtype(const Type& type, std::string_view base) const;
+  bool CanRepeatAttribute(const Type& type);
+  void ResolveNominalArguments(const Program& program);
+  struct ReflectionDeclarations;
+  void BindReflectionMembers(ReflectionBinding& binding,
+                             std::span<const ReflectionMemberSelection> members,
+                             const ReflectionDeclarations& declarations);
+  std::optional<ReflectionMemberBinding> BindReflectionMethod(
+      const Type& owner,
+      const ReflectionMemberSelection& selection,
+      const Function& declaration);
   TypeInference MakeInference(std::span<const TypeParameter> parameters);
   void DiagnoseInferenceFailure(const TypeInference::Failure& failure, SourceLocation location);
   std::vector<TypeName> ProjectSupertypes(const Projection& projection) override;
@@ -272,7 +316,7 @@ class TypeChecker final : private InferenceTypeRelations {
   void ResolveClassMethods(const Class& declaration, ClassInfo& info);
   void ResolveClassMethod(const Function& method, ClassInfo& info);
   void MergeAccessor(FunctionInfo& existing, const FunctionInfo& incoming, SourceLocation location);
-  void CheckAccessor(const Function& method);
+  void CheckAccessor(const Function& method, const FunctionInfo& signature);
   void ResolveClassConstructor(const Class& declaration, ClassInfo& info);
   void ResolveField(const Field& field, const Class& declaration, ClassInfo& info);
   void ResolveInterfaces(const Program& program);
@@ -358,6 +402,7 @@ class TypeChecker final : private InferenceTypeRelations {
   Type CheckFutureTimeout(const Expression& expression, const Type& receiver);
   Type AddThenError(const Expression& expression,
                     FunctionInfo& signature,
+                    const Type& on_value,
                     std::vector<std::optional<Type>>& checked);
   void AddFutureCleanup(const Expression& expression,
                         FunctionInfo& signature,
@@ -365,6 +410,7 @@ class TypeChecker final : private InferenceTypeRelations {
                         std::vector<std::optional<Type>>& checked);
   Type CheckTimerFactory(const Expression& expression);
   Type CheckAsyncProperty(const Expression& expression, const Type& receiver);
+  [[nodiscard]] bool IsVoidCallbackResult(const Type& type) const;
   Type CheckAsyncCallback(const Expression& expression,
                           std::span<const Type> parameters,
                           CallbackPresence presence = CallbackPresence::Required,
@@ -437,7 +483,7 @@ class TypeChecker final : private InferenceTypeRelations {
   [[nodiscard]] bool IsSubtype(const Type& subtype, const Type& supertype) const;
   [[nodiscard]] bool IsSubtypeThroughParents(std::vector<Type> pending,
                                              const Type& supertype) const;
-  [[nodiscard]] std::vector<Type> DirectSupertypes(const Type& type) const;
+  void AppendDirectSupertypes(const Type& type, std::vector<Type>& result) const;
   [[nodiscard]] bool CanAssign(const Type& target, const Type& value) const;
   void RecordConversion(const Expression& expression, const Type& target, const Type& actual);
   void DiagnoseDynamicConversion(const Expression& expression,
@@ -508,11 +554,11 @@ class TypeChecker final : private InferenceTypeRelations {
   [[nodiscard]] std::optional<EnumMember> ResolveUnqualifiedEnumMember(
       const Expression& expression) const;
   enum class ConstantLabelKind : std::uint8_t { Switch, Match };
-  std::optional<ConstantValue> CheckConstantLabel(const Expression& label,
-                                                  const Type& selector_type,
-                                                  absl::flat_hash_set<std::string>& labels,
-                                                  SourceLocation location,
-                                                  ConstantLabelKind kind);
+  CheckStatus CheckConstantLabel(const Expression& label,
+                                 const Type& selector_type,
+                                 absl::flat_hash_set<std::string>& labels,
+                                 SourceLocation location,
+                                 ConstantLabelKind kind);
 
   Type CheckIntegerLiteral(const Expression& expression);
 
@@ -538,6 +584,8 @@ class TypeChecker final : private InferenceTypeRelations {
   Type CheckBuiltinCall(const Expression& expression, Builtin builtin);
   Type CheckAssignment(const Expression& expression);
   CheckStatus CheckAssignmentTarget(const Expression& target);
+  void CheckBuiltinAssignment(const Expression& target);
+  CheckStatus CheckReceiverNullability(const Expression& access, Type& receiver);
   std::optional<LocalBinding> CheckAssignedBinding(const Expression& target);
   Type CheckCompoundAssignment(const Expression& expression);
   Type CheckCompoundAssignmentTypes(const Expression& expression,
@@ -624,6 +672,10 @@ class TypeChecker final : private InferenceTypeRelations {
   NodeFacts facts_;
   NodeFacts definitions_;
   absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests_;
+  std::vector<ReflectionBinding> reflection_;
+  std::vector<AttributeBinding> attributes_;
+  // 每阶段每个特性只绑定一次；模板定义结束后清空，具体声明重新产生其事实。
+  absl::flat_hash_map<const Attribute*, std::optional<AttributeBinding>> attribute_bindings_;
 };
 
 }  // namespace vela::frontend

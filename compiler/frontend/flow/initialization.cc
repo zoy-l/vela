@@ -90,6 +90,7 @@ class Initialization final {
   void Error(SourceLocation location, std::string message);
   void Walk(const Expression* expression, Initialized& initialized);
   void WalkSuper(const Expression& expression, Initialized& initialized);
+  void MarkBaseComplete(Initialized& initialized);
   bool WalkSpecial(const Expression& expression, Initialized& initialized);
   Path Walk(const Statement& statement, Initialized initialized);
   Path Loop(const Statement& statement, Initialized initialized);
@@ -129,6 +130,10 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
   if (initialized.base != Initialized::Base::Pending) {
     Error(expression.location, "super(...) must be called exactly once on each constructor path");
   }
+  MarkBaseComplete(initialized);
+}
+
+void Initialization::MarkBaseComplete(Initialized& initialized) {
   initialized.base = Initialized::Base::Complete;
   const auto* base = facts_.base;
   if (base == nullptr) {
@@ -350,7 +355,7 @@ Path Initialization::ApplyFinalizers(Initialized initialized, std::size_t depth)
   if (depth == finalizers_.size()) {
     return initialized;
   }
-  const auto saved = finalizers_;
+  auto saved = finalizers_;
   Path current(std::move(initialized));
   for (auto index = saved.size(); index > depth && current; --index) {
     const auto final = saved.at(index - 1);
@@ -364,7 +369,7 @@ Path Initialization::ApplyFinalizers(Initialized initialized, std::size_t depth)
     controls_.insert(controls_.end(), std::make_move_iterator(hidden.begin()),
                      std::make_move_iterator(hidden.end()));
   }
-  finalizers_ = saved;
+  finalizers_ = std::move(saved);
   return current;
 }
 
@@ -401,11 +406,7 @@ Diagnostics Initialization::Run() {
   }
   initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
   if (facts_.base != nullptr && !facts_.has_explicit_super_call) {
-    const auto& base = *facts_.base;
-    initialized.base = Initialized::Base::Complete;
-    for (const auto& name : base.field_order) {
-      initialized.Insert(field_indices_.at(name));
-    }
+    MarkBaseComplete(initialized);
   }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {

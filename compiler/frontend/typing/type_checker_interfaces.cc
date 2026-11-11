@@ -22,8 +22,7 @@ bool TypeChecker::MatchesImplementationSignature(const FunctionInfo& implementat
     return false;
   }
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-    if (!IsSameType(implementation.parameters.at(index).type,
-                    signature.parameters.at(index).type)) {
+    if (!IsSameType(implementation.parameters[index].type, signature.parameters[index].type)) {
       return false;
     }
   }
@@ -194,11 +193,9 @@ void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) 
   for (const auto& field_name : own_fields) {
     info.fields.at(field_name).index += static_cast<std::uint32_t>(base.field_order.size());
   }
-  absl::flat_hash_map<std::string, ClassDescriptor::Field> fields = base.fields;
-  for (const auto& field_name : own_fields) {
-    fields.insert_or_assign(field_name, info.fields.at(field_name));
+  for (const auto& [field_name, field] : base.fields) {
+    info.fields.try_emplace(field_name, field);
   }
-  info.fields = std::move(fields);
   info.field_order = base.field_order;
   info.field_order.insert(info.field_order.end(), own_fields.begin(), own_fields.end());
   for (const auto& [method_name, method] : base.methods) {

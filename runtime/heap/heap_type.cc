@@ -29,6 +29,20 @@ bool NominalType::IsImplementing(const InterfaceType& interface) const noexcept 
   return std::ranges::binary_search(interfaces_, &interface, std::less{});
 }
 
+bool NominalType::IsSubtypeOf(const NominalType& target) const noexcept {
+  for (const auto* current = this; current != nullptr; current = current->base_) {
+    if (current == &target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void NominalType::BindBase(const NominalType& base) noexcept {
+  assert(base_ == nullptr || base_ == &base);
+  base_ = &base;
+}
+
 bool ClassLayout::IsImplementing(const InterfaceType& interface) const noexcept {
   return nominal_->IsImplementing(interface);
 }
@@ -86,12 +100,31 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
   return type;
 }
 
+namespace {
+
+bool IsNominalSubtype(const TypeConstraint& actual, const TypeConstraint& expected) noexcept {
+  if (actual.nominal == nullptr) {
+    return false;
+  }
+  if (expected.nominal != nullptr && actual.kind == expected.kind &&
+      actual.object_kind == expected.object_kind &&
+      actual.nominal->IsSubtypeOf(*expected.nominal)) {
+    return true;
+  }
+  return expected.interface != nullptr && actual.nominal->IsImplementing(*expected.interface);
+}
+
+}  // namespace
+
 bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
   auto actual = *this;
   auto expected = target;
   while (true) {
     if (expected.dynamic) {
       return true;
+    }
+    if (!actual.dynamic && actual.kind == ValueKind::Null) {
+      return expected.nullable || expected.kind == ValueKind::Null;
     }
     if (actual.dynamic || (actual.nullable && !expected.nullable)) {
       return false;
@@ -101,8 +134,7 @@ bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
     if (actual == expected) {
       return true;
     }
-    if ((expected.interface != nullptr) && actual.nominal != nullptr &&
-        actual.nominal->IsImplementing(*expected.interface)) {
+    if (IsNominalSubtype(actual, expected)) {
       return true;
     }
     if (actual.kind != ValueKind::Object || expected.kind != ValueKind::Object ||
@@ -141,7 +173,7 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
   const auto* object = value.AsObject();
   if (object == nullptr || object->kind != type.object_kind ||
       (type.nominal != nullptr &&
-       (object->layout == nullptr || &object->layout->nominal_type() != type.nominal)) ||
+       (object->layout == nullptr || !object->layout->nominal_type().IsSubtypeOf(*type.nominal))) ||
       (type.array != nullptr && object->array_layout() != type.array) ||
       (type.collection != nullptr && object->collection_layout() != type.collection)) {
     return false;

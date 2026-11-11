@@ -1,0 +1,32 @@
+class Counter {
+  value: int = 0;
+  add(value: int): int { this.value = value; return this.value; }
+}
+const object = Counter();
+export func directField(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { object.value = values[i]; sum += object.value; }
+  return sum;
+}
+export func dynamicField(values: int[]): int {
+  const erased: dynamic = object;
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { erased.value = values[i]; sum += erased.value as int; }
+  return sum;
+}
+export func directCall(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { sum += object.add(values[i]); }
+  return sum;
+}
+export func dynamicCall(values: int[]): int {
+  const erased: dynamic = object;
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { sum += erased.add(values[i]) as int; }
+  return sum;
+}
+export func directConstruct(values: int[]): int {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) { const created = Counter(value: values[i]); sum += created.value; }
+  return sum;
+}

@@ -52,6 +52,8 @@ using runtime::NativeImage;
 using runtime::NativeJSONDecodeParameter;
 using runtime::NativeJSONDecodePlan;
 using runtime::NativeMemberDescription;
+using runtime::NativeReflectionMember;
+using runtime::NativeReflectionType;
 using runtime::NativeSignatureDescription;
 using runtime::NativeSignatureParameter;
 using runtime::NativeTable;
@@ -108,6 +110,10 @@ class ImageEmitter final {
   llvm::Constant* DependencyBlocks(std::span<const NativeDependencyBlock> descriptions);
   llvm::Constant* Members(std::span<const NativeMemberDescription> members);
   llvm::Constant* JSONPlans(std::span<const NativeJSONDecodePlan> plans);
+  llvm::Constant* CallParameters(std::span<const NativeCallParameter> parameters);
+  llvm::Constant* ReflectionTypes(std::span<const NativeReflectionType> types);
+  llvm::Constant* ReflectionMembers(std::span<const NativeReflectionMember> members);
+  llvm::Constant* Attributes(std::span<const runtime::NativeAttribute> attributes);
 
   llvm::Module& module_;
   llvm::LLVMContext& context_;
@@ -136,6 +142,10 @@ class ImageEmitter final {
   llvm::StructType* image_;
   llvm::StructType* json_parameter_;
   llvm::StructType* json_plan_;
+  llvm::StructType* reflection_type_;
+  llvm::StructType* reflection_member_;
+  llvm::StructType* attribute_;
+  llvm::StructType* attribute_value_;
   bool has_compatible_layout_ = true;
   absl::flat_hash_map<std::string_view, llvm::Constant*> texts_;
 };
@@ -362,12 +372,67 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeJSONDecodePlan, element),
           offsetof(NativeJSONDecodePlan, constructor),
       });
+  reflection_type_ = RecordType<NativeReflectionType>(
+      "vela.reflection.type",
+      std::to_array<llvm::Type*>({word_, text_, text_, table_, word_, table_, word_}),
+      std::array{
+          offsetof(NativeReflectionType, type),
+          offsetof(NativeReflectionType, module),
+          offsetof(NativeReflectionType, name),
+          offsetof(NativeReflectionType, arguments),
+          offsetof(NativeReflectionType, base),
+          offsetof(NativeReflectionType, interfaces),
+          offsetof(NativeReflectionType, flags),
+      });
+  reflection_member_ =
+      RecordType<NativeReflectionMember>("vela.reflection.member",
+                                         std::to_array<llvm::Type*>({
+                                             wide_,
+                                             word_,
+                                             text_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                             wide_,
+                                             wide_,
+                                             table_,
+                                             table_,
+                                         }),
+                                         std::array{
+                                             offsetof(NativeReflectionMember, declaration),
+                                             offsetof(NativeReflectionMember, declaring_type),
+                                             offsetof(NativeReflectionMember, name),
+                                             offsetof(NativeReflectionMember, kind),
+                                             offsetof(NativeReflectionMember, flags),
+                                             offsetof(NativeReflectionMember, type),
+                                             offsetof(NativeReflectionMember, target),
+                                             offsetof(NativeReflectionMember, getter),
+                                             offsetof(NativeReflectionMember, setter),
+                                             offsetof(NativeReflectionMember, parameters),
+                                             offsetof(NativeReflectionMember, type_arguments),
+                                         });
+  attribute_value_ = RecordType<runtime::NativeAttributeValue>(
+      "vela.attribute.value", std::to_array<llvm::Type*>({word_, word_, wide_, text_}),
+      std::array{
+          offsetof(runtime::NativeAttributeValue, type),
+          offsetof(runtime::NativeAttributeValue, kind),
+          offsetof(runtime::NativeAttributeValue, payload),
+          offsetof(runtime::NativeAttributeValue, text),
+      });
+  attribute_ = RecordType<runtime::NativeAttribute>(
+      "vela.attribute", std::to_array<llvm::Type*>({wide_, word_, table_}),
+      std::array{
+          offsetof(runtime::NativeAttribute, target),
+          offsetof(runtime::NativeAttribute, type),
+          offsetof(runtime::NativeAttribute, fields),
+      });
   image_ = RecordType<NativeImage>(
       "vela.image",
       std::to_array<llvm::Type*>({
-          word_,  word_,  text_,  text_,  table_, table_, table_, table_, table_,
-          table_, table_, table_, table_, table_, table_, table_, table_, wide_,
-          table_, table_, table_, table_, table_, word_,  table_, table_,
+          word_,  word_,  text_,  text_,  table_, table_, table_, table_, table_, table_,
+          table_, table_, table_, table_, table_, table_, table_, wide_,  table_, table_,
+          table_, table_, table_, word_,  table_, table_, table_, table_, table_,
       }),
       std::array{
           offsetof(NativeImage, abi_version),
@@ -396,6 +461,9 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeImage, native_mode),
           offsetof(NativeImage, global_flags),
           offsetof(NativeImage, json_decode_plans),
+          offsetof(NativeImage, reflection_types),
+          offsetof(NativeImage, reflection_members),
+          offsetof(NativeImage, attributes),
       });
 }
 
@@ -570,14 +638,6 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
     auto* entry = entries[index];
-    std::vector<llvm::Constant*> parameters;
-    for (const auto& parameter : function.parameters.values()) {
-      parameters.push_back(Record(call_parameter_, {
-                                                       Text(parameter.name.text()),
-                                                       Word(parameter.type),
-                                                       Word(parameter.flags),
-                                                   }));
-    }
     std::vector<llvm::Constant*> locations;
     for (const auto& location : function.locations.values()) {
       locations.push_back(Record(
@@ -586,7 +646,7 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
     constants.push_back(Record(function_, {
                                               Text(function.name.text()),
                                               Text(function.native_symbol.text()),
-                                              Table(call_parameter_, parameters),
+                                              CallParameters(function.parameters.values()),
                                               Table(location_, locations),
                                               entry,
                                               llvm::Constant::getNullValue(pointer_),
@@ -702,6 +762,9 @@ std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
                                          Word(image.native_mode),
                                          Numbers(image.global_flags.values()),
                                          JSONPlans(image.json_decode_plans.values()),
+                                         ReflectionTypes(image.reflection_types.values()),
+                                         ReflectionMembers(image.reflection_members.values()),
+                                         Attributes(image.attributes.values()),
                                      });
   auto* storage = new llvm::GlobalVariable(module_, image_, true, llvm::GlobalValue::PrivateLinkage,
                                            description, "vela.image");
@@ -729,6 +792,75 @@ llvm::Constant* ImageEmitter::JSONPlans(std::span<const NativeJSONDecodePlan> pl
                            }));
   }
   return Table(json_plan_, nodes);
+}
+
+llvm::Constant* ImageEmitter::CallParameters(std::span<const NativeCallParameter> parameters) {
+  std::vector<llvm::Constant*> records;
+  for (const auto& parameter : parameters) {
+    records.push_back(Record(call_parameter_, {
+                                                  Text(parameter.name.text()),
+                                                  Word(parameter.type),
+                                                  Word(parameter.flags),
+                                              }));
+  }
+  return Table(call_parameter_, records);
+}
+
+llvm::Constant* ImageEmitter::ReflectionTypes(std::span<const NativeReflectionType> types) {
+  std::vector<llvm::Constant*> records;
+  for (const auto& type : types) {
+    records.push_back(Record(reflection_type_, {
+                                                   Word(type.type),
+                                                   Text(type.module.text()),
+                                                   Text(type.name.text()),
+                                                   Numbers(type.arguments.values()),
+                                                   Word(type.base),
+                                                   Numbers(type.interfaces.values()),
+                                                   Word(type.flags),
+                                               }));
+  }
+  return Table(reflection_type_, records);
+}
+
+llvm::Constant* ImageEmitter::ReflectionMembers(std::span<const NativeReflectionMember> members) {
+  std::vector<llvm::Constant*> records;
+  for (const auto& member : members) {
+    records.push_back(Record(reflection_member_, {
+                                                     Wide(member.declaration.value),
+                                                     Word(member.declaring_type),
+                                                     Text(member.name.text()),
+                                                     Word(member.kind),
+                                                     Word(member.flags),
+                                                     Word(member.type),
+                                                     Word(member.target),
+                                                     Wide(member.getter.value),
+                                                     Wide(member.setter.value),
+                                                     CallParameters(member.parameters.values()),
+                                                     Numbers(member.type_arguments.values()),
+                                                 }));
+  }
+  return Table(reflection_member_, records);
+}
+
+llvm::Constant* ImageEmitter::Attributes(std::span<const runtime::NativeAttribute> attributes) {
+  std::vector<llvm::Constant*> records;
+  for (const auto& attribute : attributes) {
+    std::vector<llvm::Constant*> fields;
+    for (const auto& field : attribute.fields.values()) {
+      fields.push_back(Record(attribute_value_, {
+                                                    Word(field.type),
+                                                    Word(field.kind),
+                                                    Wide(field.payload),
+                                                    Text(field.text.text()),
+                                                }));
+    }
+    records.push_back(Record(attribute_, {
+                                             Wide(attribute.target.value),
+                                             Word(attribute.type),
+                                             Table(attribute_value_, fields),
+                                         }));
+  }
+  return Table(attribute_, records);
 }
 
 }  // namespace

@@ -57,7 +57,8 @@ void ContentCacheHit(benchmark::State& state, std::string_view filename) {
   }
   {
     const auto initial = compiler::jit::CompileFile(
-        **compiler, path, {.diagnostics = {}, .compilation = {.code_cache = directory}});
+        **compiler, path,
+        {.diagnostics = {}, .compilation = {.code_cache = directory}, .reflection = {}});
     if (!initial.Succeeded()) {
       state.SkipWithError("cannot populate cache");
       return;
@@ -65,7 +66,8 @@ void ContentCacheHit(benchmark::State& state, std::string_view filename) {
   }
   for (auto iteration : state) {
     auto loaded = compiler::jit::CompileFile(
-        **compiler, path, {.diagnostics = {}, .compilation = {.code_cache = directory}});
+        **compiler, path,
+        {.diagnostics = {}, .compilation = {.code_cache = directory}, .reflection = {}});
     if (!loaded.Succeeded() || loaded.code.cache != compiler::jit::CodeCacheStatus::Hit) {
       state.SkipWithError("expected compilation cache hit");
       break;

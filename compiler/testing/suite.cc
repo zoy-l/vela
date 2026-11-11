@@ -167,7 +167,9 @@ Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options)
 }
 
 Suite::~Suite() {
-  isolate_->scheduler().Shutdown();
+  if (state_ != State::Finished) {
+    isolate_->scheduler().Shutdown();
+  }
   isolate_->scheduler().SetUnhandledErrorHandler(std::move(previous_error_handler_));
   isolate_->SetTestBridge(nullptr);
 }

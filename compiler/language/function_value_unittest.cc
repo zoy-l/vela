@@ -2,8 +2,8 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
-#include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -15,13 +15,7 @@ TEST_P(FunctionValueTest, ExecutesUnderCollectionPressure) {
   runtime::Isolate isolate(1);
   const auto program = test::CompileCleanSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
-  const auto retained = isolate.heap().object_count();
-  const auto result = test::ExecuteInteger(**program);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), retained);
+  test::ExpectStableAnswer(**program);
 }
 
 INSTANTIATE_TEST_SUITE_P(LexicalBindings,
@@ -149,8 +143,7 @@ func main(): int {
 class FunctionTypeErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(FunctionTypeErrorTest, RejectsInvalidSignaturesCapturesAndAliases) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

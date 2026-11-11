@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
@@ -400,9 +401,7 @@ INSTANTIATE_TEST_SUITE_P(InvalidRanges,
 class StringDiagnosticTest : public testing::TestWithParam<const char*> {};
 
 TEST_P(StringDiagnosticTest, RejectsInvalidSyntaxAndImplicitConversions) {
-  const auto checked = frontend::CheckTestSource(GetParam());
-  EXPECT_FALSE(checked.Succeeded());
-  EXPECT_FALSE(checked.diagnostics.empty());
+  test::ExpectRejectedCheck(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -24,8 +24,9 @@ namespace {
 
 using Kind = TypeDescriptor::Kind;
 
-std::optional<Builtin> FindMember(std::span<const std::pair<std::string_view, Builtin>> members,
-                                  std::string_view name) {
+template <typename Member>
+std::optional<Member> FindMember(std::span<const std::pair<std::string_view, Member>> members,
+                                 std::string_view name) {
   for (const auto& [member, builtin] : members) {
     if (member == name) {
       return builtin;
@@ -214,12 +215,11 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin, const TypeDescriptor& e
 }
 
 std::optional<ArrayAlgorithm> FindArrayAlgorithm(std::string_view name) {
-  for (const auto& [label, algorithm] : ArrayAlgorithms()) {
-    if (name == label) {
-      return algorithm;
-    }
-  }
-  return std::nullopt;
+  return FindMember(ArrayAlgorithms(), name);
+}
+
+std::optional<Builtin> FindArrayMethod(std::string_view name) {
+  return FindMember(ArrayMethods(), name);
 }
 
 FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,

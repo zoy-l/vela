@@ -3,6 +3,7 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -11,7 +12,7 @@ namespace {
 
 TEST(TypeOperationTest, TestsAndNarrowsInterfacesWithoutChangingObjectIdentity) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 interface Measurable { measure(): int; }
 interface Named { name(): string; }
 class Rectangle implements Measurable, Named {
@@ -34,9 +35,7 @@ func main(): int {
   return narrow(rectangle);
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(TypeOperationTest, TestsNullableArraysAndScalars) {
@@ -50,7 +49,7 @@ func main(): bool {
          !(absent is string) && (value as int) == 42 && (array as int[])[0] == 42;
 }
 )",
-                                        isolate);
+                                              isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
@@ -66,7 +65,7 @@ class B implements I {}
 func require(value: I): B { return value as B; }
 func main(): B { return require(A()); }
 )",
-                                        isolate);
+                                              isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto result = test::Execute(**entry);
   EXPECT_EQ(result.status, ExecutionStatus::InvalidCast);
@@ -75,8 +74,7 @@ func main(): B { return require(A()); }
 class TypeOperationErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(TypeOperationErrorTest, RejectsConversionsAndInvalidatedRefinements) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(StrictTypes,

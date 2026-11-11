@@ -40,8 +40,13 @@ void ExpectDistinctLiveRoots(const ir::Function& function,
       const auto& instruction = function.instructions.at(index);
       const auto access = ir::AnalyzeRegisters(instruction, functions);
       auto simultaneous = live;
-      ir::TransferLiveness(function, graph, blocks, instruction, access, live,
-                           required.empty() ? std::span<const ir::RegisterId>{} : required[index]);
+      ir::TransferLiveness(
+          function, graph, blocks, instruction, access, live,
+          {
+              .at_instruction =
+                  required.empty() ? std::span<const ir::RegisterId>{} : required[index],
+              .uniform = {},
+          });
       simultaneous.UnionWith(live);
       for (const auto reg : plan.clears.at(index)) {
         simultaneous.Insert(reg);
@@ -155,9 +160,9 @@ TEST(NativeRootRecoveryTest, ReservesNullInitializedReferencesAndCopiesAfterMate
       PlanNativeRoots(function, {}, NativeProgramMode::Reloadable, NativeDebugging::SourceLines);
   EXPECT_EQ(ordinary.count, 0U);
   const std::array<ir::RegisterId, 1> materialized{0};
-  const auto recovery =
-      PlanNativeRoots(function, {}, NativeProgramMode::Reloadable, NativeDebugging::SourceLines,
-                      {.values = {}, .safepoints = {}, .materialized = materialized});
+  const auto recovery = PlanNativeRoots(
+      function, {}, NativeProgramMode::Reloadable, NativeDebugging::SourceLines,
+      {.values = {}, .safepoints = {}, .materialized = materialized, .uniform_values = {}});
   EXPECT_TRUE(recovery.slots.front());
   EXPECT_TRUE(recovery.slots.back());
   EXPECT_EQ(recovery.count, 2U);
@@ -187,12 +192,39 @@ TEST(NativeRootRecoveryTest, ReservesRecoveryCapacityAndMetadataOnlyReferences) 
                           .safepoints = {},
                           .materialized = {},
                           .minimum_root_count = kRecoveryRoots,
+                          .uniform_values = {},
                       });
   EXPECT_EQ(plan.count, kRecoveryRoots);
   ASSERT_TRUE(plan.slots.front());
   ASSERT_TRUE(plan.slots.back());
   EXPECT_NE(*plan.slots.front(), *plan.slots.back());
   ExpectDistinctLiveRoots(function, {}, plan, required);
+}
+
+TEST(NativeRootRecoveryTest, SharesUniformBorrowedFieldsAcrossEveryInstruction) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  const frontend::TypeDescriptor text{.kind = Kind::String, .name = frontend::kStringTypeName};
+  ir::Function function;
+  function.return_type = text;
+  function.parameter_count = 2;
+  function.register_count = 2;
+  function.value_types = {text, text};
+  function.instructions = {
+      {.opcode = Opcode::Print, .lhs = 1, .location = {}},
+      {.opcode = Opcode::Return, .dst = 1, .location = {}},
+  };
+  const std::vector<ir::RegisterId> borrowed{0};
+  const std::vector<std::vector<ir::RegisterId>> expanded(function.instructions.size(), borrowed);
+  const auto reference = PlanNativeRoots(
+      function, {}, NativeProgramMode::Closed, NativeDebugging::Safepoints,
+      {.values = expanded, .safepoints = {}, .materialized = {}, .uniform_values = {}});
+  const auto shared = PlanNativeRoots(
+      function, {}, NativeProgramMode::Closed, NativeDebugging::Safepoints,
+      {.values = {}, .safepoints = {}, .materialized = {}, .uniform_values = borrowed});
+  EXPECT_EQ(shared.slots, reference.slots);
+  EXPECT_EQ(shared.stores, reference.stores);
+  EXPECT_EQ(shared.clears, reference.clears);
+  EXPECT_EQ(shared.count, reference.count);
 }
 
 TEST(NativeInstanceStringRootsTest, OmitsOnlyStableInstanceStringsAndKeepsOverwrittenRegisters) {

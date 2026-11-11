@@ -108,17 +108,17 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
   current_function_->handlers.push_back({});
   const auto exception = AllocateRegister(statement.location);
   std::vector<std::size_t> exits;
-  const auto finish = [&]() -> void {
-    if (LowerFinalizers(finally_depth) == Completion::Continue) {
-      exits.push_back(current_function_->instructions.size());
-      Emit({.opcode = Opcode::Jump, .location = statement.location});
+  const auto finish = [&](const frontend::Statement& body) {
+    if (!model_.control_flow.at(&body).can_fall_through ||
+        LowerFinalizers(finally_depth) != Completion::Continue) {
+      return;
     }
+    exits.push_back(current_function_->instructions.size());
+    Emit({.opcode = Opcode::Jump, .location = statement.location});
   };
   current_handler_ = handler;
   LowerScopedStatement(*statement.then_branch);
-  if (model_.control_flow.at(statement.then_branch.get()).can_fall_through) {
-    finish();
-  }
+  finish(*statement.then_branch);
   current_handler_ = outer_handler;
   current_function_->handlers.at(handler).target =
       static_cast<std::uint32_t>(current_function_->instructions.size());
@@ -136,14 +136,16 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
     current_function_->handlers.push_back({});
   }
   for (const auto& clause : statement.catches) {
+    const auto has_binding = !clause.name.empty();
+    const auto* catch_type = has_binding ? &model_.catch_types.at(&clause) : nullptr;
     std::optional<std::size_t> mismatch;
-    if (!clause.name.empty()) {
+    if (has_binding) {
       const auto condition = AllocateRegister(clause.location);
       Emit({
           .opcode = Opcode::IsType,
           .dst = condition,
           .lhs = payload,
-          .index = RegisterRuntimeType(model_.catch_types.at(&clause)),
+          .index = RegisterRuntimeType(*catch_type),
           .location = clause.location,
       });
       mismatch = current_function_->instructions.size();
@@ -151,17 +153,15 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
     }
     current_handler_ = catch_finalizer ? catch_finalizer : outer_handler;
     PushScope();
-    if (!clause.name.empty()) {
+    if (has_binding) {
       // 各 catch 的局部绑定具有各自的类型，不能改写共享异常载荷寄存器的类型。
       const auto bound = AllocateRegister(clause.location);
       Emit({.opcode = Opcode::Move, .dst = bound, .lhs = payload, .location = clause.location});
-      DeclareLocal(clause.name, bound, model_.catch_types.at(&clause), clause.location, &clause);
+      DeclareLocal(clause.name, bound, *catch_type, clause.location, &clause);
     }
     LowerStatement(*clause.body);
     PopScope();
-    if (model_.control_flow.at(clause.body.get()).can_fall_through) {
-      finish();
-    }
+    finish(*clause.body);
     current_handler_ = outer_handler;
     if (mismatch) {
       BindJump(*mismatch);

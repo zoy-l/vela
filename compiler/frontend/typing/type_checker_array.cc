@@ -151,15 +151,13 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
   if (const auto algorithm = FindArrayAlgorithm(name)) {
     return CheckArrayAlgorithm(expression, receiver, *algorithm, expected);
   }
-  for (const auto& [method, builtin] : ArrayMethods()) {
-    if (method == name) {
-      auto signature = ArrayMethodSignature(builtin, element);
-      if (builtin == Builtin::ArrayPop || builtin == Builtin::ArrayShift) {
-        signature.return_type = NullableType(element);
-      }
-      facts_.builtin_calls.emplace(&expression, builtin);
-      return CheckFunctionCall(signature, expression);
+  if (const auto builtin = FindArrayMethod(name)) {
+    auto signature = ArrayMethodSignature(*builtin, element);
+    if (signature.return_type.nullable) {
+      signature.return_type = NullableType(signature.return_type);
     }
+    facts_.builtin_calls.emplace(&expression, *builtin);
+    return CheckFunctionCall(signature, expression);
   }
   AddDiagnostic(expression.location, "unknown array method '" + name + "'");
   return InvalidType();

@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from aot_benchmarks import compile_workloads, native_function_fields
+from aot_benchmarks import compile_workloads, native_function_fields, native_image_declaration
 
 
 SHAPES = {"empty": 0, "small": 4, "large": 128, "duplicates": 128,
@@ -56,7 +56,7 @@ def generate(compiler: Path, output: Path) -> None:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>",
               '#include "benchmarks/map_literal_benchmark.h"',
-              'extern "C" const vela::runtime::NativeImage* ' + manifest["image"] + "() noexcept;",
+              native_image_declaration(manifest),
               "namespace vela::benchmarks {",
               "inline const auto* const kMapLiteralImage = " + manifest["image"] + "();",
               "inline constexpr auto kMapLiteralCases = std::to_array<MapLiteralCase>({"]

@@ -337,6 +337,29 @@ TEST(AnalysisTest, NecessaryInstructionsBecomeLiveThroughLoopSuccessors) {
   EXPECT_EQ(necessary, (std::vector<std::uint8_t>{1, 0, 1, 1}));
 }
 
+TEST(AnalysisTest, UniformRequirementsMatchPerInstructionUsesAcrossOverwritesAndLoops) {
+  Function function;
+  function.register_count = 3;
+  function.instructions = {
+      {.opcode = Opcode::LoadInt, .dst = 1, .location = {}},
+      {.opcode = Opcode::Move, .dst = 2, .lhs = 1, .location = {}},
+      {.opcode = Opcode::JumpIfFalse, .lhs = 0, .index = 0, .location = {}},
+      {.opcode = Opcode::Return, .dst = 2, .location = {}},
+  };
+  const std::vector<RegisterId> uniform{1, 2};
+  const std::vector<std::vector<RegisterId>> required(function.instructions.size(), uniform);
+  const auto graph = BuildFlowGraph(function);
+  const auto explicit_uses = AnalyzeLiveness(function, graph, {}, required);
+  const auto uniform_uses = AnalyzeLiveness(function, graph, {}, {}, uniform);
+  ASSERT_EQ(uniform_uses.size(), explicit_uses.size());
+  for (std::size_t index = 0; index < uniform_uses.size(); ++index) {
+    EXPECT_EQ(uniform_uses[index].live_in, explicit_uses[index].live_in);
+    EXPECT_EQ(uniform_uses[index].live_out, explicit_uses[index].live_out);
+  }
+  EXPECT_TRUE(uniform_uses.front().live_in.Has(1));
+  EXPECT_TRUE(uniform_uses.front().live_in.Has(2));
+}
+
 TEST(AnalysisTest, RecoveryUsesKeepThePreviousDefinitionAliveAtAnOverwrite) {
   Function function;
   function.parameter_count = 1;
@@ -359,7 +382,7 @@ TEST(AnalysisTest, RecoveryUsesKeepThePreviousDefinitionAliveAtAnOverwrite) {
   live.Insert(1);
   const auto& instruction = function.instructions.at(2);
   TransferLiveness(function, graph, recovery, instruction, AnalyzeRegisters(instruction, {}), live,
-                   required.at(2));
+                   {.at_instruction = required.at(2), .uniform = {}});
   EXPECT_TRUE(live.Has(0));
   EXPECT_TRUE(live.Has(1));
 }

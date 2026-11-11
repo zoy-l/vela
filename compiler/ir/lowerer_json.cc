@@ -1,12 +1,16 @@
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/lowerer.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_set.h>
 
 #include "base/callable.h"
 #include "base/json_decode.h"
@@ -78,9 +82,18 @@ void Lowerer::LowerJSONDecodePlans() {
   }
 }
 
-void Lowerer::LowerPublicConstructors() {
+void Lowerer::LowerExposedConstructors() {
+  absl::flat_hash_set<std::string_view> registered;
+  for (const auto& type : model_.reflection) {
+    if (std::ranges::any_of(type.members, [](const auto& member) {
+          return member.kind == frontend::ReflectionMemberKind::Constructor;
+        })) {
+      registered.insert(type.type.name);
+    }
+  }
   for (const auto& source : source_.classes) {
-    if (source.export_kind != frontend::ExportKind::Exported ||
+    if ((source.export_kind != frontend::ExportKind::Exported &&
+         !registered.contains(source.name)) ||
         source.constructor_kind == frontend::ConstructorKind::Unavailable ||
         (source.constructor && source.constructor->visibility == frontend::Visibility::Private)) {
       continue;
@@ -205,13 +218,13 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
           .field_declaration = FieldDeclaration(owner.type, field),
       });
       if (!arguments.empty()) {
+        const auto field_mask = ConstructorMask(field);
         const auto bit = EmitTemporary({
             .opcode = Opcode::LoadInt,
-            .immediate =
-                std::bit_cast<std::int64_t>(std::uint64_t{1} << (field % kConstructorMaskBits)),
+            .immediate = std::bit_cast<std::int64_t>(field_mask.bit),
             .location = location,
         });
-        const auto mask = arguments.at(field / kConstructorMaskBits);
+        const auto mask = arguments.at(field_mask.index);
         Emit({
             .opcode = Opcode::BitOrInt,
             .dst = mask,

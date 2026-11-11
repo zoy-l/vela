@@ -4,8 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-
-#include <absl/container/flat_hash_set.h>
+#include <vector>
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -69,20 +68,20 @@ void FunctionEmitter::CacheGlobals() {
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   const auto readonly_slots = std::span(global_access_.readonly_slots);
   const auto has_readonly_slots = !readonly_slots.empty();
-  absl::flat_hash_set<std::uint32_t> ready_slots;
+  std::vector<std::uint8_t> ready_slots(program_.global_initializers.size());
   for (std::size_t position = 0; position < source_.instructions.size(); ++position) {
     const auto& instruction = source_.instructions[position];
     const auto slot = instruction.index;
     if (instruction.opcode == Opcode::GetGlobal &&
         (!IsGlobalInitialized(position) || (has_readonly_slots && readonly_slots[slot] != 0))) {
-      ready_slots.insert(slot);
+      ready_slots[slot] = 1;
     }
   }
-  // 按源指令顺序生成存储，避免散列表迭代顺序影响产物的确定性。
+  // 按源指令顺序生成存储，保持产物的确定性。
   for (const auto& instruction : source_.instructions) {
     const auto index = instruction.index;
     if ((instruction.opcode != Opcode::GetGlobal && instruction.opcode != Opcode::SetGlobal) ||
-        global_ready_.contains(index) || !ready_slots.contains(index)) {
+        global_ready_.contains(index) || ready_slots[index] == 0) {
       continue;
     }
     const auto readonly = has_readonly_slots && readonly_slots[index] != 0;
@@ -174,8 +173,9 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
     auto* owner =
         LoadMemory(builder_.getPtrTy(), ByteAddress(cache, offsetof(NativeGlobalCache, owner)),
                    MemoryRegion::GlobalCache);
-    WriteHeapValue(value, instruction.lhs);
-    EmitWriteBarrier(owner, instruction.lhs);
+    auto stored = LoadStoredValue(instruction.lhs);
+    WriteStoredValue(RecordAddress(value, MemoryRegion::Values), stored);
+    EmitWriteBarrier(owner, stored);
     StoreGlobalReady(state_address);
   }
   builder_.CreateBr(done);
@@ -285,8 +285,10 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
-  WriteHeapValue(GlobalValueAddress(instruction.index), instruction.lhs);
-  EmitWriteBarrier(global_owner_, instruction.lhs);
+  auto value = LoadStoredValue(instruction.lhs);
+  WriteStoredValue(RecordAddress(GlobalValueAddress(instruction.index), MemoryRegion::Values),
+                   value);
+  EmitWriteBarrier(global_owner_, value);
   // 赋值直接建立 Ready 状态，不执行原初始化器；写屏障仍由槽所属对象承担。
   if (!IsGlobalInitialized()) {
     StoreGlobalReady(ByteAddress(global_states_, instruction.index));

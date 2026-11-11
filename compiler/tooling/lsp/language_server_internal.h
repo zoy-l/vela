@@ -22,7 +22,12 @@
 namespace vela::tooling::internal {
 
 namespace protocol {
+inline constexpr std::int64_t kParseError = -32700;
+inline constexpr std::int64_t kInvalidRequest = -32600;
+inline constexpr std::int64_t kMethodNotFound = -32601;
 inline constexpr std::int64_t kInvalidParams = -32602;
+inline constexpr std::int64_t kNotInitialized = -32002;
+inline constexpr std::int64_t kRequestFailed = -32803;
 inline constexpr std::string_view kJsonRpc = "jsonrpc";
 inline constexpr std::string_view kId = "id";
 inline constexpr std::string_view kMethod = "method";
@@ -53,6 +58,8 @@ inline constexpr std::string_view kSdkSource = "vela/sdkSource";
 [[nodiscard]] std::optional<std::int64_t> JsonInteger(const yyjson_val* value);
 [[nodiscard]] std::expected<TextPosition, std::string> ReadTextPosition(const yyjson_val* value);
 [[nodiscard]] yyjson_mut_val* JsonPosition(yyjson_mut_doc* document, TextPosition position);
+[[nodiscard]] yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range);
+[[nodiscard]] JsonOutput RpcMessage();
 
 struct ServerDocument final {
   std::string path;

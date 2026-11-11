@@ -61,8 +61,9 @@ export async func retained(): Future<int> {
 }
 )";
   const frontend::SourceInput entry{.path = path, .text = kSource};
-  const auto compiled = CompileParsed(**compiler, frontend::LoadProgram(path, {&entry, 1}),
-                                      {.diagnostics = {}, .compilation = {.tier = GetParam()}});
+  const auto compiled =
+      CompileParsed(**compiler, frontend::LoadProgram(path, {&entry, 1}),
+                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(bindings::module_bindingfixture::Register(isolate));

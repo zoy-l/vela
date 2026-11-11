@@ -193,18 +193,16 @@ void ApplyCodeReuse(native::NativeModule& generated,
                     std::uint64_t batch,
                     CodeReusePlan& reuse_plan) {
   for (std::size_t index = 0; index < reuse_plan.reused.size(); ++index) {
-    if (reuse_plan.reused[index] != 0 && generated.function_symbols[index].empty()) {
-      generated.function_symbols[index] = reuse.sources[index].symbols;
-    }
-  }
-  BindReusableCode(*generated.module, reuse, generated.function_symbols, batch, reuse_plan);
-  for (std::size_t index = 0; index < reuse_plan.reused.size(); ++index) {
     if (reuse_plan.reused[index] != 0) {
       const auto& source = reuse.sources[index];
+      if (generated.function_symbols[index].empty()) {
+        generated.function_symbols[index] = source.symbols;
+      }
       generated.function_metrics[index] = source.metrics;
       generated.body_dependencies[index] = source.body_dependencies;
     }
   }
+  BindReusableCode(*generated.module, generated.function_symbols, batch, reuse_plan);
 }
 
 // 一批代码的所有查询、复用与入口绑定共用已驻留的符号，避免反复锁住 LLVM 符号池。

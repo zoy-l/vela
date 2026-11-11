@@ -37,6 +37,7 @@ struct InstanceStorage;
 class InstanceMigration;
 struct NativeRetainedFunction;
 struct LayoutCounts;
+struct ReflectionHandle;
 
 // 编译器生成的同步栈帧严格后进先出；槽在发布前清空，不持有独立外部资源。
 struct NativeStackRoots final {
@@ -159,6 +160,7 @@ struct ByteViewRange final {
 
 class Heap final {
  public:
+  [[nodiscard]] HeapObject* AllocateReflectionHandle(const ReflectionHandle& handle) noexcept;
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
   Heap(Isolate& isolate, std::size_t gc_threshold) noexcept;
   ~Heap();

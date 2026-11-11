@@ -1,7 +1,6 @@
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -96,6 +95,8 @@ void FunctionEmitter::EmitAsyncReturn(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
+  auto* function = builder_.getInt32(static_cast<std::uint32_t>(function_index_));
+  auto* origin = builder_.getInt32(static_cast<std::uint32_t>(origins_[instruction_index_]));
   const auto& saved = roots_.suspended.at(instruction_index_);
   for (std::size_t slot = 0; slot < saved.size(); ++slot) {
     Pack(Encode(saved.at(slot)), slot);
@@ -105,14 +106,13 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
     auto helper = module_.getOrInsertFunction(
         runtime::kNativeResuspendSymbol, builder_.getVoidTy(), builder_.getPtrTy(),
         builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty());
-    builder_.CreateCall(
-        helper, {
-                    ResumeState(),
-                    builder_.getInt32(static_cast<std::uint32_t>(origins_[instruction_index_])),
-                    source,
-                    arguments_,
-                    builder_.getInt64(saved.size()),
-                });
+    builder_.CreateCall(helper, {
+                                    ResumeState(),
+                                    origin,
+                                    source,
+                                    arguments_,
+                                    builder_.getInt64(saved.size()),
+                                });
     Finish(Status(builder_, ExecutionStatus::Returned));
     return;
   }
@@ -125,38 +125,32 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
         runtime::kNativeScalarAwaitReturnSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(),
         builder_.getPtrTy());
-    CheckStatus(builder_.CreateCall(
-        helper, {
-                    body_->getArg(0),
-                    builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                    generated_[function_index_].resume,
-                    builder_.getInt32(static_cast<std::uint32_t>(origins_[instruction_index_])),
-                    source,
-                    result_,
-                }));
+    CheckStatus(builder_.CreateCall(helper, {
+                                                body_->getArg(0),
+                                                function,
+                                                generated_[function_index_].resume,
+                                                origin,
+                                                source,
+                                                result_,
+                                            }));
     StoreAsyncResult();
     return;
-  }
-  std::size_t capacity = 0;
-  for (const auto& values : roots_.suspended) {
-    capacity = std::max(capacity, values.size());
   }
   auto helper = module_.getOrInsertFunction(
       runtime::kNativeSuspendSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
       builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(),
       builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
-  auto* status = builder_.CreateCall(
-      helper, {
-                  body_->getArg(0),
-                  builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                  generated_[function_index_].resume,
-                  builder_.getInt32(static_cast<std::uint32_t>(origins_[instruction_index_])),
-                  source,
-                  arguments_,
-                  builder_.getInt64(saved.size()),
-                  builder_.getInt64(capacity),
-                  result_,
-              });
+  auto* status = builder_.CreateCall(helper, {
+                                                 body_->getArg(0),
+                                                 function,
+                                                 generated_[function_index_].resume,
+                                                 origin,
+                                                 source,
+                                                 arguments_,
+                                                 builder_.getInt64(saved.size()),
+                                                 builder_.getInt64(suspension_capacity_),
+                                                 result_,
+                                             });
   CheckStatus(status);
   StoreAsyncResult();
 }
@@ -190,7 +184,7 @@ void FunctionEmitter::EmitResumeDispatch() {
                                         ByteAddress(saved_values, slot * sizeof(runtime::Value)));
       Store(reg, DecodeValue(builder_, value, type), type);
       if (const auto root_slot = roots_.slots.at(reg)) {
-        WriteHeapValue(RootAddress(*root_slot), reg, MemoryRegion::Roots);
+        StoreRootValue(reg, RootAddress(*root_slot));
       }
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。

@@ -1,4 +1,6 @@
 #include "compiler/frontend/modules/source_loader.h"
+#include <array>
+#include "base/reflection.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +36,21 @@ namespace {
 enum class SourceOrigin : std::uint8_t { Files, Memory };
 // 单次加载直接转移 AST；跨根或会话缓存保留未绑定模板，每个绑定上下文独立克隆。
 enum class SyntaxRetention : std::uint8_t { Transfer, Cache };
+
+const std::array<std::string, 1> kEditorStandardNames{std::string(reflection::kTypeInfoName)};
+
+std::span<const std::string> RetainedStandardNames(SourceLoadMode mode) {
+  return mode == SourceLoadMode::Editor ? std::span(kEditorStandardNames)
+                                        : std::span<const std::string>{};
+}
+
+ParsedSource InstantiateParsedSource(const ParsedSource& source, std::uint32_t source_id) {
+  return {
+      .source = source.source,
+      .program = CloneProgram(source.program, {.source_id = source_id}),
+      .diagnostics = source.diagnostics,
+  };
+}
 
 struct ResolvedPath final {
   std::filesystem::path canonical;
@@ -162,6 +179,7 @@ class SourceCapture final {
   SourceCapture(ModuleCache& cache, const ModuleCache* accepted)
       : cache_(&cache), accepted_(accepted) {}
   CapturedSources Run(std::span<const std::string> roots, std::span<const SourceInput> overlays);
+  CapturedSources RunPrepared(std::string_view path, std::shared_ptr<const ParsedSource> source);
 
  private:
   enum class Role : std::uint8_t { Root, Dependency };
@@ -170,6 +188,8 @@ class SourceCapture final {
             const std::string& importer,
             Role role);
   void LoadImports(std::size_t index);
+  void AddSource(const std::string& key, std::shared_ptr<const ParsedSource> source);
+  CapturedSources Finish();
   void Error(SourceLocation location,
              const std::string& path,
              std::string message,
@@ -206,6 +226,20 @@ void SourceCapture::Load(const std::filesystem::path& path,
     return;
   }
   const auto overlay = overlays_.find(key);
+  const ParsedSource* accepted_source = nullptr;
+  if (role == Role::Dependency && accepted_ != nullptr) {
+    const auto known = accepted_->sources.find(key);
+    if (known != accepted_->sources.end()) {
+      accepted_source = known->second.get();
+    }
+  }
+  if (accepted_source != nullptr && overlay == overlays_.end()) {
+    const auto cached = cache_->sources.find(key);
+    // 已接纳的不可变依赖已在捕获边界验证；重验生成产品会把盘上新状态混入固定快照。
+    if (cached != cache_->sources.end() && cached->second.get() == accepted_source) {
+      return;
+    }
+  }
   const auto text =
       overlay == overlays_.end() ? std::nullopt : std::optional<std::string_view>(overlay->second);
   auto source = ReadCachedSource(resolved->canonical, key, text, *cache_);
@@ -213,13 +247,14 @@ void SourceCapture::Load(const std::filesystem::path& path,
     Error(location, importer, source.error(), DiagnosticKind::Io);
     return;
   }
-  if (role == Role::Dependency && accepted_ != nullptr) {
-    const auto known = accepted_->sources.find(key);
-    if (known != accepted_->sources.end() && known->second == *source) {
-      return;
-    }
+  if (accepted_source == source->get()) {
+    return;
   }
-  const auto& parsed = **source;
+  AddSource(key, std::move(*source));
+}
+
+void SourceCapture::AddSource(const std::string& key, std::shared_ptr<const ParsedSource> source) {
+  const auto& parsed = *source;
   const auto source_id = static_cast<std::uint32_t>(captured_.sources.size());
   captured_.sources.push_back({.path = key, .text = parsed.source->text, .syntax = parsed.source});
   for (auto diagnostic : parsed.diagnostics) {
@@ -227,7 +262,7 @@ void SourceCapture::Load(const std::filesystem::path& path,
     diagnostic.source_path = key;
     captured_.diagnostics.push_back(std::move(diagnostic));
   }
-  parsed_.push_back(std::move(*source));
+  parsed_.push_back(std::move(source));
 }
 
 void SourceCapture::LoadImports(std::size_t index) {
@@ -264,6 +299,25 @@ CapturedSources SourceCapture::Run(std::span<const std::string> roots,
   for (const auto& root : roots) {
     Load(Utf8Path(root), {}, root, Role::Root);
   }
+  return Finish();
+}
+
+CapturedSources SourceCapture::RunPrepared(std::string_view path,
+                                           std::shared_ptr<const ParsedSource> source) {
+  auto resolved = ResolveFilePath(Utf8Path(path), *cache_);
+  if (!resolved) {
+    Error({}, std::string(path), resolved.error(), DiagnosticKind::Io);
+    return Finish();
+  }
+  const auto key = PathText(resolved->canonical);
+  resolutions_.try_emplace(std::move(resolved->requested_key), key);
+  cache_->sources.insert_or_assign(key, source);
+  seen_.insert(key);
+  AddSource(key, std::move(source));
+  return Finish();
+}
+
+CapturedSources SourceCapture::Finish() {
   for (std::size_t index = 0; index < parsed_.size() && captured_.diagnostics.empty(); ++index) {
     LoadImports(index);
   }
@@ -277,15 +331,19 @@ class ModuleLoader final {
                std::span<const SourceInput> inputs,
                ModuleCache& cache,
                SyntaxRetention retention,
-               SourceLoadMode mode = SourceLoadMode::Compilation)
-      : origin_(origin), mode_(mode), retention_(retention), cache_(&cache) {
+               SourceLoadMode mode = SourceLoadMode::Compilation,
+               std::span<const ReflectionSelection> reflection = {})
+      : origin_(origin),
+        mode_(mode),
+        retention_(retention),
+        cache_(&cache),
+        reflection_(reflection) {
     diagnostics_ =
         RegisterOverlays(inputs, overlays_, [this](const auto& path) { return Normalize(path); });
   }
 
   ModuleGraph Run(std::string_view entry);
   ModuleGraph Run(std::span<const std::string> roots);
-  ModuleGraph RunPrepared(std::string_view entry, ParsedSource source);
 
  private:
   [[nodiscard]] std::expected<ResolvedPath, std::string> Normalize(
@@ -318,6 +376,8 @@ class ModuleLoader final {
   Diagnostics diagnostics_;
   Diagnostics syntax_diagnostics_;
   ModuleCache* cache_;
+  std::span<const ReflectionSelection> reflection_;
+  std::vector<ReflectionSelection> standard_reflection_;
 };
 
 void ModuleLoader::Error(SourceLocation location,
@@ -339,13 +399,6 @@ std::expected<ResolvedPath, std::string> ModuleLoader::Normalize(
 std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesystem::path& path,
                                                             const std::string& key,
                                                             std::uint32_t source_id) const {
-  const auto instantiate = [source_id](const ParsedSource& source) -> ParsedSource {
-    return {
-        .source = source.source,
-        .program = CloneProgram(source.program, {.source_id = source_id}),
-        .diagnostics = source.diagnostics,
-    };
-  };
   const auto overlay = overlays_.find(key);
   if (origin_ == SourceOrigin::Memory && overlay == overlays_.end()) {
     return std::unexpected("source module was not supplied: '" + key + "'");
@@ -357,7 +410,7 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
     if (!parsed) {
       return std::unexpected(parsed.error());
     }
-    return instantiate(**parsed);
+    return InstantiateParsedSource(**parsed, source_id);
   }
   auto text = ReadSourceText(path, supplied, origin_);
   if (!text) {
@@ -474,11 +527,7 @@ std::optional<std::uint32_t> ModuleLoader::LoadSdk(std::string_view identity,
     source = cached->second;
   }
   const auto source_id = static_cast<std::uint32_t>(modules_.size());
-  return ParseModule(key, {
-                              .source = source->source,
-                              .program = CloneProgram(source->program, {.source_id = source_id}),
-                              .diagnostics = source->diagnostics,
-                          });
+  return ParseModule(key, InstantiateParsedSource(*source, source_id));
 }
 
 ModuleGraph ModuleLoader::Run(std::string_view entry) {
@@ -502,27 +551,22 @@ ModuleGraph ModuleLoader::Run(std::span<const std::string> roots) {
   return Finish();
 }
 
-ModuleGraph ModuleLoader::RunPrepared(std::string_view entry, ParsedSource source) {
-  const auto path = Normalize(Utf8Path(entry));
-  if (!path) {
-    Error(SourceLocation(), std::string(entry), path.error(), DiagnosticKind::Io);
-    return Finish();
-  }
-  const auto key = PathText(path->canonical);
-  ids_.emplace(key, 0);
-  const auto binding =
-      cache_->binding_ids.try_emplace(key, static_cast<std::uint32_t>(cache_->binding_ids.size()));
-  const auto& snapshot = source.source;
-  sources_.push_back({.path = key, .text = snapshot->text, .syntax = snapshot});
-  modules_.push_back({
-      .program = std::move(source.program),
-      .dependencies = {},
-      .binding_id = binding.first->second,
-  });
-  return Finish();
-}
-
 ModuleGraph ModuleLoader::Finish() {
+  for (const auto& selection : reflection_) {
+    if (selection.module.starts_with(kStandardSourcePrefix)) {
+      standard_reflection_.push_back(selection);
+      continue;
+    }
+    const auto index =
+        selection.module.starts_with(kSdkSourcePrefix)
+            ? LoadSdk(selection.module, selection.location, selection.source_path)
+            : Load(Utf8Path(selection.module), selection.location, selection.source_path);
+    if (index) {
+      auto bound = selection;
+      bound.module = sources_.at(*index).path;
+      modules_.at(*index).program.reflection.push_back(std::move(bound));
+    }
+  }
   for (std::size_t index = 0; index < modules_.size() && diagnostics_.empty(); ++index) {
     LoadDependencies(index);
   }
@@ -532,16 +576,124 @@ ModuleGraph ModuleLoader::Finish() {
       .file_resolutions = FlattenResolutions(std::move(resolutions_)),
       .diagnostics = std::move(diagnostics_),
       .syntax_diagnostics = std::move(syntax_diagnostics_),
+      .standard_reflection = std::move(standard_reflection_),
   };
 }
 
+class StandardRequirements final {
+ public:
+  explicit StandardRequirements(std::vector<std::string>& names)
+      : names_(&names), included_(names.begin(), names.end()) {}
+
+  void Include(std::string_view name) {
+    if (included_.emplace(name).second) {
+      names_->emplace_back(name);
+    }
+  }
+  void IncludeType(const TypeName& type) {
+    if (IsStandardName(type.name)) {
+      Include(type.name);
+    }
+    for (const auto& argument : type.arguments) {
+      IncludeType(argument);
+    }
+  }
+
+ private:
+  std::vector<std::string>* names_;
+  absl::flat_hash_set<std::string> included_;
+};
+
+void IncludeStandardRequirements(ParseResult& result,
+                                 std::span<ReflectionSelection> selections,
+                                 std::span<const std::string> retained) {
+  auto& program = result.program;
+  StandardRequirements names(program.standard_names);
+  for (const auto& source : program.sources) {
+    for (const auto& name : source.syntax->standard_names) {
+      names.Include(name);
+    }
+  }
+  for (const auto& name : retained) {
+    names.Include(name);
+  }
+  for (auto& selection : selections) {
+    const auto name = selection.module.substr(kStandardSourcePrefix.size());
+    if (!IsStandardName(name)) {
+      result.diagnostics.push_back({
+          .location = selection.location,
+          .message = "unknown standard reflection module",
+          .source_path = selection.source_path,
+      });
+      continue;
+    }
+    names.Include(name);
+    program.reflection.push_back(std::move(selection));
+  }
+  for (const auto& selection : program.reflection) {
+    ForEachReflectionType(selection, [&](const TypeName& type) { names.IncludeType(type); });
+  }
+}
+
+void BindReflectionSources(Program& program) {
+  absl::flat_hash_map<std::string, std::uint32_t> diagnostic_sources;
+  for (std::size_t index = 0; index < program.sources.size(); ++index) {
+    diagnostic_sources.emplace(program.sources[index].path, static_cast<std::uint32_t>(index));
+  }
+  for (auto& selection : program.reflection) {
+    if (selection.source_path.empty()) {
+      selection.source_path = selection.module;
+    }
+    const auto source_id = static_cast<std::uint32_t>(program.sources.size());
+    const auto [entry, inserted] = diagnostic_sources.try_emplace(selection.source_path, source_id);
+    if (inserted) {
+      const auto& snapshot = selection.source;
+      program.sources.push_back({
+          .path = selection.source_path,
+          .text = snapshot->text,
+          .syntax = snapshot,
+          .kind = SourceFileKind::Diagnostic,
+      });
+    }
+    const auto diagnostic_source = entry->second;
+    ForEachReflectionType(selection, [&](TypeName& type) { type.SetSourceId(diagnostic_source); });
+    selection.location.source_id = diagnostic_source;
+    for (auto& member : selection.members) {
+      member.location.source_id = diagnostic_source;
+    }
+  }
+}
+
 }  // namespace
+
+bool IsFileModule(std::string_view module) {
+  return !module.starts_with(kSdkSourcePrefix) && !module.starts_with(kStandardSourcePrefix);
+}
+
+std::vector<std::string> ReflectionFileModules(std::span<const ReflectionSelection> selections) {
+  absl::flat_hash_set<std::string_view> seen;
+  std::vector<std::string> modules;
+  for (const auto& selection : selections) {
+    const auto& module = selection.module;
+    if (IsFileModule(module) && seen.insert(module).second) {
+      modules.push_back(module);
+    }
+  }
+  return modules;
+}
 
 CapturedSources CaptureSourceFiles(std::span<const std::string> roots,
                                    ModuleCache& cache,
                                    std::span<const SourceInput> overlays,
                                    const ModuleCache* accepted) {
   return SourceCapture(cache, accepted).Run(roots, overlays);
+}
+
+CapturedSources CapturePreparedSourceFiles(std::string_view path,
+                                           std::shared_ptr<const ParsedSource> source,
+                                           ModuleCache& cache,
+                                           const ModuleCache* accepted) {
+  return SourceCapture(cache, accepted).RunPrepared(path, std::move(source));
 }
 
 ModuleGraph LoadModuleGraph(std::string_view path) {
@@ -557,20 +709,8 @@ ParseResult BindModuleGraph(ModuleGraph graph,
     return {.program = std::move(failed), .diagnostics = std::move(graph.diagnostics)};
   }
   auto result = BindModules(std::move(graph.modules), std::move(graph.sources));
-  auto& standard_names = result.program.standard_names;
-  absl::flat_hash_set<std::string> included(standard_names.begin(), standard_names.end());
-  for (const auto& source : result.program.sources) {
-    for (const auto& name : source.syntax->standard_names) {
-      if (included.insert(name).second) {
-        standard_names.push_back(name);
-      }
-    }
-  }
-  for (const auto& name : retained_standard_names) {
-    if (included.insert(name).second) {
-      standard_names.push_back(name);
-    }
-  }
+  IncludeStandardRequirements(result, graph.standard_reflection, retained_standard_names);
+  BindReflectionSources(result.program);
   for (auto& diagnostic : AddStandardEnvironment(result.program)) {
     result.diagnostics.push_back(std::move(diagnostic));
   }
@@ -591,39 +731,45 @@ std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
 
 ParseResult LoadProgram(std::string_view path,
                         std::span<const SourceInput> overlays,
-                        SourceLoadMode mode) {
+                        SourceLoadMode mode,
+                        std::span<const ReflectionSelection> reflection) {
   ModuleCache cache;
-  return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Transfer, mode)
-          .Run(path));
+  return BindModuleGraph(ModuleLoader(SourceOrigin::Files, overlays, cache,
+                                      SyntaxRetention::Transfer, mode, reflection)
+                             .Run(path),
+                         RetainedStandardNames(mode));
 }
 
 ParseResult LoadProgram(std::string_view path,
                         ModuleCache& cache,
                         std::span<const SourceInput> overlays,
-                        SourceLoadMode mode) {
+                        SourceLoadMode mode,
+                        std::span<const ReflectionSelection> reflection) {
   return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode).Run(path));
+      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode, reflection)
+          .Run(path),
+      RetainedStandardNames(mode));
 }
 
-ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry) {
+ParseResult LoadSources(std::span<const SourceInput> sources,
+                        std::string_view entry,
+                        std::span<const ReflectionSelection> reflection) {
   ModuleCache cache;
-  return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(entry));
+  return BindModuleGraph(ModuleLoader(SourceOrigin::Memory, sources, cache,
+                                      SyntaxRetention::Transfer, SourceLoadMode::Compilation,
+                                      reflection)
+                             .Run(entry));
 }
 
 ParseResult LoadSources(std::span<const SourceInput> sources,
                         std::span<const std::string> roots,
                         ModuleCache& cache,
-                        std::span<const std::string> retained_standard_names) {
-  return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Cache).Run(roots),
-      retained_standard_names);
-}
-
-ParseResult LoadPreparedProgram(std::string_view path, ParsedSource source, ModuleCache& cache) {
-  return BindModuleGraph(ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Cache)
-                             .RunPrepared(path, std::move(source)));
+                        std::span<const std::string> retained_standard_names,
+                        std::span<const ReflectionSelection> reflection) {
+  return BindModuleGraph(ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Cache,
+                                      SourceLoadMode::Compilation, reflection)
+                             .Run(roots),
+                         retained_standard_names);
 }
 
 }  // namespace vela::frontend

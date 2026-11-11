@@ -11,6 +11,7 @@
 #include <vela/types.h>
 
 #include "base/execution_status.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
@@ -66,17 +67,6 @@ func main(): int { return textLength(); }
   EXPECT_EQ(after.value.AsInteger(), 0);
 }
 
-Local<NestedIntegers> EchoNested(runtime::NativeContext& context,
-                                 Local<NestedIntegers> values) noexcept {
-  context.isolate().heap().Collect();
-  return values;
-}
-
-Local<Value> EchoDynamic(runtime::NativeContext& context, Local<Value> value) noexcept {
-  context.isolate().heap().Collect();
-  return value;
-}
-
 template <class T>
 Local<T> EchoBuiltin(runtime::NativeContext& context, Local<T> value) noexcept {
   context.isolate().heap().Collect();
@@ -122,9 +112,7 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, IsolateTypeResolutionDoesNotMakeProgramContainerMetadataPermanent) {
@@ -235,9 +223,7 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, HostCallsTypedScriptCallbackAndMutatesOriginalArray) {
@@ -253,9 +239,7 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, ReentryRestoresOriginalScriptExceptionInsteadOfWrappingNativeFailure) {
@@ -274,9 +258,7 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, PersistentCallbackKeepsCapturedProgramAfterInitialInstanceIsDestroyed) {
@@ -360,7 +342,8 @@ func main(): void { keep((): int => { throw Failure(value: 42); }); }
 
 TEST(HostTypesTest, NestedNullableArrayRoundTripPreservesIdentityAcrossGc) {
   runtime::Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoNested>("echo")));
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<EchoBuiltin<NestedIntegers>>("echo")));
   const auto compiled = test::CompileCleanSource(R"(
 external func echo(values: int[]?[]): int[]?[];
 func main(): int {
@@ -375,9 +358,7 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, NullableScalarsRetainTheirTagsInBothDirections) {
@@ -397,14 +378,12 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, DynamicLocalsKeepScalarsNullAndManagedIdentity) {
   runtime::Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoDynamic>("echo")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoBuiltin<Value>>("echo")));
   const auto compiled = test::CompileCleanSource(R"(
 external func echo(value: dynamic): dynamic;
 func main(): int {
@@ -417,14 +396,13 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectInteger(**compiled);
 }
 
 TEST(HostTypesTest, RejectsDifferentNestedElementContractsBeforePublishingInstance) {
   runtime::Isolate isolate;
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoNested>("echo")));
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<EchoBuiltin<NestedIntegers>>("echo")));
   const auto compiled = test::CompileCleanSource(
       "external func echo(values: double[]?[]): double[]?[]; func main(): void {}", isolate);
   ASSERT_FALSE(compiled);

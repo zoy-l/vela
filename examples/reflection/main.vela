@@ -1,0 +1,67 @@
+class Button extends Reflect {
+  label: string = '';
+}
+
+[Reflect]
+class Counter {
+  value: int = 10;
+
+  get doubled(): int {
+    return this.value * 2;
+  }
+
+  [Button(label: 'Add')]
+  add(amount: int): int {
+    this.value += amount;
+    return this.value;
+  }
+}
+
+enum State {
+  Idle,
+  [Reflect]
+  Active,
+}
+
+const info = Reflect.typeInfo<Counter>();
+const ctor = info.getConstructor() as ConstructorInfo;
+const counter = ctor.invoke(CallArguments());
+const field = info.findField('value') as FieldInfo;
+const method = info.findMethod('add') as MethodInfo;
+
+func main(): void {
+  print(info.name); // Counter
+
+  field.setValue(counter, 20);
+  print(field.getValue(counter) as int); // 20
+
+  const property = info.findProperty('doubled') as PropertyInfo;
+  print(property.getValue(counter) as int); // 40
+
+  const arguments = CallArguments(items: [
+    CallArgument(value: 22, name: 'amount'),
+  ]);
+  print(method.invoke(counter, arguments) as int); // 42
+  print(Reflect.typeOf(counter).id == info.id); // true
+
+  const module = info.module as string;
+  const discovered = Reflect.findType(module, 'Counter') as TypeInfo;
+  print(discovered.id == info.id); // true
+  print(Reflect.getTypes(module).length); // 2
+
+  const state = Reflect.typeInfo<State>();
+  const member = state.findEnumMember('Active') as EnumMemberInfo;
+  print(member.ordinal); // 1
+  print(Reflect.typeOf(member.value).id == state.id); // true
+
+  const buttons = Reflect.findMethods<Button>();
+  print(buttons[0].attribute.label); // Add
+}
+
+// 在开发控制台用 .call next 调用；热重载后仍通过原句柄解析当前方法。
+export func next(): int {
+  const arguments = CallArguments(items: [
+    CallArgument(value: 1, name: 'amount'),
+  ]);
+  return method.invoke(counter, arguments) as int;
+}

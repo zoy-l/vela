@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -183,6 +184,7 @@ std::string Specializer::Instantiate(const std::string& name,
   if (function != function_templates_.end()) {
     Function declaration;
     declaration.name = key;
+    declaration.application = Function::Application{.name = name, .arguments = arguments};
     functions_.push_back({
         .declaration = std::move(declaration),
         .substitutions = Bind(function->second->type_parameters, arguments, location),
@@ -289,21 +291,33 @@ void Specializer::NormalizeType(TypeName& type, const TypeSubstitutions& substit
   NormalizeTypeHead(type);
 }
 
+std::optional<Specializer::AliasExpansion> Specializer::BeginAliasExpansion(
+    const TypeName& type,
+    const Program::TypeAlias& alias) {
+  auto key = SpecializationName(type.name, type.arguments);
+  if (active_aliases_.size() >= kMaxTypeNesting || !active_aliases_.insert(key).second) {
+    Error(type.location, "cyclic or expanding type alias '" + type.name + "'");
+    return std::nullopt;
+  }
+  if (!alias.type_parameters.empty()) {
+    RecordApplication(type.name, type.arguments, type.location);
+  }
+  return AliasExpansion{
+      .key = std::move(key),
+      .substitutions = Bind(alias.type_parameters, type.arguments, type.location),
+  };
+}
+
 void Specializer::NormalizeTypeHead(TypeName& type) {
   const auto alias = aliases_.find(type.name);
   if ((type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) &&
       alias != aliases_.end()) {
-    const auto key = SpecializationName(type.name, type.arguments);
-    if (!active_aliases_.insert(key).second) {
-      Error(type.location, "cyclic or expanding type alias '" + type.name + "'");
+    const auto expansion = BeginAliasExpansion(type, alias->second);
+    if (!expansion) {
       return;
     }
-    if (!alias->second.type_parameters.empty()) {
-      RecordApplication(type.name, type.arguments, type.location);
-    }
-    const auto bound = Bind(alias->second.type_parameters, type.arguments, type.location);
-    type = CloneNormalizedType(alias->second.target, bound);
-    active_aliases_.erase(key);
+    type = CloneNormalizedType(alias->second.target, expansion->substitutions);
+    active_aliases_.erase(expansion->key);
     return;
   }
   if (type.kind == TypeName::Kind::Generic) {
@@ -507,6 +521,7 @@ void Specializer::NormalizeScoped(Statement* statement, const TypeSubstitutions&
 }
 
 void Specializer::Normalize(Function& function, const TypeSubstitutions& substitutions) {
+  NormalizeAttributes(function.attributes, substitutions);
   scopes_.emplace_back();
   for (auto& parameter : function.type_parameters) {
     if (parameter.bound) {
@@ -523,6 +538,7 @@ void Specializer::Normalize(Function& function, const TypeSubstitutions& substit
 }
 
 void Specializer::Normalize(Class& owner, const TypeSubstitutions& substitutions) {
+  NormalizeAttributes(owner.attributes, substitutions);
   if (owner.base_class) {
     Normalize(*owner.base_class, substitutions);
   }
@@ -530,6 +546,7 @@ void Specializer::Normalize(Class& owner, const TypeSubstitutions& substitutions
     Normalize(interface, substitutions);
   }
   for (auto& field : owner.fields) {
+    NormalizeAttributes(field.attributes, substitutions);
     Normalize(field.type, substitutions);
     Normalize(field.initializer.get(), substitutions);
   }
@@ -541,6 +558,16 @@ void Specializer::Normalize(Class& owner, const TypeSubstitutions& substitutions
   }
   if (owner.constructor) {
     Normalize(*owner.constructor, substitutions);
+  }
+}
+
+void Specializer::NormalizeAttributes(std::span<Attribute> attributes,
+                                      const TypeSubstitutions& substitutions) {
+  for (auto& attribute : attributes) {
+    Normalize(attribute.type, substitutions);
+    for (auto& argument : attribute.arguments) {
+      Normalize(argument.value.get(), substitutions);
+    }
   }
 }
 
@@ -680,6 +707,15 @@ Diagnostics Specializer::Initialize() {
   CollectClassTemplates();
   CollectInterfaceTemplates();
   NormalizeAliases();
+  for (auto& declaration : program_.enums) {
+    NormalizeAttributes(declaration.attributes, {});
+    for (auto& member : declaration.members) {
+      NormalizeAttributes(member.attributes, {});
+    }
+  }
+  for (auto& selection : program_.reflection) {
+    ForEachReflectionType(selection, [&](TypeName& type) { Normalize(type, {}); });
+  }
   for (auto& global : program_.globals) {
     if (global.type.kind != TypeName::Kind::Inferred) {
       Normalize(global.type, {});
@@ -777,6 +813,7 @@ void Specializer::ExpandInterface(Pending<Interface>& pending) {
                  [&](const Interface& source) { return CloneInterface(source, *this); });
     return;
   }
+  NormalizeAttributes(target.attributes, pending.substitutions);
   for (auto& method : target.methods) {
     Normalize(method, pending.substitutions);
   }
@@ -844,17 +881,12 @@ TypeName Specializer::ExpandAlias(TypeName type) {
   const auto alias = aliases_.find(type.name);
   if ((type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) &&
       alias != aliases_.end()) {
-    const auto key = SpecializationName(type.name, type.arguments);
-    if (!active_aliases_.insert(key).second || active_aliases_.size() > kMaxTypeNesting) {
-      Error(type.location, "cyclic or expanding type alias '" + type.name + "'");
+    const auto expansion = BeginAliasExpansion(type, alias->second);
+    if (!expansion) {
       return type;
     }
-    if (!alias->second.type_parameters.empty()) {
-      RecordApplication(type.name, type.arguments, type.location);
-    }
-    const auto bound = Bind(alias->second.type_parameters, type.arguments, type.location);
-    type = ExpandAlias(SubstituteTypeName(alias->second.target, bound));
-    active_aliases_.erase(key);
+    type = ExpandAlias(SubstituteTypeName(alias->second.target, expansion->substitutions));
+    active_aliases_.erase(expansion->key);
     return type;
   }
   for (auto& argument : type.arguments) {

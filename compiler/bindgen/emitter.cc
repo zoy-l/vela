@@ -190,6 +190,16 @@ void RenderMember(std::ostream& output, const Member& member, const TypeNames& n
   output << ";\n";
 }
 
+std::string DependencyAlias(std::string_view prefix,
+                            std::size_t index,
+                            std::set<std::string>& identifiers) {
+  auto alias = std::string(prefix) + std::to_string(index);
+  while (!identifiers.insert(alias).second) {
+    alias += '_';
+  }
+  return alias;
+}
+
 void ImportNativeDependencies(const Module& module,
                               const std::string& output_directory,
                               std::vector<frontend::Program::Import>& imports,
@@ -201,10 +211,7 @@ void ImportNativeDependencies(const Module& module,
   }
   for (std::size_t index = 0; index < module.dependencies.size(); ++index) {
     const auto& dependency = module.dependencies[index];
-    auto alias = "nativeDependency" + std::to_string(index);
-    while (!identifiers.insert(alias).second) {
-      alias += '_';
-    }
+    const auto alias = DependencyAlias("nativeDependency", index, identifiers);
     const auto relative =
         Utf8Path(dependency.source).lexically_relative(Utf8Path(output_directory));
     imports.push_back({.path = PathText(relative), .location = {}, .alias = alias});
@@ -229,11 +236,7 @@ std::expected<void, std::string> CollectScriptType(
   for (const auto& [key, nominal] : type.layouts.nominals) {
     const auto [entry, inserted] = script_imports.try_emplace(nominal.module);
     if (inserted) {
-      auto alias = "scriptDependency" + std::to_string(script_imports.size());
-      while (!identifiers.insert(alias).second) {
-        alias += '_';
-      }
-      entry->second = alias;
+      entry->second = DependencyAlias("scriptDependency", script_imports.size(), identifiers);
     }
     names.emplace(key, entry->second + '.' + nominal.name);
   }

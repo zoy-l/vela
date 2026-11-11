@@ -5,16 +5,56 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
+from tools.package import create_package
 
 
 def vela_executable() -> Path:
     return Path(os.environ.get(
         "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
+
+
+def native_test_libraries(output: Path, runtime: Path | None = None) -> list[Path]:
+    return [runtime if runtime is not None else
+            output / "obj/runtime" / static_library_name("vela_runtime"),
+            *[output / "obj/third_party" / static_library_name(name)
+              for name in ("gtest_main", "gtest")]]
+
+
+def create_native_package(executable: Path, destination: Path) -> dict[str, str]:
+    specification = os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")
+    return create_package(executable, executable.parent / "obj/runtime" /
+                          static_library_name("vela_runtime"), destination,
+                          Path(specification) if specification else None)
+
+
+def compile_native_host(test: unittest.TestCase, sources: list[Path], executable: Path,
+                        libraries: list[Path], includes: list[Path], *, cwd: Path) -> None:
+    tools = toolchain_tools()
+    if sys.platform == "win32":
+        objects = []
+        for source in sources:
+            obj = cwd / (source.stem + ".obj")
+            native_command(test, [tools["cxx"], "/nologo", "/MT", "/O2", "/clang:-std=c++23",
+                                  "/D_ITERATOR_DEBUG_LEVEL=0", "/D_HAS_EXCEPTIONS=0", "/c", source,
+                                  "/Fo" + str(obj), *["/I" + str(path) for path in includes]], cwd=cwd)
+            objects.append(obj)
+        command = [tools["cxx"], "/nologo", "/MT", "-fuse-ld=lld", "/Fe" + str(executable),
+                   *objects, *libraries]
+    else:
+        flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
+                 "-fuse-ld=" + str(tools["linker"])]
+        if sys.platform == "darwin":
+            flags += ["-isysroot", str(tools["sysroot"]), "-nostdinc++", "-isystem",
+                      str(tools["sysroot"] / "usr/include/c++/v1"), "-framework", "CoreFoundation"]
+        command = [tools["cxx"], *flags, *["-I" + str(path) for path in includes],
+                   *sources, *libraries, "-o", executable]
+    native_command(test, command, cwd=cwd)
 
 
 def native_command(test: unittest.TestCase, arguments: list[str | Path], expected: int = 0,

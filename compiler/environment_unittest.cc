@@ -12,9 +12,5 @@ TEST(EnvironmentTest, ProductIdentity) {
   EXPECT_EQ(kVersion, std::string_view("0.1.0"));
 }
 
-TEST(EnvironmentTest, ToolchainDescriptionIsPresent) {
-  EXPECT_FALSE(kToolchainDescription.empty());
-}
-
 }  // namespace
 }  // namespace vela

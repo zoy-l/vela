@@ -33,7 +33,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   callback_signature.return_type = dynamic;
   auto callback =
       CreateMemberFunction(receiver, std::string(name) + ".callback", callback_signature);
-  const auto callback_target = function_ids_.at(callback.name);
+  const auto callback_target = AddFunctionId(callback.name);
   BeginGeneratedBody(callback);
   const auto context = EmitTemporary({.opcode = Opcode::GetField, .lhs = 0, .location = {}});
   RecordValueType(context, dynamic);

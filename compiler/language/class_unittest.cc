@@ -5,6 +5,7 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -14,10 +15,7 @@ namespace {
 class ClassConstructionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(ClassConstructionTest, InitializesFieldsAndExecutesConstructorUnderGcPressure) {
-  runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(GetParam(), isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(GeneratedAndExplicitConstructors,
@@ -400,7 +398,7 @@ func main(): int {
 
 TEST(ClassInitializationTest, DefaultsRunOnlyWhenOmittedAndCreateIndependentCollections) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 class Trace {
   static calls: int = 0;
   static next(): int { Trace.calls++; return Trace.calls; }
@@ -416,14 +414,12 @@ func main(): int {
          first.values[0] == 42 && second.values.length == 0 && supplied.values.length == 0 ? 42 : 0;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(ClassInitializationTest, DefaultsUseDeclarationScopeBeforeConstructorParameters) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 let seed = 40;
 class Generated { value: int = seed; }
 class Explicit { value: int = seed; constructor(seed: int) { this.value += seed; } }
@@ -432,14 +428,12 @@ func main(): int {
   return Generated().value + Explicit(seed: 2).value - 40;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(ClassMutationTest, PropertyUpdatesEvaluateReceiverAndAccessorsOnce) {
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(R"(
+  test::ExpectRunAnswer(R"(
 let reads = 0;
 let writes = 0;
 let receivers = 0;
@@ -458,9 +452,7 @@ func main(): int {
          reads == 4 && writes == 3 && receivers == 3 ? 42 : 0;
 }
 )",
-                                       isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+                        isolate);
 }
 
 TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgumentWindow) {
@@ -476,9 +468,7 @@ TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgum
       "value128: 12); return Trace.calls == 126 ? "
       "box.value63 + box.value64 + box.value127 + box.value128 : 0; }";
   runtime::Isolate isolate(1);
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  test::ExpectRunAnswer(source, isolate);
 }
 
 }  // namespace

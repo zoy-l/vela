@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string>
 #include <tuple>
@@ -188,11 +187,17 @@ void BindGlobalIdentities(Program& program,
   }
   for (const auto& owner : source.classes) {
     for (const auto& field : owner.fields) {
-      if (field.storage == frontend::MemberStorage::Static &&
-          field.visibility == frontend::Visibility::Private) {
-        const auto identity = bindings.globals.at(owner.name + '.' + field.name);
-        program.global_flags.at(global_slots.at(identity)) |=
-            static_cast<std::uint32_t>(GlobalFlag::Private);
+      if (field.storage != frontend::MemberStorage::Static) {
+        continue;
+      }
+      const auto identity =
+          bindings.globals.at(QualifiedMemberKey({.owner = owner.name, .name = field.name}));
+      auto& flags = program.global_flags.at(global_slots.at(identity));
+      if (field.binding == frontend::BindingKind::Constant) {
+        flags |= static_cast<std::uint32_t>(GlobalFlag::Constant);
+      }
+      if (field.visibility == frontend::Visibility::Private) {
+        flags |= static_cast<std::uint32_t>(GlobalFlag::Private);
       }
     }
   }
@@ -203,12 +208,10 @@ void BindGlobalIdentities(Program& program,
 LoweringResult PrepareProgram(const frontend::Program& source,
                               const frontend::SemanticModel& model,
                               const PreparationOptions& options) {
-  std::optional<DeclarationBindings> declarations;
-  if (options.declarations != nullptr) {
-    declarations = BindDeclarations(source, model, *options.declarations, options.revision);
-  }
-  auto lowered =
-      Lowerer(source, model, declarations ? &*declarations : nullptr, options.native_mode).Lower();
+  frontend::DeclarationIds local_identities;
+  auto& identities = options.declarations == nullptr ? local_identities : *options.declarations;
+  const auto declarations = BindDeclarations(source, model, identities, options.revision);
+  auto lowered = Lowerer(source, model, declarations, options.native_mode).Lower();
   if (!lowered.Succeeded()) {
     return lowered;
   }
@@ -219,23 +222,17 @@ LoweringResult PrepareProgram(const frontend::Program& source,
     program.source_paths.push_back(file.path);
     program.source_texts.emplace_back(file.text);
   }
-  if (declarations) {
-    const auto& bindings = *declarations;
-    program.revision = bindings.revision;
-    const auto records = options.declarations->records();
-    DescribeDeclarations(program, source, bindings, records);
-    BindGlobalIdentities(program, source, bindings, records);
-    program.interface_declarations.resize(program.layouts.interfaces.size());
-    for (const auto& interface : source.interfaces) {
-      program.interface_declarations.at(model.interfaces.at(interface.name).index) =
-          bindings.nominals.at(interface.name);
-    }
+  program.revision = declarations.revision;
+  const auto records = identities.records();
+  DescribeDeclarations(program, source, declarations, records);
+  BindGlobalIdentities(program, source, declarations, records);
+  program.interface_declarations.resize(program.layouts.interfaces.size());
+  for (const auto& interface : source.interfaces) {
+    program.interface_declarations.at(model.interfaces.at(interface.name).index) =
+        declarations.nominals.at(interface.name);
   }
   if (options.native_mode == NativeProgramMode::Reloadable) {
-    if (!declarations) {
-      std::unreachable();
-    }
-    BindTypeDependencies(program, model, *declarations);
+    BindTypeDependencies(program, model, declarations);
   }
   for (auto& function : program.functions) {
     if (function.native_symbol.empty()) {

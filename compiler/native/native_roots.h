@@ -41,6 +41,8 @@ struct NativeRecoveryRequirements final {
   std::span<const ir::RegisterId> materialized;
   std::size_t minimum_root_count = 0;
   std::size_t minimum_temporary_count = 0;
+  // 借用字段在每个指令入口都保持活动；共享一行，避免按指令数复制相同需求。
+  std::span<const ir::RegisterId> uniform_values;
 };
 
 struct NativeFunctionMetrics final {

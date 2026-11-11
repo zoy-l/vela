@@ -319,6 +319,11 @@ BoundedRegion FindBoundedRegion(const llvm::Loop& loop) {
   return region;
 }
 
+bool IsPollConditionInstruction(const llvm::Instruction& instruction) {
+  return llvm::isa<llvm::LoadInst, llvm::GetElementPtrInst, llvm::CastInst, llvm::BinaryOperator,
+                   llvm::ICmpInst>(instruction);
+}
+
 bool CanCopyPollCondition(llvm::Value* value,
                           const llvm::Loop& loop,
                           llvm::SmallPtrSetImpl<llvm::Value*>& copied) {
@@ -329,8 +334,7 @@ bool CanCopyPollCondition(llvm::Value* value,
   if (instruction == nullptr || !loop.contains(instruction)) {
     return true;
   }
-  if (!llvm::isa<llvm::LoadInst, llvm::GetElementPtrInst, llvm::CastInst, llvm::BinaryOperator,
-                 llvm::ICmpInst>(instruction)) {
+  if (!IsPollConditionInstruction(*instruction)) {
     return false;
   }
   if (!std::ranges::all_of(instruction->operands(), [&](const auto& operand) {
@@ -366,8 +370,7 @@ llvm::Value* CopyPollCondition(llvm::Value* value,
 void ErasePollCondition(llvm::Value* value) {
   auto* instruction = llvm::dyn_cast<llvm::Instruction>(value);
   if (instruction == nullptr || !instruction->use_empty() ||
-      !llvm::isa<llvm::LoadInst, llvm::GetElementPtrInst, llvm::CastInst, llvm::BinaryOperator,
-                 llvm::ICmpInst>(instruction)) {
+      !IsPollConditionInstruction(*instruction)) {
     return;
   }
   llvm::SmallVector<llvm::WeakTrackingVH> operands(instruction->operand_values());
@@ -383,9 +386,19 @@ std::uint64_t PollBudget(std::uint64_t instructions) {
   return std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
 }
 
+llvm::Value* BoundedDistance(llvm::IRBuilder<>& builder,
+                             const CountedLoop& counted,
+                             llvm::Value* start,
+                             llvm::Value* bound,
+                             std::uint64_t limit) {
+  auto* distance =
+      counted.direction == 1 ? builder.CreateSub(bound, start) : builder.CreateSub(start, bound);
+  return builder.CreateICmpULE(distance, builder.getInt64(limit));
+}
+
 llvm::Value* BoundedTripCount(llvm::Loop& loop,
                               llvm::ScalarEvolution& evolution,
-                              llvm::DominatorTree& dominators,
+                              const std::optional<CountedLoop>& counted,
                               std::uint64_t limit) {
   auto* preheader = loop.getLoopPreheader();
   if (preheader == nullptr) {
@@ -396,14 +409,11 @@ llvm::Value* BoundedTripCount(llvm::Loop& loop,
   if (maximum != 0 && maximum <= limit) {
     return guard.getTrue();
   }
-  const auto counted = MatchCountedLoop(loop, dominators);
   if (!counted) {
     return nullptr;
   }
   auto* start = counted->index->getIncomingValueForBlock(preheader);
-  auto* distance = counted->direction == 1 ? guard.CreateSub(counted->bound, start)
-                                           : guard.CreateSub(start, counted->bound);
-  return guard.CreateICmpULE(distance, guard.getInt64(limit));
+  return BoundedDistance(guard, *counted, start, counted->bound, limit);
 }
 
 void RemoveBoundedPolls(std::span<const BoundedPoll> polls, const llvm::ValueToValueMapTy& mapped) {
@@ -490,11 +500,9 @@ void StripMineBoundedLoop(const CountedLoop& counted,
   }
   preheader->getTerminator()->replaceSuccessorWith(header, outer);
   latch->getTerminator()->replaceSuccessorWith(header, outer);
-  auto* distance = counted.direction == 1 ? guard.CreateSub(counted.bound, start)
-                                          : guard.CreateSub(start, counted.bound);
   auto* clipped = counted.direction == 1 ? guard.CreateAdd(start, guard.getInt64(limit))
                                          : guard.CreateSub(start, guard.getInt64(limit));
-  auto* bound = guard.CreateSelect(guard.CreateICmpULE(distance, guard.getInt64(limit)),
+  auto* bound = guard.CreateSelect(BoundedDistance(guard, counted, start, counted.bound, limit),
                                    counted.bound, clipped);
   auto* comparison = llvm::cast<llvm::ICmpInst>(mapped.lookup(counted.comparison));
   const auto bound_operand = counted.comparison->getOperand(0) == counted.index ? 1U : 0U;
@@ -547,7 +555,7 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
         });
         continue;
       }
-      auto* bounded = BoundedTripCount(*loop, evolution, dominators, limit);
+      auto* bounded = BoundedTripCount(*loop, evolution, counted, limit);
       if (bounded != nullptr) {
         plans.push_back({
             .loop = loop,
@@ -653,17 +661,23 @@ bool IsReductionInstruction(const llvm::Instruction& instruction,
   return true;
 }
 
+void AddCountedUpdateInstructions(AllowedInstructions& allowed,
+                                  const CountedLoop& counted,
+                                  const CheckedUpdate& update) {
+  allowed.insert(counted.index);
+  allowed.insert(counted.comparison);
+  allowed.insert(counted.condition->getCondition());
+  AddStepInstructions(allowed, counted);
+  AddUpdateInstructions(allowed, update);
+}
+
 bool IsReductionBody(const CountedLoop& counted, const Reduction& reduction) {
   const auto& loop = *counted.loop;
   auto* accumulator = reduction.accumulator;
   const auto& update = reduction.update;
   AllowedInstructions allowed;
-  allowed.insert(counted.index);
   allowed.insert(accumulator);
-  allowed.insert(counted.comparison);
-  allowed.insert(counted.condition->getCondition());
-  AddStepInstructions(allowed, counted);
-  AddUpdateInstructions(allowed, update);
+  AddCountedUpdateInstructions(allowed, counted, update);
   for (auto* block : loop.blocks()) {
     for (auto& instruction : *block) {
       if (!IsReductionInstruction(instruction, counted, reduction, allowed)) {
@@ -715,12 +729,16 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
   return IsReductionBody(counted, reduction) ? std::optional(reduction) : std::nullopt;
 }
 
-void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result) {
+void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result, llvm::Value* overflow) {
   update.value->replaceAllUsesWith(result);
-  update.overflow->replaceAllUsesWith(llvm::ConstantInt::getFalse(update.call->getContext()));
+  update.overflow->replaceAllUsesWith(overflow);
   update.value->eraseFromParent();
   update.overflow->eraseFromParent();
   update.call->eraseFromParent();
+}
+
+void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result) {
+  ReplaceUpdate(update, result, llvm::ConstantInt::getFalse(update.call->getContext()));
 }
 
 bool HasBoundedReductionPrefixes(const CountedLoop& counted,
@@ -979,11 +997,7 @@ bool IsFieldReductionBody(const CountedLoop& counted,
   if (accesses.tag != nullptr) {
     allowed.insert(accesses.tag);
   }
-  allowed.insert(counted.index);
-  allowed.insert(counted.comparison);
-  allowed.insert(counted.condition->getCondition());
-  AddStepInstructions(allowed, counted);
-  AddUpdateInstructions(allowed, update);
+  AddCountedUpdateInstructions(allowed, counted, update);
   for (auto* block : counted.loop->blocks()) {
     for (auto& instruction : *block) {
       if (!IsFieldInstruction(instruction, counted, update, allowed, base)) {
@@ -1047,11 +1061,7 @@ void FoldFieldReduction(const CountedLoop& counted, const FieldReduction& field)
       adding ? builder.CreateNSWAdd(initial, count) : builder.CreateNSWSub(initial, count);
   auto* result = builder.CreateTrunc(final, builder.getInt64Ty());
   auto* overflow = builder.CreateICmpNE(final, builder.CreateSExt(result, wide));
-  field.update.value->replaceAllUsesWith(result);
-  field.update.overflow->replaceAllUsesWith(overflow);
-  field.update.value->eraseFromParent();
-  field.update.overflow->eraseFromParent();
-  call->eraseFromParent();
+  ReplaceUpdate(field.update, result, overflow);
   // 单位增减在溢出前必然到达 int64 边界。失败时先写回最后一次成功的字段值，
   // 再进入原错误块，保留对象别名、catch/finally 与源位置可观察的前缀。
   auto* failed = field.update.failed;
@@ -1177,10 +1187,8 @@ void EmitBoundedLeafGuard(const GeneratedFunction& function) {
     builder.CreateRet(builder.getFalse());
     return;
   }
-  auto* distance =
-      counted->direction == 1 ? builder.CreateSub(bound, start) : builder.CreateSub(start, bound);
   const auto limit = PollBudget(instructions);
-  builder.CreateRet(builder.CreateICmpULE(distance, builder.getInt64(limit)));
+  builder.CreateRet(BoundedDistance(builder, *counted, start, bound, limit));
 }
 
 void AddBoundedPollPasses(llvm::FunctionPassManager& passes) {

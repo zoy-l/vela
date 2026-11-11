@@ -2,17 +2,30 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <expected>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/token.h"
 
 #include "compiler/frontend/typing/type_limits.h"
 
 namespace vela::frontend {
+
+std::expected<TypeName, Diagnostics> Parser::ParseTypeExpression() {
+  auto type = ParseType();
+  if (type && !IsAtEnd()) {
+    AddDiagnostic(Peek().location, "unexpected token after type");
+  }
+  if (!diagnostics_.empty()) {
+    return std::unexpected(std::move(diagnostics_));
+  }
+  return std::move(*type);
+}
 
 std::optional<Program::TypeAlias> Parser::ParseTypeAlias() {
   const auto* const name = Expect(TokenKind::Identifier, "expected type alias name");
@@ -91,9 +104,11 @@ std::vector<TypeName> Parser::ParseTypeArguments() {
       break;
     }
   }
-  if (MatchTypeGreater()) {
-    AnnotatePrevious(TokenRole::TypeDelimiter);
+  if (!MatchTypeGreater()) {
+    AddDiagnostic(Peek().location, "expected '>' after type arguments");
+    return {};
   }
+  AnnotatePrevious(TokenRole::TypeDelimiter);
   last_type_arguments_depth_ = depth;
   return arguments;
 }
@@ -194,7 +209,8 @@ std::optional<std::string> Parser::ParseQualifiedTypeName() {
     if (member == nullptr) {
       return std::nullopt;
     }
-    name += '.' + member->lexeme;
+    name += '.';
+    name += member->lexeme;
   }
   return name;
 }

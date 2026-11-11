@@ -90,6 +90,7 @@ std::vector<std::uint8_t> FindInstanceRootedValues(const ir::Function& function,
         break;
     }
   }
+  // 借用入口的字段由原生参数初始化，没有 IR 定义；它们仍须污染全部 Move 派生链。
   for (ir::RegisterId reg = 0; reg < count; ++reg) {
     if (defined[reg] == 0) {
       unknown[reg] = 1;
@@ -331,7 +332,8 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   const auto instance_roots =
       FindInstanceRootedValues(function, functions, readonly_globals, recovery.materialized);
   const auto required = recovery.values;
-  const auto blocks = ir::AnalyzeLiveness(function, graph, functions, required);
+  const auto blocks =
+      ir::AnalyzeLiveness(function, graph, functions, required, recovery.uniform_values);
   std::vector<RootLifetime> lifetimes(function.register_count);
   ir::RegisterSet after(function.register_count);
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
@@ -343,8 +345,13 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       const auto access = ir::AnalyzeRegisters(instruction, functions);
       after = live;
       RecordSuspension(plan, function, graph, blocks, index, after);
-      ir::TransferLiveness(function, graph, blocks, instruction, access, live,
-                           required.empty() ? std::span<const ir::RegisterId>{} : required[index]);
+      ir::TransferLiveness(
+          function, graph, blocks, instruction, access, live,
+          {
+              .at_instruction =
+                  required.empty() ? std::span<const ir::RegisterId>{} : required[index],
+              .uniform = recovery.uniform_values,
+          });
       if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
         live.ForEach([&](ir::RegisterId reg) { plan.checkpoints[index].push_back(reg); });
       }

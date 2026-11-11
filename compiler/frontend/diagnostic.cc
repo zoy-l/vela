@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace vela::frontend {
 
@@ -15,7 +16,7 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
     case DiagnosticCode::ImplicitDynamicConversion:
       return "implicit_dynamic_conversion";
   }
-  return {};
+  std::unreachable();
 }
 
 void WriteDiagnostic(std::ostream& output,
@@ -36,11 +37,17 @@ void WriteDiagnostic(std::ostream& output,
   output << diagnostic.message << '\n';
 }
 
+void WriteDiagnostics(std::ostream& output,
+                      std::span<const Diagnostic> diagnostics,
+                      std::string_view default_path) {
+  for (const auto& diagnostic : diagnostics) {
+    WriteDiagnostic(output, diagnostic, default_path);
+  }
+}
+
 std::string DiagnosticsText(std::span<const Diagnostic> diagnostics) {
   std::ostringstream output;
-  for (const auto& diagnostic : diagnostics) {
-    WriteDiagnostic(output, diagnostic);
-  }
+  WriteDiagnostics(output, diagnostics);
   return output.str();
 }
 

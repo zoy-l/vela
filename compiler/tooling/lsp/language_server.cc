@@ -22,11 +22,11 @@
 namespace vela::tooling::internal {
 namespace {
 
-constexpr std::int64_t kParseError = -32700;
-constexpr std::int64_t kInvalidRequest = -32600;
-constexpr std::int64_t kMethodNotFound = -32601;
 using protocol::kInvalidParams;
-constexpr std::int64_t kNotInitialized = -32002;
+using protocol::kInvalidRequest;
+using protocol::kMethodNotFound;
+using protocol::kNotInitialized;
+using protocol::kParseError;
 
 void WriteServerFailure(std::ostream& output, std::string_view message) {
   output << "vela lsp: " << message << '\n';
@@ -65,11 +65,25 @@ std::optional<std::int64_t> JsonInteger(const yyjson_val* value) {
   return std::nullopt;
 }
 
+JsonOutput RpcMessage() {
+  JsonOutput message;
+  auto* document = message.document();
+  auto* root = message.root();
+  AddJsonField(document, root, protocol::kJsonRpc, yyjson_mut_str(document, "2.0"));
+  return message;
+}
+
+yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
+  auto* value = yyjson_mut_obj(document);
+  AddJsonField(document, value, protocol::kStart, JsonPosition(document, range.start));
+  AddJsonField(document, value, protocol::kEnd, JsonPosition(document, range.end));
+  return value;
+}
+
 JsonOutput LanguageServer::Response(const yyjson_val* request_id) {
-  JsonOutput response;
+  auto response = RpcMessage();
   auto* document = response.document();
   auto* root = response.root();
-  AddJsonField(document, root, protocol::kJsonRpc, yyjson_mut_str(document, "2.0"));
   AddJsonField(document, root, protocol::kId,
                request_id != nullptr ? yyjson_val_mut_copy(document, request_id)
                                      : yyjson_mut_null(document));
@@ -102,10 +116,9 @@ void LanguageServer::Error(const yyjson_val* request_id,
 }
 
 void LanguageServer::Log(std::string_view message) {
-  JsonOutput notification;
+  auto notification = RpcMessage();
   auto* document = notification.document();
   auto* root = notification.root();
-  AddJsonField(document, root, protocol::kJsonRpc, yyjson_mut_str(document, "2.0"));
   AddJsonField(document, root, protocol::kMethod, yyjson_mut_str(document, "window/logMessage"));
   auto* params = yyjson_mut_obj(document);
   AddJsonField(document, params, "type", yyjson_mut_sint(document, 1));

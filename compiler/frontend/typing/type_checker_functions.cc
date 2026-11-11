@@ -50,7 +50,8 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
 
 TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
   auto result = MakeFunctionType(signature);
-  if (function_types_.contains(result.name)) {
+  const auto [found, inserted] = function_types_.try_emplace(result.name);
+  if (!inserted) {
     return result;
   }
   FunctionInfo positional;
@@ -60,7 +61,7 @@ TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
     const auto key = std::to_string(index);
     positional.AddParameter(key, parameter);
   }
-  function_types_.try_emplace(result.name, std::move(positional));
+  found->second = std::move(positional);
   types_.try_emplace(result.name, result);
   return result;
 }

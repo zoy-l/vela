@@ -28,10 +28,7 @@ TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
 }
 
 TEST_P(RegExpProgramTest, RestoresSourceFreeImageInFreshIsolate) {
-  runtime::Isolate isolate(1);
-  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
-  ASSERT_TRUE(loaded) << loaded.error();
-  test::ExpectAnswer(**loaded);
+  test::ExpectRestoredAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,
@@ -213,8 +210,7 @@ TEST(RegExpFailureTraceTest, PreservesNativeDiagnosticAndSourceLocation) {
 }
 
 TEST_P(RegExpRejectedTest, RejectsInvalidStaticContract) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -90,6 +90,13 @@ llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution) {
   return builder.CreateLoad(builder.getPtrTy(), data_address);
 }
 
+llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution) {
+  auto* data = LoadProgramData(builder, execution);
+  auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), data,
+                                             runtime::NativeMemoryLayout::kProgramImage);
+  return builder.CreateLoad(builder.getPtrTy(), address);
+}
+
 llvm::Constant* EmitConstantTable(llvm::Module& module,
                                   llvm::StructType* table,
                                   llvm::Type* element,
@@ -156,14 +163,10 @@ llvm::Value* LoadImport(Builder& builder,
                                         address(offsetof(NativeFunction::AotEntry, unscoped_slot)));
     auto* unscoped_kind = builder.CreateLoad(
         builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, unscoped_kind)));
-    selected_slot = builder.CreateSelect(
-        builder.CreateICmpEQ(
-            kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct))),
-        unscoped, slot);
-    kind = builder.CreateSelect(
-        builder.CreateICmpEQ(
-            kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct))),
-        unscoped_kind, kind);
+    auto* direct = builder.CreateICmpEQ(
+        kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct)));
+    selected_slot = builder.CreateSelect(direct, unscoped, slot);
+    kind = builder.CreateSelect(direct, unscoped_kind, kind);
   }
   // 槽类型只在此擦除，循环内只传实际入口和由 C++ 签名确定的调用约定。
   auto* target = builder.CreateLoad(builder.getPtrTy(), selected_slot);
@@ -399,11 +402,7 @@ void EmitWrapper(llvm::Module& module,
   EmitExecutionBoundary(builder);
   llvm::Value* current_image = image;
   if (function.baseline_body != nullptr) {
-    using runtime::NativeMemoryLayout;
-    auto* data = LoadProgramData(builder, entry->getArg(0));
-    auto* image_address =
-        builder.CreateConstGEP1_64(builder.getInt8Ty(), data, NativeMemoryLayout::kProgramImage);
-    current_image = builder.CreateLoad(builder.getPtrTy(), image_address);
+    current_image = LoadProgramImage(builder, entry->getArg(0));
   }
   std::vector<llvm::Value*> arguments{entry->getArg(0)};
   for (std::size_t index = 0; index < source.parameter_count; ++index) {
@@ -419,8 +418,9 @@ void EmitWrapper(llvm::Module& module,
                   kind,
                   builder.getInt8(static_cast<std::uint8_t>(runtime::NativeValueKind::String)))
             : builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(type.kind)));
-    auto* is_null = builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(Kind::Null)));
+    llvm::Value* is_null = nullptr;
     if (type.nullable) {
+      is_null = builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(Kind::Null)));
       matches = builder.CreateOr(matches, is_null);
     }
     if (IsReferenceKind(type.kind)) {

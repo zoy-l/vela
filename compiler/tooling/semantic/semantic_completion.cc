@@ -30,17 +30,6 @@ namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
 
-void AddPropertyCompletion(std::vector<Completion>& result,
-                           std::string_view name,
-                           std::string detail) {
-  result.push_back({
-      .label = std::string(name),
-      .detail = std::move(detail),
-      .kind = CompletionKind::Property,
-      .documentation = {},
-  });
-}
-
 void AddMethodCompletion(std::vector<Completion>& result,
                          std::string_view name,
                          std::string detail) {
@@ -205,24 +194,28 @@ Completion SemanticIndex::SpecializedCompletion(std::string_view owner,
   if (completion.kind != CompletionKind::Property) {
     return completion;
   }
-  const auto specialize = [&](const auto& declarations) {
+  const auto find = [owner, name](const auto& declarations) -> const frontend::FunctionDescriptor* {
     const auto declaration = declarations.find(owner);
     if (declaration == declarations.end()) {
-      return;
+      return nullptr;
     }
     const auto method = declaration->second.methods.find(name);
     if (method == declaration->second.methods.end()) {
-      return;
+      return nullptr;
     }
-    const auto& signature = method->second;
-    if (signature.is_getter) {
-      completion.detail = DisplayType(signature.return_type);
-    } else if (const auto& property_type = signature.setter_parameter_type) {
+    return &method->second;
+  };
+  const auto* signature = find(model_.classes);
+  if (signature == nullptr) {
+    signature = find(model_.interfaces);
+  }
+  if (signature != nullptr) {
+    if (signature->is_getter) {
+      completion.detail = DisplayType(signature->return_type);
+    } else if (const auto& property_type = signature->setter_parameter_type) {
       completion.detail = DisplayType(*property_type);
     }
-  };
-  specialize(model_.classes);
-  specialize(model_.interfaces);
+  }
   return completion;
 }
 
@@ -283,7 +276,12 @@ void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
     }
     const auto signature = frontend::DescribeAsyncMember(member, element);
     if (member.kind == MemberKind::Property) {
-      AddPropertyCompletion(result, member.name, std::string(signature.return_type.name));
+      result.push_back({
+          .label = std::string(member.name),
+          .detail = std::string(signature.return_type.name),
+          .kind = CompletionKind::Property,
+          .documentation = {},
+      });
     } else {
       AddMethodCompletion(result, member.name, BuiltinDetail(signature));
     }
@@ -318,14 +316,18 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
   }
 }
 
+bool SemanticIndex::IsLocalVisible(const Local& local, std::size_t offset) {
+  const auto& scope = local.scope;
+  return scope.source == 0 && offset >= local.available && offset >= scope.begin &&
+         offset < scope.end;
+}
+
 absl::flat_hash_map<std::string, Completion> SemanticIndex::VisibleLocals(
     std::size_t offset,
     std::string_view prefix) const {
   std::vector<const Local*> locals;
   for (const auto& local : locals_) {
-    const auto& scope = local.scope;
-    if (scope.source == 0 && offset >= local.available && offset >= scope.begin &&
-        offset < scope.end) {
+    if (IsLocalVisible(local, offset)) {
       locals.push_back(&local);
     }
   }
@@ -359,9 +361,7 @@ std::vector<Completion> SemanticIndex::QualifiedCompletions(std::size_t token_in
     return {};
   }
   const auto shadowed = std::ranges::any_of(locals_, [&](const Local& local) {
-    const auto& scope = local.scope;
-    return scope.source == 0 && offset >= local.available && offset >= scope.begin &&
-           offset < scope.end && symbols_[local.symbol].completion.label == name;
+    return IsLocalVisible(local, offset) && symbols_[local.symbol].completion.label == name;
   });
   if (shadowed) {
     return {};
@@ -427,9 +427,13 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
     return {};
   }
   const auto& tokens = source.tokens;
-  const auto current = TokenIndexAt(tokens, offset).value_or(0);
+  const auto* selected = QueryToken(offset, TokenQuery::Nearest);
+  if (selected == nullptr) {
+    return {};
+  }
+  const auto current = static_cast<std::size_t>(selected - tokens.data());
   const auto& token = tokens[current];
-  const auto prefix = frontend::IsMemberName(token.kind) && offset >= token.offset
+  const auto prefix = IsNameLikeToken(token.kind) && offset >= token.offset
                           ? source.text.substr(token.offset, offset - token.offset)
                           : std::string_view();
   if (frontend::IsStringToken(token.kind)) {

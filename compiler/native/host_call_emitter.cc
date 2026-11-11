@@ -423,7 +423,7 @@ void FunctionEmitter::EmitImport() {
   for (std::size_t index = 0; index < source_.parameter_count; ++index) {
     const auto reg = static_cast<ir::RegisterId>(index);
     if (const auto slot = roots_.slots.at(reg)) {
-      WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
+      StoreRootValue(reg, RootAddress(*slot));
     }
     const auto& type = source_.value_types.at(reg);
     parameters.push_back(type.kind == Kind::Dynamic || HasValidity(type) ? Pack(Encode(reg), index)

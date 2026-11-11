@@ -69,6 +69,15 @@ bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
          (target && generated_[target->function].square_root);
 }
 
+void FunctionEmitter::CacheRuntimeCalls() {
+  runtime_calls_.resize(source_.instructions.size());
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    runtime_calls_[index] = static_cast<std::uint8_t>(
+        ir::AnalyzeEffects(source_.instructions[index]).MayCollectOnSuccess() &&
+        !HasInlineRuntimePath(index));
+  }
+}
+
 llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
   const auto& type = source_.value_types.at(reg);
   if (IsRecovering()) {
@@ -250,12 +259,8 @@ void FunctionEmitter::Poll() {
 bool FunctionEmitter::IsBoundaryPollRequired(std::size_t index) const {
   const auto flags = roots_.safepoints.at(index);
   return (flags & kNativeSafepointBoundary) != 0 ||
-         ((flags & kNativeSafepointBeforeRuntime) != 0 &&
-          ir::AnalyzeEffects(source_.instructions.at(index)).MayCollectOnSuccess() &&
-          !HasInlineRuntimePath(index)) ||
-         ((flags & kNativeSafepointAfterRuntime) != 0 &&
-          ir::AnalyzeEffects(source_.instructions.at(index - 1)).MayCollectOnSuccess() &&
-          !HasInlineRuntimePath(index - 1));
+         ((flags & kNativeSafepointBeforeRuntime) != 0 && runtime_calls_[index] != 0) ||
+         ((flags & kNativeSafepointAfterRuntime) != 0 && runtime_calls_[index - 1] != 0);
 }
 
 void FunctionEmitter::PrepareInlineRuntimeCall() {
@@ -311,7 +316,7 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     }
     const auto& live = roots_.stores.at(instruction_index_);
     for (std::size_t index = 0; index < live.size(); ++index) {
-      WriteHeapValue(RootAddress(index), live.at(index), MemoryRegion::Roots);
+      StoreRootValue(live.at(index), RootAddress(index));
     }
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
     if (leaf_entry_) {
@@ -331,16 +336,15 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     return;
   }
   SetPosition();
+  std::optional<std::uint32_t> handler;
   if (!source_.instructions.empty()) {
     // 失败封套可以分配；条件式运行时调用的成功分支可能尚未登记当前活动值。
     StoreRoots(instruction_index_);
+    handler = source_.instructions.at(instruction_index_).handler;
   }
   auto failure = module_.getOrInsertFunction(runtime::kNativeFailureSymbol, builder_.getInt8Ty(),
                                              builder_.getPtrTy(), builder_.getInt8Ty());
   auto* propagated = builder_.CreateCall(failure, {body_->getArg(0), status});
-  const auto handler = source_.instructions.empty()
-                           ? std::optional<std::uint32_t>()
-                           : source_.instructions.at(instruction_index_).handler;
   if (handler) {
     auto pending = module_.getOrInsertFunction(runtime::kNativeHasExceptionSymbol,
                                                builder_.getInt8Ty(), builder_.getPtrTy());
@@ -649,12 +653,11 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   const auto& instruction = source_.instructions.at(index);
   instruction_index_ = index;
   builder_.SetInsertPoint(blocks_.at(index));
-  const auto effects = ir::AnalyzeEffects(instruction);
   const auto safepoint = IsBoundaryPollRequired(index);
   if (safepoint && kind_ != NativeEntryKind::Leaf) {
     Poll();
   }
-  if (effects.MayCollectOnSuccess() && !HasInlineRuntimePath(index)) {
+  if (runtime_calls_[index] != 0) {
     PrepareRuntimeCall();
   }
   if (instruction.construction) {
@@ -719,9 +722,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
     EmitExecutionBoundary(builder_);
   }
   if (program_.native_mode == NativeProgramMode::Reloadable) {
-    image_ = builder_.CreateLoad(builder_.getPtrTy(),
-                                 ByteAddress(LoadProgramData(builder_, body_->getArg(0)),
-                                             runtime::NativeMemoryLayout::kProgramImage));
+    image_ = LoadProgramImage(builder_, body_->getArg(0));
   }
   GuardResume();
   PrepareFrame();
@@ -735,6 +736,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   CacheConstants();
   CacheNativeStringViews();
   CacheMapLookups();
+  CacheRuntimeCalls();
   CacheFixedArrayStorage();
   CacheGlobals();
   CacheFields();
@@ -810,6 +812,7 @@ NativeRootPlan EscapeRoots(const ir::Program& program,
         .materialized = materialized,
         .minimum_root_count = canonical_roots.count,
         .minimum_temporary_count = temporary,
+        .uniform_values = {},
     };
   }
   if (std::ranges::any_of(escape.borrowed_calls,
@@ -841,12 +844,16 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
       .placement = placement,
       .field_targets = &field_targets,
       .temporary_count = PlanTemporaryCount(function, program, roots),
+      .suspension_capacity = 0,
       .field_accesses = {},
       .field_kind_writes = FindFieldKindWrites(function, program, roots.safepoints),
       .direct_calls = {},
       .arrays = {},
       .global_access = &global_access,
   };
+  for (const auto& suspended : roots.suspended) {
+    facts.suspension_capacity = std::max(facts.suspension_capacity, suspended.size());
+  }
   const auto& canonical = program.functions.at(function_index);
   if (roots.bounded_polls) {
     if (IsClosedLinkedProgram(program.native_mode, placement) && !canonical.is_async) {
@@ -1000,11 +1007,10 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     NativeDebugging debugging,
     NativeCodePlacement placement) {
   const auto& function = plan.function.get();
-  const std::vector<std::vector<ir::RegisterId>> required(function.instructions.size(),
-                                                          plan.borrowed_fields);
-  const auto roots = PlanNativeRoots(function, program.functions, program.native_mode, debugging,
-                                     {.values = required, .safepoints = {}, .materialized = {}},
-                                     global_access.readonly_slots);
+  const auto roots = PlanNativeRoots(
+      function, program.functions, program.native_mode, debugging,
+      {.values = {}, .safepoints = {}, .materialized = {}, .uniform_values = plan.borrowed_fields},
+      global_access.readonly_slots);
   const auto facts =
       PlanEmissionFacts(program, calls, field_targets, array_access, global_access, function_index,
                         plan, roots, NativeCodeTier::Baseline, placement);

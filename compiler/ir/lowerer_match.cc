@@ -32,16 +32,7 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
       } else {
         label = LowerConstantLabel(*arm.pattern);
       }
-      const auto matches = AllocateRegister(arm.location);
-      Emit({
-          .opcode = SelectEqualityOpcode(original.type),
-          .dst = matches,
-          .lhs = selector,
-          .rhs = label,
-          .location = arm.location,
-      });
-      mismatch = current_function_->instructions.size();
-      Emit({.opcode = Opcode::JumpIfFalse, .lhs = matches, .location = arm.location});
+      mismatch = LowerLabelMismatch({.reg = selector, .type = original.type}, label, arm.location);
     }
     PushScope();
     if (arm.kind == frontend::MatchArm::Kind::Binding) {
@@ -52,8 +43,10 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
     const auto value = LowerExpression(*arm.value);
     Emit({.opcode = Opcode::Move, .dst = result, .lhs = value.reg, .location = arm.location});
     PopScope();
-    exits.push_back(current_function_->instructions.size());
-    Emit({.opcode = Opcode::Jump, .location = arm.location});
+    if (&arm != &expression.arms.back()) {
+      exits.push_back(current_function_->instructions.size());
+      Emit({.opcode = Opcode::Jump, .location = arm.location});
+    }
     if (mismatch) {
       BindJump(*mismatch);
     }

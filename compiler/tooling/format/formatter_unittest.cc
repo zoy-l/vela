@@ -26,6 +26,19 @@ TEST(FormatterTest, FormatsMapEntriesAndPreservesLambdaParenthesesIdempotently) 
   EXPECT_EQ(*second, *formatted);
 }
 
+TEST(FormatterTest, KeepsAttributesOnDeclarationLinesAndArraysAsExpressions) {
+  const auto formatted = FormatSource(
+      "[Reflect]class Counter{[Button(label:'reset')]reset():void{[1,2][0];}}"
+      "class Button extends Reflect{label:string='';}");
+  ASSERT_TRUE(formatted) << frontend::DiagnosticsText(formatted.error());
+  EXPECT_TRUE(formatted->contains("[Reflect]\nclass Counter"));
+  EXPECT_TRUE(formatted->contains("  [Button(label: 'reset')]\n  reset(): void"));
+  EXPECT_TRUE(formatted->contains("[1, 2][0];"));
+  const auto repeated = FormatSource(*formatted);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*formatted, *repeated);
+}
+
 TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
   const auto result = FormatSource(
       "func main():int{let value=40;for(let i=0;i<2;i=i+1){value=value+1;}return value;}");

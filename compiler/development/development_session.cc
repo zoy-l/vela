@@ -1,4 +1,5 @@
 #include "compiler/development/development_session.h"
+#include "compiler/development/reflection_changes.h"
 
 #include <cassert>
 #include <chrono>
@@ -107,7 +108,7 @@ SourceUpdate FullUpdate(const CompiledSourceSnapshot& previous, const SourceUpda
                           });
   }
   for (const auto& change : update.changes) {
-    const auto path = PathText(Utf8Path(change.path).lexically_normal());
+    const auto path = NormalizePath(change.path);
     if (change.text) {
       sources.insert_or_assign(path, change);
     } else {
@@ -115,6 +116,7 @@ SourceUpdate FullUpdate(const CompiledSourceSnapshot& previous, const SourceUpda
     }
   }
   SourceUpdate full;
+  full.reflection = update.reflection ? update.reflection : std::optional(previous.reflection);
   for (auto& [path, change] : sources) {
     full.changes.push_back(std::move(change));
   }
@@ -156,7 +158,7 @@ DevelopmentSession::DevelopmentSession(std::string entry,
       bindings_(std::move(bindings)),
       options_(std::move(options)),
       compiler_(std::move(compiler)),
-      sources_(std::make_shared<SourceSession>(entry_, options_.diagnostics)),
+      sources_(std::make_shared<SourceSession>(entry_, options_.diagnostics, options_.reflection)),
       isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold)),
       endpoint_(isolate_->native_control().endpoint()) {
   isolate_->native_control().SetDebugger(options_.debugger);
@@ -225,7 +227,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   }
   if (operation == DevelopmentOperation::Load) {
     for (const auto& change : update.changes) {
-      const auto path = PathText(Utf8Path(change.path).lexically_normal());
+      const auto path = NormalizePath(change.path);
       if (!change.text || previous->sources.contains(path)) {
         result.status = DevelopmentStatus::SourceError;
         result.message = "Load only adds modules; edit existing modules with Hot Reload or Reload";
@@ -236,7 +238,8 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   const auto started = Clock::now();
   std::unique_ptr<SourceSession> replacement;
   if (operation == DevelopmentOperation::Reload) {
-    replacement = std::make_unique<SourceSession>(entry_, options_.diagnostics);
+    replacement =
+        std::make_unique<SourceSession>(entry_, options_.diagnostics, options_.reflection);
   }
   auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update))
                             : base.sources->Prepare(update, retained);
@@ -269,6 +272,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   result.diagnostics = source->snapshot().diagnostics;
   result.timings.frontend = source->snapshot().timings;
   result.changes.compiled_functions = code->compiled_functions;
+  DescribeReflectionChanges(previous->program, source->snapshot().program, result.changes);
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),
                               std::move(replacement), std::move(result));
 }
@@ -613,7 +617,7 @@ std::expected<runtime::NativeResolvedDeclaration, ExecutionStatus> DevelopmentSe
     const auto module = identities.Find({
         .owner = {},
         .kind = DeclarationKind::Module,
-        .name = PathText(Utf8Path(requested.module).lexically_normal()),
+        .name = NormalizePath(requested.module),
         .arguments = {},
     });
     if (!module) {

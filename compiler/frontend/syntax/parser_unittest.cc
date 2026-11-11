@@ -17,6 +17,28 @@
 namespace vela::frontend {
 namespace {
 
+TEST(ParserTest, ParsesStandaloneTypesWithTheLanguageGrammar) {
+  for (const std::string_view source : {"int", "Box<int?>[]", "Map<string, Future<int>>", "void"}) {
+    const auto parsed = ParseTypeSource(source);
+    ASSERT_TRUE(parsed) << source;
+    EXPECT_EQ(parsed->ToString(), source);
+  }
+  for (const std::string_view source : {
+           "",
+           "int;",
+           "Box<",
+           "Box<int",
+           "Map<string, int",
+           "Box<Map<string, int>",
+           "int trailing",
+           "int = 1",
+       }) {
+    const auto parsed = ParseTypeSource(source);
+    ASSERT_FALSE(parsed) << source;
+    EXPECT_FALSE(parsed.error().empty());
+  }
+}
+
 TEST(LexerTest, QuotesSourceTextWithoutInterpolationOrControlByteLoss) {
   std::string value = "quote'\\$\n\r\t";
   value.push_back('\0');
@@ -47,6 +69,7 @@ external class Host = 'test.Host' {
   set(value: int): void;
   match(): int;
 }
+
 func get(): void { print(1); }
 func use(host: Host): void { host.get(); host.set(-1); print(host.match()); }
 )");
@@ -61,6 +84,15 @@ func use(host: Host): void { host.get(); host.set(-1); print(host.match()); }
   EXPECT_EQ(host.methods[2].name, "match");
   EXPECT_EQ(parsed.program.functions.front().name, "get");
   EXPECT_EQ(parsed.program.functions.front().return_type.ToString(), "void");
+}
+
+TEST(ParserTest, ReportsMissingNativeStringsAtTheTokenBoundary) {
+  const auto host = ParseSource("external class Host = 42;");
+  ASSERT_EQ(host.diagnostics.size(), 1U);
+  EXPECT_EQ(host.diagnostics.front().message, "expected native class key string");
+  const auto function = ParseSource("external func invoke(): void = 42;");
+  ASSERT_EQ(function.diagnostics.size(), 1U);
+  EXPECT_EQ(function.diagnostics.front().message, "expected native symbol string");
 }
 
 TEST(ParserTest, ParsesRadixIntegersWithSignedBoundsAndPreservesSpelling) {

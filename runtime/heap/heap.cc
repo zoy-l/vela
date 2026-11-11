@@ -1,4 +1,5 @@
 #include "runtime/heap/heap.h"
+#include "runtime/reflection/reflection_handle.h"
 
 #include <algorithm>
 #include <array>
@@ -453,6 +454,9 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
       return;
     case ObjectKind::NativeProgram:
       MarkNativeProgram(object);
+      return;
+    case ObjectKind::Reflection:
+      MarkValue(StorageAfter<ReflectionHandle>(object)->anchor);
       return;
     case ObjectKind::Future:
     case ObjectKind::Completer:

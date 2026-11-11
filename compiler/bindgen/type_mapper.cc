@@ -71,19 +71,20 @@ clang::QualType Argument(const clang::ClassTemplateSpecializationDecl& type, uns
   return arguments[index].getAsType().getCanonicalType();
 }
 
-bool IsCharTemplate(clang::QualType type, std::string_view name) {
-  const auto* specialization = StandardTemplate(type, name);
-  if (specialization == nullptr) {
-    return false;
-  }
-  const auto character = Argument(*specialization, 0);
+bool HasCharArgument(const clang::ClassTemplateSpecializationDecl& specialization) {
+  const auto character = Argument(specialization, 0);
   return !character.isNull() && (character->isSpecificBuiltinType(clang::BuiltinType::Char_S) ||
                                  character->isSpecificBuiltinType(clang::BuiltinType::Char_U));
 }
 
+bool IsCharTemplate(clang::QualType type, std::string_view name) {
+  const auto* specialization = StandardTemplate(type, name);
+  return specialization != nullptr && HasCharArgument(*specialization);
+}
+
 bool IsString(clang::QualType type, std::string_view name) {
   const auto* specialization = StandardTemplate(type, name);
-  if (specialization == nullptr || !IsCharTemplate(type, name)) {
+  if (specialization == nullptr || !HasCharArgument(*specialization)) {
     return false;
   }
   const auto traits = Argument(*specialization, 1);
@@ -312,8 +313,9 @@ MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
     return Unsupported(tag, context, "ScriptTypeTraits.kName requires a constant declaration name");
   }
   const bool is_enum = *type_kind == "Enum";
-  const bool enum_wrapper = wrapper.getSpecializedTemplate()->getName() == "Enum";
-  const bool host_wrapper = wrapper.getSpecializedTemplate()->getName() == "Host";
+  const auto wrapper_name = wrapper.getSpecializedTemplate()->getName();
+  const bool enum_wrapper = wrapper_name == "Enum";
+  const bool host_wrapper = wrapper_name == "Host";
   if (is_enum != enum_wrapper || (*type_kind == "Host") != host_wrapper ||
       (!is_enum && *type_kind != "Class" && *type_kind != "Interface" && *type_kind != "Host")) {
     return Unsupported(tag, context, "Object/Enum/Host must match ScriptTypeTraits.kKind");
@@ -409,10 +411,11 @@ MappedType MapLogicalContainer(clang::QualType type,
                                clang::ASTContext& context,
                                const HostTypes& hosts) {
   using Kind = layout::Type::Kind;
-  const auto qualified = container.getSpecializedTemplate()->getQualifiedNameAsString();
+  const auto* declaration = container.getSpecializedTemplate();
+  const auto qualified = declaration->getQualifiedNameAsString();
   auto element = LogicalType(Argument(container, 0), context, hosts);
   const bool async = kind == Kind::Future || kind == Kind::Completer;
-  std::string path = container.getSpecializedTemplate()->getNameAsString();
+  std::string path = declaration->getNameAsString();
   if (async) {
     path += ".payload";
   } else if (qualified == "vela::Map") {

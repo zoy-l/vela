@@ -74,6 +74,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   // 泛型定义先在抽象参数环境下检查，具体特化之后只验证具体布局与执行契约。
   CheckDefinitions(program);
   RestoreMethodSpecializations(retained);
+  CheckReflectionSelections(program);
   // 普通声明先注册；检查函数体时按需注册特化，描述对象保持稳定地址。
   for (const Function& function : program.functions) {
     specializer.SetExpansionOwner(function.name);
@@ -93,11 +94,13 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
     }
   }
   specializer.Publish();
+  ResolveNominalArguments(program);
   for (const auto& source : program.classes) {
     if (const auto found = classes_.find(source.name); found != classes_.end()) {
       found->second.declaration = &source;
     }
   }
+  CheckAttributes(program);
   SemanticModel model;
   for (const auto& [identity, parameter] : type_parameters_) {
     if (parameter.bound) {
@@ -119,6 +122,8 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   model.type_applications = specializer.TakeTypeApplications();
   model.definitions = std::move(definitions_);
   model.json_decode_requests = std::move(json_decode_requests_);
+  model.reflection = std::move(reflection_);
+  model.attributes = std::move(attributes_);
   for (auto& diagnostic : BuildJSONDecodePlans(model)) {
     AddDiagnostic(diagnostic.location, std::move(diagnostic.message));
   }
@@ -163,7 +168,11 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
   info.storage = function.storage;
   info.is_getter = function.is_getter;
   info.is_setter = function.is_setter;
-  info.is_generic_application = function.application.has_value();
+  if (function.application) {
+    for (const auto& argument : function.application->arguments) {
+      info.type_arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
+    }
+  }
   if (function.return_type.kind != TypeName::Kind::Inferred) {
     info.return_type = ResolveType(function.return_type, VoidTypePolicy::Allowed);
   } else if (context != nullptr) {
@@ -197,9 +206,7 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   if (owner == nullptr) {
     const auto found = functions_.find(function.name);
     if (found != functions_.end()) {
-      // 检查函数体可能登记新的函数签名，不能跨 rehash 借用表内描述。
-      const auto signature = found->second;
-      CheckFunctionBody(function, signature, owner);
+      CheckFunctionBody(function, found->second, owner);
     }
     return;
   }
@@ -207,9 +214,12 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   if (found == owner->methods.end()) {
     return;
   }
-  const auto signature =
-      function.is_getter || function.is_setter ? ResolveSignature(function) : found->second;
-  CheckFunctionBody(function, signature, owner);
+  if (function.is_getter || function.is_setter) {
+    const auto signature = ResolveSignature(function);
+    CheckFunctionBody(function, signature, owner);
+  } else {
+    CheckFunctionBody(function, found->second, owner);
+  }
 }
 
 void TypeChecker::CheckFunctionBody(const Function& function,
@@ -219,7 +229,7 @@ void TypeChecker::CheckFunctionBody(const Function& function,
   in_async_function_ = function.is_async;
   refinements_.Clear();
   constant_bindings_.clear();
-  const auto return_type = function_info.return_type;
+  const auto& return_type = function_info.return_type;
   in_constructor_ = owner != nullptr && function.name == kConstructorName;
   if (function.is_async && return_type.kind != Type::Kind::Future) {
     AddDiagnostic(function.return_type.location, "async function return type must be Future<T>");
@@ -257,7 +267,7 @@ bool TypeChecker::CanFallThrough(const Function& function, const Type& return_ty
   if (!function.is_async || return_type.kind != Type::Kind::Future) {
     return false;
   }
-  return generic_arguments_.at(return_type.name).front().kind == Type::Kind::Void;
+  return IsVoidCallbackResult(return_type);
 }
 
 TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, const Type* expected) {
@@ -515,15 +525,10 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
     InvalidateCapturedRefinements();
     return CheckDynamicCall(expression);
   }
-  if (object.nullable) {
-    if (!expression.callee->null_safe) {
-      AddDiagnostic(expression.callee->object->location,
-                    "nullable receiver requires a non-null check");
-      return InvalidType();
-    }
+  if (CheckReceiverNullability(*expression.callee, object) == CheckStatus::Failed) {
+    return InvalidType();
   }
-  const Type receiver_type = object.nullable ? NonNullable(object) : object;
-  Type result = CheckMethodReceiver(expression, receiver_type, expected);
+  Type result = CheckMethodReceiver(expression, object, expected);
   if (expression.callee->null_safe && IsValid(result) && result.kind != Type::Kind::Void) {
     result = NullableType(result);
   }
@@ -622,8 +627,8 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
                                    expected, MethodAccess::Instance)) {
       return *applied;
     }
-    const auto method = class_info->second.methods.find(expression.callee->text);
-    if (method != class_info->second.methods.end()) {
+    const auto method = owner.methods.find(expression.callee->text);
+    if (method != owner.methods.end()) {
       CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
@@ -639,8 +644,8 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
           MemberReference{.owner = method->second.member_owner, .member = expression.callee->text});
       return CheckFunctionCall(method->second, expression);
     }
-    const auto field = class_info->second.fields.find(expression.callee->text);
-    if (field != class_info->second.fields.end() &&
+    const auto field = owner.fields.find(expression.callee->text);
+    if (field != owner.fields.end() &&
         (field->second.type.kind == Type::Kind::Dynamic ||
          (field->second.type.kind == Type::Kind::Function && !field->second.type.nullable))) {
       CheckAccess(field->second.visibility, object.name, expression.location);
@@ -695,6 +700,7 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
   const auto location = expression.location;
   std::vector<bool> assigned(function.parameters.size(), false);
   std::vector<std::uint32_t> order;
+  order.reserve(arguments.size());
   std::size_t positional = 0;
   bool named = false;
   for (std::size_t source_index = 0; source_index < arguments.size(); ++source_index) {
@@ -833,8 +839,9 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   if (type.kind == Type::Kind::Void) {
     AddDiagnostic(statement.location, "void is not a value type");
   }
-  const bool assignable = IsValid(type) && IsValid(initializer) && CanAssign(type, initializer);
-  if (IsValid(type) && IsValid(initializer) && !assignable) {
+  const bool valid = IsValid(type) && IsValid(initializer);
+  const bool assignable = valid && CanAssign(type, initializer);
+  if (valid && !assignable) {
     AddDiagnostic(statement.location, "cannot initialize '" + TypeNameFor(type) + "' with '" +
                                           TypeNameFor(initializer) + "'");
   }
@@ -918,26 +925,19 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   const Type index = CheckExpression(*expression.index, nullptr);
   const Type integer{.kind = Type::Kind::Int, .name = kIntTypeName};
   RecordConversion(*expression.index, integer, index);
+  if (!CanAssign(integer, index)) {
+    AddDiagnostic(expression.index->location, "index must be int");
+  }
   if (object.kind == Type::Kind::Dynamic) {
-    if (!CanAssign(integer, index)) {
-      AddDiagnostic(expression.index->location, "index must be int");
-    }
     return object;
   }
-  if (object.nullable) {
-    if (!expression.null_safe) {
-      AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
-      return InvalidType();
-    }
-    object = NonNullable(object);
+  if (CheckReceiverNullability(expression, object) == CheckStatus::Failed) {
+    return InvalidType();
   }
   if (object.kind != Type::Kind::Array && object.kind != Type::Kind::String &&
       object.kind != Type::Kind::ByteArray && object.kind != Type::Kind::RegExpMatch) {
     AddDiagnostic(expression.location,
                   "indexing requires an array, ByteArray, string, or RegExpMatch");
-  }
-  if (!CanAssign(integer, index)) {
-    AddDiagnostic(expression.index->location, "index must be int");
   }
   if (object.kind == Type::Kind::String) {
     facts_.builtin_calls.insert_or_assign(&expression, Builtin::StringIndex);
@@ -1002,16 +1002,12 @@ TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   Type operand = CheckExpression(*expression.operand, nullptr);
   operand = ParameterCapability(operand, expression.operand->location);
-  if ((expression.operation == TokenKind::PlusPlus ||
-       expression.operation == TokenKind::MinusMinus) &&
-      facts_.builtin_calls.contains(expression.operand.get())) {
-    AddDiagnostic(expression.operand->location,
-                  "builtin properties and indexed values are immutable");
-  }
-  if ((expression.operation == TokenKind::PlusPlus ||
-       expression.operation == TokenKind::MinusMinus) &&
-      !IsAssignable(*expression.operand)) {
-    AddDiagnostic(expression.operand->location, "increment operand is not assignable");
+  if (expression.operation == TokenKind::PlusPlus ||
+      expression.operation == TokenKind::MinusMinus) {
+    CheckBuiltinAssignment(*expression.operand);
+    if (!IsAssignable(*expression.operand)) {
+      AddDiagnostic(expression.operand->location, "increment operand is not assignable");
+    }
   }
   if (expression.operation == TokenKind::Bang) {
     CheckBooleanOperand(*expression.operand, operand, "'!' requires a bool operand");
@@ -1079,7 +1075,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   if (CheckAssignmentTarget(*expression.left) == CheckStatus::Failed) {
     return InvalidType();
   }
-  static_cast<void>(CheckAssignedBinding(*expression.left));
+  const auto binding = CheckAssignedBinding(*expression.left);
   const auto left = CheckExpression(*expression.left, nullptr);
   const auto right = CheckExpression(*expression.right, &left);
   if (expression.left->kind == Expression::Kind::Member) {
@@ -1087,17 +1083,13 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
     RecordConversion(*expression.right, left, right);
-    if (expression.left->kind == Expression::Kind::Name) {
-      if (const auto* binding = LookupLocal(expression.left->text)) {
-        refinements_.Erase(binding->id);
-      }
+    if (binding) {
+      refinements_.Erase(binding->id);
     }
     return left.kind == Type::Kind::Dynamic ? left
                                             : CheckCompoundAssignmentTypes(expression, left, left);
   }
-  if (facts_.builtin_calls.contains(expression.left.get())) {
-    AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
-  }
+  CheckBuiltinAssignment(*expression.left);
   if (!IsValid(left) || !IsValid(right)) {
     return InvalidType();
   }
@@ -1327,16 +1319,15 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   if (binding) {
     left = binding->type;
   }
-  if (facts_.builtin_calls.contains(expression.left.get())) {
-    AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
-  }
+  CheckBuiltinAssignment(*expression.left);
   const Type right = CheckExpression(*expression.right, &left);
   RecordConversion(*expression.right, left, right);
-  const bool assignable = IsValid(left) && IsValid(right) && CanAssign(left, right);
+  const bool valid = IsValid(left) && IsValid(right);
+  const bool assignable = valid && CanAssign(left, right);
   if (binding) {
     RefineAssignedLocal(*binding, assignable ? right : InvalidType());
   }
-  if (IsValid(left) && IsValid(right) && !assignable) {
+  if (valid && !assignable) {
     AddDiagnostic(expression.location, "assignment types do not match");
     return InvalidType();
   }
@@ -1365,6 +1356,24 @@ std::optional<TypeChecker::LocalBinding> TypeChecker::CheckAssignedBinding(
   return *local;
 }
 
+TypeChecker::CheckStatus TypeChecker::CheckReceiverNullability(const Expression& access,
+                                                               Type& receiver) {
+  if (receiver.nullable) {
+    if (!access.null_safe) {
+      AddDiagnostic(access.object->location, "nullable receiver requires a non-null check");
+      return CheckStatus::Failed;
+    }
+    receiver = NonNullable(receiver);
+  }
+  return CheckStatus::Succeeded;
+}
+
+void TypeChecker::CheckBuiltinAssignment(const Expression& target) {
+  if (facts_.builtin_calls.contains(&target)) {
+    AddDiagnostic(target.location, "builtin properties and indexed values are immutable");
+  }
+}
+
 TypeChecker::CheckStatus TypeChecker::CheckAssignmentTarget(const Expression& target) {
   if (!IsAssignable(target)) {
     AddDiagnostic(target.location, "left side of assignment is not assignable");
@@ -1379,10 +1388,10 @@ void TypeChecker::CheckMemberAssignment(const Expression& member) {
   if (const auto found = facts_.static_members.find(&member);
       found != facts_.static_members.end()) {
     const auto& owner = classes_.at(found->second.owner);
+    const auto source_id = owner.declaration->location.source_id;
     read_only = read_only || owner.methods.contains(found->second.member) ||
-                (!sources_.empty() && sources_.subspan(owner.declaration->location.source_id)
-                                          .front()
-                                          .path.starts_with(kStandardSourcePrefix));
+                (source_id < sources_.size() &&
+                 sources_[source_id].path.starts_with(kStandardSourcePrefix));
   } else if (const auto object = facts_.expression_types.find(member.object.get());
              object != facts_.expression_types.end() && object->second.kind == Type::Kind::Class) {
     const auto& methods = classes_.at(NonNullable(object->second).name).methods;

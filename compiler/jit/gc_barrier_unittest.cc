@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -70,8 +71,8 @@ export func readGlobal(owner: Holder): int {
   const auto& [configuration, marked, phase] = GetParam();
   const auto [mode, tier] = configuration;
   if (mode == NativeProgramMode::Closed) {
-    const auto compiled =
-        CompileSource(**compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}});
+    const auto compiled = CompileSource(
+        **compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}});
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     auto created = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
     ASSERT_TRUE(created);
@@ -108,8 +109,9 @@ export func readGlobal(owner: Holder): int {
     ASSERT_TRUE(holder.Succeeded());
     const runtime::Value owner = holder.value;
     const runtime::RootRange owner_root(heap, &owner, 1);
-    const bool string_store = std::string(store_name) == "stringStore";
-    const bool dynamic_store = std::string(store_name) == "dynamicStore";
+    const std::string_view store_kind = store_name;
+    const bool string_store = store_kind == "stringStore";
+    const bool dynamic_store = store_kind == "dynamicStore";
     const auto node = runtime::ExecuteNativeFunction(instance, *make_node);
     ASSERT_TRUE(node.Succeeded());
     const auto value =
@@ -135,7 +137,7 @@ export func readGlobal(owner: Holder): int {
     const auto read = instance.FindFunction(read_name);
     ASSERT_TRUE(store);
     ASSERT_TRUE(read);
-    const auto entry = instance.image().functions.values().subspan(*store).front().entry;
+    const auto entry = instance.image().functions.values()[*store].entry;
     const std::array arguments{
         runtime::EncodeNativeValue(owner),
         runtime::EncodeNativeValue(value),

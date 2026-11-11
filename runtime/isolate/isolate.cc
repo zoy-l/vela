@@ -119,7 +119,8 @@ void Isolate::SetOutput(std::ostream& output) noexcept {
 ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
                                         std::span<const std::uint32_t> reference_fields,
                                         ClassLayoutOptions options) {
-  if (options.is_enum && options.nominal != nullptr && options.nominal->fixed_layout_ != nullptr) {
+  if ((options.is_enum || options.is_metadata) && options.nominal != nullptr &&
+      options.nominal->fixed_layout_ != nullptr) {
     if (native_layout_transactions_ == 0) {
       native_metadata_.classes.erase(options.nominal->fixed_layout_);
     }
@@ -152,6 +153,8 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   }
   result->nominal_ = nominal;
   result->storage_ = options.storage;
+  result->is_metadata_ = options.is_metadata;
+  result->reflection_identity_ = options.reflection_identity;
   result->field_declarations_ = std::move(options.field_declarations);
   const auto declarations = result->field_declarations();
   for (std::size_t index = 0; index < declarations.size(); ++index) {

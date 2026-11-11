@@ -54,7 +54,6 @@ class Lexer final {
   };
   void ScanQuestion(std::size_t start);
   void ScanArithmetic(PunctuationContext context);
-  void ScanComparison(PunctuationContext context);
   void ScanEquals(std::size_t start);
   void ScanLess(std::size_t start);
   void ScanGreater(std::size_t start);

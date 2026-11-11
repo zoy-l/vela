@@ -1,11 +1,12 @@
 #include "compiler/development/development_files.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -14,8 +15,8 @@
 
 #include <gtest/gtest.h>
 
-#include "base/file.h"
 #include "base/path.h"
+#include "base/reflection.h"
 #include "base/testing/directory.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
@@ -28,12 +29,13 @@ namespace {
 
 class DevelopmentFilesTest : public test::DirectoryTest {
  protected:
-  void Write(std::string_view path, std::string_view source) {
-    ASSERT_TRUE(
-        WriteFileAtomically(directory() / Utf8Path(path), std::as_bytes(std::span(source))));
-  }
-  [[nodiscard]] std::string Path(std::string_view path) const {
-    return PathText(directory() / Utf8Path(path));
+  static void CommitAndAccept(DevelopmentFiles& files,
+                              SourceSession& sources,
+                              SourceUpdate update) {
+    const auto candidate = sources.Prepare(std::move(update));
+    ASSERT_TRUE(candidate) << frontend::DiagnosticsText(candidate.error().diagnostics);
+    ASSERT_TRUE(sources.Commit(*candidate));
+    ASSERT_TRUE(files.Accept(sources.snapshot()));
   }
   void MakeDirectory(std::string_view path) {
     std::error_code error;
@@ -58,6 +60,127 @@ class DevelopmentFilesTest : public test::DirectoryTest {
     });
   }
 };
+
+TEST_F(DevelopmentFilesTest, CapturesReflectionOnlyModulesAndConfigurationAsOneSnapshot) {
+  constexpr std::string_view kConfiguration = R"({"reflection":[
+    {"module":"models","type":"Counter","members":[{"kind":"field","name":"value"}]}
+  ]})";
+  Write("vela.json", kConfiguration);
+  Write("main.vela", "func main(): void {}");
+  Write("models.vela", "class Counter { value: int = 1; }");
+  DevelopmentFiles files(Path("main.vela"));
+  const auto update = files.Capture(CompiledSourceSnapshot{});
+  ASSERT_TRUE(update);
+  const auto& registration = update->reflection;
+  if (!registration) {
+    FAIL() << "reflection capture omitted its registration update";
+  }
+  ASSERT_EQ(registration->size(), 1U);
+  Write("vela.json", R"({"reflection":[]})");
+  SourceSession session(files.entry());
+  const auto candidate = session.Prepare(*update);
+  ASSERT_TRUE(candidate);
+  const auto& snapshot = candidate->snapshot();
+  EXPECT_TRUE(snapshot.sources.contains(Path("models.vela")));
+  const auto& types = snapshot.program.reflection_types;
+  EXPECT_TRUE(std::ranges::any_of(types, [](const auto& type) {
+    return type.name == "Counter" && (type.flags & reflection::kRegistered) != 0;
+  }));
+  const auto& paths = snapshot.program.source_paths;
+  const auto configuration = std::ranges::find(paths, Path("vela.json"));
+  ASSERT_NE(configuration, paths.end());
+  EXPECT_EQ(
+      snapshot.program.source_texts.at(static_cast<std::size_t>(configuration - paths.begin())),
+      kConfiguration);
+}
+
+TEST_F(DevelopmentFilesTest, WatchesRegistrationChangesAndRejectsInvalidConfiguration) {
+  Write("main.vela", "class Counter { value: int = 1; }");
+  Write("vela.json", R"({"reflection":[{"module":"main","type":"Counter"}]})");
+  DevelopmentFiles files(Path("main.vela"));
+  ASSERT_TRUE(files.StartWatching());
+  const auto first = files.Capture(CompiledSourceSnapshot{});
+  ASSERT_TRUE(first);
+  SourceSession session(files.entry());
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, *first));
+  Write("vela.json", R"({"reflection":)");
+  const auto invalid = AwaitChange(files);
+  ASSERT_FALSE(invalid);
+  EXPECT_EQ(session.snapshot()->revision, 1U);
+  Write("vela.json", R"({"reflection":[]})");
+  const auto withdrawn = AwaitChange(files);
+  ASSERT_TRUE(withdrawn) << frontend::DiagnosticsText(withdrawn.error());
+  EXPECT_TRUE(withdrawn->changes.empty());
+  const auto& registration = withdrawn->reflection;
+  if (!registration) {
+    FAIL() << "reflection withdrawal omitted its registration update";
+  }
+  EXPECT_TRUE(registration->empty());
+  const auto replacement = session.Prepare(*withdrawn);
+  ASSERT_TRUE(replacement);
+  ASSERT_TRUE(session.Commit(*replacement));
+  EXPECT_TRUE(session.snapshot()->reflection.empty());
+}
+
+TEST_F(DevelopmentFilesTest, NearestConfigurationShieldsAncestorsUntilDeleted) {
+  MakeDirectory("project");
+  Write("vela.json", "{}");
+  Write("project/vela.json", "{}");
+  Write("project/main.vela", "class Counter {}");
+  DevelopmentFiles files(Path("project/main.vela"));
+  ASSERT_TRUE(files.StartWatching());
+  auto first = files.Capture(CompiledSourceSnapshot{});
+  ASSERT_TRUE(first);
+  SourceSession session(files.entry());
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, std::move(*first)));
+  Write("vela.json", R"({"reflection":[{"module":"project/main","type":"Counter"}]})");
+  const auto unchanged = files.Poll(std::chrono::milliseconds(100));
+  ASSERT_TRUE(unchanged) << frontend::DiagnosticsText(unchanged.error());
+  EXPECT_FALSE(*unchanged);
+  ASSERT_TRUE(std::filesystem::remove(directory() / "project/vela.json"));
+  const auto discovered = AwaitChange(files);
+  ASSERT_TRUE(discovered) << frontend::DiagnosticsText(discovered.error());
+  const auto& registration = discovered->reflection;
+  if (!registration) {
+    FAIL() << "configuration discovery omitted its registration update";
+  }
+  EXPECT_EQ(registration->size(), 1U);
+}
+
+TEST_F(DevelopmentFilesTest, AcceptingAnOlderReflectionCaptureKeepsTheCurrentConfigurationPending) {
+  constexpr std::string_view kRegistered = R"({"reflection":[{"module":"main","type":"Counter"}]})";
+  Write("main.vela", "class Counter {}");
+  Write("vela.json", kRegistered);
+  DevelopmentFiles files(Path("main.vela"));
+  ASSERT_TRUE(files.StartWatching());
+  auto first = files.Capture(CompiledSourceSnapshot{});
+  ASSERT_TRUE(first);
+  SourceSession session(files.entry());
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, std::move(*first)));
+
+  Write("vela.json", R"({"reflection":[]})");
+  const auto withdrawn = AwaitChange(files);
+  ASSERT_TRUE(withdrawn) << frontend::DiagnosticsText(withdrawn.error());
+  const auto older = session.Prepare(*withdrawn);
+  ASSERT_TRUE(older);
+  Write("vela.json", kRegistered);
+  const auto restored = AwaitChange(files);
+  ASSERT_TRUE(restored) << frontend::DiagnosticsText(restored.error());
+  EXPECT_TRUE(restored->IsEmpty());
+
+  ASSERT_TRUE(session.Commit(*older));
+  ASSERT_TRUE(files.Accept(session.snapshot()));
+  const auto pending = files.Poll();
+  ASSERT_TRUE(pending) << frontend::DiagnosticsText(pending.error());
+  ASSERT_TRUE(pending->has_value());
+  const auto& update = **pending;
+  const auto& registration = update.reflection;
+  if (!registration) {
+    FAIL() << "accepting an older capture lost pending registrations";
+  }
+  EXPECT_EQ(registration->size(), 1U);
+  EXPECT_EQ(update.base_revision, session.snapshot()->revision);
+}
 
 TEST_F(DevelopmentFilesTest, CapturedTextsStayImmutableWhenFilesChangeBeforeCompilation) {
   Write("main.vela",
@@ -113,10 +236,7 @@ TEST_F(DevelopmentFilesTest, EventCapturesKeepRejectedEditsAcrossOtherFileChange
   auto captured = files.Capture(empty);
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("library.vela", "export func answer(): int { return true; }");
   auto invalid = AwaitChange(files);
   ASSERT_TRUE(invalid);
@@ -145,10 +265,7 @@ TEST_F(DevelopmentFilesTest, ANewMissingImportIsWatchedUntilItsFileAppears) {
   auto captured = files.Capture(empty);
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela",
         "import 'library.vela' as lib; export func read(): int { return lib.answer(); }");
   EXPECT_FALSE(AwaitChange(files));
@@ -168,10 +285,7 @@ TEST_F(DevelopmentFilesTest, ANewImportDirectoryIsWatchedAfterTheDirectoryAppear
   auto captured = files.Capture(empty);
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela",
         "import 'nested/library.vela' as lib; export func read(): int { return lib.answer(); }");
   EXPECT_FALSE(AwaitChange(files));
@@ -199,10 +313,7 @@ TEST_F(DevelopmentFilesTest, AncestorRenamesRebindNestedSourcesToTheReplacementD
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
 
   std::error_code error;
   std::filesystem::rename(Utf8Path(Path("library")), Utf8Path(Path("displaced")), error);
@@ -252,10 +363,7 @@ TEST_F(DevelopmentFilesTest, ExplicitLoadsRegisterTheirAdditionalSourceDirectori
   auto captured = files.Capture(empty);
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   auto loaded = DevelopmentFiles(Path("nested/library.vela")).Capture(*sources.snapshot());
   ASSERT_TRUE(loaded);
   ASSERT_TRUE(files.WatchSources(loaded->changes));
@@ -312,10 +420,7 @@ TEST_F(DevelopmentFilesTest, RemovedModulesAreNotReintroducedByLaterFileEvents) 
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   constexpr std::string_view kRemainingSource = "export func read(): int { return 42; }";
   Write("main.vela", kRemainingSource);
   const auto removed = sources.Prepare({
@@ -343,10 +448,7 @@ TEST_F(DevelopmentFilesTest, AcceptingAnOlderCaptureKeepsTheNewerPendingText) {
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela", "export func read(): int { return 43; }");
   auto first = AwaitChange(files);
   ASSERT_TRUE(first);
@@ -377,10 +479,7 @@ TEST_F(DevelopmentFilesTest, SavingAcceptedContentsDoesNotPrepareAnUpdate) {
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela", kSource);
   const auto unchanged = files.Poll(std::chrono::milliseconds(100));
   ASSERT_TRUE(unchanged) << frontend::DiagnosticsText(unchanged.error());
@@ -395,10 +494,7 @@ TEST_F(DevelopmentFilesTest, RepeatedSavesOfRejectedContentsDoNotReemitPendingCa
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela", kInvalid);
   const auto invalid = AwaitChange(files);
   ASSERT_TRUE(invalid);
@@ -425,10 +521,7 @@ TEST_F(DevelopmentFilesTest, AncestorImportsRemainIncrementalAfterSubscriptionUp
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   const auto unchanged = files.Poll(std::chrono::milliseconds(100));
   ASSERT_TRUE(unchanged) << frontend::DiagnosticsText(unchanged.error());
   EXPECT_FALSE(*unchanged);
@@ -452,10 +545,7 @@ TEST_F(DevelopmentFilesTest, SupersededRejectedImportsRetireTheirUnacceptedSourc
   auto captured = files.Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(captured);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   Write("main.vela",
         "import 'nested/library.vela' as lib; export func read(): int { return lib.answer(); }");
   auto invalid = AwaitChange(files);
@@ -481,10 +571,7 @@ TEST_F(DevelopmentFilesTest, SdkModulesRemainEmbeddedAcrossCaptureAndFileEvents)
   ASSERT_TRUE(captured) << frontend::DiagnosticsText(captured.error());
   ASSERT_EQ(captured->changes.size(), 1U);
   SourceSession sources(files.entry());
-  const auto initial = sources.Prepare(std::move(*captured));
-  ASSERT_TRUE(initial) << frontend::DiagnosticsText(initial.error().diagnostics);
-  ASSERT_TRUE(sources.Commit(*initial));
-  ASSERT_TRUE(files.Accept(sources.snapshot()));
+  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, sources, std::move(*captured)));
   EXPECT_FALSE(sources.snapshot()->sources.contains("sdk:test"));
   const auto unchanged = files.Capture(*sources.snapshot());
   ASSERT_TRUE(unchanged) << frontend::DiagnosticsText(unchanged.error());

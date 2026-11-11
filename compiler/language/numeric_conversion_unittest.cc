@@ -3,6 +3,7 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -56,8 +57,7 @@ INSTANTIATE_TEST_SUITE_P(
 class NumericTypeBoundaryTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(NumericTypeBoundaryTest, RejectsImplicitConversionsAndInvalidReceivers) {
-  runtime::Isolate isolate;
-  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
+  test::ExpectRejectedSource(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
