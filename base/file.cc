@@ -30,7 +30,10 @@ std::expected<void, std::string> WriteFileAtomically(const std::filesystem::path
   auto temporary = path;
   temporary += ".tmp." + std::to_string(tick) + "." +
                std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
-  std::ofstream output(temporary, std::ios::binary | std::ios::out | std::ios::noreplace);
+  constexpr auto kOpenMode =
+      static_cast<std::ios::openmode>(static_cast<std::uintmax_t>(std::ios::binary) |
+                                      static_cast<std::uintmax_t>(std::ios::noreplace));
+  std::ofstream output(temporary, kOpenMode);
   if (!output) {
     return std::unexpected("cannot create temporary output '" + PathText(temporary) + "'");
   }

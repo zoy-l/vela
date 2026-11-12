@@ -457,12 +457,12 @@ TEST(FutureTest, PostedCompletionAndMultipleAdoptionsPreserveErrorDiagnostic) {
       .origin = {},
   };
   std::optional<FutureCompletionError> completion_error;
-  std::thread host([copy = source, diagnostic, &completion_error] mutable {
+  std::thread host{[copy = source, diagnostic, &completion_error] mutable {
     if (const auto completion = copy.CompleteError(Value::Integer(kErrorValue), diagnostic);
         !completion) {
       completion_error = completion.error();
     }
-  });
+  }};
   host.join();
   ASSERT_FALSE(completion_error.has_value());
   ASSERT_TRUE(first.Adopt(source));

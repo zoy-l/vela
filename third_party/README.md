@@ -10,8 +10,11 @@ runtime resources, and LLVM/LibTooling headers and static libraries share this i
 The acquisition verifies the required host tools, development headers, parser resources,
 and Apache-2.0 WITH LLVM-exception license before publishing the directory.
 These are compiler development inputs, not prerequisites users must install alongside a Vela distribution.
-`llvm-config` supplies the native backend library closure to GN. The SDK's absolute
-zstd installation path is replaced by the repository-built zstd 1.5.7 dependency,
+`llvm-config` supplies the native backend library closure to GN. The SDK's zlib
+and zstd references are replaced by repository-built dependencies: zlib 1.3.1,
+pinned at `51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf` under the
+[Zlib license](https://github.com/madler/zlib/blob/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf/LICENSE),
+and zstd 1.5.7,
 pinned at `f8745da6ff1ad1e7bab384bd1f9d742439278e99` and used under its
 [BSD license](https://github.com/facebook/zstd/blob/f8745da6ff1ad1e7bab384bd1f9d742439278e99/LICENSE).
 The LLVM license is retained at `third_party/build_tools/llvm_toolchain/23.1.5/<host>/LICENSE.TXT`;

@@ -214,7 +214,10 @@ void CompleteCallback(const FutureContinuation& context, Future& source) {
 OperationResult ScheduleTimeout(const Continuation& context,
                                 const FutureCall& call,
                                 const FutureCallbacks& callbacks) {
-  assert(call.runtime_type.has_value());
+  const auto& runtime_type = call.runtime_type;
+  if (!runtime_type) {
+    std::unreachable();
+  }
   auto* isolate = context->isolate;
   const auto& references = context->references;
   auto& heap = isolate->heap();
@@ -224,7 +227,7 @@ OperationResult ScheduleTimeout(const Continuation& context,
       !FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto timeout_type = *call.runtime_type;
+  const auto timeout_type = *runtime_type;
   const auto* timeout_layout = timeout_type.nominal->fixed_layout();
   const auto callback = call.At(2);
   std::optional<FutureCallback> replacement;
@@ -305,10 +308,13 @@ OperationResult ObserveCompletion(const Continuation& context,
 OperationResult ObserveCallbacks(const Continuation& context,
                                  const FutureCall& call,
                                  const FutureCallbacks& callbacks) {
-  assert(call.runtime_type.has_value());
+  const auto& runtime_type = call.runtime_type;
+  if (!runtime_type) {
+    std::unreachable();
+  }
   const auto operation = call.operation;
 
-  const auto error_type = *call.runtime_type;
+  const auto error_type = *runtime_type;
   const auto on_value = operation == AsyncOperation::Then ? call.At(1) : Value::Null();
   const auto on_error = operation == AsyncOperation::Then ? call.At(2) : call.At(1);
   std::optional<FutureCallback> value_callback;

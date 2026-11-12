@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -349,8 +348,11 @@ Value Heap::ResolveStringMapValue(HeapObject& object,
   const auto& table = storage.table;
   const auto hash = HashKey(Value::String(key));
   const auto slot = storage.capacity == 0 ? Slot{} : FindSlot(table, key, hash);
-  assert(layout.values.has_value());
-  const auto& values = *layout.values;
+  const auto& value_layout = layout.values;
+  if (!value_layout) {
+    std::unreachable();
+  }
+  const auto& values = *value_layout;
   auto* integer =
       slot.found && !values.HasTaggedElements() && values.element.kind == ValueKind::Integer
           ? &ElementSlots<std::int64_t>(table.values)[slot.entry]

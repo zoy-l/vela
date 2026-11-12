@@ -31,7 +31,10 @@ source_set("llvm") {
     ":llvm_headers",
     ":llvm_libraries",
   ]
-  public_deps = [ ":zstd" ]
+  public_deps = [
+    ":zlib",
+    ":zstd",
+  ]
 }
 
 config("llvm_jit_libraries") {
@@ -43,7 +46,10 @@ source_set("llvm_jit") {
     ":llvm_headers",
     ":llvm_jit_libraries",
   ]
-  public_deps = [ ":zstd" ]
+  public_deps = [
+    ":zlib",
+    ":zstd",
+  ]
 }
 
 config("clang_tooling_headers") {
@@ -73,7 +79,10 @@ source_set("clang_tooling") {
     ":clang_tooling_headers",
     ":clang_tooling_libraries",
   ]
-  public_deps = [ ":zstd" ]
+  public_deps = [
+    ":zlib",
+    ":zstd",
+  ]
 }
 
 config("efsw_headers") {
@@ -144,6 +153,35 @@ static_library("efsw") {
       libs = [ "pthread" ]
     }
   }
+}
+
+static_library("zlib") {
+  configs -= [ "//build/config:vela_warnings" ]
+  if (target_os == "win") {
+    defines = [
+      "_CRT_NONSTDC_NO_DEPRECATE",
+      "_CRT_SECURE_NO_DEPRECATE",
+    ]
+  } else {
+    defines = [ "Z_HAVE_UNISTD_H" ]
+  }
+  sources = [
+    "zlib/adler32.c",
+    "zlib/compress.c",
+    "zlib/crc32.c",
+    "zlib/deflate.c",
+    "zlib/gzclose.c",
+    "zlib/gzlib.c",
+    "zlib/gzread.c",
+    "zlib/gzwrite.c",
+    "zlib/infback.c",
+    "zlib/inffast.c",
+    "zlib/inflate.c",
+    "zlib/inftrees.c",
+    "zlib/trees.c",
+    "zlib/uncompr.c",
+    "zlib/zutil.c",
+  ]
 }
 
 static_library("zstd") {

@@ -1,7 +1,6 @@
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -167,7 +166,9 @@ reflection::Member Lowerer::DescribeReflectionMethod(
     call_signature = DescribeCallSignature(*signature);
   } else {
     const auto& native_signature = program_.functions.at(target).signature;
-    assert(native_signature.has_value());
+    if (!native_signature) {
+      std::unreachable();
+    }
     call_signature = *native_signature;
   }
   reflection::Member result{

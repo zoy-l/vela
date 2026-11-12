@@ -263,6 +263,7 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             "yyjson": ROOT / "third_party/yyjson/LICENSE",
             "xxhash": ROOT / "third_party/xxhash/LICENSE",
             "unicode": ROOT / "third_party/unicode_data/LICENSE",
+            "zlib": ROOT / "third_party/zlib/LICENSE",
             "zstd": ROOT / "third_party/zstd/LICENSE",
         }.items():
             copy_file(path, package, "share/vela/licenses/" + name + ".txt", "license", name, "included")

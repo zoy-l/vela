@@ -8,6 +8,7 @@ vars = {
   "yyjson_revision": "6447536015f3d600f3d65323b10976103b337ca7",
   "xxhash_revision": "e626a72bc2321cd320e953a0ccf1584cad60f363",
   "pcre2_revision": "6f9d7c1373262c541324a16a358785b33ef116cf",
+  "zlib_revision": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
   "zstd_revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
   "llvm_sdk_version": "23.1.5",
   "llvm_sdk_license_sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee",
@@ -35,6 +36,7 @@ deps = {
   "third_party/yyjson": "https://github.com/ibireme/yyjson.git@" + Var("yyjson_revision"),
   "third_party/xxhash": "https://github.com/Cyan4973/xxHash.git@" + Var("xxhash_revision"),
   "third_party/pcre2": "https://github.com/PCRE2Project/pcre2.git@" + Var("pcre2_revision"),
+  "third_party/zlib": "https://github.com/madler/zlib.git@" + Var("zlib_revision"),
   "third_party/zstd": "https://github.com/facebook/zstd.git@" + Var("zstd_revision"),
   "third_party/build_tools/gn/windows-amd64": {
     "packages": [{

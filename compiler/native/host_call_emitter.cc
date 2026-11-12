@@ -1,10 +1,10 @@
 #include "compiler/native/function_emitter.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include <llvm/IR/Attributes.h>
@@ -294,8 +294,11 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     result_type = ValueType(context, return_type);
   }
   auto* target = builder_.CreateExtractValue(entries, 0);
-  assert(callee.signature.has_value());
-  const auto& call_signature = *callee.signature;
+  const auto& native_signature = callee.signature;
+  if (!native_signature) {
+    std::unreachable();
+  }
+  const auto& call_signature = *native_signature;
   std::vector<llvm::Value*> parameters(arguments.begin(), arguments.end());
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     const auto& type = callee.value_types[index];
@@ -355,8 +358,11 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
   }
   // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接调用
   // 从包装对象固定位置借用原生指针，原生调用期间仍保留调用者的根登记。
-  assert(callee.signature.has_value());
-  const auto& signature = *callee.signature;
+  const auto& native_signature = callee.signature;
+  if (!native_signature) {
+    std::unreachable();
+  }
+  const auto& signature = *native_signature;
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     const auto& type = callee.value_types[index];
     if (IsScalar(type) && !type.nullable) {

@@ -4,7 +4,6 @@
 #include "compiler/ir/lowerer.h"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -119,17 +118,20 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
   } else if (method) {
     plan.mode = CallableMode::BoundMethod;
   }
-  if (receiver && plan.mode == CallableMode::BoundMethod) {
-    auto name = frontend::NonNullableTypeName(receiver->type);
-    if (super != model_.super_members.end()) {
-      const auto& base = model_.classes.at(name).base_class;
-      assert(base.has_value());
-      name = *base;
+  if (!receiver || plan.mode != CallableMode::BoundMethod) {
+    return plan;
+  }
+  auto name = frontend::NonNullableTypeName(receiver->type);
+  if (super != model_.super_members.end()) {
+    const auto& base = model_.classes.at(name).base_class;
+    if (!base) {
+      std::unreachable();
     }
-    const auto owner = declarations_->classes.find(name);
-    if (owner != declarations_->classes.end()) {
-      plan.binding_receiver = owner->second.declaration;
-    }
+    name = *base;
+  }
+  const auto owner = declarations_->classes.find(name);
+  if (owner != declarations_->classes.end()) {
+    plan.binding_receiver = owner->second.declaration;
   }
   return plan;
 }

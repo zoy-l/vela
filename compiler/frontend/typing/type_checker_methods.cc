@@ -6,7 +6,6 @@
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <expected>
 #include <optional>
@@ -343,7 +342,9 @@ void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
                                         const std::string& interface,
                                         const Function& method) {
   const auto& application = method.application;
-  assert(application.has_value());
+  if (!application) {
+    std::unreachable();
+  }
   const auto interface_name = interfaces_.at(interface).type.name;
   if (!queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
     return;

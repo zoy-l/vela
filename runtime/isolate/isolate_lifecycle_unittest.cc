@@ -177,7 +177,7 @@ TEST(IsolateLifecycleTest, TimerHandleCanBeCancelledAfterItsIsolateHasStoppedAnd
     ASSERT_TRUE(isolate.TryStop());
     EXPECT_TRUE(lifetime.expired());
   }
-  std::thread host([timer] mutable { timer.Cancel(); });
+  std::thread host{[timer] mutable { timer.Cancel(); }};
   host.join();
 }
 
@@ -220,7 +220,7 @@ TEST(IsolateLifecycleTest, TimerCancellationRacingStopReleasesCallbacksOnTheOwne
     const std::weak_ptr<int> lifetime = marker;
     auto timer = isolate.scheduler().Periodic(std::chrono::hours(1), [marker] { ++*marker; });
     marker.reset();
-    std::thread host([timer] mutable { timer.Cancel(); });
+    std::thread host{[timer] mutable { timer.Cancel(); }};
     const auto stopped = isolate.TryStop();
     host.join();
     ASSERT_TRUE(stopped);

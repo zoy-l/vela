@@ -303,7 +303,7 @@ TEST(HostAsyncTest, CancellationSourceSharesOnlyCancellationStateAcrossThreads) 
     source = GetCancellationSource(*token);
   }
   isolate.heap().Collect();
-  std::thread worker([source] mutable { source.Cancel(); });
+  std::thread worker{[source] mutable { source.Cancel(); }};
   worker.join();
   HandleScope scope(isolate);
   const auto token = source.ToLocal(scope);

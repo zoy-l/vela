@@ -1,12 +1,12 @@
 #include "runtime/native/native_dynamic.h"
 
 #include <array>
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "base/builtin.h"
 #include "base/callable.h"
@@ -106,7 +106,9 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
   switch (member.kind) {
     case MemberKind::Field: {
       const auto& type = member.type;
-      assert(type.has_value());
+      if (!type) {
+        std::unreachable();
+      }
       auto& object = *receiver.AsObject();
       const auto* layout = Heap::ClassOf(object);
       const auto declaration = FieldDeclaration(*layout, member.target);
@@ -146,28 +148,26 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
                                                   Value original) {
   const auto& instance = execution.instance();
   const auto& types = instance.layouts().types;
-  const auto setter = member.setter;
-  const TypeConstraint* type = nullptr;
   if (member.kind == MemberKind::Field) {
     const auto& field_type = member.type;
-    assert(field_type.has_value());
-    type = &types.at(*field_type);
-  } else if (member.kind == MemberKind::Property && setter) {
-    type = &types.at(instance.call_signature(*setter).parameters.front().type);
-  } else {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  if (member.kind == MemberKind::Field) {
+    if (!field_type) {
+      std::unreachable();
+    }
+    const auto& type = types.at(*field_type);
     auto& object = *receiver.AsObject();
     const auto* layout = Heap::ClassOf(object);
     const auto declaration = FieldDeclaration(*layout, member.target);
-    return WriteNativeField(execution, receiver, member.target, declaration, original, *type);
+    return WriteNativeField(execution, receiver, member.target, declaration, original, type);
   }
-  if (!Heap::IsValueOfType(original, *type)) {
+  const auto setter = member.setter;
+  if (member.kind != MemberKind::Property || !setter) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto& type = types.at(instance.call_signature(*setter).parameters.front().type);
+  if (!Heap::IsValueOfType(original, type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
-  const auto value = UnboxDynamicValue(original, *type);
-  assert(setter.has_value());
+  const auto value = UnboxDynamicValue(original, type);
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
   const auto result = InvokeNativeTarget(execution, *setter, input);
   return result ? std::expected<Value, ExecutionStatus>(original) : std::unexpected(result.error());

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -54,6 +55,38 @@ class ToolchainLayoutTest(unittest.TestCase):
                     tools["clang_tidy"].unlink()
                     with self.assertRaisesRegex(RuntimeError, "clang-tidy"):
                         llvm.validate_sdk(directory, version)
+
+
+class LinkConfigurationTest(unittest.TestCase):
+    def test_windows_sdk_libraries_use_managed_compression_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-llvm-link-") as work:
+            directory = Path(work)
+            tool = directory / "bin" / llvm.executable_name("llvm-config")
+            tool.parent.mkdir()
+            tool.touch()
+            library = directory / "lib/LLVMSupport.lib"
+            library.parent.mkdir()
+            library.touch()
+            system = ("psapi.lib shell32.lib ole32.lib uuid.lib advapi32.lib ws2_32.lib "
+                      "ntdll.lib zs.lib S:/llvm/zstdbuild/install/lib/zstd_static.lib xml2s.lib")
+
+            def query(command: list[str], **_) -> subprocess.CompletedProcess:
+                option = command[2]
+                output = {"--libnames": library.name, "--system-libs": system,
+                          "--has-rtti": "NO", "--host-target": "x86_64-pc-windows-msvc"}[option]
+                return subprocess.CompletedProcess(command, 0, stdout=output)
+
+            with (mock.patch.object(llvm, "sdk_directory", return_value=directory),
+                  mock.patch.object(llvm.subprocess, "run", side_effect=query)):
+                configuration = llvm.link_configuration()
+                for prefix in ("vela_llvm", "vela_llvm_jit", "vela_llvm_tooling"):
+                    self.assertEqual(configuration[prefix + "_libraries"], [library.as_posix()])
+                    self.assertEqual(configuration[prefix + "_system_libraries"],
+                                     ["psapi.lib", "shell32.lib", "ole32.lib", "uuid.lib",
+                                      "advapi32.lib", "ws2_32.lib", "ntdll.lib"])
+                system = "S:/unmanaged/dependency.lib"
+                with self.assertRaisesRegex(RuntimeError, "Unmanaged LLVM system library"):
+                    llvm.link_configuration()
 
 
 class ArchiveExtractionTest(unittest.TestCase):
