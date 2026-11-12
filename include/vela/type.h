@@ -16,6 +16,7 @@
 #include "runtime/value/value.h"
 
 namespace vela {
+template <class T>
 class TypeInfo;
 namespace internal {
 struct TypeAccess;
@@ -36,7 +37,7 @@ class Type final {
     return FromBinding(runtime::HostType::Bind(session, runtime::internal::NativeTypeOf<T>()));
   }
   [[nodiscard]] runtime::Isolate& isolate() const noexcept { return binding_.isolate(); }
-  [[nodiscard]] Result<TypeInfo> Describe() const;
+  [[nodiscard]] Result<TypeInfo<T>> Describe() const;
   [[nodiscard]] Result<HostValue<T>> Cast(HandleScope& scope, Local<Value> value) const {
     const auto& owner = isolate();
     if (&scope.isolate() != &owner || &value.isolate() != &owner) {

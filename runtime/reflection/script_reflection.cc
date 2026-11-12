@@ -61,6 +61,9 @@ enum class Descriptor : std::uint8_t {
   Parameter,
   Signature,
   SignatureParameter,
+  StaticField,
+  StaticProperty,
+  StaticMethod,
 };
 
 constexpr auto kDescriptorNames = std::to_array<std::string_view>({
@@ -75,9 +78,11 @@ constexpr auto kDescriptorNames = std::to_array<std::string_view>({
     "ParameterInfo",
     "SignatureInfo",
     "SignatureParameterInfo",
+    "StaticFieldInfo",
+    "StaticPropertyInfo",
+    "StaticMethodInfo",
 });
-static_assert(kDescriptorNames.size() ==
-              static_cast<std::size_t>(Descriptor::SignatureParameter) + 1);
+static_assert(kDescriptorNames.size() == static_cast<std::size_t>(Descriptor::StaticMethod) + 1);
 constexpr auto kMemberDescriptors = std::to_array<Descriptor>({
     Descriptor::Field,
     Descriptor::Property,
@@ -93,12 +98,18 @@ MemberKind Category(Operation operation) {
   switch (operation) {
     case Operation::GetFields:
     case Operation::FindField:
+    case Operation::GetStaticFields:
+    case Operation::FindStaticField:
       return MemberKind::Field;
     case Operation::GetProperties:
     case Operation::FindProperty:
+    case Operation::GetStaticProperties:
+    case Operation::FindStaticProperty:
       return MemberKind::Property;
     case Operation::GetMethods:
     case Operation::FindMethod:
+    case Operation::GetStaticMethods:
+    case Operation::FindStaticMethod:
       return MemberKind::Method;
     case Operation::GetConstructor:
       return MemberKind::Constructor;
@@ -138,28 +149,35 @@ reflection::MemberQuery Query(Value value) {
   const auto& object = *value.AsObject();
   return {
       .scope = static_cast<reflection::MemberScope>(Heap::LoadField(object, 0).AsInteger()),
-      .storage = static_cast<reflection::MemberStorage>(Heap::LoadField(object, 1).AsInteger()),
       .visibility =
-          static_cast<reflection::VisibilityFilter>(Heap::LoadField(object, 2).AsInteger()),
+          static_cast<reflection::VisibilityFilter>(Heap::LoadField(object, 1).AsInteger()),
   };
 }
 
 class ScriptReflection final {
  public:
-  ScriptReflection(NativeExecution& execution, ReflectionIndex& index)
-      : execution_(&execution), index_(&index), heap_(&execution.isolate().heap()) {}
-  ResultValue Type(ReflectedType type);
+  ScriptReflection(NativeExecution& execution, ReflectionIndex& index, TypeConstraint result)
+      : execution_(&execution),
+        index_(&index),
+        heap_(&execution.isolate().heap()),
+        result_(result) {}
+  ResultValue Type(ReflectedType type, const TypeConstraint* contract = nullptr);
   ResultValue Execute(Operation operation, std::span<const Value> arguments);
   ResultValue FindMethods(ReflectedType attribute, const TypeConstraint& result, Value module);
 
  private:
   const TypeConstraint& Contract(Descriptor descriptor);
-  ResultValue Wrap(Descriptor descriptor, Value payload);
-  ResultValue Handle(Descriptor descriptor, ReflectedType type, DeclarationId member);
-  ResultValue Member(const NativeReflectionMember& member);
+  ResultValue Wrap(Descriptor descriptor, Value payload, const TypeConstraint* requested = nullptr);
+  ResultValue Handle(Descriptor descriptor,
+                     ReflectedType type,
+                     DeclarationId member,
+                     const TypeConstraint* contract = nullptr);
+  ResultValue Member(const NativeReflectionMember& member,
+                     const TypeConstraint* contract = nullptr);
   ResultValue Array(Descriptor element,
                     std::size_t count,
-                    absl::FunctionRef<ResultValue(std::size_t)> item);
+                    absl::FunctionRef<ResultValue(std::size_t)> item,
+                    const TypeConstraint* requested = nullptr);
   ResultValue Types(std::span<const ReflectedType> types);
   ResultValue Record(Descriptor descriptor, std::span<const Value> fields);
   // fields 由调用方保根；返回的 payload 在后续分配前由调用方保根。
@@ -178,18 +196,22 @@ class ScriptReflection final {
   NativeExecution* execution_;
   ReflectionIndex* index_;
   Heap* heap_;
+  TypeConstraint result_;
   std::array<TypeConstraint, kDescriptorNames.size()> contracts_;
 };
 
 template <class Action>
-ResultValue WithReflection(NativeExecution& execution, HeapObject& state, const Action& action) {
+ResultValue WithReflection(NativeExecution& execution,
+                           HeapObject& state,
+                           TypeConstraint result,
+                           const Action& action) {
   auto current = NativeInstance::Borrow(state);
   const NativeInstanceScope scope(execution, current);
   const auto index = PrepareReflectionIndex(current);
   if (!index) {
     return std::unexpected(index.error());
   }
-  ScriptReflection reflection(execution, **index);
+  ScriptReflection reflection(execution, **index, result);
   return action(reflection);
 }
 
@@ -203,15 +225,22 @@ const TypeConstraint& ScriptReflection::Contract(Descriptor descriptor) {
   const auto position = static_cast<std::size_t>(descriptor);
   auto& contract = contracts_[position];
   if (contract.nominal == nullptr) {
-    const auto* type = index_->FindDescribedType(reflection::kModule, kDescriptorNames[position]);
+    const std::array dynamic{ReflectedType{.constraint = {.dynamic = true}}};
+    const auto generic = descriptor == Descriptor::Type || descriptor == Descriptor::Field ||
+                         descriptor == Descriptor::Property || descriptor == Descriptor::Method;
+    const auto* type =
+        index_->FindDescribedType(reflection::kModule, kDescriptorNames[position],
+                                  generic ? std::span(dynamic) : std::span<const ReflectedType>{});
     contract = index_->TypeAt(type->type).constraint;
   }
   return contract;
 }
 
-ResultValue ScriptReflection::Wrap(Descriptor descriptor, Value payload) {
+ResultValue ScriptReflection::Wrap(Descriptor descriptor,
+                                   Value payload,
+                                   const TypeConstraint* requested) {
   const RootRange root(*heap_, &payload, 1, std::nullopt);
-  const auto& contract = Contract(descriptor);
+  const auto& contract = requested != nullptr ? *requested : Contract(descriptor);
   auto* object = heap_->AllocateInstance(*contract.nominal->fixed_layout());
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -224,7 +253,8 @@ ResultValue ScriptReflection::Wrap(Descriptor descriptor, Value payload) {
 
 ResultValue ScriptReflection::Handle(Descriptor descriptor,
                                      ReflectedType type,
-                                     DeclarationId member) {
+                                     DeclarationId member,
+                                     const TypeConstraint* contract) {
   const auto& instance = execution_->instance();
   const ReflectionHandle description{
       .type = type,
@@ -234,11 +264,11 @@ ResultValue ScriptReflection::Handle(Descriptor descriptor,
   };
   auto* handle = heap_->AllocateReflectionHandle(description);
   return handle == nullptr ? ResultValue(std::unexpected(ExecutionStatus::OutOfMemory))
-                           : Wrap(descriptor, Value::Object(handle));
+                           : Wrap(descriptor, Value::Object(handle), contract);
 }
 
-ResultValue ScriptReflection::Type(ReflectedType type) {
-  return Handle(Descriptor::Type, type, {});
+ResultValue ScriptReflection::Type(ReflectedType type, const TypeConstraint* contract) {
+  return Handle(Descriptor::Type, type, {}, contract);
 }
 
 ResultValue ScriptReflection::CopyAttribute(const NativeAttribute& attribute) {
@@ -314,7 +344,7 @@ ResultValue ScriptReflection::FindMethods(ReflectedType attribute,
   const RootRange root(*heap_, &value, 1, std::nullopt);
   std::uint32_t index = 0;
   for (const auto& selected : matches) {
-    std::array<Value, 2> pair{Value::Null(), Value::Null()};
+    std::array<Value, 4> pair;
     const RootRange pair_roots(*heap_, pair.data(), pair.size(), std::nullopt);
     const auto method = Member(*selected.member);
     if (!method) {
@@ -325,7 +355,8 @@ ResultValue ScriptReflection::FindMethods(ReflectedType attribute,
     if (!data) {
       return data;
     }
-    pair.back() = *data;
+    pair[1] = *data;
+    pair[(selected.member->flags & reflection::kStatic) != 0 ? 3 : 2] = *method;
     const auto payload = ValueSlots(pair);
     if (!payload) {
       return payload;
@@ -341,15 +372,26 @@ ResultValue ScriptReflection::FindMethods(ReflectedType attribute,
   return value;
 }
 
-ResultValue ScriptReflection::Member(const NativeReflectionMember& member) {
-  return Handle(kMemberDescriptors[member.kind], index_->TypeAt(member.declaring_type),
-                member.declaration);
+ResultValue ScriptReflection::Member(const NativeReflectionMember& member,
+                                     const TypeConstraint* contract) {
+  auto descriptor = kMemberDescriptors[member.kind];
+  if ((member.flags & reflection::kStatic) != 0) {
+    if (descriptor == Descriptor::Field) {
+      descriptor = Descriptor::StaticField;
+    } else if (descriptor == Descriptor::Property) {
+      descriptor = Descriptor::StaticProperty;
+    } else if (descriptor == Descriptor::Method) {
+      descriptor = Descriptor::StaticMethod;
+    }
+  }
+  return Handle(descriptor, index_->TypeAt(member.declaring_type), member.declaration, contract);
 }
 
 ResultValue ScriptReflection::Array(Descriptor element,
                                     std::size_t count,
-                                    absl::FunctionRef<ResultValue(std::size_t)> item) {
-  const auto constraint = Contract(element);
+                                    absl::FunctionRef<ResultValue(std::size_t)> item,
+                                    const TypeConstraint* requested) {
+  const auto constraint = requested != nullptr ? *requested : Contract(element);
   LayoutTransaction transaction(execution_->isolate(), LayoutLifetime::Collectible);
   const auto* layout = execution_->isolate().CreateArrayLayout({.element = constraint});
   auto* array = heap_->AllocateArray(*layout, static_cast<std::uint32_t>(count));
@@ -521,7 +563,7 @@ ResultValue ScriptReflection::DescribeMember(Operation operation,
       const auto kind = getter ? MemberKind::Getter : MemberKind::Setter;
       if (operation == Operation::Getter || operation == Operation::Setter) {
         const auto* accessor = index_->RegisteredAccessor(member, kind);
-        return accessor != nullptr ? Member(*accessor) : Value::Null();
+        return accessor != nullptr ? Member(*accessor, &result_) : Value::Null();
       }
       return Value::Boolean(index_->CanAccess(member, kind));
     }
@@ -533,11 +575,16 @@ ResultValue ScriptReflection::DescribeMember(Operation operation,
 ResultValue ScriptReflection::Members(Operation operation,
                                       ReflectedType type,
                                       std::span<const Value> arguments) {
-  const auto single = operation == Operation::FindField || operation == Operation::FindProperty ||
-                      operation == Operation::FindMethod ||
-                      operation == Operation::GetConstructor ||
-                      operation == Operation::FindEnumMember;
+  const auto single =
+      operation == Operation::FindField || operation == Operation::FindProperty ||
+      operation == Operation::FindMethod || operation == Operation::FindStaticField ||
+      operation == Operation::FindStaticProperty || operation == Operation::FindStaticMethod ||
+      operation == Operation::GetConstructor || operation == Operation::FindEnumMember;
   const auto kind = Category(operation);
+  const auto storage = kind == MemberKind::EnumMember || (operation >= Operation::GetStaticFields &&
+                                                          operation <= Operation::FindStaticMethod)
+                           ? reflection::MemberStorage::Static
+                           : reflection::MemberStorage::Instance;
   if (single) {
     const auto constructor = kind == MemberKind::Constructor;
     const auto enumeration = kind == MemberKind::EnumMember;
@@ -547,11 +594,13 @@ ResultValue ScriptReflection::Members(Operation operation,
       query = reflection::kConstructorQuery;
     } else if (!enumeration) {
       query = Query(arguments[1]);
+      query.storage = storage;
     }
-    const auto parameters = operation == Operation::FindMethod
-                                ? TypeArguments(arguments[2])
-                                : std::expected<std::vector<ReflectedType>, ExecutionStatus>(
-                                      std::vector<ReflectedType>{});
+    const auto parameters =
+        operation == Operation::FindMethod || operation == Operation::FindStaticMethod
+            ? TypeArguments(arguments[2])
+            : std::expected<std::vector<ReflectedType>, ExecutionStatus>(
+                  std::vector<ReflectedType>{});
     if (!parameters) {
       return std::unexpected(parameters.error());
     }
@@ -559,17 +608,20 @@ ResultValue ScriptReflection::Members(Operation operation,
     if (!found) {
       return std::unexpected(found.error());
     }
-    return *found == nullptr ? ResultValue(Value::Null()) : Member(**found);
+    return *found == nullptr ? ResultValue(Value::Null()) : Member(**found, &result_);
   }
   std::vector<const NativeReflectionMember*> members;
+  auto query = kind == MemberKind::EnumMember ? reflection::MemberQuery{} : Query(arguments[0]);
+  query.storage = storage;
   const auto enumerated = index_->EnumerateMembers(
-      type, kind, kind == MemberKind::EnumMember ? reflection::MemberQuery{} : Query(arguments[0]),
-      [&](const auto& member) { members.push_back(&member); });
+      type, kind, query, [&](const auto& member) { members.push_back(&member); });
   if (!enumerated) {
     return std::unexpected(enumerated.error());
   }
-  return Array(kMemberDescriptors[static_cast<std::size_t>(kind)], members.size(),
-               [&](auto position) { return Member(*members[position]); });
+  return Array(
+      kMemberDescriptors[static_cast<std::size_t>(kind)], members.size(),
+      [&](auto position) { return Member(*members[position], &result_.array->element); },
+      &result_.array->element);
 }
 
 ResultValue ScriptReflection::Invoke(const ReflectionHandle& handle, Invocation invocation) {
@@ -600,7 +652,10 @@ ResultValue ScriptReflection::Invoke(const ReflectionHandle& handle, Invocation 
 ResultValue ScriptReflection::Execute(Operation operation, std::span<const Value> arguments) {
   const auto subject = arguments[0];
   if (operation == Operation::TypeOf) {
-    return Type({.constraint = Heap::TypeOf(subject)});
+    return Type({.constraint = Heap::TypeOf(subject)}, &result_);
+  }
+  if (operation == Operation::VoidType) {
+    return Type({.constraint = {}, .is_void = true}, &result_);
   }
   if (operation == Operation::GetTypes) {
     std::vector<ReflectedType> types;
@@ -620,7 +675,7 @@ ResultValue ScriptReflection::Execute(Operation operation, std::span<const Value
   if (operation == Operation::Revision) {
     return Value::Integer(static_cast<std::int64_t>(execution_->instance().current_revision()));
   }
-  if (operation >= Operation::RecordItem) {
+  if (operation >= Operation::RecordItem && operation < Operation::FindAttributedMethods) {
     const auto data = Heap::LoadField(*subject.AsObject(), 0);
     return Heap::ValueSlots(*data.AsObject())[static_cast<std::size_t>(operation) -
                                               static_cast<std::size_t>(Operation::RecordItem)];
@@ -650,7 +705,8 @@ ResultValue ScriptReflection::ExecuteTarget(Operation operation, std::span<const
     }
     return Value::Boolean(*result);
   }
-  if (operation >= Operation::GetFields && operation <= Operation::FindEnumMember) {
+  if ((operation >= Operation::GetFields && operation <= Operation::FindEnumMember) ||
+      (operation >= Operation::GetStaticFields && operation <= Operation::FindStaticMethod)) {
     return Members(operation, handle->type, arguments.subspan(1));
   }
   if (!is_member) {
@@ -663,12 +719,20 @@ ResultValue ScriptReflection::ExecuteTarget(Operation operation, std::span<const
     return WriteReflectedMember(*execution_, handle->member, arguments[1], arguments[2])
         .transform([] { return Value::Null(); });
   }
+  if (operation == Operation::GetStaticValue) {
+    return ReadReflectedMember(*execution_, handle->member, Value::Null());
+  }
+  if (operation == Operation::SetStaticValue) {
+    return WriteReflectedMember(*execution_, handle->member, Value::Null(), arguments[1])
+        .transform([] { return Value::Null(); });
+  }
   // 实参快照会检查名称；先解析目标，保留撤回或删除优先于实参错误的契约。
   const auto member = index_->ResolveMember(handle->member);
   if (!member) {
     return std::unexpected(member.error());
   }
-  if (operation == Operation::Invoke || operation == Operation::Construct) {
+  if (operation == Operation::Invoke || operation == Operation::Construct ||
+      operation == Operation::InvokeStatic) {
     const auto invocation = operation == Operation::Invoke
                                 ? Invocation{.receiver = arguments[1], .arguments = arguments[2]}
                                 : Invocation{.receiver = Value::Null(), .arguments = arguments[1]};
@@ -689,15 +753,19 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
   }
   if (builtin == Builtin::ReflectionTypeInfo) {
     const auto type_index = static_cast<std::uint32_t>(arguments[0].AsInteger());
-    const auto type =
-        type_index == kNoNativeIndex
-            ? ReflectedType{.constraint = {}, .is_void = true}
-            : ReflectedType{.constraint = execution.instance().layouts().types[type_index]};
+    const ReflectedType type{.constraint = execution.instance().layouts().types[type_index]};
     const RootRange type_root(isolate.heap(), std::span(&type.constraint, 1));
-    return WithReflection(execution, execution.instance().current_state(),
-                          [&](auto& reflection) { return reflection.Type(type); });
+    const auto result =
+        execution.instance().layouts().types[static_cast<std::uint32_t>(arguments[1].AsInteger())];
+    return WithReflection(execution, execution.instance().current_state(), result,
+                          [&](auto& reflection) { return reflection.Type(type, &result); });
   }
-  const auto decoded = DecodeOperation<Operation::FindAttributedMethods>(arguments[0]);
+  const auto result_index = static_cast<std::uint32_t>(arguments.back().AsInteger());
+  const auto result = result_index == kNoNativeIndex
+                          ? TypeConstraint{}
+                          : execution.instance().layouts().types[result_index];
+  const RootRange result_root(isolate.heap(), std::span(&result, 1));
+  const auto decoded = DecodeOperation<Operation::InvokeStatic>(arguments[0]);
   if (!decoded) {
     return std::unexpected(decoded.error());
   }
@@ -709,10 +777,11 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
         types[static_cast<std::uint32_t>(arguments[2].AsInteger())],
     };
     const RootRange type_roots(isolate.heap(), constraints);
-    return WithReflection(execution, execution.instance().current_state(), [&](auto& reflection) {
-      return reflection.FindMethods({.constraint = constraints.front()}, constraints.back(),
-                                    arguments[3]);
-    });
+    return WithReflection(execution, execution.instance().current_state(), result,
+                          [&](auto& reflection) {
+                            return reflection.FindMethods({.constraint = constraints.front()},
+                                                          constraints.back(), arguments[3]);
+                          });
   }
   HeapObject* state = nullptr;
   if (const auto* handle = DescriptorHandle(arguments[1])) {
@@ -724,7 +793,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
   } else {
     state = &execution.instance().current_state();
   }
-  return WithReflection(execution, *state, [&](auto& reflection) {
+  return WithReflection(execution, *state, result, [&](auto& reflection) {
     return reflection.Execute(operation, arguments.subspan(1));
   });
 }

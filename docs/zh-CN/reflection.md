@@ -24,6 +24,7 @@ Vela 的反射提供类型与成员描述、字段和属性读写、方法调用
 [Reflect]
 class Counter {
   value: int = 10;
+  static total: int = 0;
 
   add(amount: int): int {
     this.value += amount;
@@ -45,7 +46,7 @@ func main(): void {
       CallArgument(value: 5, name: 'amount'),
     ]);
     const result = method.invoke(counter, arguments);
-    print(result as int); // 25
+    print(result); // 25
   }
 }
 ```
@@ -107,8 +108,7 @@ Vela 不复制这些平台的程序集装载、访问提权、重载绑定、数
 
 ## 3. Reflect 静态入口与类型发现
 
-既有五个通用反射入口统一定义为 `Reflect` 的公共静态方法，另新增第 15 节的按特性发现
-方法接口。`Reflect` 与 `TypeInfo`、
+通用反射入口定义为 `Reflect` 的公共静态方法，第 15 节定义按特性发现方法的接口。`Reflect` 与 `TypeInfo`、
 `FieldInfo`、`MemberQuery`、`CallArgument`、`CallArguments` 等类型由全局标准环境提供，
 无需 import。名称保护与局部遮蔽遵循[全局标准声明规则](standard_library.md)。
 默认参数由标准声明与绑定共同实现。
@@ -123,10 +123,11 @@ Vela 不复制这些平台的程序集装载、访问提权、重载绑定、数
 
 | API | 返回类型 | 行为 |
 | --- | --- | --- |
-| `Reflect.typeInfo<T>()` | `TypeInfo` | 获取静态指定类型的规范结构描述，不要求构造 T，也不登记其成员 |
-| `Reflect.typeOf(value: dynamic)` | `TypeInfo` | 获取实际值的类型；数组和集合保留声明的元素类型，不按当前内容猜测 |
-| `Reflect.getTypes(module: string)` | `TypeInfo[]` | 枚举当前程序中该模块登记的具体名义类型 |
-| `Reflect.findType(module: string, name: string, typeArguments: TypeInfo[] = [])` | `TypeInfo?` | 按声明名及完整类型实参查找已登记类型，不在运行时生成新特化 |
+| `Reflect.typeInfo<T>()` | `TypeInfo<T>` | 获取静态指定类型的规范结构描述，不要求构造 T，也不登记其成员 |
+| `Reflect.typeOf(value: dynamic)` | `TypeInfo<dynamic>` | 获取实际值的类型；数组和集合保留声明的元素类型，不按当前内容猜测 |
+| `Reflect.getTypes(module: string)` | `TypeInfo<dynamic>[]` | 枚举当前程序中该模块登记的具体名义类型 |
+| `Reflect.findType(module: string, name: string, typeArguments: TypeDescriptor[] = [])` | `TypeInfo<dynamic>?` | 按声明名及完整类型实参查找已登记类型，不在运行时生成新特化 |
+| `Reflect.voidType()` | `TypeInfo<dynamic>` | 描述无返回值类型 Void；void 不是泛型接收者的值类型 |
 | `Reflect.revision()` | `int` | 获取当前反射上下文的发布版本；用于识别查询结果所属发布 |
 | `Reflect.findMethods<T extends Attribute>(module: string? = null)` | `MethodAttributeMatch<T>[]` | 查询当前程序中已登记且直接带有匹配特性的公开普通方法；模块为可选筛选，完整契约见第 15 节 |
 
@@ -150,14 +151,35 @@ Vela 不复制这些平台的程序集装载、访问提权、重载绑定、数
 具体应用。对同一类型的多次登记合并为同一身份；相同模块和声明的不同具体类型实参保持区别。
 类型枚举按声明名及规范类型实参键排序，不依赖哈希表顺序，也不将枚举位置作为持久身份。
 
-`Reflect.typeOf(null)` 返回 Null 类型，`Reflect.typeInfo<void>()` 可用于描述无返回值的签名；
+`Reflect.typeOf(null)` 返回 Null 类型，`Reflect.voidType()` 用于描述无返回值的签名；
 void 仍不是可存储的语言值。泛型函数可以转发 `Reflect.typeInfo<T>()`，具体特化负责产生
 类型描述，抽象参数不进入运行时。
 
 ## 4. TypeInfo 与类型身份
 
-`TypeInfo` 由运行时创建，没有公开构造函数，公共属性只读。它是绑定反射上下文的类型句柄，
+`TypeInfo<T>` 继承公共元数据基类 `TypeDescriptor`，由运行时创建，没有公开构造函数，公共属性只读。
+它是绑定反射上下文的类型句柄，
 不是供用户修改的类型定义，也不保存可由外部解引用的内存地址。
+
+`T` 表示实例成员 API 接受的接收者类型。`Reflect.typeInfo<Counter>()` 返回
+`TypeInfo<Counter>`，其字段、属性和方法分别保留 `FieldInfo<Counter>`、
+`PropertyInfo<Counter>` 和 `MethodInfo<Counter>`。直接传入字符串等错误静态类型会产生编译诊断。
+成员仍通过运行时名称选择，字段值、方法实参和结果使用 `dynamic`，执行时按实际成员声明检查。
+
+`Reflect.typeOf(component)`、`findType`、`getTypes` 和关联类型元数据返回
+`TypeInfo<dynamic>`，适合未知组件的字段遍历。此时接收者也在运行时检查。
+`TypeDescriptor` 提供下表的公共元数据，使不同 `T` 的描述可用于
+`isAssignableFrom` 和泛型类型实参列表；它不把已知接收者类型隐式改成 dynamic。
+
+```vela
+func inspect(component: dynamic): void {
+  for (const field in Reflect.typeOf(component).getFields()) {
+    print(field.name);
+    print(field.type.name);
+    print(field.getValue(component));
+  }
+}
+```
 
 | 属性或方法 | 类型 | 含义 |
 | --- | --- | --- |
@@ -167,12 +189,12 @@ void 仍不是可存储的语言值。泛型函数可以转发 `Reflect.typeInfo
 | `kind` | `TypeKind` | 类型种类，覆盖现有语言的基础、名义、容器、函数及异步类型，并包含 Void、Null、Dynamic |
 | `isNullable` | `bool` | 是否是显式可空类型；dynamic 的 null 接受规则单独由其类型种类决定 |
 | `isRegistered` | `bool` | 当前发布是否将此具体名义类型登记到反射目录 |
-| `typeArguments` | `TypeInfo[]` | 具体泛型、数组、集合和异步类型的实参，按类型声明顺序排列 |
-| `baseType` | `TypeInfo?` | 声明的直接父类，不把可空性重新传播为父类声明的一部分 |
-| `interfaces` | `TypeInfo[]` | 语义模型确认的接口集合，使用确定性顺序 |
+| `typeArguments` | `TypeInfo<dynamic>[]` | 具体泛型、数组、集合和异步类型的实参，按类型声明顺序排列 |
+| `baseType` | `TypeInfo<dynamic>?` | 声明的直接父类，不把可空性重新传播为父类声明的一部分 |
+| `interfaces` | `TypeInfo<dynamic>[]` | 语义模型确认的接口集合，使用确定性顺序 |
 | `signature` | `SignatureInfo?` | 函数类型的结构签名，其它类型为 null |
 | `isInstance(value: dynamic)` | `bool` | 使用现有运行时类型约束检查该值 |
-| `isAssignableFrom(other: TypeInfo)` | `bool` | 判断 other 类型的值能否赋给本类型，不执行转换 |
+| `isAssignableFrom(other: TypeDescriptor)` | `bool` | 判断 other 类型的值能否赋给本类型，不执行转换 |
 
 `TypeKind` 的取值为 Void、Null、Dynamic、Bool、Int、Double、String、MutableString、
 Array、Set、Map、Function、Class、Interface、Enum、Future、Completer、Timer、
@@ -185,7 +207,7 @@ CancellationToken、ByteArray、ByteData、RegExp 和 RegExpMatch。
 
 可空名义类型的 `baseType`、`interfaces` 和类型实参描述其原声明关系，赋值与实例判断另外处理
 可空性；成员目录与对应非可空声明共用登记。`SignatureInfo` 提供
-`parameters: SignatureParameterInfo[]` 和 `returnType: TypeInfo`；每个结构参数包含
+`parameters: SignatureParameterInfo[]` 和 `returnType: TypeInfo<dynamic>`；每个结构参数包含
 `type`、`isOptional` 和 `isRest`，不伪造声明参数名和默认表达式信息。
 Void 只参与签名和身份描述，`isInstance` 对任何值均返回 false；任一方为 Void 的
 `isAssignableFrom` 报告 `TypeError`，不把签名结果当作可赋值的值类型。
@@ -198,20 +220,26 @@ Void 只参与签名和身份描述，`isInstance` 对任何值均返回 false�
 ## 5. 成员描述与查询
 
 字段、属性、方法、构造及枚举成员描述实现公共 `MemberInfo` 协议。公共信息为
-`id: MemberId`、`name: string`、`declaringType: TypeInfo`、`kind: MemberKind`、
+`id: MemberId`、`name: string`、`declaringType: TypeInfo<dynamic>`、`kind: MemberKind`、
 `visibility: MemberVisibility` 和 `isStatic: bool`。
 `MemberKind` 区分 Field、Property、Method、Getter、Setter、Constructor 和 EnumMember。
 `MemberId` 包含所属反射上下文和稳定声明身份，不向用户暴露布局槽号或函数表索引。
 枚举成员身份可由稳定枚举身份与序号确定；枚举结构变更仍要求完整 Reload。
 
-| TypeInfo API | 返回类型 |
+| TypeInfo<T> API | 返回类型 |
 | --- | --- |
-| `getFields(query: MemberQuery = MemberQuery())` | `FieldInfo[]` |
-| `findField(name: string, query: MemberQuery = MemberQuery())` | `FieldInfo?` |
-| `getProperties(query: MemberQuery = MemberQuery())` | `PropertyInfo[]` |
-| `findProperty(name: string, query: MemberQuery = MemberQuery())` | `PropertyInfo?` |
-| `getMethods(query: MemberQuery = MemberQuery())` | `MethodInfo[]` |
-| `findMethod(name: string, query: MemberQuery = MemberQuery(), typeArguments: TypeInfo[] = [])` | `MethodInfo?` |
+| `getFields(query: MemberQuery = MemberQuery())` | `FieldInfo<T>[]` |
+| `findField(name: string, query: MemberQuery = MemberQuery())` | `FieldInfo<T>?` |
+| `getProperties(query: MemberQuery = MemberQuery())` | `PropertyInfo<T>[]` |
+| `findProperty(name: string, query: MemberQuery = MemberQuery())` | `PropertyInfo<T>?` |
+| `getMethods(query: MemberQuery = MemberQuery())` | `MethodInfo<T>[]` |
+| `findMethod(name: string, query: MemberQuery = MemberQuery(), typeArguments: TypeDescriptor[] = [])` | `MethodInfo<T>?` |
+| `getStaticFields(query: MemberQuery = MemberQuery())` | `StaticFieldInfo[]` |
+| `findStaticField(name: string, query: MemberQuery = MemberQuery())` | `StaticFieldInfo?` |
+| `getStaticProperties(query: MemberQuery = MemberQuery())` | `StaticPropertyInfo[]` |
+| `findStaticProperty(name: string, query: MemberQuery = MemberQuery())` | `StaticPropertyInfo?` |
+| `getStaticMethods(query: MemberQuery = MemberQuery())` | `StaticMethodInfo[]` |
+| `findStaticMethod(name: string, query: MemberQuery = MemberQuery(), typeArguments: TypeDescriptor[] = [])` | `StaticMethodInfo?` |
 | `getConstructor()` | `ConstructorInfo?` |
 | `getEnumMembers()` | `EnumMemberInfo[]` |
 | `findEnumMember(name: string)` | `EnumMemberInfo?` |
@@ -221,8 +249,11 @@ Void 只参与签名和身份描述，`isInstance` 对任何值均返回 false�
 | 字段 | 可选值 | 默认值 |
 | --- | --- | --- |
 | `scope: MemberScope` | `Declared`、`IncludeInherited` | `IncludeInherited` |
-| `storage: MemberStorageFilter` | `Instance`、`Static`、`All` | `All` |
 | `visibility: MemberVisibilityFilter` | `Public`、`Private`、`All` | `Public` |
+
+`getFields` / `findField`、属性和方法的同类 API 只查询实例成员；
+`getStaticFields` / `findStaticField` 及同类 API 只查询静态成员。
+查询对象只提供范围与可见性，不再混合两种操作形式。
 
 这些值由标准枚举表达，不引入标志运算语法。过滤条件只收窄已登记目录，不改变访问权限。
 成员本身的 `MemberVisibility` 只包含 Public 和 Private，不使用查询中的 All 值。
@@ -247,17 +278,31 @@ Void 只参与签名和身份描述，`isInstance` 对任何值均返回 false�
 
 | 描述 API | 类型或返回类型 | 行为 |
 | --- | --- | --- |
-| `FieldInfo.type` | `TypeInfo` | 字段的完整声明类型 |
-| `FieldInfo.getValue(receiver: dynamic)` | `dynamic` | 读取字段，保留原值和名义类型 |
-| `FieldInfo.setValue(receiver: dynamic, value: dynamic)` | `void` | 完整类型检查后写入，使用正常写屏障 |
-| `PropertyInfo.type` | `TypeInfo` | 访问器的值类型 |
-| `PropertyInfo.canRead` / `canWrite` | `bool` | 当前登记与公开访问路径是否允许读或写 |
-| `PropertyInfo.getter` / `setter` | `MethodInfo?` | 已登记的相应访问器描述，缺少时为 null |
-| `PropertyInfo.getValue(receiver: dynamic)` | `dynamic` | 调用正常 getter |
-| `PropertyInfo.setValue(receiver: dynamic, value: dynamic)` | `void` | 检查 setter 参数后调用正常 setter |
+| `FieldInfo<T>.type` | `TypeInfo<dynamic>` | 字段的完整声明类型 |
+| `FieldInfo<T>.getValue(receiver: T)` | `dynamic` | 读取字段，保留原值和名义类型 |
+| `FieldInfo<T>.setValue(receiver: T, value: dynamic)` | `void` | 完整类型检查后写入，使用正常写屏障 |
+| `PropertyInfo<T>.type` | `TypeInfo<dynamic>` | 访问器的值类型 |
+| `PropertyInfo<T>.canRead` / `canWrite` | `bool` | 当前登记与公开访问路径是否允许读或写 |
+| `PropertyInfo<T>.getter` / `setter` | `MethodInfo<T>?` | 已登记的相应访问器描述，缺少时为 null |
+| `PropertyInfo<T>.getValue(receiver: T)` | `dynamic` | 调用正常 getter |
+| `PropertyInfo<T>.setValue(receiver: T, value: dynamic)` | `void` | 检查 setter 参数后调用正常 setter |
 
-实例成员要求合法、非 null 的接收者。静态成员统一传入 null；传入其它值报告 `TypeError`，
-不忽略错误接收者。成员描述只绑定声明，不在内部永久保存某个对象。
+实例成员要求满足 `T` 的合法、非 null 接收者，动态输入仍在执行边界检查实际声明类型。
+静态成员使用 `StaticFieldInfo`、`StaticPropertyInfo` 和 `StaticMethodInfo`，操作不接收实例：
+
+```vela
+const info = Reflect.typeInfo<Counter>();
+const total = info.findStaticField('total');
+if (total != null) {
+  total.setValue(30);
+  print(total.getValue());
+}
+```
+
+`StaticPropertyInfo` 的 `getValue()`、`setValue(value: dynamic)` 与静态字段相同；
+`getter` / `setter` 返回 `StaticMethodInfo?`。
+`StaticMethodInfo.invoke(arguments: CallArguments)` 只接收实参包。
+三种静态描述保留对应实例描述的元数据属性。成员描述只绑定声明，不在内部永久保存某个对象。
 调用方跨分配保存接收者时使用已有脚本引用或 C++ 根句柄。
 
 属性按逻辑名字聚合 getter/setter，两个访问器保留独立的登记、可见性与调用身份。
@@ -273,11 +318,11 @@ Void 只参与签名和身份描述，`isInstance` 对任何值均返回 false�
 
 | 描述 API | 类型或返回类型 | 行为 |
 | --- | --- | --- |
-| `MethodInfo.parameters` | `ParameterInfo[]` | 脚本可见的有序参数，不包含隐藏接收者和 ABI 参数 |
-| `MethodInfo.returnType` | `TypeInfo` | 声明返回类型，无返回值时为 Void |
-| `MethodInfo.typeArguments` | `TypeInfo[]` | 已编译方法具体特化的类型实参 |
-| `MethodInfo.isAsync` | `bool` | 声明是否为 async；不根据返回 Future 推测此标志 |
-| `MethodInfo.invoke(receiver: dynamic, arguments: CallArguments)` | `dynamic` | 执行受检查的当前声明调用 |
+| `MethodInfo<T>.parameters` | `ParameterInfo[]` | 脚本可见的有序参数，不包含隐藏接收者和 ABI 参数 |
+| `MethodInfo<T>.returnType` | `TypeInfo<dynamic>` | 声明返回类型，无返回值时为 Void |
+| `MethodInfo<T>.typeArguments` | `TypeInfo<dynamic>[]` | 已编译方法具体特化的类型实参 |
+| `MethodInfo<T>.isAsync` | `bool` | 声明是否为 async；不根据返回 Future 推测此标志 |
+| `MethodInfo<T>.invoke(receiver: T, arguments: CallArguments)` | `dynamic` | 执行受检查的当前声明调用 |
 | `ConstructorInfo.parameters` | `ParameterInfo[]` | 正常构造签名，包含生成构造的可省略字段参数 |
 | `ConstructorInfo.invoke(arguments: CallArguments)` | `dynamic` | 执行正常构造，返回实际实例 |
 
@@ -343,7 +388,7 @@ async 或普通返回 Future 的方法返回原 Future，不隐式 await、不�
 | null / 空数组 | 有效查找没有匹配项；有效已登记目录为空 |
 | `ReflectionUnavailable` | 未登记名义类型的成员目录查询，或仍存在的声明已退出当前反射登记 |
 | `ReflectionAccessDenied` | 已取得描述，但尝试执行非公开访问路径 |
-| `TypeError` | 错误成员种类、静态调用接收者错误、属性缺少相应访问器、非法 Void 赋值判断或参数绑定形式错误 |
+| `TypeError` | 错误成员种类、属性缺少相应访问器、非法 Void 赋值判断或参数绑定形式错误 |
 | `InvalidCast` | 实例接收者或实参、写入值不满足完整类型约束 |
 | `TargetDeleted` | 已取得的成员身份在当前发布中已删除 |
 | `InvalidIsolate` | C++ 边界混用不同 Isolate 的上下文、描述或值 |
@@ -361,7 +406,7 @@ async 或普通返回 Future 的方法返回原 Future，不隐式 await、不�
 
 ## 8. 脚本与 C++ 的共同运行时
 
-C++ 通过 `#include <vela/host.h>` 使用 `vela::Reflection`、`vela::TypeInfo` 与成员描述。
+C++ 通过 `#include <vela/host.h>` 使用 `vela::Reflection`、`vela::TypeInfo<T>` 与成员描述。
 [公共头文件](../../include/vela/reflection.h)是完整声明的权威来源。
 接口位于 `vela` 命名空间，以下按操作说明契约；参数与返回类型以头文件为准。
 `Result<T>` 沿用现有宿主错误和根句柄契约。
@@ -372,7 +417,7 @@ C++ 通过 `#include <vela/host.h>` 使用 `vela::Reflection`、`vela::TypeInfo`
 | `Reflection::TypeOf` | 获取值的完整类型，要求同一 Isolate |
 | `Reflection::GetTypes`、`FindType` | 枚举或查找已登记的具体类型 |
 | `Reflection::Revision` | 获取当前发布版本 |
-| `Type<T>::Describe` | 桥接已绑定的逻辑类型，不重新创建名义身份 |
+| `Type<T>::Describe` | 返回 `TypeInfo<T>`，保留逻辑接收者类型，不重新创建名义身份 |
 | `TypeInfo::id` | 取得可复制的规范身份 |
 | `TypeInfo::Describe` | 复制类型描述和具有类型根的关联句柄 |
 | `TypeInfo::IsInstance`、`IsAssignableFrom` | 检查值的完整类型或类型赋值关系 |
@@ -381,8 +426,9 @@ C++ 通过 `#include <vela/host.h>` 使用 `vela::Reflection`、`vela::TypeInfo`
 
 | C++ 操作 | 契约 |
 | --- | --- |
-| `GetFields`、`GetProperties`、`GetMethods` | 按查询范围、存储种类与可见性枚举对应成员 |
+| `GetFields`、`GetProperties`、`GetMethods` | 按查询范围与可见性枚举实例成员，返回保留接收者 T 的描述 |
 | `FindField`、`FindProperty`、`FindMethod` | 按名称查找；泛型方法还匹配完整类型实参；合法缺失返回空值 |
+| `GetStaticFields` / `FindStaticField` 及属性、方法的同类接口 | 查询静态成员，返回无接收者操作的独立描述 |
 | `GetConstructor` | 获取已登记的构造，合法缺失返回空值 |
 | `GetEnumMembers`、`FindEnumMember` | 按原始声明顺序枚举或按名称查找枚举成员 |
 
@@ -412,6 +458,13 @@ C++ 的成员种类名为 `ReflectionMemberKind`，其它查询枚举与脚本�
 `std::array{CallArgument(value, "amount")}` 可以直接传给 `Invoke`。
 `CreateValue<T>(scope, value)` 通过现有 codec 创建保根的擦除值，结果为 `Result<Local<Value>>`。
 调用和读取的成功结果、错误载荷在返回时均已保根。
+
+`FieldInfo<T>`、`PropertyInfo<T>` 和 `MethodInfo<T>` 接受 `HostValue<T>` 接收者。
+`Reflection::TypeOf`、`FindType`、`GetTypes` 返回 `TypeInfo<Value>`，
+相应实例描述接受 `Local<Value>`。字段值和调用结果继续为保根的 `Local<Value>`。
+`StaticFieldInfo`、`StaticPropertyInfo` 的读写与 `StaticMethodInfo::Invoke` 不接收接收者。
+公共 `TypeDescriptor` 提供类型元数据，异构类型实参使用 `std::span<const TypeDescriptor>`；
+`MemberQuery` 只包含范围与可见性。
 
 仅绑定 Isolate 的基础类型、容器和函数类型也支持结构描述、类型判断及空成员查询。
 脚本名义类型与宿主类的完整声明和成员目录需要绑定具体实例或开发会话。
@@ -744,7 +797,7 @@ class Counter {
 `value` 或构造。
 
 编辑器通过第 15 节的 `Reflect.findMethods<Button>()` 一次取得 `Button` 数据及对应方法，
-据此决定按钮的显示与交互，点击时使用普通 `MethodInfo.invoke` 调用目标。反射服务负责
+据此决定按钮的显示与交互，点击时使用普通 `MethodInfo<T>.invoke` 调用目标。反射服务负责
 定位与受检查调用，按钮 UI 属于独立消费者；编译器只处理通用特性与 `Reflect` 类型关系。
 本文不新增 `Button` 标准类型或编辑器专用调用规则。
 
@@ -791,9 +844,9 @@ Reload 的边界继续遵循第 9 节。登记与成员发现不执行特性构�
 ```vela
 func main(): void {
   const matches = Reflect.findMethods<Button>();
-  for (const match in matches) {
-    print(match.attribute.label); // 重置
-    // match.method 是 reset 的 MethodInfo，调用时另行提供接收者。
+  for (const selected in matches) {
+    print(selected.attribute.label); // 重置
+    // selected.instanceMethod 描述 reset；调用时另行提供 Counter 实例。
   }
 }
 ```
@@ -821,12 +874,14 @@ API 签名为 `Reflect.findMethods<T extends Attribute>(module: string? = null):
 
 ### 15.2 匹配与返回记录
 
-`MethodAttributeMatch<T>` 由标准环境提供，无公开构造函数，包含两个只读属性：
+`MethodAttributeMatch<T>` 由标准环境提供，无公开构造函数，包含四个只读属性：
 
 | 属性 | 类型 | 含义 |
 | --- | --- | --- |
-| `method` | `MethodInfo` | 被该条特性直接标注的方法描述；保留真实声明者，不绑定业务对象 |
+| `method` | `MemberInfo` | 被该条特性直接标注的方法描述；保留真实声明者，不绑定业务对象 |
 | `attribute` | `T` | 该条标注的数据副本，保留实际派生特性类型及其字段值 |
+| `instanceMethod` | `MethodInfo<dynamic>?` | 实例方法的操作描述；静态方法为 null |
+| `staticMethod` | `StaticMethodInfo?` | 静态方法的操作描述；实例方法为 null |
 
 匹配使用普通类型赋值关系：实际特性类型为 `T` 或其派生类型时都可匹配。例如查询 `Reflect`
 可以得到方法上直接使用的 `Button` 标注；查询 `Button` 不匹配只有 `[Reflect]` 的方法。
@@ -843,7 +898,7 @@ API 签名为 `Reflect.findMethods<T extends Attribute>(module: string? = null):
 
 返回数组是独立结果集合。每次查询为 `attribute` 产生独立的数据副本；修改该副本的普通
 可写字段或修改数组，不改变编译产物中的标注、登记目录或其他查询结果。`method` 和
-`attribute` 属性本身不能被调用方重新赋值。
+`attribute`、`instanceMethod` 和 `staticMethod` 属性本身不能被调用方重新赋值。
 
 ### 15.3 查询、调用与重载
 
@@ -851,9 +906,9 @@ API 签名为 `Reflect.findMethods<T extends Attribute>(module: string? = null):
 它可以分配结果记录和特性数据副本，数据来自前端已绑定并保留的元数据。第 14 节必须为
 特性参数与默认值定义可复制的数据表示；不能通过在查询期间执行用户构造代码补齐数据。
 
-查询结果不捕获接收者。调用实例方法时，消费者提供满足声明类型的对象；调用静态方法时
-传入 null。实参、异步结果与异常继续遵循现有 `MethodInfo.invoke` 契约。查询不会将带参
-方法改成无参方法，也不自动构造对象、执行方法或 await 结果。
+查询结果不捕获接收者。消费者检查 `instanceMethod` 或 `staticMethod` 的非空分支后调用；
+实例分支接收满足声明类型的对象，静态分支只接收实参包。实参、异步结果与异常继续遵循成员调用契约。
+查询不会将带参方法改成无参方法，也不自动构造对象、执行方法或 await 结果。
 
 一次查询选择并保活同一个当前发布，方法集合与标注数据均来自该发布。`attribute` 是查询
 时取得的数据副本；`method` 是稳定身份句柄，后续调用仍解析调用时的当前发布。热重载修改
@@ -886,7 +941,7 @@ C++ 公共查询绑定的具体签名在第 14 节所列的后续设计中确定
 | 数据与生命周期 | 修改结果不改变目录；重载后旧数据副本与当前方法句柄行为正确；GC、停止与完整 Reload 无历史代码根环 |
 | 编译与工具 | 基线和优化 JIT、无源码 AOT、缓存、LSP/doc、格式化与 REPL 都消费相同声明和查询契约 |
 
-本节不要求 `MethodInfo.getAttributes<T>()` 成为主要使用入口；通用的按目标读取特性 API
+本节不要求 `MethodInfo<T>.getAttributes<T>()` 成为主要使用入口；通用的按目标读取特性 API
 仍由第 14 节单独设计，方法发现消费者直接使用 `Reflect.findMethods<T>()`。
 
 ## 16. 参考

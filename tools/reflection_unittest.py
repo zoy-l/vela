@@ -21,6 +21,9 @@ class Button extends Reflect { label: string = ''; }
 class Counter implements Reader {
   value: int = 10;
   static total: int = 3;
+  static get shared(): int { return Counter.total; }
+  static set shared(value: int): void { Counter.total = value; }
+  static twice(value: int): int { return value * 2; }
   [Reflect] private hidden: int = 9;
   get amount(): int { return this.value; }
   [Reflect] private set amount(value: int): void { this.value = value; }
@@ -37,13 +40,15 @@ func compiledSpecializations(): void {
   counter.echo<string>('compiled');
   counter.echo<(int) => string>((value: int): string => 'compiled');
 }
-func describe<T>(): TypeInfo { return Reflect.typeInfo<T>(); }
+func describe<T>(): TypeInfo<T> { return Reflect.typeInfo<T>(); }
 export func calculate(): int {
   const info = describe<Counter>();
   if (info.name != 'Counter' || info.kind != TypeKind.Class) { return -1; }
   const ctor = info.getConstructor();
   if (ctor == null || !ctor.parameters[0].hasDefault) { return -2; }
-  const object = ctor.invoke(CallArguments());
+  const created = ctor.invoke(CallArguments());
+  if (!(created is Counter)) { return -20; }
+  const object: Counter = created;
   const field = info.findField('value');
   if (field == null) { return -3; }
   field.setValue(object, 20);
@@ -53,16 +58,17 @@ export func calculate(): int {
   catch (error: Error) { if (error.code != 'ReflectionAccessDenied') { return -6; } }
   const method = info.findMethod('add');
   if (method == null || method.parameters[0].name != 'amount') { return -7; }
-  const answer = method.invoke(object, CallArguments(items: [CallArgument(value: 22, name: 'amount')])) as int;
+  const answer = method.invoke(object, CallArguments(items: [CallArgument(value: 22, name: 'amount')]));
+  if (!(answer is int)) { return -21; }
   const reader = Reflect.typeInfo<Reader>().findMethod('read');
-  if (reader == null || reader.invoke(object, CallArguments()) as int != answer) { return -8; }
+  if (reader == null || reader.invoke(object, CallArguments()) != answer) { return -8; }
   const generic = info.findMethod('echo', typeArguments: [Reflect.typeInfo<string>()]);
-  if (generic == null || generic.invoke(object, CallArguments(items: [CallArgument(value: 'ok')])) as string != 'ok') { return -9; }
+  if (generic == null || generic.invoke(object, CallArguments(items: [CallArgument(value: 'ok')])) != 'ok') { return -9; }
   const selected = Reflect.typeInfo<Choice>().findEnumMember('third');
   if (selected == null || selected.ordinal != 2 || Reflect.typeOf(selected.value).id != Reflect.typeInfo<Choice>().id) { return -10; }
   const values: Counter[] = [];
   if (Reflect.typeOf(values).typeArguments[0].id != info.id) { return -11; }
-  if (Reflect.typeInfo<void>().kind != TypeKind.Void || Reflect.typeOf(null).kind != TypeKind.Null) { return -12; }
+  if (Reflect.voidType().kind != TypeKind.Void || Reflect.typeOf(null).kind != TypeKind.Null) { return -12; }
   const signature = Reflect.typeInfo<(int) => string>().signature;
   if (signature == null || signature.parameters[0].type.kind != TypeKind.Int || signature.returnType.kind != TypeKind.String) { return -13; }
   if (Reflect.typeInfo<Generic<(int) => string>>().typeArguments[0].id != Reflect.typeInfo<(int) => string>().id) { return -15; }
@@ -73,9 +79,23 @@ export func calculate(): int {
   if (!ids.has(Reflect.typeOf(object).id)) { return -14; }
   const matches = Reflect.findMethods<Button>();
   if (matches.length != 2 || matches[0].attribute.label != 'first' || matches[1].attribute.label != 'second') { return -17; }
-  if (matches[0].method.name != 'read' || matches[0].method.invoke(object, CallArguments()) as int != answer) { return -18; }
+  const read = matches[0].instanceMethod;
+  if (read == null || matches[0].staticMethod != null || matches[0].method.name != 'read' || read.invoke(object, CallArguments()) != answer) { return -18; }
   matches[0].attribute.label = 'modified';
   if (Reflect.findMethods<Button>(module: info.module)[0].attribute.label != 'first') { return -19; }
+  const total = info.findStaticField('total');
+  const shared = info.findStaticProperty('shared');
+  const twice = info.findStaticMethod('twice');
+  if (total == null || shared == null || twice == null) { return -22; }
+  total.setValue(21);
+  if (shared.getValue() != 21) { return -23; }
+  const getter = shared.getter;
+  const setter = shared.setter;
+  if (getter == null || setter == null) { return -24; }
+  setter.invoke(CallArguments(items: [CallArgument(value: 42)]));
+  if (getter.invoke(CallArguments()) != answer || total.getValue() != answer) { return -25; }
+  if (twice.invoke(CallArguments(items: [CallArgument(value: 21)])) != answer) { return -26; }
+  if (info.findField('total') != null || info.findStaticField('value') != null) { return -27; }
   return answer;
 }
 func main(): void { print(calculate()); }

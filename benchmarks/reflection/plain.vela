@@ -11,7 +11,12 @@ export func directField(values: int[]): int {
 export func dynamicField(values: int[]): int {
   const erased: dynamic = object;
   let sum = 0;
-  for (let i = 0; i < values.length; i++) { erased.value = values[i]; sum += erased.value as int; }
+  for (let i = 0; i < values.length; i++) {
+    erased.value = values[i];
+    const value = erased.value;
+    if (!(value is int)) { return -1; }
+    sum += value;
+  }
   return sum;
 }
 export func directCall(values: int[]): int {
@@ -22,7 +27,11 @@ export func directCall(values: int[]): int {
 export func dynamicCall(values: int[]): int {
   const erased: dynamic = object;
   let sum = 0;
-  for (let i = 0; i < values.length; i++) { sum += erased.add(values[i]) as int; }
+  for (let i = 0; i < values.length; i++) {
+    const value = erased.add(values[i]);
+    if (!(value is int)) { return -1; }
+    sum += value;
+  }
   return sum;
 }
 export func directConstruct(values: int[]): int {

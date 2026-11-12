@@ -40,6 +40,12 @@ void Lowerer::LowerIntrinsicFunction(Function function,
         .immediate = DescribeReflectionArgument(type),
         .location = source.location,
     });
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result++,
+        .immediate = RegisterRuntimeType(function.return_type),
+        .location = source.location,
+    });
   }
   if (source.intrinsic_operation) {
     argument_start = result;
@@ -68,9 +74,15 @@ void Lowerer::LowerIntrinsicFunction(Function function,
           .location = source.location,
       });
     }
-    while (result - argument_start < BuiltinArity(builtin)) {
+    while (result - argument_start + 1 < BuiltinArity(builtin)) {
       Emit({.opcode = Opcode::LoadNull, .dst = result++, .location = source.location});
     }
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = result++,
+        .immediate = DescribeReflectionArgument(function.return_type),
+        .location = source.location,
+    });
   }
   if (builtin == Builtin::JsonTypedParse || builtin == Builtin::JsonSafeParse) {
     const auto key = QualifiedMemberKey({.owner = owner->name, .name = source.name});

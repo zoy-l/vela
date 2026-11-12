@@ -43,6 +43,10 @@ SpecializationRequests::SpecializationRequests(const Program& program,
                                                const DeclarationIds& identities)
     : records_(identities.records()) {
   for (const auto& [name, origin] : program.origins) {
+    // 具体应用沿用模板 origin；存留请求必须使用模板名，不受哈希遍历顺序影响。
+    if (!origin.arguments.empty()) {
+      continue;
+    }
     names_.emplace(OriginKey{origin.module_uri, origin.kind, origin.name}, name);
   }
 }

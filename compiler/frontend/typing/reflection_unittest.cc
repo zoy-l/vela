@@ -46,6 +46,82 @@ ReflectionSelection Select(std::string_view type) {
   };
 }
 
+TEST(ReflectionReceiverTest, PreservesReceiverTypeAcrossQueriesAndAccessors) {
+  const SourceInput input{
+      .path = "main.vela",
+      .text = R"(
+[Reflect]
+class Counter {
+  value: int = 0;
+  get amount(): int { return this.value; }
+  set amount(value: int): void { this.value = value; }
+  add(value: int): int { return this.value + value; }
+  static total: int = 0;
+  static reset(): void { Counter.total = 0; }
+}
+func forward<T>(): TypeInfo<T> { return Reflect.typeInfo<T>(); }
+func main(): void {
+  const counter = Counter();
+  const info: TypeInfo<Counter> = forward<Counter>();
+  const fields: FieldInfo<Counter>[] = info.getFields();
+  const field: FieldInfo<Counter>? = info.findField('value');
+  if (field != null) { field.setValue(counter, 20); }
+  const property: PropertyInfo<Counter>? = info.findProperty('amount');
+  if (property != null) {
+    property.setValue(counter, 30);
+    const getter: MethodInfo<Counter>? = property.getter;
+    if (getter != null) { getter.invoke(counter, CallArguments()); }
+  }
+  const method: MethodInfo<Counter>? = info.findMethod('add');
+  if (method != null) { method.invoke(counter, CallArguments(items: [CallArgument(value: 1)])); }
+  const erased: TypeInfo<dynamic> = Reflect.typeOf(counter);
+  for (const item in erased.getFields()) { item.getValue(counter); }
+  const total: StaticFieldInfo? = info.findStaticField('total');
+  if (total != null) { total.setValue(1); total.getValue(); }
+  const reset: StaticMethodInfo? = info.findStaticMethod('reset');
+  if (reset != null) { reset.invoke(CallArguments()); }
+}
+)",
+  };
+  auto parsed = LoadSources(std::span(&input, 1), input.path);
+  ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
+  const auto checked = TypeChecker().Check(parsed.program);
+  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
+}
+
+TEST(ReflectionReceiverTest, RejectsWrongKnownReceiversAndReceiverArgumentsForStatics) {
+  for (const std::string_view operation : {
+           "const field = info.findField('value'); if (field != null) { field.getValue('wrong'); }",
+           "const field = info.findField('value'); if (field != null) { field.setValue('wrong', "
+           "1); }",
+           "const method = info.findMethod('add'); if (method != null) { method.invoke('wrong', "
+           "CallArguments()); }",
+           "const property = info.findProperty('amount'); if (property != null) { "
+           "property.setValue('wrong', 1); }",
+           "const property = info.findProperty('amount'); if (property != null) { const getter = "
+           "property.getter; if (getter != null) { getter.invoke('wrong', CallArguments()); } }",
+           "const field = info.findStaticField('total'); if (field != null) { "
+           "field.getValue(Counter()); }",
+           "const field = info.findStaticField('total'); if (field != null) { "
+           "field.setValue(Counter(), 1); }",
+           "const method = info.findStaticMethod('reset'); if (method != null) { "
+           "method.invoke(Counter(), CallArguments()); }",
+       }) {
+    SCOPED_TRACE(operation);
+    const std::string source =
+        "class Counter { value: int = 0; static total: int = 0; "
+        "get amount(): int { return this.value; } set amount(value: int): void {} "
+        "add(value: int): int { return value; } static reset(): void {} } "
+        "func main(): void { const info = Reflect.typeInfo<Counter>(); " +
+        std::string(operation) + " }";
+    const SourceInput input{.path = "main.vela", .text = source};
+    auto parsed = LoadSources(std::span(&input, 1), input.path);
+    ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
+    const auto checked = TypeChecker().Check(parsed.program);
+    EXPECT_FALSE(checked.Succeeded());
+  }
+}
+
 TEST(ReflectionAttributeTest, BindsClassMembersAndRepeatedDerivedAttributesFromSource) {
   const SourceInput input{
       .path = "main.vela",

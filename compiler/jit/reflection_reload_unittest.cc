@@ -55,7 +55,7 @@ class ReflectionReloadTest : public ::testing::TestWithParam<NativeCodeTier> {
                              revision == 0 ? DevelopmentOperation::Load : operation);
   }
   DevelopmentSession& session() { return *session_storage_; }
-  Result<std::optional<TypeInfo>> FindType(std::string_view name) {
+  Result<std::optional<TypeInfo<Value>>> FindType(std::string_view name) {
     auto reflection = Reflection::Bind(session().isolate().native_dispatch());
     if (!reflection) {
       return std::unexpected(std::move(reflection.error()));
@@ -72,15 +72,18 @@ TEST_P(ReflectionReloadTest, HostAndScriptHandlesSelectCurrentCodeWithoutRetaini
 class Box { value: int = 10; read(): int { return this.value + )";
   const std::string suffix = R"(; } }
 let object: Box? = null;
-let method: MethodInfo? = null;
+let method: MethodInfo<Box>? = null;
 export func remember(): void {
   object = Box();
   method = Reflect.typeInfo<Box>().findMethod('read');
 }
 export func read(): int {
   const target = method;
-  if (target == null) { return -1; }
-  return target.invoke(object, CallArguments()) as int;
+  const receiver = object;
+  if (target == null || receiver == null) { return -1; }
+  const output = target.invoke(receiver, CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )";
   auto result = Update(prefix + "1" + suffix);
@@ -221,15 +224,17 @@ export func count(): int { return defaults; }
 TEST_P(ReflectionReloadTest, FailedCandidatesAndDeletedTargetsKeepScriptIdentitiesCoherent) {
   const std::string initial = R"(
 class Box { value: int = 10; read(): int { return this.value; } }
-let saved: FieldInfo? = null;
+let saved: FieldInfo<Box>? = null;
 let identity: MemberId? = null;
 export func remember(): void {
   saved = Reflect.typeInfo<Box>().findField('value');
-  const current = saved as FieldInfo;
+  const current = saved;
+  if (current == null) { return; }
   identity = current.id;
 }
 export func status(): int {
-  const current = saved as FieldInfo;
+  const current = saved;
+  if (current == null) { return -3; }
   if (current.id != identity) { return -1; }
   try { current.name; return 0; }
   catch (error: Error) { return error.code == 'TargetDeleted' ? 42 : -2; }
@@ -248,10 +253,11 @@ export func status(): int {
   EXPECT_EQ(unchanged->AsInteger(), 0);
   result = Update(R"(
 class Box {}
-let saved: FieldInfo? = null;
+let saved: FieldInfo<Box>? = null;
 let identity: MemberId? = null;
 export func status(): int {
-  const current = saved as FieldInfo;
+  const current = saved;
+  if (current == null) { return -3; }
   if (current.id != identity) { return -1; }
   try { current.name; return 0; }
   catch (error: Error) { return error.code == 'TargetDeleted' ? 42 : -2; }
@@ -269,11 +275,13 @@ export func status(): int {
 
 TEST_P(ReflectionReloadTest, ResolvesMethodIdentityBeforeReadingInvalidArgumentSnapshots) {
   const std::string prefix = R"(
-let saved: MethodInfo? = null;
-export func remember(): void { saved = Reflect.typeInfo<Box>().findMethod('read'); }
+let saved: StaticMethodInfo? = null;
+export func remember(): void { saved = Reflect.typeInfo<Box>().findStaticMethod('read'); }
 export func failure(): string {
   try {
-    (saved as MethodInfo).invoke(null, CallArguments(items: [CallArgument(value: 0, name: '')]));
+    const target = saved;
+    if (target == null) { return 'missing'; }
+    target.invoke(CallArguments(items: [CallArgument(value: 0, name: '')]));
     return 'none';
   } catch (error: Error) { return error.code; }
 }
@@ -298,14 +306,14 @@ export func failure(): string {
 TEST_P(ReflectionReloadTest, ExternalDescriptorsBlockFullReloadAndManagedDescriptorsDoNot) {
   const std::string source = R"(
 class Box { value: int = 10; read(): int { return this.value; } }
-let saved: TypeInfo? = null;
+let saved: TypeDescriptor? = null;
 export func remember(): void { saved = Reflect.typeInfo<Box>(); }
 func main(): void {}
 )";
   auto result = Update(source);
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   ASSERT_TRUE(session().Invoke("main.vela", "remember"));
-  std::optional<TypeInfo> held;
+  std::optional<TypeInfo<Value>> held;
   {
     const auto type = test::RequireReflectionValue(FindType("Box"));
     ASSERT_TRUE(type) << type.error();
@@ -391,7 +399,7 @@ TEST_P(ReflectionReloadTest,
        StructuralDescriptorRootsRetainNestedNominalIdentitiesAcrossPublication) {
   auto result = Update(R"(
 class Box { value: int = 10; read(): int { return this.value; } }
-let saved: TypeInfo? = null;
+let saved: TypeDescriptor? = null;
 let identity: TypeId? = null;
 export func remember(): void {
   saved = Reflect.typeInfo<Map<string, (Box) => Future<Box[]>>>();
@@ -402,12 +410,14 @@ export func remember(): void {
   ASSERT_TRUE(session().Invoke("main.vela", "remember"));
   result = Update(R"(
 class Box {}
-let saved: TypeInfo? = null;
+let saved: TypeDescriptor? = null;
 let identity: TypeId? = null;
 export func inspect(): int {
-  const root = saved as TypeInfo;
+  const root = saved;
+  if (root == null) { return -3; }
   const function = root.typeArguments[1];
-  const signature = function.signature as SignatureInfo;
+  const signature = function.signature;
+  if (signature == null) { return -4; }
   if (signature.parameters[0].type.id != identity) { return -1; }
   const array = signature.returnType.typeArguments[0];
   if (array.typeArguments[0].id != identity) { return -2; }
@@ -430,10 +440,22 @@ class Box { )";
   const std::string suffix = R"( }
 let saved: MethodAttributeMatch<Button>? = null;
 export func remember(): void { saved = Reflect.findMethods<Button>()[0]; }
-export func oldLabel(): string { return (saved as MethodAttributeMatch<Button>).attribute.label; }
+export func oldLabel(): string {
+  const selected = saved;
+  if (selected == null) { return 'missing'; }
+  return selected.attribute.label;
+}
 export func currentLabel(): string { return Reflect.findMethods<Button>()[0].attribute.label; }
 export func count(): int { return Reflect.findMethods<Button>().length; }
-export func call(): int { return (saved as MethodAttributeMatch<Button>).method.invoke(null, CallArguments()) as int; }
+export func call(): int {
+  const selected = saved;
+  if (selected == null) { return -1; }
+  const method = selected.staticMethod;
+  if (method == null) { return -2; }
+  const output = method.invoke(CallArguments());
+  if (output is int) { return output; }
+  return -101;
+}
 )";
   auto result = Update(prefix + "[Button(label: 'old')] static read(): int { return 1; }" + suffix,
                        std::vector<frontend::ReflectionSelection>{});
@@ -493,7 +515,11 @@ async func observe(): Future<void> {
   await gate.future;
   const matches = Reflect.findMethods<Button>();
   label = matches[0].attribute.label;
-  value = matches[0].method.invoke(null, CallArguments()) as int;
+  const method = matches[0].staticMethod;
+  if (method == null) { return; }
+  const result = method.invoke(CallArguments());
+  if (!(result is int)) { return; }
+  value = result;
   observedRevision = Reflect.revision();
 }
 )" + entries,

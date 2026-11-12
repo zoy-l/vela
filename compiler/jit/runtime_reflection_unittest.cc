@@ -4,6 +4,8 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -26,8 +28,38 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
-namespace vela::compiler::jit {
+namespace vela {
 namespace {
+struct ReflectionCounterTag;
+}
+
+template <>
+struct ScriptTypeTraits<ReflectionCounterTag> final {
+  static constexpr auto kKind = ScriptTypeKind::Class;
+  static constexpr std::string_view kName = "Counter";
+  static constexpr std::string_view kModule = "main.vela";
+  using Arguments = std::tuple<>;
+};
+
+namespace compiler::jit {
+namespace {
+
+using CounterObject = Object<ReflectionCounterTag>;
+static_assert(std::is_same_v<decltype(std::declval<Type<CounterObject>>().Describe()),
+                             Result<TypeInfo<CounterObject>>>);
+static_assert(std::is_invocable_v<decltype(&FieldInfo<CounterObject>::GetValue),
+                                  const FieldInfo<CounterObject>&,
+                                  HandleScope&,
+                                  Local<CounterObject>>);
+static_assert(!std::is_invocable_v<decltype(&FieldInfo<CounterObject>::GetValue),
+                                   const FieldInfo<CounterObject>&,
+                                   HandleScope&,
+                                   Local<String>>);
+static_assert(!std::is_invocable_v<decltype(&MethodInfo<CounterObject>::Invoke),
+                                   const MethodInfo<CounterObject>&,
+                                   HandleScope&,
+                                   Local<String>,
+                                   CallArguments>);
 
 TEST(ReflectionContextTest, DistinguishesUnpublishedAndStoppedDispatch) {
   runtime::Isolate isolate;
@@ -136,27 +168,45 @@ class Counter {
   value = method->Invoke(scope, *object, arguments);
   ASSERT_TRUE(value) << value.error().message;
   EXPECT_EQ(internal::HandleAccess::Read(*value).AsInteger(), 40);
-  const auto null = CreateValue<Nullable<std::int64_t>>(scope, std::nullopt);
-  ASSERT_TRUE(null);
-  const auto total = test::RequireReflectionValue(type.FindField("total"));
+  const auto total = test::RequireReflectionValue(type.FindStaticField("total"));
   ASSERT_TRUE(total) << total.error();
-  value = total->GetValue(scope, *null);
+  value = total->GetValue(scope);
   ASSERT_TRUE(value);
   EXPECT_EQ(internal::HandleAccess::Read(*value).AsInteger(), 2);
-  ASSERT_TRUE(total->SetValue(scope, *null, *twenty));
-  const auto twice = test::RequireReflectionValue(type.FindMethod("twice"));
+  ASSERT_TRUE(total->SetValue(scope, *twenty));
+  const auto twice = test::RequireReflectionValue(type.FindStaticMethod("twice"));
   ASSERT_TRUE(twice) << twice.error();
   const std::array positional{CallArgument(*twenty)};
-  value = twice->Invoke(scope, *null, positional);
+  value = twice->Invoke(scope, positional);
   ASSERT_TRUE(value);
   EXPECT_EQ(internal::HandleAccess::Read(*value).AsInteger(), 40);
-  const auto wrong_receiver = total->GetValue(scope, *object);
-  ASSERT_FALSE(wrong_receiver);
-  EXPECT_EQ(wrong_receiver.error().status, ExecutionStatus::TypeError);
+  EXPECT_EQ(type.FindField("total"), std::nullopt);
+  EXPECT_EQ(type.FindMethod("twice"), std::nullopt);
+  const auto static_fields = type.GetStaticFields();
+  const auto static_methods = type.GetStaticMethods();
+  ASSERT_TRUE(static_fields && static_methods);
+  EXPECT_EQ(static_fields->size(), 1U);
+  EXPECT_EQ(static_methods->size(), 1U);
   const auto observed = reflection->TypeOf(scope, *object);
   ASSERT_TRUE(observed);
   EXPECT_EQ(observed->id(), type.id());
   EXPECT_EQ(absl::HashOf(observed->id()), absl::HashOf(type.id()));
+  const auto typed = Type<CounterObject>::Bind(instance());
+  ASSERT_TRUE(typed);
+  const auto typed_info = typed->Describe();
+  ASSERT_TRUE(typed_info);
+  const auto typed_object = typed->Cast(scope, *object);
+  ASSERT_TRUE(typed_object);
+  const auto typed_field = test::RequireReflectionValue(typed_info->FindField("value"));
+  ASSERT_TRUE(typed_field) << typed_field.error();
+  const auto typed_value = typed_field->GetValue(scope, *typed_object);
+  ASSERT_TRUE(typed_value);
+  EXPECT_EQ(internal::HandleAccess::Read(*typed_value).AsInteger(), 40);
+  const auto typed_property = test::RequireReflectionValue(typed_info->FindProperty("amount"));
+  ASSERT_TRUE(typed_property) << typed_property.error();
+  const auto typed_getter = test::RequireReflectionValue(typed_property->GetGetter());
+  ASSERT_TRUE(typed_getter) << typed_getter.error();
+  ASSERT_TRUE(typed_getter->Invoke(scope, *typed_object));
 }
 
 TEST_P(RuntimeReflectionTest, KeepsPrivateMetadataAndRejectsInvalidArgumentsBeforeUserCode) {
@@ -215,22 +265,34 @@ class Box {
 TEST_P(RuntimeReflectionTest, StaticEnumFieldsPreserveDynamicBoxingAndNominalIdentity) {
   Load({
       .source = R"(
-enum Color { red, blue }
+enum Color { red, [Reflect] blue }
 [Reflect]
 class Palette {
   static selected: Color = Color.blue;
   static optional: Color? = null;
 }
-export func answer(): int {
+export func answer() : int {
   const info = Reflect.typeInfo<Palette>();
-  const selected = info.findField('selected');
-  const optional = info.findField('optional');
-  if (selected == null || optional == null) { return -1; }
-  const value = selected.getValue(null);
-  if (!(value is Color) || (value as Color) != Color.blue) { return -2; }
-  if (optional.getValue(null) != null) { return -3; }
-  optional.setValue(null, Color.red);
-  if ((optional.getValue(null) as Color) != Color.red) { return -4; }
+  const selected = info.findStaticField('selected');
+  const optional = info.findStaticField('optional');
+  if (selected == null || optional == null) {
+    return -1;
+  }
+  const value = selected.getValue();
+  if (!(value is Color) || value != Color.blue) {
+    return -2;
+  }
+  if (optional.getValue() != null) {
+    return -3;
+  }
+  optional.setValue(Color.red);
+  if (optional.getValue() != Color.red) {
+    return -4;
+  }
+  const members = Reflect.typeInfo<Color>().getEnumMembers();
+  if (members.length != 1 || members[0].name != 'blue' || members[0].value != Color.blue) {
+    return -5;
+  }
   return 42;
 }
 )",
@@ -241,19 +303,82 @@ export func answer(): int {
   ASSERT_TRUE(reflection);
   const auto palette = test::RequireReflectionValue(reflection->FindType("main.vela", "Palette"));
   ASSERT_TRUE(palette) << palette.error();
-  const auto selected = test::RequireReflectionValue(palette->FindField("selected"));
+  const auto selected = test::RequireReflectionValue(palette->FindStaticField("selected"));
   ASSERT_TRUE(selected) << selected.error();
   const auto expected_type = selected->GetType();
   ASSERT_TRUE(expected_type);
   HandleScope scope(isolate());
-  const auto null = CreateValue<Nullable<std::int64_t>>(scope, std::nullopt);
-  ASSERT_TRUE(null);
-  const auto value = selected->GetValue(scope, *null);
+  const auto value = selected->GetValue(scope);
   ASSERT_TRUE(value) << value.error().message;
   const auto actual_type = reflection->TypeOf(scope, *value);
   ASSERT_TRUE(actual_type);
   EXPECT_EQ(actual_type->id(), expected_type->id());
   ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, SeparatesStaticAccessorsAndValidatesErasedReceiversAndValues) {
+  Load({
+      .source = R"(
+[Reflect]
+class Counter {
+  value: int = 0;
+  static total: int = 1;
+  static get amount(): int { return Counter.total; }
+  static set amount(value: int): void { Counter.total = value; }
+  add(value: int): int { this.value += value; return this.value; }
+}
+export func answer(): int {
+  const object = Counter();
+  const known = Reflect.typeInfo<Counter>();
+  if (known.findField('total') != null || known.findProperty('amount') != null ||
+      known.findStaticField('value') != null || known.findStaticMethod('add') != null) { return -1; }
+  const property = known.findStaticProperty('amount');
+  if (property == null || !property.canRead || !property.canWrite) { return -2; }
+  const getter = property.getter;
+  const setter = property.setter;
+  if (getter == null || setter == null || known.getStaticProperties().length != 1) { return -3; }
+  property.setValue(20);
+  if (getter.invoke(CallArguments()) != 20) { return -4; }
+  setter.invoke(CallArguments(items: [CallArgument(value: 42)]));
+  if (property.getValue() != 42) { return -5; }
+  const erased = Reflect.typeOf(object);
+  const foundField = erased.findField('value');
+  const foundMethod = erased.findMethod('add');
+  if (foundField == null || foundMethod == null) { return -6; }
+  const field: FieldInfo<dynamic> = foundField;
+  const method: MethodInfo<dynamic> = foundMethod;
+  try { field.setValue('wrong receiver', 20); return -7; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -8; } }
+  try { field.setValue(object, 'wrong value'); return -9; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -10; } }
+  try { method.invoke(object, CallArguments(items: [CallArgument(value: 'wrong argument')])); return -11; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -12; } }
+  if (object.value != 0) { return -13; }
+  return Counter.total;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+  const auto reflection = Reflection::Bind(instance());
+  ASSERT_TRUE(reflection);
+  const auto type = test::RequireReflectionValue(reflection->FindType("main.vela", "Counter"));
+  ASSERT_TRUE(type) << type.error();
+  const auto property = test::RequireReflectionValue(type->FindStaticProperty("amount"));
+  ASSERT_TRUE(property) << property.error();
+  HandleScope scope(isolate());
+  const auto setter = test::RequireReflectionValue(property->GetSetter());
+  const auto getter = test::RequireReflectionValue(property->GetGetter());
+  ASSERT_TRUE(setter) << setter.error();
+  ASSERT_TRUE(getter) << getter.error();
+  const auto value = CreateValue<std::int64_t>(scope, 30);
+  ASSERT_TRUE(value);
+  const std::array arguments{CallArgument(*value)};
+  ASSERT_TRUE(setter->Invoke(scope, arguments));
+  const auto result = getter->Invoke(scope);
+  ASSERT_TRUE(result);
+  EXPECT_EQ(internal::HandleAccess::Read(*result).AsInteger(), 30);
 }
 
 TEST_P(RuntimeReflectionTest, PreservesEnumIdentityAndCrossIsolateBoundaries) {
@@ -271,6 +396,10 @@ TEST_P(RuntimeReflectionTest, PreservesEnumIdentityAndCrossIsolateBoundaries) {
   const auto member = test::RequireReflectionValue(type->FindEnumMember("blue"));
   ASSERT_TRUE(member) << member.error();
   EXPECT_EQ(member->Ordinal(), 2);
+  const auto members = type->GetEnumMembers();
+  ASSERT_TRUE(members);
+  ASSERT_EQ(members->size(), 1U);
+  EXPECT_EQ(members->front().id(), member->id());
   HandleScope scope(isolate());
   const auto value = member->GetValue(scope);
   ASSERT_TRUE(value);
@@ -301,6 +430,7 @@ export func answer(): int {
   if (ctor == null) { return -2; }
   if (!ctor.parameters[0].hasDefault || ctor.parameters[0].position != 0) { return -3; }
   const object = ctor.invoke(CallArguments());
+  if (!(object is Counter)) { return -11; }
   const field = info.findField('value');
   if (field == null) { return -4; }
   field.setValue(object, 20);
@@ -309,12 +439,14 @@ export func answer(): int {
   if (method.kind != MemberKind.Method || method.returnType.kind != TypeKind.Int) { return -6; }
   const repeated = info.findField('value');
   if (repeated == null || info.id != Reflect.typeOf(object).id || field.id != repeated.id) { return -7; }
-  if (Reflect.typeInfo<void>().kind != TypeKind.Void || Reflect.typeOf(null).kind != TypeKind.Null) { return -8; }
+  if (Reflect.voidType().kind != TypeKind.Void || Reflect.typeOf(null).kind != TypeKind.Null) { return -8; }
   if (Reflect.getTypes('main.vela').length != 1 || Reflect.findType('main.vela', 'Counter') == null) { return -9; }
   const values = Set<TypeId>();
   values.add(info.id);
   if (!values.has(Reflect.typeOf(object).id)) { return -10; }
-  return method.invoke(object, CallArguments(items: [CallArgument(value: 5, name: 'amount')])) as int;
+  const output = method.invoke(object, CallArguments(items: [CallArgument(value: 5, name: 'amount')]));
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       .configuration = R"({"reflection":[{"module":"main","type":"Counter","members":[
@@ -332,7 +464,7 @@ TEST_P(RuntimeReflectionTest, StructuralTypesAndForwardedGenericDescriptionsPres
       .source = R"(
 class Box { value: int = 1; echo<T>(value: T): T { return value; } }
 class Generic<T> { value: T; }
-func describe<T>(): TypeInfo { return Reflect.typeInfo<T>(); }
+func describe<T>(): TypeInfo<T> { return Reflect.typeInfo<T>(); }
 export func answer(): int {
   const info = describe<Box>();
   const signature = Reflect.typeInfo<(int) => string>().signature;
@@ -345,7 +477,7 @@ export func answer(): int {
   if (method == null) { return -3; }
   const callable = info.findMethod('echo', typeArguments: [Reflect.typeInfo<(int) => string>()]);
   if (callable == null || callable.typeArguments[0].id != generic.typeArguments[0].id) { return -6; }
-  const result = method.invoke(Box(), CallArguments(items: [CallArgument(value: 'ok')])) as string;
+  const result = method.invoke(Box(), CallArguments(items: [CallArgument(value: 'ok')]));
   return result == 'ok' ? 42 : -4;
 }
 )",
@@ -425,17 +557,17 @@ export func answer(): int {
   const object = Derived();
   if (!base.isAssignableFrom(info) || info.isAssignableFrom(base)) { return -1; }
   if (!base.isInstance(object) || !Reflect.typeInfo<Reader>().isInstance(object)) { return -2; }
-  const fields = info.getFields(MemberQuery(storage: MemberStorageFilter.Instance));
+  const fields = info.getFields(MemberQuery());
   if (fields.length != 2 || fields[0].name != 'base' || fields[1].name != 'last') { return -3; }
   if (fields[0].declaringType.id != base.id) { return -4; }
   if (info.getFields(MemberQuery(scope: MemberScope.Declared)).length != 1) { return -5; }
-  if (info.getFields(MemberQuery(visibility: MemberVisibilityFilter.All)).length != 4) { return -6; }
+  if (info.getFields(MemberQuery(visibility: MemberVisibilityFilter.All)).length != 3) { return -6; }
   if (info.findMethod('read') != null) { return -7; }
   const declared = base.findMethod('read');
   const interfaceMethod = Reflect.typeInfo<Reader>().findMethod('read');
   if (declared == null || interfaceMethod == null) { return -8; }
-  if (declared.invoke(object, CallArguments()) as int != 1) { return -9; }
-  if (interfaceMethod.invoke(object, CallArguments()) as int != 2) { return -10; }
+  if (declared.invoke(object, CallArguments()) != 1) { return -9; }
+  if (interfaceMethod.invoke(object, CallArguments()) != 2) { return -10; }
   return 42;
 }
 )",
@@ -470,27 +602,40 @@ class Explicit {
 }
 export func answer(): int {
   const info = Reflect.typeInfo<Generated>();
-  const ctor = info.getConstructor() as ConstructorInfo;
-  const explicitCtor = Reflect.typeInfo<Explicit>().getConstructor() as ConstructorInfo;
+  const foundCtor = info.getConstructor();
+  if (foundCtor == null) { return -1; }
+  const ctor: ConstructorInfo = foundCtor;
+  const foundExplicitCtor = Reflect.typeInfo<Explicit>().getConstructor();
+  if (foundExplicitCtor == null) { return -1; }
+  const explicitCtor: ConstructorInfo = foundExplicitCtor;
   try { ctor.invoke(CallArguments()); return -2; }
   catch (error: Error) { if (error.code != 'TypeError') { return -3; } }
   try { ctor.invoke(CallArguments(items: [CallArgument(value: 2, name: 'required')])); return -4; }
   catch (error: Error) { if (error.code != 'InvalidCast') { return -5; } }
   if (defaults != 0 || bodies != 0) { return -6; }
-  const object = ctor.invoke(CallArguments(items: [CallArgument(value: null, name: 'required')]));
+  const createdObject = ctor.invoke(CallArguments(items: [CallArgument(value: null, name: 'required')]));
+  if (!(createdObject is Generated)) { return -16; }
+  const object: Generated = createdObject;
   if (defaults != 1) { return -7; }
-  const value = info.findField('value') as FieldInfo;
-  const required = info.findField('required') as FieldInfo;
-  const fail = info.findMethod('fail') as MethodInfo;
-  const clear = info.findMethod('clear') as MethodInfo;
-  if (required.getValue(object) != null || value.getValue(object) as int != 10) { return -9; }
+  const foundValue = info.findField('value');
+  if (foundValue == null) { return -100; }
+  const value: FieldInfo<Generated> = foundValue;
+  const required = info.findField('required');
+  if (required == null) { return -100; }
+  const fail = info.findMethod('fail');
+  if (fail == null) { return -100; }
+  const foundClear = info.findMethod('clear');
+  if (foundClear == null) { return -100; }
+  const clear: MethodInfo<Generated> = foundClear;
+  if (required.getValue(object) != null || value.getValue(object) != 10) { return -9; }
   try { fail.invoke(object, CallArguments()); return -10; }
   catch (error: Error) { if (error != expected) { return -11; } }
-  if (clear.invoke(object, CallArguments()) != null || value.getValue(object) as int != 0) { return -12; }
+  if (clear.invoke(object, CallArguments()) != null || value.getValue(object) != 0) { return -12; }
   try { explicitCtor.invoke(CallArguments(items: [CallArgument(value: 42)])); return -13; }
   catch (error: Error) { if (error.code != 'TypeError') { return -14; } }
   const created = explicitCtor.invoke(CallArguments(items: [CallArgument(value: 42, name: 'value')]));
-  const actual = created as Explicit;
+  if (!(created is Explicit)) { return -15; }
+  const actual = created;
   if (bodies != 1 || actual.value != 42 || defaults != 1) { return -15; }
   return 42;
 }
@@ -522,9 +667,11 @@ async func main(): Future<int> {
   if (fetch == null || work == null || fetch.isAsync || !work.isAsync) { return -1; }
   if (work.returnType.kind != TypeKind.Future || work.returnType.typeArguments[0].kind != TypeKind.Int) { return -2; }
   const object = Worker();
-  const returned = fetch.invoke(object, CallArguments()) as Future<int>;
+  const returned = fetch.invoke(object, CallArguments());
+  if (!(returned is Future<int>)) { return -3; }
   if (returned != original) { return -3; }
-  const pending = work.invoke(object, CallArguments()) as Future<int>;
+  const pending = work.invoke(object, CallArguments());
+  if (!(pending is Future<int>)) { return -4; }
   source.complete(42);
   return await pending;
 }
@@ -546,23 +693,29 @@ TEST_P(RuntimeReflectionTest, RegisteredStandardStaticsRespectReadonlyFieldsAndB
       .source = R"(
 export func answer(): int {
   const info = Reflect.typeInfo<Math>();
-  const constant = info.findField('PI');
-  const sqrt = info.findMethod('sqrt') as MethodInfo;
+  const constant = info.findStaticField('PI');
+  const foundSqrt = info.findStaticMethod('sqrt');
+  if (foundSqrt == null) { return -100; }
+  const sqrt: StaticMethodInfo = foundSqrt;
   if (constant == null || !info.isRegistered) { return -1; }
-  if (constant.getValue(null) as double != Math.PI) { return -2; }
-  try { constant.setValue(null, 0.0); return -3; }
+  if (constant.getValue() != Math.PI) { return -2; }
+  try { constant.setValue(0.0); return -3; }
   catch (error: Error) { if (error.code != 'ReflectionAccessDenied') { return -4; } }
-  if (sqrt.invoke(null, CallArguments(items: [CallArgument(value: 9.0)])) as double != 3.0) { return -5; }
+  if (sqrt.invoke(CallArguments(items: [CallArgument(value: 9.0)])) != 3.0) { return -5; }
   const integer = Reflect.typeInfo<int>();
-  const parse: MethodInfo = integer.findMethod('parse') as MethodInfo;
+  const foundParse = integer.findStaticMethod('parse');
+  if (foundParse == null) { return -100; }
+  const parse: StaticMethodInfo = foundParse;
   if (!integer.isRegistered) { return -6; }
   if (!parse.parameters[1].isOptional || parse.parameters[1].hasDefault) { return -7; }
-  if (parse.invoke(null, CallArguments(items: [CallArgument(value: '2a'), CallArgument(value: 16, name: 'radix')])) as int != 42) { return -8; }
+  if (parse.invoke(CallArguments(items: [CallArgument(value: '2a'), CallArgument(value: 16, name: 'radix')])) != 42) { return -8; }
   if (!parse.parameters[1].type.isNullable) { return -9; }
-  if (parse.invoke(null, CallArguments(items: [CallArgument(value: '42'), CallArgument(value: null)])) as int != 42) { return -10; }
-  try { parse.invoke(null, CallArguments(items: [CallArgument(value: '42'), CallArgument(value: 1.5)])); return -11; }
+  if (parse.invoke(CallArguments(items: [CallArgument(value: '42'), CallArgument(value: null)])) != 42) { return -10; }
+  try { parse.invoke(CallArguments(items: [CallArgument(value: '42'), CallArgument(value: 1.5)])); return -11; }
   catch (error: Error) { if (error.code != 'InvalidCast') { return -12; } }
-  return parse.invoke(null, CallArguments(items: [CallArgument(value: '42')])) as int;
+  const output = parse.invoke(CallArguments(items: [CallArgument(value: '42')]));
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       .configuration = R"({"reflection":[
@@ -580,8 +733,8 @@ TEST_P(RuntimeReflectionTest, UnreachableProgramAndManagedDescriptorCyclesAreCol
       .source = R"(
 class Button extends Reflect { label: string = 'saved'; }
 class Box { value: int = 42; [Button] read(): int { return this.value; } }
-let saved: TypeInfo? = null;
-let field: FieldInfo? = null;
+let saved: TypeInfo<Box>? = null;
+let field: FieldInfo<Box>? = null;
 let matches: MethodAttributeMatch<Button>[]? = null;
 export func remember(): void {
   saved = Reflect.typeInfo<Box>();
@@ -618,24 +771,30 @@ class Box {
 }
 export func answer(): int {
   const info = Reflect.typeInfo<Box>();
-  const fields = info.getFields();
+  const fields = info.getStaticFields();
   const properties = info.getProperties();
   if (initialized != 0 || setters != 0) { return -1; }
-  const field = info.findField('value') as FieldInfo;
-  if (field.getValue(null) as int != 42 || field.getValue(null) as int != 42 || initialized != 1) { return -2; }
-  const omitted = info.findProperty('omittedSetter') as PropertyInfo;
+  const field = info.findStaticField('value');
+  if (field == null) { return -100; }
+  if (field.getValue() != 42 || field.getValue() != 42 || initialized != 1) { return -2; }
+  const omitted = info.findProperty('omittedSetter');
+  if (omitted == null) { return -100; }
   if (omitted.canWrite || omitted.setter != null) { return -3; }
   try { omitted.setValue(Box(), 5); return -4; }
   catch (error: Error) { if (error.code != 'ReflectionUnavailable') { return -5; } }
-  const readOnly = info.findProperty('readOnly') as PropertyInfo;
+  const readOnly = info.findProperty('readOnly');
+  if (readOnly == null) { return -100; }
   try { readOnly.setValue(Box(), 5); return -6; }
   catch (error: Error) { if (error.code != 'TypeError') { return -7; } }
-  const writeOnly = info.findProperty('onlySetter') as PropertyInfo;
+  const foundWriteOnly = info.findProperty('onlySetter');
+  if (foundWriteOnly == null) { return -100; }
+  const writeOnly: PropertyInfo<Box> = foundWriteOnly;
   try { writeOnly.getValue(Box()); return -8; }
   catch (error: Error) { if (error.code != 'TypeError') { return -9; } }
   try { writeOnly.setValue(Box(), 1.5); return -10; }
   catch (error: Error) { if (error.code != 'InvalidCast') { return -11; } }
-  const failing = info.findProperty('failing') as PropertyInfo;
+  const failing = info.findProperty('failing');
+  if (failing == null) { return -100; }
   try { failing.getValue(Box()); return -12; }
   catch (error: Error) { if (error.code != 'GetterFailure') { return -13; } }
   return initialized == 1 && setters == 0 ? 42 : -14;
@@ -685,9 +844,11 @@ class Child extends Counter {}
 export func answer(): int {
   const whole = Reflect.typeInfo<Whole>();
   if (!whole.isRegistered || whole.getFields().length != 1 || whole.getConstructor() == null) { return -1; }
-  const amount = whole.findProperty('amount') as PropertyInfo;
+  const amount = whole.findProperty('amount');
+  if (amount == null) { return -100; }
   if (!amount.canRead || amount.canWrite || amount.setter != null) { return -2; }
-  const counter = Reflect.findType('main.vela', 'Counter') as TypeInfo;
+  const counter = Reflect.findType('main.vela', 'Counter');
+  if (counter == null) { return -100; }
   if (counter.findField('value') != null || counter.getConstructor() != null) { return -3; }
   const matches = Reflect.findMethods<Button>();
   if (matches.length != 3 || Reflect.findMethods<Reflect>().length != 3) { return -4; }
@@ -695,14 +856,20 @@ export func answer(): int {
   if (counter.findMethod('ignored') != null) { return -12; }
   if (matches[0].method.name != 'reset' || matches[0].attribute.label != 'first' || matches[1].attribute.label != 'second') { return -5; }
   if (matches[2].method.name != 'run' || !matches[2].method.isStatic || !(matches[2].attribute is PrimaryButton)) { return -6; }
-  if ((matches[2].attribute as PrimaryButton).priority != 7) { return -7; }
+  const primary = matches[2].attribute;
+  if (!(primary is PrimaryButton) || primary.priority != 7) { return -7; }
   if (Reflect.findMethods<Button>(module: 'missing.vela').length != 0 || Reflect.findMethods<Button>(module: 'main.vela').length != 3) { return -8; }
   matches[0].attribute.label = 'changed';
   const again = Reflect.findMethods<Button>(module: null);
   if (again[0].attribute.label != 'first' || again[1].attribute.label != 'second') { return -9; }
   const object = Counter();
-  if (matches[0].method.invoke(object, CallArguments()) as int != 42 || object.value != 42) { return -10; }
-  return matches[2].method.invoke(null, CallArguments()) as int;
+  const reset = matches[0].instanceMethod;
+  const run = matches[2].staticMethod;
+  if (reset == null || run == null || matches[0].staticMethod != null || matches[2].instanceMethod != null) { return -13; }
+  if (reset.invoke(object, CallArguments()) != 42 || object.value != 42) { return -10; }
+  const output = run.invoke(CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       .configuration = "{}",
@@ -739,10 +906,14 @@ export func answer(): int {
   if (matches.length != 1 || effects != 0) { return -1; }
   const data = matches[0].attribute;
   if (data.count != -42 || data.ratio != -1.5 || !data.enabled || data.title != 'data') { return -2; }
-  if (data.color != Color.Blue || !(data.boxed is Color) || data.boxed as Color != Color.Red || data.optional != null || data.empty != null) { return -3; }
+  if (data.color != Color.Blue || !(data.boxed is Color) || data.boxed != Color.Red || data.optional != null || data.empty != null) { return -3; }
   data.count = 7;
   if (Reflect.findMethods<Data>()[0].attribute.count != -42 || effects != 0) { return -4; }
-  return matches[0].method.invoke(null, CallArguments()) as int;
+  const run = matches[0].staticMethod;
+  if (run == null) { return -5; }
+  const output = run.invoke(CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       .configuration = "{}",
@@ -770,11 +941,17 @@ export func answer(): int {
   const box = Box<int>(value: 40);
   if (box.echo<int>(2) != 2) { return -1; }
   const generic = Reflect.findMethods<Tag<int>>();
-  if (generic.length != 1 || generic[0].method.name != 'echo' || generic[0].method.typeArguments.length != 1) { return -2; }
-  if (generic[0].method.invoke(box, CallArguments(items: [CallArgument(value: 42)])) as int != 42) { return -3; }
+  if (generic.length != 1 || generic[0].method.name != 'echo') { return -2; }
+  const echo = generic[0].instanceMethod;
+  if (echo == null || echo.typeArguments.length != 1) { return -5; }
+  if (echo.invoke(box, CallArguments(items: [CallArgument(value: 42)])) != 42) { return -3; }
   const actions = Reflect.findMethods<Tag<string>>();
   if (actions.length != 1 || actions[0].method.declaringType.name != 'Action') { return -4; }
-  return actions[0].method.invoke(Implementation(), CallArguments()) as int;
+  const run = actions[0].instanceMethod;
+  if (run == null) { return -6; }
+  const output = run.invoke(Implementation(), CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       .configuration = "{}",
@@ -799,7 +976,11 @@ export func answer(): int {
   if (Reflect.findMethods<Reflect>(module: 'alpha.vela').length != 1) { return -2; }
   const tagged = Reflect.findMethods<tags.Tag>();
   if (tagged.length != 2 || tagged[0].attribute.label != 'alpha' || tagged[1].attribute.label != 'zeta' || tagged[0].attribute.kind != tags.Kind.Active) { return -3; }
-  return matches[0].method.invoke(Other(), CallArguments()) as int;
+  const run = matches[0].instanceMethod;
+  if (run == null) { return -4; }
+  const output = run.invoke(Other(), CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )",
       },
@@ -829,4 +1010,5 @@ INSTANTIATE_TEST_SUITE_P(ReflectionTiers,
                          ::testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
 
 }  // namespace
-}  // namespace vela::compiler::jit
+}  // namespace compiler::jit
+}  // namespace vela

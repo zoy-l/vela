@@ -250,8 +250,11 @@ TEST_F(JitCodeCacheTest, ReflectionRegistrationChangesAreVisibleAfterCacheHits) 
 class Box { value: int = 42; read(): int { return this.value; } }
 export func registered(): bool { return Reflect.typeInfo<Box>().isRegistered; }
 export func answer(): int {
-  const method = Reflect.typeInfo<Box>().findMethod('read') as MethodInfo;
-  return method.invoke(Box(), CallArguments()) as int;
+  const method = Reflect.typeInfo<Box>().findMethod('read');
+  if (method == null) { return -1; }
+  const output = method.invoke(Box(), CallArguments());
+  if (output is int) { return output; }
+  return -101;
 }
 )",
   };

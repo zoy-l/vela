@@ -1,6 +1,6 @@
 import 'attributes' as tags;
 import 'targets' as targets;
-const targetModule = Reflect.typeInfo<targets.Actions>().module as string;
+const targetModule = Reflect.typeInfo<targets.Actions>().module;
 [Reflect]
 class Background {
 $background
@@ -31,7 +31,8 @@ export func verify(): int {
     const found = matches[i];
     if (found.attribute.index != i || found.attribute.label != 'button' ||
         found.method.declaringType.name != 'Actions' || !found.method.isStatic) { return -2; }
-    if (found.method.invoke(null, CallArguments()) as int != i) { return -3; }
+    const method = found.staticMethod;
+    if (method == null || method.invoke(CallArguments()) != i) { return -3; }
   }
   if (matches.length > 0) {
     matches[0].attribute.label = 'changed';

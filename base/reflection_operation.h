@@ -52,6 +52,16 @@ enum class Operation : std::uint8_t {
   EnumValue = 41,
   RecordItem = 42,
   FindAttributedMethods = RecordItem + kRecordSlots,
+  VoidType = 49,
+  GetStaticFields = 50,
+  FindStaticField = 51,
+  GetStaticProperties = 52,
+  FindStaticProperty = 53,
+  GetStaticMethods = 54,
+  FindStaticMethod = 55,
+  GetStaticValue = 56,
+  SetStaticValue = 57,
+  InvokeStatic = 58,
 };
 
 }  // namespace vela::reflection

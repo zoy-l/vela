@@ -27,7 +27,10 @@ DevelopmentResult ApplyUpdate(DevelopmentSession& session,
     return candidate.error();
   }
   auto result = session.Submit(std::move(*candidate));
-  return result.status == DevelopmentStatus::WaitingForSafepoint ? session.Pump() : result;
+  while (result.status == DevelopmentStatus::WaitingForSafepoint) {
+    result = session.Pump();
+  }
+  return result;
 }
 
 void ExpectAccepted(const DevelopmentResult& result) {

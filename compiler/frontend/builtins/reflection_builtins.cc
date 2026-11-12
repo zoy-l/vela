@@ -30,6 +30,7 @@ struct Binding final {
 };
 constexpr auto kBindings = std::to_array<Binding>({
     {.name = "typeOf", .operation = reflection::Operation::TypeOf},
+    {.name = "voidType", .operation = reflection::Operation::VoidType},
     {.name = "getTypes", .operation = reflection::Operation::GetTypes},
     {
         .name = "findType",
@@ -85,6 +86,36 @@ constexpr auto kBindings = std::to_array<Binding>({
         .optional_parameters = kQuery | kTypeArguments,
     },
     {.name = "getConstructor", .operation = reflection::Operation::GetConstructor},
+    {
+        .name = "getStaticFields",
+        .operation = reflection::Operation::GetStaticFields,
+        .optional_parameters = kQuery,
+    },
+    {
+        .name = "findStaticField",
+        .operation = reflection::Operation::FindStaticField,
+        .optional_parameters = kQuery,
+    },
+    {
+        .name = "getStaticProperties",
+        .operation = reflection::Operation::GetStaticProperties,
+        .optional_parameters = kQuery,
+    },
+    {
+        .name = "findStaticProperty",
+        .operation = reflection::Operation::FindStaticProperty,
+        .optional_parameters = kQuery,
+    },
+    {
+        .name = "getStaticMethods",
+        .operation = reflection::Operation::GetStaticMethods,
+        .optional_parameters = kQuery,
+    },
+    {
+        .name = "findStaticMethod",
+        .operation = reflection::Operation::FindStaticMethod,
+        .optional_parameters = kQuery | kTypeArguments,
+    },
     {.name = "getEnumMembers", .operation = reflection::Operation::GetEnumMembers},
     {.name = "findEnumMember", .operation = reflection::Operation::FindEnumMember},
     {.name = "declaringType", .operation = reflection::Operation::DeclaringType},
@@ -135,6 +166,19 @@ void Bind(Function& function, std::optional<reflection::Operation> operation) {
   }
 }
 
+std::optional<reflection::Operation> StaticOperation(std::string_view method) {
+  if (method == "getValue") {
+    return reflection::Operation::GetStaticValue;
+  }
+  if (method == "setValue") {
+    return reflection::Operation::SetStaticValue;
+  }
+  if (method == "invoke") {
+    return reflection::Operation::InvokeStatic;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 bool IsReflectionStandardName(std::string_view name) noexcept {
@@ -160,7 +204,9 @@ Diagnostics BindReflectionDeclarations(Program& program) {
     }
     if (owner.name == "TypeId" || owner.name == "MemberId") {
       owner.reflection_role = Class::ReflectionRole::Identity;
-    } else if (record || owner.name == reflection::kTypeInfoName || owner.name == "MemberInfo" ||
+    } else if (record || owner.name == reflection::kTypeInfoName ||
+               owner.name == "TypeDescriptor" || owner.name == "MemberInfo" ||
+               (owner.base_class && owner.base_class->name == "TypeDescriptor") ||
                (owner.base_class && owner.base_class->name == "MemberInfo")) {
       owner.reflection_role = Class::ReflectionRole::Metadata;
     }
@@ -172,6 +218,8 @@ Diagnostics BindReflectionDeclarations(Program& program) {
             static_cast<std::uint32_t>(reflection::Operation::RecordItem) + index);
       } else if (owner.name == "ConstructorInfo" && method.name == "invoke") {
         operation = reflection::Operation::Construct;
+      } else if (owner.name.starts_with("Static")) {
+        operation = StaticOperation(method.name);
       }
       Bind(method, operation);
     }

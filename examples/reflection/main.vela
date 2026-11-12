@@ -24,33 +24,47 @@ enum State {
 }
 
 const info = Reflect.typeInfo<Counter>();
-const ctor = info.getConstructor() as ConstructorInfo;
-const counter = ctor.invoke(CallArguments());
-const field = info.findField('value') as FieldInfo;
-const method = info.findMethod('add') as MethodInfo;
+const counter = createCounter();
+const field = info.findField('value');
+const method = info.findMethod('add');
+
+func createCounter(): Counter {
+  const factory = info.getConstructor();
+  if (factory == null) { throw Error(message: 'Counter constructor is not registered'); }
+  const created = factory.invoke(CallArguments());
+  if (created is Counter) { return created; }
+  throw Error(message: 'Expected a Counter instance');
+}
 
 func main(): void {
+  const valueField = field;
+  const add = method;
+  if (valueField == null || add == null) { return; }
   print(info.name); // Counter
 
-  field.setValue(counter, 20);
-  print(field.getValue(counter) as int); // 20
+  valueField.setValue(counter, 20);
+  print(valueField.getValue(counter)); // 20
 
-  const property = info.findProperty('doubled') as PropertyInfo;
-  print(property.getValue(counter) as int); // 40
+  const property = info.findProperty('doubled');
+  if (property == null) { return; }
+  print(property.getValue(counter)); // 40
 
   const arguments = CallArguments(items: [
     CallArgument(value: 22, name: 'amount'),
   ]);
-  print(method.invoke(counter, arguments) as int); // 42
+  print(add.invoke(counter, arguments)); // 42
   print(Reflect.typeOf(counter).id == info.id); // true
 
-  const module = info.module as string;
-  const discovered = Reflect.findType(module, 'Counter') as TypeInfo;
+  const module = info.module;
+  if (module == null) { return; }
+  const discovered = Reflect.findType(module, 'Counter');
+  if (discovered == null) { return; }
   print(discovered.id == info.id); // true
   print(Reflect.getTypes(module).length); // 2
 
   const state = Reflect.typeInfo<State>();
-  const member = state.findEnumMember('Active') as EnumMemberInfo;
+  const member = state.findEnumMember('Active');
+  if (member == null) { return; }
   print(member.ordinal); // 1
   print(Reflect.typeOf(member.value).id == state.id); // true
 
@@ -60,8 +74,12 @@ func main(): void {
 
 // 在开发控制台用 .call next 调用；热重载后仍通过原句柄解析当前方法。
 export func next(): int {
+  const add = method;
+  if (add == null) { return -1; }
   const arguments = CallArguments(items: [
     CallArgument(value: 1, name: 'amount'),
   ]);
-  return method.invoke(counter, arguments) as int;
+  const result = add.invoke(counter, arguments);
+  if (result is int) { return result; }
+  throw Error(message: 'Counter.add returned a non-integer value');
 }
