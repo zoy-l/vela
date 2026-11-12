@@ -151,7 +151,7 @@ Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, 
   if (builtin == Builtin::StringCodePoints) {
     return FillCodePoints(*receiver.AsString(), *object);
   }
-  return heap.FillGraphemes(*object, text).transform([target]() { return target; });
+  return heap.FillGraphemes(*object, text).transform([target] { return target; });
 }
 
 }  // namespace vela::runtime

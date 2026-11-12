@@ -186,6 +186,7 @@ void PublishFailure(SessionReporter& reporter,
 
 SuiteResult CompileSuite(const std::filesystem::path& path,
                          const compiler::ProjectConfiguration& configuration,
+                         const Settings& settings,
                          const TestCommandOptions& command,
                          std::uint64_t identity,
                          SessionReporter& reporter,
@@ -196,7 +197,7 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   event.file = file;
   reporter.Emit(event);
   SuiteOptions options;
-  options.settings = *configuration.test;
+  options.settings = settings;
   options.list = command.list;
   options.suite = identity;
   options.file = file;
@@ -424,8 +425,8 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
         if (index >= paths->size()) {
           return;
         }
-        results.at(index) =
-            CompileSuite(paths->at(index), *configuration, *command, index + 1, reporter, compiler);
+        results.at(index) = CompileSuite(paths->at(index), *configuration, settings, *command,
+                                         index + 1, reporter, compiler);
       }
     });
   }

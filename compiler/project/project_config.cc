@@ -258,8 +258,9 @@ std::expected<frontend::ReflectionMemberSelection, ConfigurationError> ReadRefle
       {"constructor", Kind::Constructor},
       {"enumMember", Kind::EnumMember},
   });
-  const auto found = std::ranges::find(kKinds, *kind, &decltype(kKinds)::value_type::first);
-  if (found == kKinds.end()) {
+  const auto kinds = std::span(kKinds);
+  const auto found = std::ranges::find(kinds, *kind, &decltype(kKinds)::value_type::first);
+  if (found == kinds.end()) {
     return std::unexpected(reader.Error(kind_value, kind_field, "unknown member kind"));
   }
   frontend::ReflectionMemberSelection result{

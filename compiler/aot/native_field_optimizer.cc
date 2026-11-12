@@ -167,8 +167,8 @@ bool HasUniformIndependentFields(std::vector<FieldUpdate>& updates) {
 }
 
 std::optional<llvm::BasicBlockEdge> FirstIterationEdge(const llvm::Loop& loop) {
-  const auto* branch = llvm::dyn_cast<llvm::BranchInst>(loop.getHeader()->getTerminator());
-  if (branch == nullptr || !branch->isConditional()) {
+  const auto* branch = llvm::dyn_cast<llvm::CondBrInst>(loop.getHeader()->getTerminator());
+  if (branch == nullptr) {
     return std::nullopt;
   }
   const auto* ready = llvm::dyn_cast<llvm::PHINode>(branch->getCondition());
@@ -323,7 +323,7 @@ bool IsUnusedCounter(const llvm::PHINode& index,
 enum class FieldLoopPhase : std::uint8_t { PeelInitialization, FoldUpdates };
 
 struct RepeatedLoop final {
-  llvm::BranchInst* latch;
+  llvm::CondBrInst* latch;
   unsigned count;
   std::optional<llvm::BasicBlockEdge> first_iteration;
 };
@@ -339,9 +339,8 @@ std::optional<RepeatedLoop> MatchRepeatedLoop(llvm::Loop& loop,
   const auto count = evolution.getSmallConstantTripCount(&loop, latch_block);
   auto* index = phase == FieldLoopPhase::PeelInitialization ? loop.getCanonicalInductionVariable()
                                                             : loop.getInductionVariable(evolution);
-  auto* latch = llvm::dyn_cast<llvm::BranchInst>(latch_block->getTerminator());
-  if (count < 2 || count > kMaximumRepeatedUpdates || index == nullptr || latch == nullptr ||
-      !latch->isConditional()) {
+  auto* latch = llvm::dyn_cast<llvm::CondBrInst>(latch_block->getTerminator());
+  if (count < 2 || count > kMaximumRepeatedUpdates || index == nullptr || latch == nullptr) {
     return std::nullopt;
   }
   auto* increment = llvm::dyn_cast<llvm::Instruction>(index->getIncomingValueForBlock(latch_block));
@@ -379,10 +378,9 @@ class RepeatedFieldPass final : public llvm::PassInfoMixin<RepeatedFieldPass> {
         if (matched->first_iteration && llvm::canPeel(loop)) {
           auto& assumptions = analyses.getResult<llvm::AssumptionAnalysis>(function);
           llvm::ValueToValueMapTy values;
-          if (llvm::peelLoop(loop, 1, false, &loops, &evolution, dominators, &assumptions, true,
-                             values)) {
-            return llvm::PreservedAnalyses::none();
-          }
+          llvm::peelLoop(loop, 1, false, &loops, &evolution, dominators, &assumptions, true,
+                         values);
+          return llvm::PreservedAnalyses::none();
         }
         continue;
       }

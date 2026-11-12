@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -112,8 +113,9 @@ void Bind(Function& function, std::optional<reflection::Operation> operation) {
   } else if (function.name == "typeInfo") {
     function.intrinsic = Builtin::ReflectionTypeInfo;
   } else {
-    const auto binding = std::ranges::find(kBindings, function.name, &Binding::name);
-    if (binding == kBindings.end()) {
+    const auto bindings = std::span(kBindings);
+    const auto binding = std::ranges::find(bindings, function.name, &Binding::name);
+    if (binding == bindings.end()) {
       return;
     }
     function.intrinsic = Builtin::Reflection;

@@ -17,7 +17,7 @@ import tempfile
 
 from tools.config import BUILD_VARIANTS, ROOT, configure, executable_name, static_library_name, toolchain_tools
 from tools.llvm import sdk_directory, sdk_specification
-from tools.clang_sdk import sdk_directory as clang_sdk_directory
+from tools.clang_sdk import resource_directory as clang_resource_directory
 
 
 def command(arguments: list[str | Path], *, environment: dict[str, str] | None = None,
@@ -101,12 +101,12 @@ def verify_package(package: Path, workspace: Path, sdk_environment: dict[str, st
 
 
 def package_bindgen(executable: Path, package: Path) -> None:
-    resource = clang_sdk_directory() / "lib/clang/21"
+    resource = clang_resource_directory()
     paths = {
         "generator": "bin/" + executable_name("vela_bindgen"),
         "formatter": "libexec/" + executable_name("clang-format"),
         "style": "share/vela/bindings.clang-format",
-        "resource_dir": "share/vela/clang/21",
+        "resource_dir": "share/vela/clang/" + resource.name,
     }
     inputs = {
         paths["generator"]: executable,
@@ -256,7 +256,6 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                   "include/efsw/efsw.hpp", "header", "efsw", "MIT")
         for name, path in {
             "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
-            "clang": tools["cxx"].parent.parent / "LICENSE",
             "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
             "efsw": ROOT / "third_party/efsw/LICENSE",
             "pcre2": ROOT / "third_party/pcre2/LICENCE.md",

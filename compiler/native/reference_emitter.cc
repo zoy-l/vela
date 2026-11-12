@@ -80,10 +80,11 @@ void FunctionEmitter::CacheMapLookups() {
   const auto& lookups = map_lookup_pairs_;
   map_lookups_.resize(source_.instructions.size());
   for (std::size_t index = 0; index < lookups.size(); ++index) {
-    if (!lookups[index]) {
+    const auto& source = lookups[index];
+    if (!source) {
       continue;
     }
-    const auto get = *lookups[index];
+    const auto get = *source;
     auto*& lookup = map_lookups_[get];
     if (lookup == nullptr) {
       lookup = AllocateAuxiliary(runtime::NativeMemoryLayout::kMapLookupBytes);
@@ -154,7 +155,7 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
   }
   for (const auto reg : roots_.stores.at(index)) {
     const auto& slot = roots_.slots.at(reg);
-    StoreRootValue(reg, RootAddress(*slot));
+    StoreRootValue(reg, RootAddress(slot));
   }
 }
 
@@ -169,7 +170,7 @@ void FunctionEmitter::ClearRoots(std::size_t index) {
   }
   for (const auto reg : roots_.clears.at(index)) {
     const auto& slot = roots_.slots.at(reg);
-    ClearRoot(*slot);
+    ClearRoot(slot);
   }
 }
 

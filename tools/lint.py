@@ -19,19 +19,6 @@ from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
-# File-scoped exceptions and their contracts are documented in .agents/cpp_style.md.
-SCOPED_CHECK_EXCEPTIONS = {
-    "compiler/bindgen/collector.cc": ("bugprone-derived-method-shadowing-base-method",),
-    "compiler/frontend/builtins/async_builtins.cc": ("readability-qualified-auto",),
-    "compiler/frontend/builtins/sdk_modules.cc": ("readability-qualified-auto",),
-    "compiler/frontend/typing/type_name.cc": ("readability-qualified-auto",),
-    "compiler/jit/platform_support_win.cc": ("bugprone-easily-swappable-parameters",),
-    "compiler/jit/code_resources.cc": ("bugprone-easily-swappable-parameters",),
-    "runtime/heap/heap_string_case.cc": ("readability-qualified-auto",),
-    "runtime/native/native_operations.cc": ("bugprone-easily-swappable-parameters",),
-    "runtime/native/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
-}
-
 
 @dataclass(frozen=True)
 class LintResult:
@@ -139,9 +126,6 @@ def check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) -
     command = [
         str(clang_tidy), str(source), "-p", str(database), "--quiet", "--warnings-as-errors=*",
     ]
-    exceptions = SCOPED_CHECK_EXCEPTIONS.get(source.relative_to(ROOT).as_posix(), ())
-    if exceptions:
-        command.append("--checks=" + ",".join("-" + check for check in exceptions))
     if fix:
         command.extend(["--fix", "--format-style=file"])
     result = subprocess.run(

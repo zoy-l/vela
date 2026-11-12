@@ -460,7 +460,7 @@ std::expected<void, ExecutionStatus> Future::Bind(FutureScheduler& scheduler, He
 
 Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler) {
   Future result(&scheduler);
-  static_cast<void>(scheduler.After(delay, [result = result.Retained()]() mutable {
+  static_cast<void>(scheduler.After(delay, [result = result.Retained()] mutable {
     std::ignore = result.Complete(::vela::runtime::Value::Null());
   }));
   return result;
@@ -613,7 +613,7 @@ std::expected<void, FutureCompletionError> Future::RequestCompletion(FutureResul
   if (state_->scheduler != nullptr && !state_->scheduler->IsOwnerThread()) {
     Future self(state_, Rooting::Retained);
     state_->scheduler->PostInRun(
-        [self = std::move(self), result = std::move(result)]() mutable {
+        [self = std::move(self), result = std::move(result)] mutable {
           self.Publish(std::move(result));
         },
         state_->run);

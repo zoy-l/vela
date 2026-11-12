@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <optional>
 #include <set>
 #include <span>
 #include <vector>
@@ -53,9 +52,9 @@ void ExpectDistinctLiveRoots(const ir::Function& function,
       }
       std::set<std::size_t> occupied;
       simultaneous.ForEach([&](ir::RegisterId reg) {
-        if (const auto slot = plan.slots.at(reg)) {
-          EXPECT_LT(*slot, plan.count);
-          EXPECT_TRUE(occupied.insert(*slot).second) << "register " << reg;
+        if (const auto slot = plan.slots.find(reg); slot != plan.slots.end()) {
+          EXPECT_LT(slot->second, plan.count);
+          EXPECT_TRUE(occupied.insert(slot->second).second) << "register " << reg;
         }
       });
     }
@@ -78,9 +77,7 @@ func run(): void {
   ASSERT_NE(found, functions.end());
   for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
     const auto plan = PlanNativeRoots(*found, functions, mode, GetParam());
-    const auto assigned =
-        std::ranges::count_if(plan.slots, [](const auto& slot) { return slot.has_value(); });
-    EXPECT_LT(plan.count, static_cast<std::size_t>(assigned));
+    EXPECT_LT(plan.count, plan.slots.size());
     ExpectDistinctLiveRoots(*found, functions, plan);
   }
 }
@@ -132,8 +129,8 @@ async func run(): Future<string> {
       ++suspensions;
       std::set<std::size_t> occupied;
       for (const auto reg : saved) {
-        if (const auto slot = plan.slots.at(reg)) {
-          EXPECT_TRUE(occupied.insert(*slot).second);
+        if (const auto slot = plan.slots.find(reg); slot != plan.slots.end()) {
+          EXPECT_TRUE(occupied.insert(slot->second).second);
         }
       }
     }
@@ -163,8 +160,8 @@ TEST(NativeRootRecoveryTest, ReservesNullInitializedReferencesAndCopiesAfterMate
   const auto recovery = PlanNativeRoots(
       function, {}, NativeProgramMode::Reloadable, NativeDebugging::SourceLines,
       {.values = {}, .safepoints = {}, .materialized = materialized, .uniform_values = {}});
-  EXPECT_TRUE(recovery.slots.front());
-  EXPECT_TRUE(recovery.slots.back());
+  EXPECT_TRUE(recovery.slots.contains(0));
+  EXPECT_TRUE(recovery.slots.contains(function.register_count - 1));
   EXPECT_EQ(recovery.count, 2U);
   ExpectDistinctLiveRoots(function, {}, recovery);
 }
@@ -195,9 +192,9 @@ TEST(NativeRootRecoveryTest, ReservesRecoveryCapacityAndMetadataOnlyReferences) 
                           .uniform_values = {},
                       });
   EXPECT_EQ(plan.count, kRecoveryRoots);
-  ASSERT_TRUE(plan.slots.front());
-  ASSERT_TRUE(plan.slots.back());
-  EXPECT_NE(*plan.slots.front(), *plan.slots.back());
+  ASSERT_TRUE(plan.slots.contains(0));
+  ASSERT_TRUE(plan.slots.contains(function.register_count - 1));
+  EXPECT_NE(plan.slots.at(0), plan.slots.at(function.register_count - 1));
   ExpectDistinctLiveRoots(function, {}, plan, required);
 }
 
@@ -339,7 +336,7 @@ export async func suspended(): Future<void> {
       return instruction.opcode == Opcode::Call && functions[instruction.index].name == "consume";
     });
     ASSERT_NE(consume, function.instructions.end()) << name;
-    EXPECT_TRUE(plan.slots.at(consume->lhs).has_value()) << name;
+    EXPECT_TRUE(plan.slots.contains(consume->lhs)) << name;
     ExpectDistinctLiveRoots(function, functions, plan);
   }
 }

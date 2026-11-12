@@ -46,10 +46,11 @@ std::optional<layout::Type::Kind> ScalarKind(clang::QualType type,
     return Kind::Boolean;
   }
   const auto integer = IntegerType(context);
-  if (!integer.isNull() && context.hasSameType(type, integer)) {
+  if (!integer.isNull() && clang::ASTContext::hasSameType(type, integer)) {
     return Kind::Integer;
   }
-  return context.hasSameType(type, context.DoubleTy) ? std::optional(Kind::Double) : std::nullopt;
+  return clang::ASTContext::hasSameType(type, context.DoubleTy) ? std::optional(Kind::Double)
+                                                                : std::nullopt;
 }
 
 const clang::ClassTemplateSpecializationDecl* StandardTemplate(clang::QualType type,

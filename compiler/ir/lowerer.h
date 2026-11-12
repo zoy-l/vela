@@ -351,9 +351,9 @@ class Lowerer final {
                            AsyncOperation operation,
                            RegisterId base,
                            const std::optional<LoweredValue>& receiver);
-  LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
+  LoweredValue LowerSnapshotArray(const frontend::Expression& expression, Builtin count_builtin);
   [[nodiscard]] static std::optional<Builtin> SnapshotCountBuiltin(Builtin builtin);
-  void EmitSnapshotArray(Builtin builtin,
+  void EmitSnapshotArray(Builtin count_builtin,
                          RegisterId base,
                          const frontend::TypeDescriptor& type,
                          frontend::SourceLocation location);

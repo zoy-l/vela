@@ -670,7 +670,7 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   if (instruction.completes_construction) {
     EndConstruction();
   }
-  if (builder_.GetInsertBlock()->getTerminator() == nullptr) {
+  if (!builder_.GetInsertBlock()->hasTerminator()) {
     ClearRoots(index);
     builder_.CreateBr(blocks_.at(index + 1));
   }

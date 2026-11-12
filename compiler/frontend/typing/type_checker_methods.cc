@@ -6,6 +6,7 @@
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <expected>
 #include <optional>
@@ -341,6 +342,8 @@ void TypeChecker::RegisterMethodApplications() {
 void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
                                         const std::string& interface,
                                         const Function& method) {
+  const auto& application = method.application;
+  assert(application.has_value());
   const auto interface_name = interfaces_.at(interface).type.name;
   if (!queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
     return;
@@ -349,6 +352,7 @@ void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
       .owner = owner.type.name,
       .interface = interface_name,
       .method = method.name,
+      .application = &*application,
       .location = method.location,
   });
 }
@@ -358,9 +362,7 @@ void TypeChecker::DrainInterfaceBindings() {
     auto binding = interface_bindings_.back();
     interface_bindings_.pop_back();
     auto& owner = classes_.at(binding.owner);
-    const auto& method = *interface_method_applications_.at(binding.interface).at(binding.method);
-    const auto& specialized = method.application;
-    const auto& application = *specialized;
+    const auto& application = *binding.application;
     const auto implementation =
         interface_method_templates_.at({owner.type.name, binding.interface, application.name});
     const auto target = MaterializeMethod(implementation, application.arguments, binding.location);

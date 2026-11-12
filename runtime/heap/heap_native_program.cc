@@ -26,8 +26,11 @@ namespace vela::runtime {
 NativeProgramState::NativeProgramState() = default;
 
 NativeProgramState::~NativeProgramState() {
-  delete[] global_states;
-  delete[] global_caches;
+  if (isolate != nullptr) {
+    auto& heap = isolate->heap();
+    heap.FreeNative(global_states);
+    heap.FreeNative(global_caches);
+  }
 }
 
 NativeProgramState::GlobalState& NativeProgramState::global_state(

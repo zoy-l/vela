@@ -177,7 +177,7 @@ TEST_F(HostObjectTest, ReusedNativeAddressCannotMatchACollectedWrapper) {
   const std::shared_ptr<void> storage(::operator new(sizeof(TrackedHost)),
                                       [](void* pointer) noexcept { ::operator delete(pointer); });
   auto* pointer = static_cast<TrackedHost*>(storage.get());
-  const auto create = [&]() {
+  const auto create = [&] {
     std::construct_at(pointer, destroyed_);
     return std::shared_ptr<void>(pointer, [storage](void* object) noexcept {
       std::destroy_at(static_cast<TrackedHost*>(object));
@@ -223,7 +223,7 @@ TEST_F(HostObjectTest, WeakIndexCompactionKeepsLiveIdentityWhenAllocationFails) 
   std::array<Value, kObjectCount> values;
   auto& heap = isolate_.heap();
   const RootRange roots(heap, values.data(), values.size());
-  const auto wrap = [&]() {
+  const auto wrap = [&] {
     auto owned = std::make_unique<TrackedHost>(destroyed_);
     return heap.WrapHostObject(*layout_, sizeof(TrackedHost),
                                HostObjectStorage(owned.release(), &DeleteHost));

@@ -63,6 +63,7 @@ std::optional<AttributeValue> TypeChecker::AttributeData(const Expression& expre
   AttributeValue result{.type = actual, .value = {}};
   switch (expression.kind) {
     case Kind::NullLiteral:
+      result.type = expected;
       return result;
     case Kind::BooleanLiteral:
       result.value = expression.boolean_value;

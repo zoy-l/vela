@@ -270,7 +270,7 @@ TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsO
         instruction.setMetadata(kNativePollReadyStateMetadata, nullptr);
       } else if (inverted && instruction.getName() == "pending") {
         llvm::cast<llvm::ICmpInst>(instruction).setPredicate(llvm::CmpInst::ICMP_EQ);
-        llvm::cast<llvm::BranchInst>(block.getTerminator())->swapSuccessors();
+        llvm::cast<llvm::CondBrInst>(block.getTerminator())->swapSuccessors();
       }
     }
   }

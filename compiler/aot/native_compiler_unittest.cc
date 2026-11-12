@@ -23,6 +23,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
@@ -540,8 +541,31 @@ export func select(value: int): int {
   const auto result =
       Compile(prepared.program, {.exports = {"choose", "select"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
-  EXPECT_NE(result->llvm_ir.find("@switch.table.vela_aot_entry_0"), std::string::npos);
-  EXPECT_NE(result->llvm_ir.find("@switch.table.vela_aot_entry_1"), std::string::npos);
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  for (const auto* name : {"vela_aot_entry_0", "vela_aot_entry_1"}) {
+    const auto* function = module->getFunction(name);
+    ASSERT_NE(function, nullptr);
+    // LLVM 可合并两种语法生成的相同常量表；检查实际查表加载，不绑定私有表名。
+    EXPECT_TRUE(std::ranges::any_of(llvm::instructions(*function), [](const auto& instruction) {
+      const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+      if (load == nullptr) {
+        return false;
+      }
+      const auto* element = llvm::dyn_cast<llvm::GetElementPtrInst>(load->getPointerOperand());
+      if (element == nullptr) {
+        return false;
+      }
+      const auto* table = llvm::dyn_cast<llvm::GlobalVariable>(element->getPointerOperand());
+      if (table == nullptr || !table->isConstant() || !table->hasInitializer()) {
+        return false;
+      }
+      const auto* values = llvm::dyn_cast<llvm::ConstantDataArray>(table->getInitializer());
+      constexpr unsigned kCaseCount = 8;
+      return values != nullptr && values->getNumElements() == kCaseCount;
+    }));
+  }
 }
 
 TEST(NativeCompilerTest, ReferenceLeafFunctionsRegisterRootsOnlyAtFailure) {

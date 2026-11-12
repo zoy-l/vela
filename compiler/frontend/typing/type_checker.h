@@ -639,6 +639,7 @@ class TypeChecker final : private InferenceTypeRelations {
     std::string_view owner;
     std::string_view interface;
     std::string_view method;
+    const Function::Application* application;
     SourceLocation location;
   };
   std::vector<InterfaceBinding> interface_bindings_;

@@ -346,7 +346,7 @@ void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
   }
   auto* object = static_cast<NativeClassHost*>(runtime::HostObjectPointer(*receiver->AsObject()));
   object->SetReentry(&Reenter, &reentry);
-  const auto invoke = [&]() {
+  const auto invoke = [&] {
     return entry ? entry->Invoke(std::span<const runtime::Value>{})
                  : runtime::InvokeNativeTarget(*execution, function, {});
   };
@@ -477,7 +477,7 @@ void CppScalar(benchmark::State& state, bool adapter) {
   benchmark::DoNotOptimize(pointer);
   benchmark::DoNotOptimize(handwritten);
   static constexpr std::int64_t kCount = 4096;
-  const auto expected = []() -> CppResult<Kernel> {
+  const auto expected = [] -> CppResult<Kernel> {
     if constexpr (Kernel == CppKernel::Floating) {
       return static_cast<double>(kCount) * static_cast<double>(kCount + 2) /
              kArithmeticSeriesDivisor;

@@ -34,7 +34,7 @@ namespace {
 constexpr std::size_t kMaximumVersionedLoopInstructions = 1024;
 
 struct InvariantCall final {
-  llvm::BranchInst* branch;
+  llvm::CondBrInst* branch;
   llvm::Value* entry_condition;
 };
 
@@ -80,9 +80,8 @@ llvm::SmallVector<InvariantCall> FindInvariantCalls(llvm::Loop& loop,
     if (instructions > kMaximumVersionedLoopInstructions) {
       return {};
     }
-    auto* branch = llvm::dyn_cast<llvm::BranchInst>(block->getTerminator());
-    if (branch == nullptr || !branch->isConditional() ||
-        branch->getMetadata(kNativeInvariantCallMetadata) == nullptr) {
+    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
+    if (branch == nullptr || branch->getMetadata(kNativeInvariantCallMetadata) == nullptr) {
       continue;
     }
     auto* condition = branch->getCondition();
@@ -118,7 +117,7 @@ void VersionInvariantCalls(const InvariantCallPlan& plan) {
   VersionLoop(loop, *ready, mapped, ".intrinsic");
   for (const auto& selected : plan.calls) {
     auto* branch = selected.branch;
-    auto* cloned = llvm::cast<llvm::BranchInst>(mapped.lookup(branch));
+    auto* cloned = llvm::cast<llvm::CondBrInst>(mapped.lookup(branch));
     branch->setMetadata(kNativeInvariantCallMetadata, nullptr);
     cloned->setMetadata(kNativeInvariantCallMetadata, nullptr);
     // 合取为 false 不说明其中某个条件为 false；慢路径保留各自守卫及 Ready 更新。
@@ -165,7 +164,7 @@ class InvariantCallPass : public llvm::PassInfoMixin<InvariantCallPass> {
 
 }  // namespace
 
-void MarkInvariantCall(llvm::BranchInst& branch) {
+void MarkInvariantCall(llvm::CondBrInst& branch) {
   branch.setMetadata(kNativeInvariantCallMetadata, llvm::MDNode::get(branch.getContext(), {}));
 }
 

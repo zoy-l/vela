@@ -14,7 +14,7 @@ namespace vela {
 namespace {
 
 TEST(JsonDocumentTest, OwnsDecodedStringsAcrossInputDestructionAndMoves) {
-  auto parsed = []() -> std::expected<JsonDocument, JsonError> {
+  auto parsed = [] -> std::expected<JsonDocument, JsonError> {
     const std::string input = R"({"text":"Vela \u4e2d\u6587","value":42})";
     return JsonDocument::Parse(std::as_bytes(std::span(input)));
   }();

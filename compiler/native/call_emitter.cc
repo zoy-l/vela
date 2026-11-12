@@ -37,7 +37,7 @@ FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(std::size_t callee) 
   return CallEntry::Body;
 }
 
-void FunctionEmitter::MarkClosedInvariantCall(llvm::BranchInst& branch) const {
+void FunctionEmitter::MarkClosedInvariantCall(llvm::CondBrInst& branch) const {
   if (IsClosedLinkedProgram(program_.native_mode, placement_) && roots_.bounded_polls) {
     MarkInvariantCall(branch);
   }

@@ -1,4 +1,4 @@
-"""Acquire the pinned LLVM development SDK used by the native compiler backend."""
+"""Acquire the pinned upstream LLVM tools, runtime resources, and development SDK."""
 
 from __future__ import annotations
 
@@ -15,9 +15,8 @@ import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
 
-from tools.config import BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform
+from tools.config import BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform, llvm_tools
 
 
 def sdk_specification() -> tuple[str, str, str, str]:
@@ -36,28 +35,11 @@ def sdk_specification() -> tuple[str, str, str, str]:
 
 def sdk_directory() -> Path:
     version, _, _, _ = sdk_specification()
-    return BUILD_TOOLS_ROOT / "llvm" / version / host_platform()
+    return BUILD_TOOLS_ROOT / "llvm_toolchain" / version / host_platform()
 
 
-def selected_member(path: PurePosixPath) -> bool:
-    parts = path.parts
-    if len(parts) < 2:
-        return False
-    if parts[0] == "include":
-        return parts[1] in {"llvm", "llvm-c"}
-    if parts[0] == "lib":
-        return (path.name.startswith(("libLLVM", "LLVM"))
-                and path.suffix in {".a", ".lib"})
-    if parts[0] == "bin":
-        return path.name.removesuffix(".exe") in {
-            "llvm-config", "llvm-ar", "llvm-lib", "llvm-ranlib", "llvm-libtool-darwin",
-            "lld", "ld.lld", "ld64.lld", "lld-link", "wasm-ld",
-        }
-    return parts[0] == "share" and "license" in str(path).lower()
-
-
-def extract_sdk(archive: Path, destination: Path,
-                selector: Callable[[PurePosixPath], bool] = selected_member) -> None:
+def extract_sdk(archive: Path, destination: Path) -> None:
+    destination = destination.resolve()
     with tarfile.open(archive, mode="r|xz") as package:
         root_name = None
         links = []
@@ -72,7 +54,7 @@ def extract_sdk(archive: Path, destination: Path,
             if original.parts[0] != root_name:
                 raise RuntimeError("LLVM archive contains multiple roots")
             relative = PurePosixPath(*original.parts[1:])
-            if not selector(relative):
+            if not relative.parts:
                 continue
             target = destination.joinpath(*relative.parts)
             if member.isdir():
@@ -86,14 +68,40 @@ def extract_sdk(archive: Path, destination: Path,
                 links.append((target, member))
             else:
                 raise RuntimeError(f"Unsupported LLVM archive entry: {original}")
-        # 工具别名只连接包内已选中的文件，不发布指向 SDK 外部的符号链接。
-        for target, member in links:
-            source = ((target.parent / member.linkname).resolve() if member.issym()
-                      else destination.joinpath(*PurePosixPath(member.linkname).parts[1:]))
-            if not source.is_relative_to(destination.resolve()) or not source.is_file():
-                raise RuntimeError(f"Invalid LLVM tool alias: {member.name}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.link(source, target)
+        # 发布包的工具、共享库和目录别名可能形成前向引用；只解析包内目标。
+        while links:
+            pending = []
+            for target, member in links:
+                if member.issym():
+                    source = (target.parent / member.linkname).resolve()
+                else:
+                    original = PurePosixPath(member.linkname)
+                    if not original.parts or original.is_absolute() or original.parts[0] != root_name:
+                        raise RuntimeError(f"Invalid LLVM tool alias: {member.name}")
+                    source = destination.joinpath(*original.parts[1:]).resolve()
+                if not source.is_relative_to(destination):
+                    raise RuntimeError(f"Invalid LLVM tool alias: {member.name}")
+                if not source.exists():
+                    pending.append((target, member))
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_dir():
+                    os.symlink(os.path.relpath(source, target.parent), target,
+                               target_is_directory=True)
+                else:
+                    os.link(source, target)
+            if len(pending) == len(links):
+                raise RuntimeError(f"Unresolved LLVM tool alias: {pending[0][1].name}")
+            links = pending
+
+
+def validate_sdk(directory: Path, version: str) -> None:
+    llvm_tools(directory)
+    for relative in ("bin/" + executable_name("llvm-config"), "include/llvm/IR/Module.h",
+                     "include/clang/Tooling/Tooling.h",
+                     f"lib/clang/{version.split('.')[0]}/include/stddef.h"):
+        if not (directory / relative).is_file():
+            raise RuntimeError(f"LLVM toolchain lacks required input: {directory / relative}")
 
 
 def sync_license(destination: Path, version: str, expected: str) -> None:
@@ -113,43 +121,42 @@ def sync() -> None:
     destination = sdk_directory()
     identity = destination / ".archive-sha256"
     if identity.is_file() and identity.read_text(encoding="ascii").strip() == expected:
+        validate_sdk(destination, version)
         sync_license(destination, version, license_identity)
-        print(f"LLVM SDK {version}: {destination}")
+        print(f"LLVM toolchain {version}: {destination}")
         return
     if destination.exists():
-        raise RuntimeError(f"Incomplete or mismatched LLVM SDK at {destination}")
+        raise RuntimeError(f"Incomplete or mismatched LLVM toolchain at {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     url = (f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/"
            + urllib.parse.quote(archive_name))
     with tempfile.TemporaryDirectory(prefix="vela-llvm-download-") as download:
         archive = Path(download) / archive_name
-        print(f"Downloading LLVM SDK {version} for {host_platform()}", flush=True)
+        print(f"Downloading LLVM toolchain {version} for {host_platform()}", flush=True)
         digest = hashlib.sha256()
         with urllib.request.urlopen(url, timeout=60) as response, archive.open("wb") as output:
             while chunk := response.read(1024 * 1024):
                 digest.update(chunk)
                 output.write(chunk)
         if digest.hexdigest() != expected:
-            raise RuntimeError("LLVM SDK SHA-256 does not match DEPS")
-        print("Verified LLVM archive; extracting headers, static libraries and link tools",
-              flush=True)
+            raise RuntimeError("LLVM toolchain SHA-256 does not match DEPS")
+        print("Verified LLVM archive; extracting complete toolchain and development SDK", flush=True)
         with tempfile.TemporaryDirectory(prefix=".extract-", dir=destination.parent) as work:
             staged = Path(work) / "sdk"
             staged.mkdir()
             extract_sdk(archive, staged)
-            if not (staged / "include/llvm/IR/Module.h").is_file():
-                raise RuntimeError("LLVM package lacks development headers")
+            validate_sdk(staged, version)
             sync_license(staged, version, license_identity)
             (staged / ".archive-sha256").write_text(expected + "\n", encoding="ascii")
             staged.rename(destination)
-    print(f"LLVM SDK ready: {destination}")
+    print(f"LLVM toolchain ready: {destination}")
 
 
 def link_configuration() -> dict[str, str | list[str]]:
     directory = sdk_directory()
     tool = directory / "bin" / executable_name("llvm-config")
     if not tool.is_file():
-        raise RuntimeError(f"Missing LLVM SDK: {directory}; run vl llvm sync")
+        raise RuntimeError(f"Missing LLVM SDK: {directory}; run python -m tools.vl llvm sync")
 
     def query(*arguments: str) -> list[str]:
         result = subprocess.run([str(tool), "--link-static", *arguments], check=True,
@@ -186,7 +193,7 @@ def link_configuration() -> dict[str, str | list[str]]:
     jit_libraries, jit_system = select(core + ("orcjit", "orcdebugging", "jitlink",
                                              "orctargetprocess"))
     tooling_libraries, tooling_system = select((
-        "bitreader", "bitstreamreader", "option", "profiledata", "targetparser",
+        "bitreader", "bitstreamreader", "option", "plugins", "profiledata", "targetparser",
         "binaryformat", "mc", "mcparser", "object", "windowsdriver", "frontendhlsl",
         "frontendopenmp", "core", "demangle", "support"))
     return {"vela_llvm_root": directory.as_posix(),
@@ -212,5 +219,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, RuntimeError, tarfile.TarError) as error:
-        print(f"LLVM SDK acquisition failed: {error}", file=sys.stderr)
+        print(f"LLVM toolchain acquisition failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

@@ -66,7 +66,7 @@ class BinaryReader final {
     std::expected<std::tuple<Types...>, BinaryError> record(std::in_place);
     [&]<std::size_t... Indices>(std::index_sequence<Indices...>) -> void {
       (
-          [&]() -> void {
+          [&] -> void {
             if (!record) {
               return;
             }

@@ -138,11 +138,10 @@ int RunFile(std::string_view path, ExecutionMode mode) {
     return vela::testing::RunDirectSuite(
         program, path,
         {
-            .output = std::cout,
-            .errors = std::cerr,
-            .terminal = vela::tooling::IsInteractiveStandardOutput()
-                            ? vela::testing::TerminalMode::Interactive
-                            : vela::testing::TerminalMode::Plain,
+            std::cout,
+            vela::tooling::IsInteractiveStandardOutput() ? vela::testing::TerminalMode::Interactive
+                                                         : vela::testing::TerminalMode::Plain,
+            std::cerr,
         });
   }
   return vela::runtime::RunProcessEntry(program, *main, std::cerr,
@@ -310,14 +309,13 @@ int TestCommand(std::span<char*> arguments) {
   for (const auto* argument : arguments) {
     options.emplace_back(argument);
   }
-  return vela::testing::TestCommand(options,
-                                    {
-                                        .output = std::cout,
-                                        .errors = std::cerr,
-                                        .terminal = vela::tooling::IsInteractiveStandardOutput()
-                                                        ? vela::testing::TerminalMode::Interactive
-                                                        : vela::testing::TerminalMode::Plain,
-                                    });
+  return vela::testing::TestCommand(options, {
+                                                 std::cout,
+                                                 vela::tooling::IsInteractiveStandardOutput()
+                                                     ? vela::testing::TerminalMode::Interactive
+                                                     : vela::testing::TerminalMode::Plain,
+                                                 std::cerr,
+                                             });
 }
 
 int DocumentCommand(std::span<char*> arguments) {

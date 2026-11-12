@@ -195,7 +195,7 @@ void LocalEntry(benchmark::State& state) {
     return;
   }
   Measure(state, isolate, [&](HandleScope& scope) -> Result<std::int64_t> {
-    Result<Local<Integers>> result = [&]() -> Result<Local<Integers>> {
+    Result<Local<Integers>> result = [&] -> Result<Local<Integers>> {
       if constexpr (Boundary == Path::Typed) {
         return entry->Call(scope, *values);
       } else if constexpr (Boundary == Path::Wrapper) {

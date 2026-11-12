@@ -64,7 +64,7 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
         object_type, {
                          builder_.getInt32(allocation.type),
                          builder_.getInt32(static_cast<std::uint32_t>(object.allocation)),
-                         builder_.getInt32(static_cast<std::uint32_t>(*root)),
+                         builder_.getInt32(static_cast<std::uint32_t>(root)),
                          EmitConstantTable(module_, table, field_type, fields, fields_name),
                      }));
   }

@@ -255,8 +255,9 @@ void IntegerRangeAnalysis::Propagate(std::size_t index) {
     }
     return;
   }
-  if (!flows_[index]) {
-    auto& flow = flows_[index].emplace();
+  auto& stored = flows_[index];
+  if (!stored) {
+    auto& flow = stored.emplace();
     flow.graph = ir::BuildFlowGraph(function);
     flow.definitions = ir::FindRegisterDefinitions(function, accesses_[index]);
     const auto count = flow.graph.blocks.size();
@@ -266,11 +267,10 @@ void IntegerRangeAnalysis::Propagate(std::size_t index) {
     flow.scratch.assign(function.register_count, Empty());
     flow.work.reserve(count);
   }
-  Solve(index);
+  Solve(index, *stored);
 }
 
-void IntegerRangeAnalysis::Solve(std::size_t function_index) {
-  auto& flow = *flows_[function_index];
+void IntegerRangeAnalysis::Solve(std::size_t function_index, FunctionFlow& flow) {
   const auto& function = program_->functions[function_index];
   const auto& input = facts_[function_index];
   if (flow.graph.blocks.empty()) {
@@ -299,17 +299,17 @@ void IntegerRangeAnalysis::Solve(std::size_t function_index) {
       Transfer(function_index, position, state, arrays);
     }
     for (const auto successor : block.successors) {
-      MergeEdge(function_index, block, state, successor);
+      MergeEdge(function_index, flow, block, state, successor);
     }
   }
 }
 
 void IntegerRangeAnalysis::MergeEdge(std::size_t function_index,
+                                     FunctionFlow& flow,
                                      const ir::BasicBlock& block,
                                      const State& state,
                                      std::size_t successor) {
-  auto& flow = *flows_[function_index];
-  const auto edge = RefineEdge(function_index, block, successor, state);
+  const auto edge = RefineEdge(function_index, flow, block, successor, state);
   if (edge && (edge->left.isEmptySet() || edge->right.isEmptySet())) {
     return;
   }
@@ -348,11 +348,11 @@ void IntegerRangeAnalysis::Transfer(std::size_t function_index,
 
 std::optional<IntegerRangeAnalysis::EdgeRanges> IntegerRangeAnalysis::RefineEdge(
     std::size_t function_index,
+    const FunctionFlow& flow,
     const ir::BasicBlock& block,
     std::size_t successor,
     const State& state) const {
   const auto& function = program_->functions[function_index];
-  const auto& flow = *flows_[function_index];
   const auto& graph = flow.graph;
   const auto position = block.end - 1;
   const auto& branch = function.instructions[position];
@@ -407,10 +407,11 @@ void IntegerRangeAnalysis::Publish(std::size_t index) {
   result.indices.assign(count, Full());
   result.writes.assign(count, Full());
   result.no_overflow.assign(count, 0);
-  if (!flows_[index] || !result.reachable) {
+  auto& stored = flows_[index];
+  if (!stored || !result.reachable) {
     return;
   }
-  auto& flow = *flows_[index];
+  auto& flow = *stored;
   auto& state = flow.scratch;
   const auto arrays = ArrayBits(index);
   for (std::size_t block_index = 0; block_index < flow.graph.blocks.size(); ++block_index) {

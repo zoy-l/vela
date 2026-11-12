@@ -19,8 +19,8 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
+#include <clang/AST/DynamicRecursiveASTVisitor.h>
 #include <clang/AST/RawCommentList.h>
-#include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Type.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Basic/FileEntry.h>
@@ -68,12 +68,12 @@ std::string RealPath(llvm::StringRef path, clang::DiagnosticsEngine& diagnostics
   return std::string(real);
 }
 
-class Collector final : public clang::RecursiveASTVisitor<Collector> {
+class Collector final : public clang::DynamicRecursiveASTVisitor {
  public:
   Collector(clang::CompilerInstance& compiler, Collection& collection)
       : compiler_(&compiler), collection_(&collection), context_(&compiler.getASTContext()) {}
 
-  bool VisitDecl(clang::Decl* declaration) {
+  bool VisitDecl(clang::Decl* declaration) override {
     std::size_t count = 0;
     for (const auto* attribute : declaration->specific_attrs<clang::AnnotateAttr>()) {
       const auto text = attribute->getAnnotation();
@@ -106,7 +106,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
     return true;
   }
 
-  bool VisitCXXRecordDecl(clang::CXXRecordDecl* declaration) {
+  bool VisitCXXRecordDecl(clang::CXXRecordDecl* declaration) override {
     if (!declaration->isThisDeclarationADefinition()) {
       return true;
     }
@@ -203,7 +203,7 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
   }
 
   std::string Documentation(const clang::Decl& declaration) {
-    const auto* comment = context_->getRawCommentForDeclNoCache(&declaration);
+    const auto* comment = context_->getRawCommentForAnyRedecl(&declaration);
     return comment != nullptr ? comment->getFormattedText(context_->getSourceManager(),
                                                           compiler_->getDiagnostics())
                               : std::string{};
@@ -425,9 +425,10 @@ class Collector final : public clang::RecursiveASTVisitor<Collector> {
       return;
     }
     member.result = *result;
-    const auto pointer = method.isStatic() ? context_->getPointerType(method.getType())
-                                           : context_->getMemberPointerType(
-                                                 method.getType(), nullptr, method.getParent());
+    const auto pointer =
+        method.isStatic()
+            ? context_->getPointerType(method.getType())
+            : context_->getMemberPointerType(method.getType(), std::nullopt, method.getParent());
     member.cpp_pointer_type = PrintType(pointer, *context_);
   }
 

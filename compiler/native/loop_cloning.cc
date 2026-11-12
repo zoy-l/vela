@@ -48,7 +48,7 @@ void VersionLoop(llvm::Loop& loop,
   auto* header = loop.getHeader();
   auto* terminator = loop.getLoopPreheader()->getTerminator();
   auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(header));
-  llvm::BranchInst::Create(fast, header, &condition, terminator->getIterator());
+  llvm::CondBrInst::Create(&condition, fast, header, terminator->getIterator());
   terminator->eraseFromParent();
 }
 

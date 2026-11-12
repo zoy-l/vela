@@ -153,7 +153,7 @@ export func size(text: string): int {
   const auto text = std::ranges::find(instructions, Opcode::StringConcat, &ir::Instruction::opcode);
   ASSERT_NE(text, instructions.end());
   const auto field = text->dst;
-  EXPECT_TRUE(roots.slots.at(field));
+  EXPECT_TRUE(roots.slots.contains(field));
   bool rooted = false;
   for (std::size_t index = 0; index < instructions.size(); ++index) {
     if (instructions.at(index).opcode == Opcode::Call) {

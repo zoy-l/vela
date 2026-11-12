@@ -35,7 +35,7 @@ namespace {
 
 bool IsFutureFactoryCall(const frontend::Expression& expression,
                          const frontend::SemanticModel& model) {
-  using Expression = frontend::Expression;
+  using frontend::Expression;
   if (expression.kind != Expression::Kind::Call) {
     return false;
   }
@@ -721,7 +721,7 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
   };
   record_definition();
   using Kind = frontend::TypeDescriptor::Kind;
-  using Expression = frontend::Expression;
+  using frontend::Expression;
   if ((value.type.kind == Kind::Future || value.type.kind == Kind::Completer) &&
       (expression.kind == Expression::Kind::Call || expression.kind == Expression::Kind::Member ||
        expression.kind == Expression::Kind::Await)) {
@@ -2060,7 +2060,7 @@ Lowerer::LoweredValue Lowerer::LowerConditional(const frontend::Expression& expr
 Lowerer::LoweredValue Lowerer::LowerLogical(const frontend::Expression& expression) {
   const LoweredValue left = LowerExpression(*expression.left);
   const auto right = [&] { return LowerExpression(*expression.right); };
-  const auto constant = [&]() -> LoweredValue {
+  const auto constant = [&] -> LoweredValue {
     const auto reg = AllocateRegister(expression.location);
     Emit({
         .opcode = Opcode::LoadBool,

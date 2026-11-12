@@ -726,6 +726,7 @@ class Data extends Reflect {
   color: Color = Color.Blue;
   boxed: dynamic = Color.Red;
   optional: int? = null;
+  empty: dynamic = null;
 }
 class Target {
   [Data]
@@ -738,7 +739,7 @@ export func answer(): int {
   if (matches.length != 1 || effects != 0) { return -1; }
   const data = matches[0].attribute;
   if (data.count != -42 || data.ratio != -1.5 || !data.enabled || data.title != 'data') { return -2; }
-  if (data.color != Color.Blue || !(data.boxed is Color) || data.boxed as Color != Color.Red || data.optional != null) { return -3; }
+  if (data.color != Color.Blue || !(data.boxed is Color) || data.boxed as Color != Color.Red || data.optional != null || data.empty != null) { return -3; }
   data.count = 7;
   if (Reflect.findMethods<Data>()[0].attribute.count != -42 || effects != 0) { return -4; }
   return matches[0].method.invoke(null, CallArguments()) as int;

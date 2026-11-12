@@ -100,7 +100,7 @@ std::string FieldsSource(std::size_t count) {
   source += "}\nfunc main(): int { const record = Record(";
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
-      source += ",";
+      source += ',';
     }
     source += "f" + std::to_string(index) + ": " + std::to_string(index);
   }
@@ -139,7 +139,7 @@ TEST(NativeScaleTest, KeepsManyManagedValuesLive) {
   source += "return ";
   for (std::size_t index = 0; index < kDeclarationCount; ++index) {
     if (index != 0) {
-      source += "+";
+      source += '+';
     }
     source += "b" + std::to_string(index) + ".value";
   }
@@ -156,7 +156,7 @@ std::string ParametersSource(std::size_t count) {
   std::string source = "func pick(";
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
-      source += ",";
+      source += ',';
     }
     source += "p" + std::to_string(index) + ": int";
   }
@@ -164,7 +164,7 @@ std::string ParametersSource(std::size_t count) {
       "): int { return p" + std::to_string(count - 1) + "; }\nfunc main(): int { return pick(";
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
-      source += ",";
+      source += ',';
     }
     source += std::to_string(index);
   }

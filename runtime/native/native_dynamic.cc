@@ -1,6 +1,7 @@
 #include "runtime/native/native_dynamic.h"
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -105,6 +106,7 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
   switch (member.kind) {
     case MemberKind::Field: {
       const auto& type = member.type;
+      assert(type.has_value());
       auto& object = *receiver.AsObject();
       const auto* layout = Heap::ClassOf(object);
       const auto declaration = FieldDeclaration(*layout, member.target);
@@ -148,6 +150,7 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
   const TypeConstraint* type = nullptr;
   if (member.kind == MemberKind::Field) {
     const auto& field_type = member.type;
+    assert(field_type.has_value());
     type = &types.at(*field_type);
   } else if (member.kind == MemberKind::Property && setter) {
     type = &types.at(instance.call_signature(*setter).parameters.front().type);
@@ -164,6 +167,7 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
   const auto value = UnboxDynamicValue(original, *type);
+  assert(setter.has_value());
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
   const auto result = InvokeNativeTarget(execution, *setter, input);
   return result ? std::expected<Value, ExecutionStatus>(original) : std::unexpected(result.error());
@@ -247,7 +251,7 @@ std::expected<Value, ExecutionStatus> ReadNativeMember(NativeExecution& executio
                                                        Value receiver,
                                                        std::string_view name,
                                                        const TypeConstraint& contract) {
-  const auto read = [&]() -> std::expected<Value, ExecutionStatus> {
+  const auto read = [&] -> std::expected<Value, ExecutionStatus> {
     const auto* member = FindMember(execution.instance(), receiver, name, contract);
     return member != nullptr ? ReadMember(execution, *member, receiver, Builtin::DynamicMemberGet)
                              : std::unexpected(ExecutionStatus::InvalidField);
@@ -260,7 +264,7 @@ std::expected<void, ExecutionStatus> WriteNativeMember(NativeExecution& executio
                                                        std::string_view name,
                                                        Value value,
                                                        const TypeConstraint& contract) {
-  const auto write = [&]() -> std::expected<void, ExecutionStatus> {
+  const auto write = [&] -> std::expected<void, ExecutionStatus> {
     const auto* member = FindMember(execution.instance(), receiver, name, contract);
     if (member == nullptr) {
       return std::unexpected(ExecutionStatus::InvalidField);

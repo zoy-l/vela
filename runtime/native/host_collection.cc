@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -155,6 +156,7 @@ Result<void> ExecuteHostCollection(HandleScope& scope,
     std::ranges::copy(arguments, stored.begin());
     stored[1] = *key;
     if (builtin == Builtin::MapSet) {
+      assert(layout.values.has_value());
       auto value = StoreElementValue(arguments[2], *layout.values);
       if (!value) {
         return std::unexpected(std::move(value.error()));
@@ -187,6 +189,7 @@ Result<HostPresence> ReadHostMap(HandleScope& scope,
   if (!*value) {
     return HostPresence::Missing;
   }
+  assert(layout.values.has_value());
   auto result = ReceiveStoredElement(scope, **value, *layout.values, output);
   if (!result) {
     return std::unexpected(std::move(result.error()));

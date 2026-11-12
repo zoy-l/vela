@@ -291,7 +291,7 @@ TEST(PreparationTest, EmitsFieldDefaultsOnceInTheConstructorAcrossManyCallSites)
   for (int index = 0; index < kConstructions; ++index) {
     source += "Box();";
   }
-  source += "}";
+  source += '}';
   const auto prepared = Prepare(source);
   ASSERT_TRUE(prepared.Succeeded());
   const auto& functions = prepared.program.functions;

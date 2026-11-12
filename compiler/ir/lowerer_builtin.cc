@@ -129,8 +129,8 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
       (builtin == Builtin::ArrayPush && expression.arguments.size() != 1)) {
     return LowerArrayMutation(expression);
   }
-  if (SnapshotCountBuiltin(builtin)) {
-    return LowerSnapshotArray(expression);
+  if (const auto count_builtin = SnapshotCountBuiltin(builtin)) {
+    return LowerSnapshotArray(expression, *count_builtin);
   }
   const auto arity = BuiltinArity(builtin);
   const auto base = AllocateRegisterWindow(arity, expression.location);

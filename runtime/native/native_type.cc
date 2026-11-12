@@ -63,14 +63,17 @@ std::expected<TypeConstraint, ExecutionStatus> ResolveBuiltinNativeType(Isolate&
     }
   }
   LayoutCache cache;
-  return InstantiateNativeType(isolate, type, cache);
+  return InstantiateNativeType(isolate, source, *type.type, cache);
 }
 
-TypeConstraint InstantiateNativeType(Isolate& isolate, NativeType type, LayoutCache& cache) {
+TypeConstraint InstantiateNativeType(Isolate& isolate,
+                                     const layout::Program& layouts,
+                                     const layout::Type& type,
+                                     LayoutCache& cache) {
   TypeConstraint result;
   const RootRange root(isolate.heap(), std::span(&result, 1));
   LayoutTransaction transaction(isolate, LayoutLifetime::Collectible);
-  result = InstantiateLayoutType(type.layouts(), *type.type, isolate, cache);
+  result = InstantiateLayoutType(layouts, type, isolate, cache);
   transaction.CommitStructural();
   return result;
 }

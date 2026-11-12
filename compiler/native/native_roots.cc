@@ -119,7 +119,7 @@ struct RootLifetime final {
 };
 
 void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetimes) {
-  ir::RegisterSet candidates(plan.slots.size());
+  ir::RegisterSet candidates(lifetimes.size());
   for (const auto& stores : plan.stores) {
     for (const auto reg : stores) {
       candidates.Insert(reg);
@@ -150,18 +150,18 @@ void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetim
       slot = available.top();
       available.pop();
     }
-    plan.slots.at(lifetime.reg) = slot;
+    plan.slots.emplace(lifetime.reg, slot);
     active.emplace(lifetime.end, slot);
   }
   for (auto& clears : plan.clears) {
-    std::erase_if(clears, [&](ir::RegisterId reg) { return !plan.slots.at(reg).has_value(); });
+    std::erase_if(clears, [&](ir::RegisterId reg) { return !plan.slots.contains(reg); });
   }
 }
 
 void AssignImportRoots(NativeRootPlan& plan, const ir::Function& function) {
   for (ir::RegisterId reg = 0; reg < function.parameter_count; ++reg) {
     if (HasManagedValue(function, reg)) {
-      plan.slots.at(reg) = plan.count++;
+      plan.slots.emplace(reg, plan.count++);
     }
   }
 }
@@ -255,7 +255,6 @@ NativeRootPlan InitializeRoots(const ir::Function& function,
   NativeRootPlan plan;
   plan.debug_values = debugging == NativeDebugging::Instructions;
   plan.bounded_polls = debugging == NativeDebugging::Safepoints;
-  plan.slots.resize(function.register_count);
   plan.stores.resize(function.instructions.size());
   plan.clears.resize(function.instructions.size());
   plan.suspended.resize(function.instructions.size());

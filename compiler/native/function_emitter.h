@@ -188,7 +188,7 @@ class FunctionEmitter final {
   CallEntry SelectCallEntry(std::size_t callee) const;
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
-  void MarkClosedInvariantCall(llvm::BranchInst& branch) const;
+  void MarkClosedInvariantCall(llvm::CondBrInst& branch) const;
   llvm::Value* ControlState();
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };

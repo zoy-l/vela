@@ -9,11 +9,12 @@ import subprocess
 import sys
 import unittest
 
-from tools.clang_sdk import sdk_directory
+from tools.clang_sdk import resource_directory
 from tools.bindgen import fingerprints, generate, verify_manifest
 from tools.package import package_bindgen
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools, xcode_path
 from tools.test_support import CommandTestCase, compile_native_host, create_native_package
+from tools.llvm import sdk_specification
 
 
 class BindingCollectorTest(CommandTestCase):
@@ -23,7 +24,7 @@ class BindingCollectorTest(CommandTestCase):
         super().setUp()
         self.collector = self.executable.parent / executable_name("vela_bindgen")
         self.compiler = toolchain_tools()["cxx"]
-        self.resource = sdk_directory() / "lib/clang/21"
+        self.resource = resource_directory()
         self.header = self.directory / "接口 counter.h"
         self.source = self.write("input.cc", '#include "接口 counter.h"\n')
         flags = (["/nologo", "/clang:-std=c++23", "/c", "/Foignored.obj"]
@@ -87,7 +88,7 @@ class VELA_CLASS("app.Counter") Counter final {
         first = self.collect(source)
         model = json.loads(first.stdout)
         self.assertEqual(first.stdout, self.collect(source).stdout)
-        self.assertEqual(model["clang_version"], "21.1.8")
+        self.assertEqual(model["clang_version"], sdk_specification()[0])
         counter, = model["classes"]
         self.assertEqual(counter["key"], "app.Counter")
         self.assertEqual(counter["cpp"], "app::Counter")
@@ -428,7 +429,7 @@ class VELA_CLASS("app.Service") Service { public:
         manifest = self.directory / "generated/app/app.bindings.json"
         self.assertTrue(verify_manifest(manifest))
         parsed = json.loads(manifest.read_text())
-        self.assertEqual(parsed["bindings"]["clang_version"], "21.1.8")
+        self.assertEqual(parsed["bindings"]["clang_version"], sdk_specification()[0])
 
     def test_rejects_unnameable_abstract_or_conflicting_class_exports_at_source(self) -> None:
         cases = [

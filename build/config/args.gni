@@ -20,6 +20,7 @@ declare_args() {
   vela_llvm_tooling_libraries = []
   vela_llvm_tooling_system_libraries = []
   vela_clang_root = ""
+  vela_clang_resource_dir = ""
   vela_clang_libraries = []
 }
 

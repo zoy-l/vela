@@ -456,8 +456,9 @@ class ArrayDomainAnalysis final {
         const auto& range = ranges_[index].writes[position];
         if (!range.isEmptySet() && range.getSignedMin().isNonNegative()) {
           const auto maximum = range.getUnsignedMax().getZExtValue();
-          const auto mask =
-              maximum == 0 ? 0 : kUnknownArrayElementBits >> std::countl_zero(maximum);
+          const auto mask = maximum == 0 ? 0
+                                         : kUnknownArrayElementBits >>
+                                               static_cast<unsigned>(std::countl_zero(maximum));
           bits &= mask;
         }
       }

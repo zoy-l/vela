@@ -18,7 +18,10 @@ namespace vela::frontend {
 
 std::expected<TypeName, Diagnostics> Parser::ParseTypeExpression() {
   auto type = ParseType();
-  if (type && !IsAtEnd()) {
+  if (!type) {
+    return std::unexpected(std::move(diagnostics_));
+  }
+  if (!IsAtEnd()) {
     AddDiagnostic(Peek().location, "unexpected token after type");
   }
   if (!diagnostics_.empty()) {

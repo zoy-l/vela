@@ -2,6 +2,7 @@
 #include <optional>
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -148,6 +149,7 @@ OperationResult InitializeOutput(Isolate& isolate,
   auto& heap = isolate.heap();
   if (algorithm == ArrayAlgorithm::Map) {
     const auto result = signature.result;
+    assert(result.has_value());
     const auto output = AllocateOutput(isolate, *result, length);
     if (!output) {
       return std::unexpected(output.error());

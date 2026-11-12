@@ -427,6 +427,9 @@ TEST(HostBuiltinTest, RegExpOptionsControlSearchAndPrefixCodePointOffsets) {
       const auto start = RegExpMatchStart(scope, **match);
       ASSERT_TRUE(start.has_value());
       EXPECT_EQ(*start, 2);
+      if (!*text) {
+        FAIL() << "missing matched text";
+      }
       EXPECT_EQ((**text).Utf8(), "É\n");
     }
   }

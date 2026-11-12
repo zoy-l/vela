@@ -170,22 +170,21 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
   InitializeTarget();
   // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
   // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
-  const auto triple = std::string(runtime::NativeTargetIdentity());
+  const llvm::Triple triple{std::string(runtime::NativeTargetIdentity())};
   std::string error;
   const auto* target = llvm::TargetRegistry::lookupTarget(triple, error);
   if (target == nullptr) {
     return std::unexpected(std::move(error));
   }
   llvm::TargetOptions options;
-  const llvm::Triple target_triple(triple);
-  if (placement == NativeCodePlacement::Linked && target_triple.getArch() == llvm::Triple::x86_64) {
+  if (placement == NativeCodePlacement::Linked && triple.getArch() == llvm::Triple::x86_64) {
     // x64 指令缓存行为 64 字节；固定热循环对齐，避免前序函数体积变化增加取指行数。
     constexpr unsigned kX64LoopAlignment = 64;
     options.LoopAlignment = kX64LoopAlignment;
   }
   const auto cpu = TargetCpu(placement);
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
-      target_triple, cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
+      triple, cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
       llvm::CodeGenOptLevel::Default, placement == NativeCodePlacement::Dynamic));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
@@ -476,12 +475,10 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         .square_root = IsSquareRootImport(function, program.layouts),
     };
     auto current = baseline;
+    // 仅可重载映像存在版本失效；封闭映像的调用目标和字段布局在实例期内固定。
     if (program.native_mode == NativeProgramMode::Reloadable && tier == NativeCodeTier::Optimized &&
-        function.native_symbol.empty()) {
-      // 仅可重载映像存在版本失效；封闭映像的调用目标和字段布局在实例期内固定。
-      if (HasVersionAssumptions(function, program)) {
-        current = AddRecoveryEntries(module, prefix, baseline);
-      }
+        function.native_symbol.empty() && HasVersionAssumptions(function, program)) {
+      current = AddRecoveryEntries(module, prefix, baseline);
     }
     const auto inlining =
         PlanInlining(function, index, program.native_mode, debugging, placement, tier);

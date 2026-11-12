@@ -31,7 +31,7 @@ struct CodeIdentity;
 
 inline constexpr std::uint32_t kNativeAbiVersion = 22;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
-inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
+inline constexpr unsigned kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {
   return static_cast<std::uint8_t>(status);

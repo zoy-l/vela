@@ -24,14 +24,14 @@ struct FutureCompletionEndpoint::State final {
         completer(std::move(target)),
         run(owner.run_) {}
 
-  std::expected<void, FutureCompletionError> CheckRequest() const {
+  [[nodiscard]] std::expected<Completer*, FutureCompletionError> CheckRequest() {
     if (completed) {
       return std::unexpected(FutureCompletionError::AlreadyCompleted);
     }
-    if (scheduler == nullptr) {
+    if (scheduler == nullptr || !completer) {
       return std::unexpected(FutureCompletionError::Closed);
     }
-    return {};
+    return &*completer;
   }
 
   void Retire() const {
@@ -118,7 +118,7 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteTex
   auto state = lease_->state;
   const std::scoped_lock lock(state->mutex);
   if (auto checked = state->CheckRequest(); !checked) {
-    return checked;
+    return std::unexpected(checked.error());
   }
   auto* scheduler = state->scheduler;
   state->completed = true;
@@ -167,10 +167,11 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Settle(
   }
   auto& state = *lease_->state;
   const std::scoped_lock lock(state.mutex);
-  if (auto checked = state.CheckRequest(); !checked) {
-    return checked;
+  auto checked = state.CheckRequest();
+  if (!checked) {
+    return std::unexpected(checked.error());
   }
-  auto& completer = *state.completer;
+  auto& completer = **checked;
   if (expected_heap != nullptr && &completer.future().heap() != expected_heap) {
     return std::unexpected(FutureCompletionError::DifferentIsolate);
   }

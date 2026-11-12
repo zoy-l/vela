@@ -15,16 +15,16 @@ std::int64_t Step(std::int64_t value) {
 }  // namespace
 
 std::vector<std::int64_t> PrepareNumericValues(NumericInput input) {
-  constexpr std::int64_t kMultiplier = 1664525;
-  constexpr std::int64_t kIncrement = 1013904223;
-  constexpr std::int64_t kStateMask = 0x7fffffff;
-  constexpr std::int64_t kValueMask = 1023;
+  constexpr std::uint64_t kMultiplier = 1664525;
+  constexpr std::uint64_t kIncrement = 1013904223;
+  constexpr std::uint64_t kStateMask = 0x7fffffff;
+  constexpr std::uint64_t kValueMask = 1023;
   std::vector<std::int64_t> values;
   values.reserve(static_cast<std::size_t>(input.size));
-  auto seed = input.seed;
+  auto seed = static_cast<std::uint64_t>(input.seed);
   for (std::int64_t index = 0; index < input.size; ++index) {
     seed = ((seed * kMultiplier) + kIncrement) & kStateMask;
-    values.push_back(seed & kValueMask);
+    values.push_back(static_cast<std::int64_t>(seed & kValueMask));
   }
   return values;
 }

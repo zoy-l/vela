@@ -596,7 +596,11 @@ std::expected<void, ExecutionStatus> ReflectionIndex::Prepare() {
     while (end < members.size() && members[declared_.values()[end]].declaring_type == owner) {
       ++end;
     }
-    views_.values()[*TypePosition(owner)].declared = declared_.values().subspan(begin, end - begin);
+    const auto position = TypePosition(owner);
+    if (!position) {
+      return std::unexpected(ExecutionStatus::InvalidEntry);
+    }
+    views_.values()[*position].declared = declared_.values().subspan(begin, end - begin);
     begin = end;
   }
   NativeBuffer<std::uint32_t> pending(*heap_, types.size());

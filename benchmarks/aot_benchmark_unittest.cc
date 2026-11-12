@@ -30,14 +30,26 @@ std::int64_t HostStep(std::int64_t value) noexcept {
 }
 
 void VerifyNumericResults(runtime::NativeInstance& instance) {
-  const auto prepare = instance.FindFunction("prepareNumeric");
-  const auto arithmetic = instance.FindFunction("arithmetic");
-  const auto calls = instance.FindFunction("calls");
-  const auto scalar = instance.FindFunction("entryScalar");
-  ASSERT_TRUE(prepare);
-  ASSERT_TRUE(arithmetic);
-  ASSERT_TRUE(calls);
-  ASSERT_TRUE(scalar);
+  const auto prepare_function = instance.FindFunction("prepareNumeric");
+  if (!prepare_function) {
+    FAIL() << "missing prepareNumeric function";
+  }
+  const auto prepare = *prepare_function;
+  const auto arithmetic_function = instance.FindFunction("arithmetic");
+  if (!arithmetic_function) {
+    FAIL() << "missing arithmetic function";
+  }
+  const auto arithmetic = *arithmetic_function;
+  const auto calls_function = instance.FindFunction("calls");
+  if (!calls_function) {
+    FAIL() << "missing calls function";
+  }
+  const auto calls = *calls_function;
+  const auto scalar_function = instance.FindFunction("entryScalar");
+  if (!scalar_function) {
+    FAIL() << "missing entryScalar function";
+  }
+  const auto scalar = *scalar_function;
   runtime::NativeExecution execution(instance);
   for (const auto seed : {kAotInputSeed, std::int64_t{7}}) {
     for (const std::int64_t size : {0, 1, 17, 1000, 4096, 65536}) {
@@ -47,13 +59,13 @@ void VerifyNumericResults(runtime::NativeInstance& instance) {
           runtime::EncodeNativeValue(runtime::Value::Integer(size)),
           runtime::EncodeNativeValue(runtime::Value::Integer(seed)),
       };
-      ASSERT_TRUE(runtime::InvokeNativeTarget(execution, *prepare, arguments));
+      ASSERT_TRUE(runtime::InvokeNativeTarget(execution, prepare, arguments));
       instance.isolate().heap().Collect();
-      const auto squared = runtime::InvokeNativeTarget(execution, *arithmetic, {});
+      const auto squared = runtime::InvokeNativeTarget(execution, arithmetic, {});
       ASSERT_TRUE(squared);
       ASSERT_TRUE(squared->IsInteger());
       EXPECT_EQ(squared->AsInteger(), CppArithmetic(values));
-      const auto stepped = runtime::InvokeNativeTarget(execution, *calls, {});
+      const auto stepped = runtime::InvokeNativeTarget(execution, calls, {});
       ASSERT_TRUE(stepped);
       ASSERT_TRUE(stepped->IsInteger());
       EXPECT_EQ(stepped->AsInteger(), CppCalls(values));
@@ -61,7 +73,7 @@ void VerifyNumericResults(runtime::NativeInstance& instance) {
   }
   for (const std::int64_t input : {0, 41, 123}) {
     const std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(input))};
-    const auto result = runtime::InvokeNativeTarget(execution, *scalar, arguments);
+    const auto result = runtime::InvokeNativeTarget(execution, scalar, arguments);
     ASSERT_TRUE(result);
     ASSERT_TRUE(result->IsInteger());
     EXPECT_EQ(result->AsInteger(), CppScalarEntry(input));

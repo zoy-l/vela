@@ -91,7 +91,7 @@ extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
 }
 
 extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execution,
-                                                         std::uint32_t index,
+                                                         NativeGlobalIndex index,
                                                          std::uint64_t position,
                                                          NativeGlobalFrame frame_kind,
                                                          NativeValue* result) {
@@ -101,8 +101,8 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
     execution->MaterializeFrame(frame, decoded.function);
     *execution->current_instruction() = decoded.instruction;
   }
-  const auto status =
-      StoreNativeResult(result, execution->instance().InitializeGlobal(*execution, index));
+  const auto status = StoreNativeResult(result, execution->instance().InitializeGlobal(
+                                                    *execution, static_cast<std::uint32_t>(index)));
   if (frame_kind == NativeGlobalFrame::Leaf) {
     execution->Exit();
   }
@@ -135,9 +135,9 @@ extern "C" std::uint8_t vela_native_v10_new_callable(NativeExecution* execution,
 }
 
 extern "C" HeapObject* vela_native_v10_new_array(NativeExecution* execution,
-                                                 std::uint32_t index,
+                                                 NativeArrayLayoutIndex index,
                                                  std::uint64_t length) noexcept {
-  const auto* type = execution->instance().layouts().arrays.at(index);
+  const auto* type = execution->instance().layouts().arrays.at(static_cast<std::uint32_t>(index));
   return execution->isolate().heap().AllocateArray(*type, static_cast<std::size_t>(length));
 }
 
@@ -288,9 +288,10 @@ extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,
 
 extern "C" std::uint8_t vela_native_v2_compare_strings(const NativeValue* left,
                                                        const NativeValue* right) noexcept {
-  const auto first = DecodeNativeValue(*left).AsString()->value();
-  const auto second = DecodeNativeValue(*right).AsString()->value();
-  return first == second ? 1 : 0;
+  return DecodeNativeValue(*left).AsString()->value() ==
+                 DecodeNativeValue(*right).AsString()->value()
+             ? 1
+             : 0;
 }
 
 extern "C" std::uint8_t vela_native_v1_equal(const NativeValue* left,

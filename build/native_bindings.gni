@@ -23,7 +23,7 @@ template("vela_native_bindings") {
       "--generator",
       rebase_path(generator, root_build_dir),
       "--resource-dir",
-      "$vela_clang_root/lib/clang/21",
+      vela_clang_resource_dir,
     ]
   }
 }

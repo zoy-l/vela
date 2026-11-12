@@ -101,8 +101,8 @@ TEST_F(FileTest, ConcurrentReplacementsPublishOnlyWholeFiles) {
   ASSERT_TRUE(WriteFileAtomically(path, first));
   std::expected<void, std::string> left_result;
   std::expected<void, std::string> right_result;
-  std::jthread left([&]() -> void { left_result = WriteFileAtomically(path, first); });
-  std::jthread right([&]() -> void { right_result = WriteFileAtomically(path, second); });
+  std::jthread left([&] -> void { left_result = WriteFileAtomically(path, first); });
+  std::jthread right([&] -> void { right_result = WriteFileAtomically(path, second); });
   left.join();
   right.join();
   EXPECT_TRUE(left_result) << left_result.error();
@@ -124,7 +124,7 @@ TEST_F(FileTest, ConcurrentReadersSeeOnlyWholePublishedSnapshots) {
   ASSERT_TRUE(WriteFileAtomically(path, versions.first));
   std::barrier ready(2);
   std::expected<void, std::string> read;
-  std::jthread reader([&]() -> void {
+  std::jthread reader([&] -> void {
     ready.arrive_and_wait();
     read = ReadVersions(path, versions, kPublicationCount);
   });

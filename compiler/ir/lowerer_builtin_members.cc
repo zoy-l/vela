@@ -194,8 +194,8 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
           static_cast<std::uint32_t>(function.instructions.size());
     }
   }
-  if (SnapshotCountBuiltin(builtin)) {
-    EmitSnapshotArray(builtin, base, function.return_type, {});
+  if (const auto count_builtin = SnapshotCountBuiltin(builtin)) {
+    EmitSnapshotArray(*count_builtin, base, function.return_type, {});
   }
   EmitRegExpLayoutArgument(builtin, base, function.return_type, {});
   const auto result = AllocateRegister({});

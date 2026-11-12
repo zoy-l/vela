@@ -8,6 +8,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
@@ -34,7 +35,6 @@ struct CodeMemory final {
 
 CodeMemory Measure(const llvm::jitlink::LinkGraph& graph) {
   using llvm::orc::MemProt;
-  using llvm::operator&;
   CodeMemory memory;
   for (const auto& section : graph.sections()) {
     if (section.getMemLifetime() != llvm::orc::MemLifetime::Standard) {
@@ -45,9 +45,9 @@ CodeMemory Measure(const llvm::jitlink::LinkGraph& graph) {
       bytes += block->getSize();
     }
     const auto protection = section.getMemProt();
-    if ((protection & MemProt::Exec) != MemProt::None) {
+    if (llvm::operator&(protection, MemProt::Exec) != MemProt::None) {
       memory.executable += bytes;
-    } else if ((protection & MemProt::Write) != MemProt::None) {
+    } else if (llvm::operator&(protection, MemProt::Write) != MemProt::None) {
       memory.writable += bytes;
     } else {
       memory.read_only += bytes;
@@ -114,6 +114,9 @@ class ResourceAccounting final : public llvm::orc::LinkGraphLinkingLayer::Plugin
   void notifyTransferringResources([[maybe_unused]] llvm::orc::JITDylib& library,
                                    llvm::orc::ResourceKey destination_key,
                                    llvm::orc::ResourceKey source_key) override {
+    if (destination_key == source_key) {
+      return;
+    }
     const std::scoped_lock lock(mutex_);
     const auto found = registered_.find(source_key);
     if (found != registered_.end()) {

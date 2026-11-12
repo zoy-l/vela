@@ -227,7 +227,9 @@ async func main(): Future<void> {
   ASSERT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(root.state(), runtime::FutureState::Failed);
   const auto diagnostic = root.error_diagnostic();
-  ASSERT_TRUE(diagnostic.has_value());
+  if (!diagnostic) {
+    FAIL() << "missing async failure diagnostic";
+  }
   const auto& diagnostic_value = *diagnostic;
   EXPECT_EQ(diagnostic_value.message, "async failure");
   ASSERT_FALSE(diagnostic_value.stack_trace.empty());

@@ -202,13 +202,20 @@ async func main(): Future<string> {
     ASSERT_TRUE(compiled) << compiled.error();
     auto& instance = **compiled;
     const auto main = instance.FindFunction("main");
-    ASSERT_TRUE(main);
+    if (!main) {
+      FAIL() << "missing main function";
+    }
+    const auto main_function = *main;
+    const auto type = instance.call_signature(main_function).result;
+    if (!type) {
+      FAIL() << "missing main result type";
+    }
+    const auto result_type = *type;
     runtime::ProcessEntry process(isolate, errors);
     const auto result = test::Execute(instance);
     ASSERT_TRUE(result.Succeeded());
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 3U);
-    const auto type = instance.call_signature(*main).result;
-    EXPECT_EQ(process.Finish(result.value, &instance.layouts().types[*type]), 0);
+    EXPECT_EQ(process.Finish(result.value, &instance.layouts().types[result_type]), 0);
     EXPECT_EQ(output.str(), "ready\n");
     EXPECT_TRUE(errors.str().empty());
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);

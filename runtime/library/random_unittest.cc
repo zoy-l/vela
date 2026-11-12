@@ -21,10 +21,10 @@ TEST(RandomTest, MatchesXoroshiro128PlusPlusReferenceSequenceAfterSplitMixSeedin
       0xc4eec1f605c9e5fc,
   });
   for (const auto value : expected) {
-    EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(value >> 11) * 0x1.0p-53);
+    EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(value >> 11U) * 0x1.0p-53);
   }
   random.Seed(kSeed);
-  EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11) * 0x1.0p-53);
+  EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11U) * 0x1.0p-53);
 }
 
 class BoundedRandomTest : public testing::TestWithParam<std::int64_t> {};

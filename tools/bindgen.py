@@ -237,10 +237,10 @@ def main(arguments: list[str] | None = None) -> int:
                 if digest(package / name) != expected:
                     raise ValueError(f"Packaged binding tool is missing or corrupt: {name}")
         else:
-            from tools.clang_sdk import sdk_directory
+            from tools.clang_sdk import resource_directory
             from tools.config import executable_name, output_directory
             generator = parsed.generator or output_directory(parsed.variant) / executable_name("vela_bindgen")
-            resource = parsed.resource_dir or sdk_directory() / "lib/clang/21"
+            resource = parsed.resource_dir or resource_directory()
         path = generate(parsed.config, generator, resource, check=parsed.check,
                         formatter=formatter, style=style)
         print(f"Binding generation {'verified' if parsed.check else 'published'}: {path}")

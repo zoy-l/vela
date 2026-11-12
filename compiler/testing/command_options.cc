@@ -79,7 +79,7 @@ std::expected<void, std::string> ReadOption(TestCommandOptions& options,
       if (!count || *count == 0) {
         return std::unexpected("--concurrency must be a positive integer");
       }
-      options.concurrency = *count;
+      options.concurrency = count;
       return {};
     }
     case OptionKind::Name: {
@@ -116,8 +116,9 @@ std::expected<void, std::string> ReadNamedOption(TestCommandOptions& options,
   const auto argument = arguments[index];
   const auto separator = argument.find('=');
   const auto name = argument.substr(0, separator);
-  const auto found = std::ranges::find(kOptions, name, &NamedOption::name);
-  if (found == kOptions.end()) {
+  const auto options_by_name = std::span(kOptions);
+  const auto found = std::ranges::find(options_by_name, name, &NamedOption::name);
+  if (found == options_by_name.end()) {
     return std::unexpected("unknown test option: " + std::string(name));
   }
   std::string_view value;

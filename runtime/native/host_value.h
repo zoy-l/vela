@@ -120,18 +120,19 @@ Result<std::array<runtime::Value, sizeof...(Args)>> EncodeHostArguments(
   std::array<runtime::Value, sizeof...(Args)> values{};
   if constexpr (sizeof...(Args) != 0) {
     std::size_t index = 0;
-    std::optional<Error> failure;
-    const auto encode = [&]<class T>(const HostValue<T>& value) {
+    Result<void> status;
+    const auto encode = [&]<class T>(const HostValue<T>& value) -> Result<void> {
       auto encoded = EncodeHostValue<T>(scope, value);
       if (!encoded) {
-        failure = std::move(encoded.error());
-        return false;
+        return std::unexpected(std::move(encoded.error()));
       }
       values[index++] = *encoded;
-      return true;
+      return {};
     };
-    if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(std::move(*failure));
+    const bool succeeded =
+        (static_cast<bool>(status = encode.template operator()<Args>(arguments)) && ...);
+    if (!succeeded) {
+      return std::unexpected(std::move(status.error()));
     }
   }
   return values;
@@ -174,7 +175,7 @@ Result<HostReceivedValue<T, Operation>> ReceiveHostValue(HandleScope& scope,
                    [&] { return DecodeHostLocal<T>(*destination); });
   } else {
     runtime::Value value;
-    return receive(value, [&]() -> HostValue<T> {
+    return receive(value, [&] -> HostValue<T> {
       if constexpr (!std::is_void_v<T>) {
         return DecodeHostScalar<T>(value);
       }

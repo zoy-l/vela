@@ -37,16 +37,22 @@ EvaluateIntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) 
       }
       break;
     case Opcode::BitAndInt:
-      return left & right;
+      return static_cast<std::int64_t>(static_cast<std::uint64_t>(left) &
+                                       static_cast<std::uint64_t>(right));
     case Opcode::BitOrInt:
-      return left | right;
+      return static_cast<std::int64_t>(static_cast<std::uint64_t>(left) |
+                                       static_cast<std::uint64_t>(right));
     case Opcode::BitXorInt:
-      return left ^ right;
+      return static_cast<std::int64_t>(static_cast<std::uint64_t>(left) ^
+                                       static_cast<std::uint64_t>(right));
     case Opcode::ShiftLeftInt:
       return static_cast<std::int64_t>(static_cast<std::uint64_t>(left)
                                        << (static_cast<std::uint64_t>(right) & kShiftMask));
-    case Opcode::ShiftRightInt:
-      return left >> (static_cast<std::uint64_t>(right) & kShiftMask);
+    case Opcode::ShiftRightInt: {
+      const auto bits = static_cast<std::uint64_t>(left);
+      const auto shift = static_cast<std::uint64_t>(right) & kShiftMask;
+      return static_cast<std::int64_t>(left < 0 ? ~(~bits >> shift) : bits >> shift);
+    }
     case Opcode::ShiftUnsignedRightInt:
       return static_cast<std::int64_t>(static_cast<std::uint64_t>(left) >>
                                        (static_cast<std::uint64_t>(right) & kShiftMask));

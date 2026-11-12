@@ -180,8 +180,8 @@ std::uint64_t RoundRight(std::uint64_t bits, std::uint32_t shift) {
   }
   const auto whole = bits >> shift;
   const auto half = std::uint64_t{1} << (shift - 1);
-  const auto remainder = bits & ((half << 1) - 1);
-  return whole + (remainder > half || (remainder == half && (whole & 1) != 0) ? 1U : 0U);
+  const auto remainder = bits & ((half << 1U) - 1);
+  return whole + (remainder > half || (remainder == half && (whole & 1U) != 0) ? 1U : 0U);
 }
 
 // 用无符号位运算固定最近偶数舍入，不读取或修改宿主浮点舍入环境。
@@ -197,7 +197,7 @@ std::uint32_t Float32Bits(double value) {
   constexpr std::int32_t kMinimumExponent = -126;
   constexpr std::int32_t kMaximumExponent = 127;
   const auto bits = std::bit_cast<std::uint64_t>(value);
-  const auto sign = static_cast<std::uint32_t>(bits >> 32) & kFloatSign;
+  const auto sign = static_cast<std::uint32_t>(bits >> 32U) & kFloatSign;
   const auto exponent = static_cast<std::uint32_t>((bits >> kDoubleFraction) & kDoubleExponentMask);
   const auto fraction = bits & kDoubleFractionMask;
   if (exponent == kDoubleExponentMask) {
@@ -250,8 +250,8 @@ std::expected<std::uint64_t, ExecutionStatus> Encode(const ByteAccess& access, V
   const auto number = value.AsInteger();
   if (access.width < sizeof(std::int64_t)) {
     const auto bits = access.width * kBitsPerByte;
-    const auto maximum =
-        (std::int64_t{1} << (bits - (access.number == ByteNumber::Signed ? 1 : 0))) - 1;
+    const auto maximum = static_cast<std::int64_t>(
+        (std::uint64_t{1} << (bits - (access.number == ByteNumber::Signed ? 1 : 0))) - 1);
     const auto minimum = access.number == ByteNumber::Signed ? -maximum - 1 : 0;
     if (number < minimum || number > maximum) {
       return std::unexpected(ExecutionStatus::InvalidNumericConversion);

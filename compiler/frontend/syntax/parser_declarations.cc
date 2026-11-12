@@ -161,7 +161,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   MemberModifiers modifiers;
   bool has_visibility = false;
   bool has_storage = false;
-  const auto is_accessor_modifier = [&]() {
+  const auto is_accessor_modifier = [&] {
     return (Check(TokenKind::Get) || Check(TokenKind::Set)) &&
            IsMemberName(tokens_[current_ + 1].kind);
   };

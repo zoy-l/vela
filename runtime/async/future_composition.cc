@@ -214,6 +214,7 @@ void CompleteCallback(const FutureContinuation& context, Future& source) {
 OperationResult ScheduleTimeout(const Continuation& context,
                                 const FutureCall& call,
                                 const FutureCallbacks& callbacks) {
+  assert(call.runtime_type.has_value());
   auto* isolate = context->isolate;
   const auto& references = context->references;
   auto& heap = isolate->heap();
@@ -238,7 +239,7 @@ OperationResult ScheduleTimeout(const Continuation& context,
   auto roots = std::make_shared<RootedValues>(heap, references);
   auto timer = scheduler.After(
       std::chrono::milliseconds(delay.AsInteger()),
-      [context, callback = std::move(replacement), won, roots, timeout_layout]() {
+      [context, callback = std::move(replacement), won, roots, timeout_layout] {
         if (std::exchange(*won, true)) {
           return;
         }
@@ -304,6 +305,7 @@ OperationResult ObserveCompletion(const Continuation& context,
 OperationResult ObserveCallbacks(const Continuation& context,
                                  const FutureCall& call,
                                  const FutureCallbacks& callbacks) {
+  assert(call.runtime_type.has_value());
   const auto operation = call.operation;
 
   const auto error_type = *call.runtime_type;
@@ -389,7 +391,7 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
   }
   // 排队计算自行保根；丢弃脚本返回值不取消副作用，停止调度器则释放该内部根。
   auto action = [&isolate, callback = std::move(*callback), roots,
-                 result = result.Retained()]() mutable {
+                 result = result.Retained()] mutable {
     const auto invoked = callback.invoke({});
     CompleteFuture(isolate, result, invoked);
   };

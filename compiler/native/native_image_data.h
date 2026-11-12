@@ -20,7 +20,7 @@ class NativeImageData final {
  public:
   [[nodiscard]] const runtime::NativeImage* image() const noexcept { return &image_; }
   [[nodiscard]] std::size_t bytes() const noexcept {
-    return sizeof(image_) + storage_.getBytesAllocated() +
+    return sizeof(image_) + storage_.getTotalMemory() +
            (functions_.size() * sizeof(runtime::NativeFunctionDescription));
   }
   void BindEntries(std::span<const runtime::NativeEntry> entries,

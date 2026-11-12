@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -62,8 +63,9 @@ def static_library_name(name: str) -> str:
 
 
 def xcode_path(arguments: list[str], description: str) -> Path:
+    sdk = os.environ.get("SDKROOT") or "macosx"
     result = subprocess.run(
-        ["/usr/bin/xcrun", "--sdk", "macosx", *arguments],
+        ["/usr/bin/xcrun", "--sdk", sdk, *arguments],
         check=True,
         capture_output=True,
         text=True,
@@ -76,12 +78,10 @@ def xcode_path(arguments: list[str], description: str) -> Path:
     return path.resolve()
 
 
-def toolchain_tools() -> dict[str, Path]:
-    host = host_platform()
-    clang_bin = BUILD_TOOLS_ROOT / "clang" / host / "bin"
-    gn_path = BUILD_TOOLS_ROOT / "gn" / host / executable_name("gn")
-    ninja_path = BUILD_TOOLS_ROOT / "ninja" / host / executable_name("ninja")
-    if platform.system() == "Windows":
+def llvm_tools(directory: Path) -> dict[str, Path]:
+    clang_bin = directory / "bin"
+    system = platform.system()
+    if system == "Windows":
         cc = clang_bin / "clang-cl.exe"
         cxx = cc
         archiver = clang_bin / "llvm-lib.exe"
@@ -90,14 +90,12 @@ def toolchain_tools() -> dict[str, Path]:
         cc = clang_bin / "clang"
         cxx = clang_bin / "clang++"
         archiver = clang_bin / "llvm-ar"
-        linker = clang_bin / ("ld64.lld" if platform.system() == "Darwin" else "ld.lld")
-    tools = {
-        "gn": require_file(gn_path, "project GN executable"),
-        "ninja": require_file(ninja_path, "project Ninja executable"),
+        linker = clang_bin / ("ld64.lld" if system == "Darwin" else "ld.lld")
+    return {
         "cc": require_file(cc, "project Clang executable"),
         "cxx": require_file(cxx, "project Clang++ executable"),
         "archiver": require_file(archiver, "project LLVM archiver"),
-        "linker": require_file(linker, "host linker"),
+        "linker": require_file(linker, "project LLD linker"),
         "clang_format": require_file(
             clang_bin / executable_name("clang-format"),
             "project clang-format executable",
@@ -110,6 +108,19 @@ def toolchain_tools() -> dict[str, Path]:
             clang_bin / executable_name("clang-tidy"),
             "project clang-tidy executable",
         ),
+    }
+
+
+def toolchain_tools() -> dict[str, Path]:
+    from tools.llvm import sdk_directory
+
+    host = host_platform()
+    tools = {
+        "gn": require_file(BUILD_TOOLS_ROOT / "gn" / host / executable_name("gn"),
+                           "project GN executable"),
+        "ninja": require_file(BUILD_TOOLS_ROOT / "ninja" / host / executable_name("ninja"),
+                              "project Ninja executable"),
+        **llvm_tools(sdk_directory()),
     }
     if platform.system() == "Darwin":
         tools["sysroot"] = xcode_path(["--show-sdk-path"], "macOS SDK")

@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -75,18 +74,19 @@ template <class R, class... Args, class Entry>
   std::array<VelaAotValue, sizeof...(Args)> encoded{};
   if constexpr (sizeof...(Args) != 0) {
     std::size_t index = 0;
-    std::optional<Error> failure;
-    const auto encode = [&]<class T>(const HostValue<T>& value) {
+    Result<void> encoding;
+    const auto encode = [&]<class T>(const HostValue<T>& value) -> Result<void> {
       auto argument = EncodeArgument<T>(scope, value);
       if (!argument) {
-        failure = std::move(argument.error());
-        return false;
+        return std::unexpected(std::move(argument.error()));
       }
       encoded[index++] = *argument;
-      return true;
+      return {};
     };
-    if (!(encode.template operator()<Args>(arguments) && ...)) {
-      return std::unexpected(std::move(*failure));
+    const bool succeeded =
+        (static_cast<bool>(encoding = encode.template operator()<Args>(arguments)) && ...);
+    if (!succeeded) {
+      return std::unexpected(std::move(encoding.error()));
     }
   }
   VelaAotValue result{};

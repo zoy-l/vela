@@ -52,8 +52,8 @@ std::expected<std::int64_t, ExecutionStatus> ParseInt(std::string_view source, V
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + (negative ? 1U : 0U);
   std::uint64_t magnitude = 0;
   const auto* end = std::to_address(text.end());
-  const auto parsed = std::from_chars(std::to_address(text.begin()), end, magnitude,
-                                    static_cast<int>(radix));
+  const auto parsed =
+      std::from_chars(std::to_address(text.begin()), end, magnitude, static_cast<int>(radix));
   if (parsed.ec != std::errc{} || parsed.ptr != end || magnitude > limit) {
     return std::unexpected(ExecutionStatus::IntParseError);
   }
@@ -68,7 +68,7 @@ bool IsDecimal(std::string_view text) {
   if (!text.empty() && (text.front() == '+' || text.front() == '-')) {
     text.remove_prefix(1);
   }
-  const auto digits = [&text]() {
+  const auto digits = [&text] {
     const auto size = text.size();
     while (!text.empty() && absl::ascii_isdigit(static_cast<std::uint8_t>(text.front()))) {
       text.remove_prefix(1);

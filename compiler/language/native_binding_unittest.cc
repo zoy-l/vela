@@ -605,7 +605,9 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
   runtime::FutureCompletionEndpoint completer;
   PendingFetchCompleter() = &completer;
   auto root = StartNativeFetch(isolate);
-  ASSERT_TRUE(root.has_value());
+  if (!root) {
+    FAIL() << "missing native future";
+  }
   auto& root_future = *root;
   ASSERT_EQ(root_future.state(), runtime::FutureState::Pending);
   ASSERT_TRUE(CompleteNativeFuture(completer));

@@ -207,10 +207,9 @@ bool TypeInference::CanResolveFrom(std::span<const TypeName> inputs) const {
   absl::flat_hash_set<TypeParameterId> available;
   std::vector<TypeParameterId> pending;
   const auto collect = [&](const auto& self, const TypeName& type) -> void {
-    if (const auto* parameter = FindParameter(type)) {
-      if (available.insert(parameter->identity).second) {
-        pending.push_back(parameter->identity);
-      }
+    if (const auto* parameter = FindParameter(type);
+        parameter != nullptr && available.insert(parameter->identity).second) {
+      pending.push_back(parameter->identity);
     }
     for (const auto& argument : type.arguments) {
       self(self, argument);

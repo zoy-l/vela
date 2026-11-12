@@ -127,7 +127,7 @@ Result<Local<vela::Value>> NativeContext::TypedFutureValue(NativeType type,
   }
   const auto raw = Value::Object(object);
   const RootRange source_root(isolate_->heap(), &raw, 1, std::nullopt);
-  const auto resolve = [&]() -> std::expected<TypeConstraint, ExecutionStatus> {
+  const auto resolve = [&] -> std::expected<TypeConstraint, ExecutionStatus> {
     if (execution_ == nullptr) {
       return ResolveBuiltinNativeType(isolate(), type);
     }

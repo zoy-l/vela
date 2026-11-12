@@ -89,10 +89,12 @@ struct NativeLogicalType<Nullable<T>> final {
   [[nodiscard]] static NativeType Get() {
     auto type = NativeTypeOf<T>();
     static_assert(!std::is_void_v<T>, "void cannot be nullable");
-    auto& descriptor = *type.type;
-    if (descriptor.kind != layout::Type::Kind::Dynamic) {
-      descriptor.nullable = true;
-    }
+    type.type = type.type.transform([](layout::Type descriptor) {
+      if (descriptor.kind != layout::Type::Kind::Dynamic) {
+        descriptor.nullable = true;
+      }
+      return descriptor;
+    });
     return type;
   }
 };

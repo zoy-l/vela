@@ -7,6 +7,7 @@
 #include <utility>
 
 #ifndef _WIN32
+#include <sys/signal.h>
 #include <csignal>
 #endif
 
@@ -55,7 +56,7 @@ void WriteAsyncFailure(std::ostream& output, const Future& future, std::string_v
 void InitializeProcessOutput() {
 #ifndef _WIN32
   // 让关闭的输出管道成为可报告的 I/O 失败，而非先由默认信号动作终止进程。
-  std::signal(SIGPIPE, SIG_IGN);
+  static_cast<void>(std::signal(SIGPIPE, SIG_IGN));
 #endif
 }
 

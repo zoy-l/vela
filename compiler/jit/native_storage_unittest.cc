@@ -157,9 +157,9 @@ export func checked(value: int): int { return rotate((value + 1) & 4294967295, 7
   if (!bounded || !wide || !iterate || !checked) {
     FAIL() << "expected exported functions bounded, wide, iterate and checked";
   }
-  constexpr auto kWordBits = std::numeric_limits<std::uint32_t>::digits;
-  constexpr std::int64_t kMask = std::numeric_limits<std::uint32_t>::max();
-  constexpr std::int64_t kWideBit = std::int64_t{1} << kWordBits;
+  constexpr unsigned kWordBits = std::numeric_limits<std::uint32_t>::digits;
+  constexpr std::uint64_t kMask = std::numeric_limits<std::uint32_t>::max();
+  constexpr std::int64_t kWideBit = std::uint64_t{1} << kWordBits;
   constexpr std::int64_t kIterations = 257;
   constexpr unsigned kRotateBits = 7;
   constexpr unsigned kIncrement = 42;
@@ -200,7 +200,7 @@ export func checked(value: int): int { return rotate((value + 1) & 4294967295, 7
     ASSERT_TRUE(loop.Succeeded()) << loop.message;
     EXPECT_EQ(loop.value.AsInteger(), expected_loop);
     for (const auto shift : kShifts) {
-      constexpr auto kShiftMask = std::numeric_limits<std::uint64_t>::digits - 1;
+      constexpr std::uint64_t kShiftMask = std::numeric_limits<std::uint64_t>::digits - 1;
       const auto bits = std::bit_cast<std::uint64_t>(input);
       const auto right = static_cast<std::uint64_t>(shift) & kShiftMask;
       const auto left = static_cast<std::uint64_t>(kWordBits - shift) & kShiftMask;
@@ -287,8 +287,11 @@ export func run(): Fields {
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   ASSERT_TRUE(instance) << instance.error().message;
   const auto run = (*instance)->FindFunction("run");
-  ASSERT_TRUE(run);
-  const auto result = runtime::ExecuteNativeFunction(**instance, *run);
+  if (!run) {
+    FAIL() << "missing run function";
+  }
+  const auto function = *run;
+  const auto result = runtime::ExecuteNativeFunction(**instance, function);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   runtime::RootRange root(isolate.heap(), &result.value, 1);
   isolate.heap().Collect();

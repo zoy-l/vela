@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 
 #include "base/builtin.h"
@@ -73,9 +74,10 @@ std::optional<std::string_view> SdkModuleSource(std::string_view identity) noexc
 }
 
 void BindSdkDeclarations(Program& program) {
+  const auto bindings = std::span(kBindings);
   for (auto& function : program.functions) {
-    const auto binding = std::ranges::find(kBindings, function.name, &SDKBinding::name);
-    if (binding != kBindings.end()) {
+    const auto binding = std::ranges::find(bindings, function.name, &SDKBinding::name);
+    if (binding != bindings.end()) {
       function.intrinsic = binding->builtin;
       function.intrinsic_operation = binding->operation;
       function.native_symbol.clear();

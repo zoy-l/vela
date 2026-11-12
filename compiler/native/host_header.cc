@@ -39,7 +39,7 @@ std::string Literal(std::string_view text) {
     if (character == '\\' || character == '"') {
       result += '\\';
     }
-    const auto byte = static_cast<std::uint8_t>(character);
+    const auto byte = static_cast<unsigned>(static_cast<unsigned char>(character));
     if (byte < kFirstPrintableAscii || byte == kDeleteAscii) {
       result += '\\';
       result += static_cast<char>('0' + ((byte >> (2U * kOctalDigitBits)) & kOctalDigitMask));
@@ -127,9 +127,9 @@ std::optional<layout::Type> MemberType(const ir::Program& program, const MemberD
   }
   if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
     const auto& getter = program.functions.at(member.target);
-    const auto& signature = *getter.signature;
-    if (signature.result) {
-      return program.layouts.types.at(*signature.result);
+    const auto& signature = getter.signature;
+    if (signature && signature->result) {
+      return program.layouts.types.at(*signature->result);
     }
   }
   return std::nullopt;
@@ -140,6 +140,9 @@ std::expected<void, std::string> EmitConstructor(std::ostringstream& output,
                                                  std::string_view name_space,
                                                  const ir::Function& constructor,
                                                  std::string_view logical) {
+  if (!constructor.signature) {
+    return std::unexpected("constructor has no call signature: " + constructor.name);
+  }
   const auto& signature = *constructor.signature;
   const auto count = signature.parameters.size() / 2;
   std::vector<std::string> parameters;
@@ -212,6 +215,9 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
     write_type = member_type;
   } else if (member.setter) {
     const auto& setter = program.functions.at(*member.setter);
+    if (!setter.signature) {
+      return std::unexpected("setter has no call signature: " + setter.name);
+    }
     const auto& signature = *setter.signature;
     write_type = program.layouts.types.at(signature.parameters.back().type);
   }
@@ -279,6 +285,9 @@ std::expected<void, std::string> EmitEntries(std::ostringstream& output,
     declarations.emplace(declaration.identity, &declaration);
   }
   for (const auto& function : program.functions | std::views::filter(&ir::Function::is_exported)) {
+    if (!function.signature) {
+      return std::unexpected("exported function has no call signature: " + function.name);
+    }
     const auto& signature = *function.signature;
     auto result = signature.result
                       ? HostLogicalType(program.layouts,

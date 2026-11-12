@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -348,6 +349,7 @@ Value Heap::ResolveStringMapValue(HeapObject& object,
   const auto& table = storage.table;
   const auto hash = HashKey(Value::String(key));
   const auto slot = storage.capacity == 0 ? Slot{} : FindSlot(table, key, hash);
+  assert(layout.values.has_value());
   const auto& values = *layout.values;
   auto* integer =
       slot.found && !values.HasTaggedElements() && values.element.kind == ValueKind::Integer

@@ -183,8 +183,8 @@ void FunctionEmitter::EmitResumeDispatch() {
       auto* value = builder_.CreateLoad(NativeRecordType(module_.getContext()),
                                         ByteAddress(saved_values, slot * sizeof(runtime::Value)));
       Store(reg, DecodeValue(builder_, value, type), type);
-      if (const auto root_slot = roots_.slots.at(reg)) {
-        StoreRootValue(reg, RootAddress(*root_slot));
+      if (const auto root_slot = roots_.slots.find(reg); root_slot != roots_.slots.end()) {
+        StoreRootValue(reg, RootAddress(root_slot->second));
       }
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。

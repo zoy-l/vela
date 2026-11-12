@@ -19,10 +19,10 @@
 namespace vela::runtime {
 namespace {
 
-constexpr std::uint8_t kStopRequested = 1U << 0;
-constexpr std::uint8_t kQueuedAction = 1U << 1;
-constexpr std::uint8_t kPendingPublication = 1U << 2;
-constexpr std::uint8_t kDebuggerAttached = 1U << 3;
+constexpr std::uint8_t kStopRequested = 1U << 0U;
+constexpr std::uint8_t kQueuedAction = 1U << 1U;
+constexpr std::uint8_t kPendingPublication = 1U << 2U;
+constexpr std::uint8_t kDebuggerAttached = 1U << 3U;
 
 }  // namespace
 

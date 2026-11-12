@@ -47,7 +47,7 @@ void RunMap(benchmark::State& state,
             const MapLiteralCase& problem,
             runtime::Heap& heap,
             Invoke invoke) {
-  const auto check = [&]() -> std::expected<void, std::string> {
+  const auto check = [&] -> std::expected<void, std::string> {
     auto result = invoke();
     if (!result) {
       return std::unexpected(result.error());
@@ -100,7 +100,7 @@ void MapAot(benchmark::State& state, MapLiteralCase problem) {
     return;
   }
   runtime::NativeExecution execution(**instance);
-  RunMap(state, problem, isolate.heap(), [&]() -> std::expected<runtime::Value, std::string> {
+  RunMap(state, problem, isolate.heap(), [&] -> std::expected<runtime::Value, std::string> {
     const auto result = runtime::InvokeNativeTarget(execution, problem.function, {});
     return result ? std::expected<runtime::Value, std::string>(*result)
                   : std::unexpected(std::string(ExecutionStatusName(result.error())));
@@ -147,7 +147,7 @@ void MapJit(benchmark::State& state, MapLiteralCase problem, NativeCodeTier tier
     state.SkipWithError("map entry is missing");
     return;
   }
-  RunMap(state, problem, isolate.heap(), [&]() -> std::expected<runtime::Value, std::string> {
+  RunMap(state, problem, isolate.heap(), [&] -> std::expected<runtime::Value, std::string> {
     const auto result = entry->Invoke({});
     return result ? std::expected<runtime::Value, std::string>(*result)
                   : std::unexpected(std::string(ExecutionStatusName(result.error())));

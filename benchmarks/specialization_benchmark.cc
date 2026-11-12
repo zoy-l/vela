@@ -36,7 +36,7 @@ void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
     source += name;
     source += kind == TemplateKind::Function ? "());" : "()).read();";
   }
-  source += "}";
+  source += '}';
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   const auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   if (!parsed.diagnostics.empty()) {

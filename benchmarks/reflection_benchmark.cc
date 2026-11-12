@@ -102,7 +102,7 @@ class ScriptProgram final {
     return std::move(result.code);
   }
 
-  std::expected<CompiledProgram, std::string> Compile() const {
+  [[nodiscard]] std::expected<CompiledProgram, std::string> Compile() const {
     auto compiler = compiler::jit::Compiler::Create();
     if (!compiler) {
       return std::unexpected(frontend::DiagnosticsText(compiler.error()));

@@ -24,13 +24,13 @@ namespace internal {
 struct ReflectionAccess;
 }
 
-using TypeKind = reflection::TypeKind;
+using reflection::TypeKind;
 using ReflectionMemberKind = reflection::MemberKind;
-using MemberScope = reflection::MemberScope;
+using reflection::MemberScope;
 using MemberStorageFilter = reflection::MemberStorage;
 using MemberVisibility = reflection::Visibility;
 using MemberVisibilityFilter = reflection::VisibilityFilter;
-using MemberQuery = reflection::MemberQuery;
+using reflection::MemberQuery;
 
 class FieldInfo;
 class PropertyInfo;

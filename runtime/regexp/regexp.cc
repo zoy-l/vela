@@ -407,7 +407,7 @@ struct Names final {
     return {static_cast<const char*>(name_bytes), static_cast<std::size_t>(end - bytes.begin())};
   }
   [[nodiscard]] std::uint32_t group(std::size_t entry) const {
-    constexpr auto kBitsPerByte = 8;
+    constexpr unsigned kBitsPerByte = 8;
     const auto bytes = table.subspan(entry * width, width);
     return (static_cast<std::uint32_t>(bytes.subspan(0).front()) << kBitsPerByte) |
            bytes.subspan(1).front();

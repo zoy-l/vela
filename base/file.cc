@@ -34,7 +34,7 @@ std::expected<void, std::string> WriteFileAtomically(const std::filesystem::path
   if (!output) {
     return std::unexpected("cannot create temporary output '" + PathText(temporary) + "'");
   }
-  const auto remove_temporary = [&]() -> void {
+  const auto remove_temporary = [&] -> void {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);
   };

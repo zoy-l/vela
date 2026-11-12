@@ -78,8 +78,11 @@ void ExpectRootedFailure(runtime::Isolate& isolate,
   auto& dispatch = isolate.native_dispatch();
   auto instance = runtime::NativeInstance::Borrow(dispatch.current_state());
   const auto target = instance.FindFunction("fail");
-  ASSERT_TRUE(target);
-  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
+  if (!target) {
+    FAIL() << "missing fail function";
+  }
+  const auto function = *target;
+  const auto failed = runtime::ExecuteNativeFunction(instance, function);
   EXPECT_EQ(failed.status, status);
   ASSERT_EQ(failed.stack_trace.size(), frames.size());
   std::size_t index = 0;
@@ -188,7 +191,7 @@ export func overflow(value: int): int {
     ASSERT_TRUE(escaped);
     ASSERT_TRUE(borrowed);
     ASSERT_TRUE(overflow);
-    constexpr std::int64_t kWideValue = (std::int64_t{1} << 40) + 42;
+    constexpr std::int64_t kWideValue = (std::uint64_t{1} << 40U) + 42;
     const std::array wide{runtime::Value::Integer(kWideValue)};
     const auto bounded = masked->Invoke(wide);
     ASSERT_TRUE(bounded);
@@ -1662,14 +1665,14 @@ export func prefix(initial: int): int {
   ASSERT_TRUE(prefix);
   constexpr std::int64_t kSeed = 123;
   constexpr std::int64_t kIterations = 64;
-  constexpr std::int64_t kMixKey = 4660;
-  constexpr std::int64_t kMixMask = 65535;
-  std::int64_t expected = kSeed;
-  for (std::int64_t index = 0; index < kIterations; ++index) {
+  constexpr std::uint64_t kMixKey = 4660;
+  constexpr std::uint64_t kMixMask = 65535;
+  std::uint64_t expected = kSeed;
+  for (std::uint64_t index = 0; index < kIterations; ++index) {
     expected ^= (index ^ kMixKey) & kMixMask;
   }
   const std::array seed{runtime::Value::Integer(kSeed)};
-  ASSERT_TRUE(test::ReturnsInteger(*value, expected, seed));
+  ASSERT_TRUE(test::ReturnsInteger(*value, static_cast<std::int64_t>(expected), seed));
   constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
   const std::array overflow{runtime::Value::Integer(kMaximum - 3)};
   ASSERT_TRUE(test::ReturnsInteger(*prefix, kMaximum, overflow));

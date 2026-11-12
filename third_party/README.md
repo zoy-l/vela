@@ -1,25 +1,26 @@
 # Third-party dependencies
 
-The AOT backend and binding generator use the LLVM/Clang 21.1.8 development SDK. Host archive names and SHA-256
-identities are pinned in `DEPS`; its `llvm_sdk` hook runs `python -m tools.llvm sync`.
+Builds, lint, the AOT backend, and the binding generator use the upstream LLVM/Clang 23.1.5
+release package. Host archive names and SHA-256 identities are pinned in `DEPS`;
+its single `llvm_sdk` hook runs `python -m tools.llvm sync`.
 For an existing checkout, `python -m tools.vl llvm sync` acquires the same package.
-The acquisition keeps LLVM headers, static libraries, linking/archive tools, and
-the checked Apache-2.0 WITH LLVM-exception license. These are compiler development
-inputs, not prerequisites users must install alongside a Vela distribution.
+The complete archive is installed under `third_party/build_tools/llvm_toolchain/23.1.5/<host>`.
+Clang, LLD, LLVM archive tools, clang-tidy, clang-format, clangd, shared libraries,
+runtime resources, and LLVM/LibTooling headers and static libraries share this installation.
+The acquisition verifies the required host tools, development headers, parser resources,
+and Apache-2.0 WITH LLVM-exception license before publishing the directory.
+These are compiler development inputs, not prerequisites users must install alongside a Vela distribution.
 `llvm-config` supplies the native backend library closure to GN. The SDK's absolute
 zstd installation path is replaced by the repository-built zstd 1.5.7 dependency,
 pinned at `f8745da6ff1ad1e7bab384bd1f9d742439278e99` and used under its
 [BSD license](https://github.com/facebook/zstd/blob/f8745da6ff1ad1e7bab384bd1f9d742439278e99/LICENSE).
-The LLVM license is retained at `third_party/build_tools/llvm/21.1.8/<host>/LICENSE.TXT`;
+The LLVM license is retained at `third_party/build_tools/llvm_toolchain/23.1.5/<host>/LICENSE.TXT`;
 distribution packaging must include it. LLVM is a compiler dependency and must not
 enter the generated application's runtime closure.
 
-The `clang_sdk` DEPS hook runs `python -m tools.clang_sdk` to acquire Clang AST/Tooling
-headers, static libraries, and parser resource headers from the same checked release archive.
-The SDK and its Apache-2.0 WITH LLVM-exception license are retained beneath
-`third_party/build_tools/clang_sdk/21.1.8/<host>`. GN links this dependency only into
-`vela_bindgen`; runtime and generated applications do not link Clang. The parser version
-is recorded separately from the host build compiler revision.
+`tools/clang_sdk.py` describes the Clang AST/Tooling library closure and parser resources
+in that installation. GN links this dependency only into `vela_bindgen`; runtime and
+generated applications do not link Clang. The parser version is recorded in generated binding manifests.
 
 `gclient sync --no-history` obtains source dependencies and host tools from the
 immutable revisions in the root `DEPS`. Vela's GN integration lives in
@@ -31,14 +32,14 @@ resolve their repository-relative paths, use no system copies, and do not modify
 `PATH`.
 
 Windows uses the project `clang-cl`, `lld-link`, and `llvm-lib` with the installed
-Visual Studio C++ libraries and Windows SDK. macOS uses Xcode for its SDK,
-standard library, and linker. See the root README for platform configuration.
+Visual Studio C++ libraries and Windows SDK. macOS uses Xcode for its SDK
+and standard library with the project `ld64.lld`. See the root README for platform configuration.
 
 | Dependency | Revision | License |
 | --- | --- | --- |
 | [LuaJIT 2.1](https://github.com/LuaJIT/LuaJIT) | `a4c064539ea931274d407e1249b4bb575424a0f4` | MIT; [upstream license](https://github.com/LuaJIT/LuaJIT/blob/a4c064539ea931274d407e1249b4bb575424a0f4/COPYRIGHT) |
 | [Abseil](https://github.com/abseil/abseil-cpp) | `76bb24329e8bf5f39704eb10d21b9a80befa7c81` | Apache-2.0; [upstream license](https://github.com/abseil/abseil-cpp/blob/76bb24329e8bf5f39704eb10d21b9a80befa7c81/LICENSE) |
-| [efsw 1.7.3](https://github.com/SpartanJ/efsw) | `fe4253e421bdcbd3d468fae80eb4191f5222cbd2` | MIT; [upstream license](https://github.com/SpartanJ/efsw/blob/fe4253e421bdcbd3d468fae80eb4191f5222cbd2/LICENSE) |
+| [efsw 1.7.3 (Vela fork)](https://github.com/zoy-l/efsw) | `d3b9595a4043d371923511098d32372d28adbaed` | MIT; [upstream license](https://github.com/zoy-l/efsw/blob/d3b9595a4043d371923511098d32372d28adbaed/LICENSE) |
 | [GoogleTest](https://github.com/google/googletest) | `52eb8108c5bdec04579160ae17225d66034bd723` | BSD-3-Clause; [upstream license](https://github.com/google/googletest/blob/52eb8108c5bdec04579160ae17225d66034bd723/LICENSE) |
 | [Google Benchmark 1.9.5](https://github.com/google/benchmark) | `192ef10025eb2c4cdd392bc502f0c852196baa48` | Apache-2.0; [upstream license](https://github.com/google/benchmark/blob/192ef10025eb2c4cdd392bc502f0c852196baa48/LICENSE) |
 | [utf8proc 2.12.0](https://github.com/JuliaStrings/utf8proc) | `79cdd5ab40c79afa559f689ffc13b76812dee1ac` | MIT and Unicode-3.0; [upstream licenses](https://github.com/JuliaStrings/utf8proc/blob/79cdd5ab40c79afa559f689ffc13b76812dee1ac/LICENSE.md) |

@@ -87,8 +87,10 @@ toolchain("clang") {
       if (target_os == "mac") {
         framework_switch = "-framework "
       }
-      command =
-          "\"$cxx\" -fuse-ld=\"$vela_linker\" @{{output}}.rsp -o \"{{output}}\""
+
+      # 显式选择 LLD 的参数协议；绝对路径本身不会让 Clang
+      # 识别链接器类型。
+      command = "\"$cxx\" -fuse-ld=lld --ld-path=\"$vela_linker\" @{{output}}.rsp -o \"{{output}}\""
     }
     description = "LINK {{output}}"
     rspfile = "{{output}}.rsp"

@@ -48,7 +48,7 @@ def compile_native_host(test: unittest.TestCase, sources: list[Path], executable
                    *objects, *libraries]
     else:
         flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
-                 "-fuse-ld=" + str(tools["linker"])]
+                 "-fuse-ld=lld", "--ld-path=" + str(tools["linker"])]
         if sys.platform == "darwin":
             flags += ["-isysroot", str(tools["sysroot"]), "-nostdinc++", "-isystem",
                       str(tools["sysroot"] / "usr/include/c++/v1"), "-framework", "CoreFoundation"]

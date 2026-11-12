@@ -82,7 +82,8 @@ std::expected<TypeConstraint, ExecutionStatus> ResolveInstanceNativeType(NativeI
   if (!cache) {
     return std::unexpected(cache.error());
   }
-  return InstantiateNativeType(instance.isolate(), description, *cache);
+  return InstantiateNativeType(instance.isolate(), description.layouts(), *description.type,
+                               *cache);
 }
 
 HostType::Storage::Storage(Isolate& owner,

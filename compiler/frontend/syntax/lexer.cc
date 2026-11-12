@@ -627,7 +627,7 @@ std::pair<std::uint32_t, std::size_t> Lexer::ReadHexDigits(std::size_t limit) {
       break;
     }
     Advance();
-    point = (point << 4) | *digit;
+    point = (point << 4U) | *digit;
     ++digits;
   }
   return {point, digits};

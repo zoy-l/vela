@@ -10,15 +10,15 @@ namespace {
 constexpr std::uint64_t kSeedIncrement = 0x9e3779b97f4a7c15;
 constexpr std::uint64_t kSeedMultiplierFirst = 0xbf58476d1ce4e5b9;
 constexpr std::uint64_t kSeedMultiplierSecond = 0x94d049bb133111eb;
-constexpr int kSeedShiftFirst = 30;
-constexpr int kSeedShiftSecond = 27;
-constexpr int kSeedShiftFinal = 31;
+constexpr unsigned kSeedShiftFirst = 30;
+constexpr unsigned kSeedShiftSecond = 27;
+constexpr unsigned kSeedShiftFinal = 31;
 constexpr int kOutputRotation = 17;
 constexpr int kStateRotationFirst = 49;
 constexpr int kStateRotationSecond = 28;
-constexpr int kStateShift = 21;
-constexpr int kMantissaBits = 53;
-constexpr int kDiscardedBits = 64 - kMantissaBits;
+constexpr unsigned kStateShift = 21;
+constexpr unsigned kMantissaBits = 53;
+constexpr unsigned kDiscardedBits = 64 - kMantissaBits;
 constexpr double kUnitScale = 0x1.0p-53;
 
 std::uint64_t SplitMix(std::uint64_t& seed) noexcept {

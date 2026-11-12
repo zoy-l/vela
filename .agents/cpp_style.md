@@ -14,18 +14,12 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   Retain trailing return types only where C++ syntax requires them, such as explicit lambda
   results or deduction guides. Local variable type inference remains allowed.
 - Preserve deduced iterator types for standard-library range algorithms; a `std::array` iterator
-  can be a pointer in libc++ and a class in MSVC STL. `vl lint` excludes
-  `readability-qualified-auto` in `compiler/frontend/builtins/async_builtins.cc`,
-  `compiler/frontend/builtins/sdk_modules.cc`, `compiler/frontend/typing/type_name.cc`, and
-  `runtime/heap/heap_string_case.cc` because its `auto*` fixes make those lookups platform-dependent.
-  Keep explicit pointer qualification for actual pointer contracts in these files.
+  can be a pointer in libc++ and a class in MSVC STL. Use `std::span` for contiguous range lookups
+  that need a uniform iterator contract. Keep explicit pointer qualification for pointer contracts.
 - Use `#pragma once` in headers; do not use include guards.
 - `include/vela/bindings.h` uses `VELA_CLASS`, `VELA_NAME`, `VELA_GETTER`, `VELA_SETTER`,
   `VELA_IGNORE`, and `VELA_DETAIL_ANNOTATE` as declaration annotations. The macro-usage check
   permits only these names because functions cannot replace C++ attribute syntax.
-- `compiler/bindgen/collector.cc` implements Clang's `RecursiveASTVisitor` CRTP callbacks.
-  Its `VisitDecl` and `VisitCXXRecordDecl` must shadow the corresponding base methods;
-  `vl lint` excludes `bugprone-derived-method-shadowing-base-method` only for this file.
 - Use the repository's `.clang-format` for mechanical formatting, with a 100-column line limit.
 - For C++ enums and initializer lists, clang-tidy requires trailing commas in multiline constructs;
   clang-format controls their layout. Single-line comma policy is `Ignore`: the pinned checker
@@ -110,12 +104,8 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   Explain empirical strategy values in an anonymous namespace or configuration structure.
 - Use strong types or enums for internal object types, modes, and state machines instead of string
   comparisons.
-- Preserve externally fixed native ABI and LLVM override signatures. `vl lint` excludes
-  `bugprone-easily-swappable-parameters` in `runtime/native/native_operations.cc` and
-  `compiler/jit/platform_support_win.cc` and `compiler/jit/code_resources.cc`: generated C entries
-  and ORC resource-transfer callbacks
-  retain their specified positional scalar arguments. Keep their parameter roles explicit; use
-  strong types for new internal interfaces instead of extending this exception.
+- Preserve externally fixed native ABI and LLVM override signatures. Keep parameter roles explicit
+  in generated C entries and ORC callbacks; use strong types in internal interfaces.
 - Centralize protocol keys shared between modules as `inline constexpr std::string_view` constants.
   Do not scatter hard-coded copies.
 - Use structured path interfaces such as `std::filesystem::path`; do not concatenate separators
@@ -130,11 +120,6 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   `std::optional` represents only legitimate absence.
 - Define ownership, borrowing duration, destruction order, and threading constraints for every
   resource type.
-- In `runtime/native/native_instance.cc`, use `std::unique_ptr<T[]>` for fallible fixed-array
-  preparation before transferring ownership to the native program state. `vl lint` excludes the two
-  `avoid-c-arrays` checks in that file because this owner preserves the existing `nothrow` failure
-  boundary and the generated code's raw-pointer ABI. Other C-style array declarations remain
-  prohibited; do not substitute a throwing allocation or an ABI-dependent container layout.
 - External files, text, and user input must not cause intentional process termination. Return
   actionable diagnostics or failure results at the actual boundary.
 - Assert runtime invariants once at their actual boundary. Do not repeatedly check state guaranteed

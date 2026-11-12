@@ -257,10 +257,8 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
     const auto opcode = instruction.opcode;
     const auto is_jump = IsJumpOpcode(opcode);
     const auto effects = AnalyzeEffects(instruction);
-    if (is_jump) {
-      if (instruction.index < code.size()) {
-        starts.at(instruction.index) = 1;
-      }
+    if (is_jump && instruction.index < code.size()) {
+      starts.at(instruction.index) = 1;
     }
     if ((is_jump || opcode == Opcode::Return || opcode == Opcode::Throw ||
          opcode == Opcode::Rethrow || effects.may_suspend ||

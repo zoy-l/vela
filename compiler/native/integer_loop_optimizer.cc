@@ -70,7 +70,7 @@ struct CheckedUpdate {
   llvm::IntrinsicInst* call;
   llvm::ExtractValueInst* value;
   llvm::ExtractValueInst* overflow;
-  llvm::BranchInst* branch;
+  llvm::CondBrInst* branch;
   llvm::BasicBlock* failed;
 };
 
@@ -103,8 +103,8 @@ std::optional<CheckedUpdate> MatchUpdate(llvm::Value* incoming, const llvm::Loop
   if (overflow == nullptr || !overflow->hasOneUse()) {
     return std::nullopt;
   }
-  auto* branch = llvm::dyn_cast<llvm::BranchInst>(call->getParent()->getTerminator());
-  if (branch == nullptr || !branch->isConditional()) {
+  auto* branch = llvm::dyn_cast<llvm::CondBrInst>(call->getParent()->getTerminator());
+  if (branch == nullptr) {
     return std::nullopt;
   }
   auto* condition = branch->getCondition();
@@ -134,7 +134,7 @@ struct CountedLoop {
   llvm::PHINode* index;
   llvm::Value* bound;
   llvm::ICmpInst* comparison;
-  llvm::BranchInst* condition;
+  llvm::CondBrInst* condition;
   unsigned exit_edge;
   llvm::Instruction* increment;
   std::optional<CheckedUpdate> step;
@@ -161,8 +161,8 @@ std::optional<int> MatchStepDirection(llvm::PHINode& index, llvm::Instruction& i
 std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
                                          llvm::BasicBlock* block,
                                          llvm::DominatorTree& dominators) {
-  auto* branch = llvm::dyn_cast<llvm::BranchInst>(block->getTerminator());
-  if (branch == nullptr || !branch->isConditional()) {
+  auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
+  if (branch == nullptr) {
     return std::nullopt;
   }
   auto* condition = branch->getCondition();
@@ -247,7 +247,7 @@ constexpr std::uint64_t kMaximumUnpolledIterations = 1024;
 constexpr std::uint64_t kMaximumUnpolledInstructions = 131072;
 
 struct BoundedPoll final {
-  llvm::BranchInst* branch;
+  llvm::CondBrInst* branch;
   unsigned ready_edge;
 };
 
@@ -301,7 +301,7 @@ BoundedRegion FindBoundedRegion(const llvm::Loop& loop) {
         return {};
       }
     }
-    auto* branch = llvm::dyn_cast<llvm::BranchInst>(block->getTerminator());
+    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
     if (branch != nullptr && branch->getMetadata(kNativeBoundedPollMetadata) != nullptr) {
       auto* ready = llvm::dyn_cast_or_null<llvm::ConstantInt>(
           PollReadyValue(branch->getCondition(), block->getModule()->getDataLayout()));
@@ -420,12 +420,12 @@ void RemoveBoundedPolls(std::span<const BoundedPoll> polls, const llvm::ValueToV
   for (const auto& poll : polls) {
     // 原循环保留安全点，但不再作为下一轮优化的复制候选。
     poll.branch->setMetadata(kNativeBoundedPollMetadata, nullptr);
-    auto* cloned = llvm::cast<llvm::BranchInst>(mapped.lookup(poll.branch));
+    auto* cloned = llvm::cast<llvm::CondBrInst>(mapped.lookup(poll.branch));
     auto* condition = cloned->getCondition();
     auto* ready = cloned->getSuccessor(poll.ready_edge);
     // 克隆循环也向共享恢复出口的 PHI 增加了输入；删除轮询边时同步退休该输入。
     cloned->getSuccessor(1 - poll.ready_edge)->removePredecessor(cloned->getParent());
-    llvm::BranchInst::Create(ready, cloned->getIterator());
+    llvm::UncondBrInst::Create(ready, cloned->getIterator());
     cloned->eraseFromParent();
     ErasePollCondition(condition);
   }
@@ -507,7 +507,7 @@ void StripMineBoundedLoop(const CountedLoop& counted,
   auto* comparison = llvm::cast<llvm::ICmpInst>(mapped.lookup(counted.comparison));
   const auto bound_operand = counted.comparison->getOperand(0) == counted.index ? 1U : 0U;
   comparison->setOperand(bound_operand, bound);
-  auto* condition = llvm::cast<llvm::BranchInst>(mapped.lookup(counted.condition));
+  auto* condition = llvm::cast<llvm::CondBrInst>(mapped.lookup(counted.condition));
   auto* normal_exit = condition->getSuccessor(counted.exit_edge);
   normal_exit->removePredecessor(condition->getParent());
   condition->setSuccessor(counted.exit_edge, exit);
@@ -641,12 +641,12 @@ bool IsReductionInstruction(const llvm::Instruction& instruction,
                             const CountedLoop& counted,
                             const Reduction& reduction,
                             const AllowedInstructions& allowed) {
-  if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-    if (branch->isConditional() && branch != counted.condition &&
-        (!counted.step || branch != counted.step->branch) && branch != reduction.update.branch) {
+  if (const auto* branch = llvm::dyn_cast<llvm::CondBrInst>(&instruction)) {
+    if (branch != counted.condition && (!counted.step || branch != counted.step->branch) &&
+        branch != reduction.update.branch) {
       return false;
     }
-  } else if (!allowed.contains(&instruction)) {
+  } else if (!llvm::isa<llvm::UncondBrInst>(instruction) && !allowed.contains(&instruction)) {
     return false;
   }
   auto* normal_exit = counted.condition->getSuccessor(counted.exit_edge);
@@ -966,10 +966,12 @@ bool IsFieldInstruction(const llvm::Instruction& instruction,
   if (instruction.getMetadata(kNativeRootClearMetadata) != nullptr) {
     return true;
   }
-  if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-    if (!branch->isConditional() || branch == counted.condition ||
-        (counted.step && branch == counted.step->branch) || branch == update.branch ||
-        llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
+  if (llvm::isa<llvm::UncondBrInst>(instruction)) {
+    return true;
+  }
+  if (const auto* branch = llvm::dyn_cast<llvm::CondBrInst>(&instruction)) {
+    if (branch == counted.condition || (counted.step && branch == counted.step->branch) ||
+        branch == update.branch || llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
       return true;
     }
     const auto* check = llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());

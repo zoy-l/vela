@@ -211,9 +211,6 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
     if (BindAliasType(alias.target, type, arguments) != AliasBinding::Matched) {
       continue;
     }
-    if (std::ranges::any_of(arguments, [](const auto& entry) { return !entry.second; })) {
-      continue;
-    }
     frontend::TypeName result{
         .name = alias.name,
         .location = type.location,
@@ -225,6 +222,10 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
     bool complete = true;
     for (const auto& parameter : alias.parameters) {
       const auto& bound = arguments.at(parameter);
+      if (!bound) {
+        complete = false;
+        break;
+      }
       auto argument = FindTypeName(*bound, TypeExpansion::Complete);
       if (!argument) {
         complete = false;

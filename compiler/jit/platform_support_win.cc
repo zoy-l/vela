@@ -20,6 +20,7 @@
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/ExecutionEngine/Orc/LinkGraphLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/Support/Casting.h>
@@ -33,7 +34,7 @@ struct Registration final {
   std::vector<RUNTIME_FUNCTION> frames;
 };
 
-class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugin {
+class CoffRegistrationPlugin final : public llvm::orc::LinkGraphLinkingLayer::Plugin {
  public:
   CoffRegistrationPlugin() = default;
   CoffRegistrationPlugin(const CoffRegistrationPlugin&) = delete;
@@ -161,6 +162,9 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
   void notifyTransferringResources(llvm::orc::JITDylib& /*JD*/,
                                    llvm::orc::ResourceKey destination,
                                    llvm::orc::ResourceKey source) override {
+    if (destination == source) {
+      return;
+    }
     const std::scoped_lock lock(mutex_);
     const auto found = registered_.find(source);
     if (found != registered_.end()) {

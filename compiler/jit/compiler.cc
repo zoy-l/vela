@@ -23,6 +23,7 @@
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
+#include <llvm/ExecutionEngine/Orc/SymbolLookupSet.h>
 #include <llvm/ExecutionEngine/Orc/SymbolStringPool.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>

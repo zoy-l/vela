@@ -29,7 +29,7 @@ TEST(ReplSourceTest, ExternalFunctionsAcceptAnOmittedSemicolonAlongsideExternalC
   }
 }
 
-using DevelopmentReplTest = test::DevelopmentReplTest;
+using test::DevelopmentReplTest;
 
 TEST_F(DevelopmentReplTest, InteractiveCommentsDoNotClaimDiskBindingProducts) {
   Execute("// Binding generation: pasted\nconst answer = 42;");

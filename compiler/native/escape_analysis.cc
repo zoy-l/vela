@@ -302,11 +302,10 @@ std::vector<BlockState> Solve(const ir::Function& function,
     };
     const auto& last = function.instructions.at(block.end - 1);
     // 同一块可以同时以正常边和异常边进入同一 handler，分别合并两种定义状态。
-    if (last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse ||
-        last.opcode == Opcode::JumpIfNull) {
-      if (last.index < function.instructions.size()) {
-        propagate(graph.instruction_blocks.at(last.index), values);
-      }
+    if ((last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse ||
+         last.opcode == Opcode::JumpIfNull) &&
+        last.index < function.instructions.size()) {
+      propagate(graph.instruction_blocks.at(last.index), values);
     }
     if (last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
         last.opcode != Opcode::Throw && last.opcode != Opcode::Rethrow &&

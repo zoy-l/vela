@@ -278,8 +278,10 @@ class LuaProgram final {
     auto* setup = static_cast<Setup*>(lua_touserdata(lua, 1));
     auto& program = *setup->program;
     luaL_openlibs(lua);
-    const auto mode = setup->mode == LuaMode::Jit ? LUAJIT_MODE_ON : LUAJIT_MODE_OFF;
-    if (luaJIT_setmode(lua, 0, LUAJIT_MODE_ENGINE | mode) == 0) {
+    const auto mode =
+        static_cast<unsigned>(setup->mode == LuaMode::Jit ? LUAJIT_MODE_ON : LUAJIT_MODE_OFF);
+    if (luaJIT_setmode(lua, 0,
+                       static_cast<int>(static_cast<unsigned>(LUAJIT_MODE_ENGINE) | mode)) == 0) {
       lua_pushliteral(lua, "Cannot select requested LuaJIT engine mode");
       return lua_error(lua);
     }

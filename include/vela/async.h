@@ -24,7 +24,7 @@ namespace vela {
 
 enum class TimerMode : std::uint8_t { Once, Periodic };
 
-using FutureObservation = runtime::FutureObservation;
+using runtime::FutureObservation;
 
 template <class T, class Callback>
 [[nodiscard]] Result<FutureObservation> ObserveFuture(HandleScope& scope,

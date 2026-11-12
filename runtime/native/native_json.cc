@@ -30,7 +30,7 @@ std::expected<Value, ExecutionStatus> Convert(NativeExecution& execution,
                                               JsonEncoder& encoder,
                                               Value receiver) {
   const auto& instance = execution.instance();
-  const auto invalid = [&]() {
+  const auto invalid = [&] {
     return Failure(execution,
                    encoder.ConversionError(
                        "JSON object requires a public zero-argument toJson() returning a value"));

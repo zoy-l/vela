@@ -52,35 +52,42 @@ constexpr auto kShaConstants = std::to_array<std::uint32_t>({
   for (std::size_t i = 16; i < digest.size(); ++i) {
     const auto v0 = digest[i - 15];
     const auto v1 = digest[i - 2];
-    const auto s0 = std::rotr(v0, 7) ^ std::rotr(v0, 18) ^ (v0 >> 3);
-    const auto s1 = std::rotr(v1, 17) ^ std::rotr(v1, 19) ^ (v1 >> 10);
+    const auto s0 = std::rotr(v0, 7) ^ std::rotr(v0, 18) ^ (v0 >> 3U);
+    const auto s1 = std::rotr(v1, 17) ^ std::rotr(v1, 19) ^ (v1 >> 10U);
     digest[i] = digest[i - 16] + s0 + digest[i - 7] + s1;
   }
-  auto [a, b, c, d, e, f, g, h] = hash;
+  auto state_a = hash[0];
+  auto state_b = hash[1];
+  auto state_c = hash[2];
+  auto state_d = hash[3];
+  auto state_e = hash[4];
+  auto state_f = hash[5];
+  auto state_g = hash[6];
+  auto state_h = hash[7];
   for (std::size_t i = 0; i < digest.size(); ++i) {
-    const auto s0 = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
-    const auto majority = (a & b) ^ (a & c) ^ (b & c);
+    const auto s0 = std::rotr(state_a, 2) ^ std::rotr(state_a, 13) ^ std::rotr(state_a, 22);
+    const auto majority = (state_a & state_b) ^ (state_a & state_c) ^ (state_b & state_c);
     const auto t2 = s0 + majority;
-    const auto s1 = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
-    const auto choice = (e & f) ^ ((~e) & g);
-    const auto t1 = h + s1 + choice + kShaConstants[i] + digest[i];
-    h = g;
-    g = f;
-    f = e;
-    e = d + t1;
-    d = c;
-    c = b;
-    b = a;
-    a = t1 + t2;
+    const auto s1 = std::rotr(state_e, 6) ^ std::rotr(state_e, 11) ^ std::rotr(state_e, 25);
+    const auto choice = (state_e & state_f) ^ ((~state_e) & state_g);
+    const auto t1 = state_h + s1 + choice + kShaConstants[i] + digest[i];
+    state_h = state_g;
+    state_g = state_f;
+    state_f = state_e;
+    state_e = state_d + t1;
+    state_d = state_c;
+    state_c = state_b;
+    state_b = state_a;
+    state_a = t1 + t2;
   }
-  hash[0] += a;
-  hash[1] += b;
-  hash[2] += c;
-  hash[3] += d;
-  hash[4] += e;
-  hash[5] += f;
-  hash[6] += g;
-  hash[7] += h;
+  hash[0] += state_a;
+  hash[1] += state_b;
+  hash[2] += state_c;
+  hash[3] += state_d;
+  hash[4] += state_e;
+  hash[5] += state_f;
+  hash[6] += state_g;
+  hash[7] += state_h;
 }
 
 double Sha256(const std::vector<std::uint32_t>& input) {
@@ -105,7 +112,7 @@ double Sha256(const std::vector<std::uint32_t>& input) {
       auto value = hash[word];
       for (std::size_t digit = 0; digit < kDigitsPerWord; ++digit) {
         hex[(word * kDigitsPerWord) + kDigitsPerWord - digit - 1] = kHexDigits[value & 0xfU];
-        value >>= 4;
+        value >>= 4U;
       }
     }
     benchmark::DoNotOptimize(hex);
@@ -369,7 +376,7 @@ class Tree final {
     NodePtr high;
     Split(std::move(root_), value, low, equal, high);
     if (equal == nullptr) {
-      seed_ = ((seed_ * 1103515245) + 12345) & 0x7fffffff;
+      seed_ = ((seed_ * 1103515245) + 12345) & 0x7fffffffU;
       equal = std::make_unique<Node>(value, seed_);
     }
     root_ = Merge(Merge(std::move(low), std::move(equal)), std::move(high));
@@ -386,7 +393,7 @@ class Tree final {
  private:
   struct Node final {
     std::int64_t value;
-    std::int64_t priority;
+    std::uint64_t priority;
     std::unique_ptr<Node> left;
     std::unique_ptr<Node> right;
   };
@@ -427,7 +434,7 @@ class Tree final {
   }
 
   NodePtr root_;
-  std::int64_t seed_ = 1;
+  std::uint64_t seed_ = 1;
 };
 
 double RunTree() {
@@ -455,11 +462,11 @@ std::int64_t Noise(std::int64_t position) {
   auto value = static_cast<std::uint32_t>(position);
   value *= 0x68e31da4U;
   value += 1;
-  value ^= value >> 8;
+  value ^= value >> 8U;
   value += 0xb5297a4dU;
-  value ^= value << 8;
+  value ^= value << 8U;
   value *= 0x1b56c4e9U;
-  value ^= value >> 8;
+  value ^= value >> 8U;
   return std::bit_cast<std::int32_t>(value);
 }
 
@@ -526,7 +533,8 @@ CppWorkload::CppWorkload(Workload workload) : workload_(workload) {
     case Workload::Dictionary:
       keys_.reserve(kDictionaryKeys);
       for (std::int64_t i = 0; i < kDictionaryKeys; ++i) {
-        keys_.push_back(std::to_string((271828183 ^ (i * 119)) % kDictionaryKeys));
+        const auto mixed = (271828183U ^ (static_cast<std::uint64_t>(i) * 119)) % kDictionaryKeys;
+        keys_.push_back(std::to_string(mixed));
       }
       break;
     case Workload::String2Float:

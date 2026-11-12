@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -382,6 +383,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   using runtime::NativeMemoryLayout;
   const auto reading = instruction.opcode == Opcode::GetField;
   const auto declaration = instruction.field_declaration;
+  assert(declaration.has_value());
   const auto field = *declaration;
   const auto origin = origins_[instruction_index_];
   const auto& canonical = CanonicalInstruction(origin);
@@ -403,6 +405,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
     return;
   }
   const auto cached_access = field_accesses_.at(origin);
+  assert(cached_access.has_value());
   const auto access_index = *cached_access;
   auto* cache = ByteAddress(field_caches_, access_index * sizeof(NativeFieldCache));
   auto* layout =
@@ -469,6 +472,7 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   using runtime::InstanceStorage;
   using runtime::NativeMemoryLayout;
   const auto declaration = instruction.field_declaration;
+  assert(declaration.has_value());
   const auto& direct = field_layouts_.at(*declaration);
   auto& context = module_.getContext();
   auto* layout =

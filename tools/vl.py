@@ -36,7 +36,7 @@ def print_help() -> None:
     print("  editor      Package the VS Code extension")
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
-    print("  llvm sync   Acquire the pinned LLVM development SDK")
+    print("  llvm sync   Acquire the pinned LLVM toolchain and development SDK")
     print("  package     Build a distribution with audited native target support")
     print("  test        Run GoogleTest suites")
 

@@ -167,9 +167,10 @@ func main(): int {
 缺少标记或依赖的类型直接诊断。
 
 GN 配置默认导出 `compile_commands.json`，[`tools/clangd.py`](../../tools/clangd.py) 复用该数据库。
-[`tools/clang_sdk.py`](../../tools/clang_sdk.py) 从 `DEPS` 固定的 LLVM 21.1.8 发布包提取
-Clang AST/Tooling 开发头、静态库和 resource headers，并校验归档摘要。
-生成器使用该 SDK 的 LibTooling；业务 C++ 编译仍使用仓库固定的 Fuchsia Clang 23 工具链。
+[`tools/llvm.py`](../../tools/llvm.py) 获取 `DEPS` 固定的上游 LLVM 正式发布包并校验归档摘要。
+[`tools/clang_sdk.py`](../../tools/clang_sdk.py) 描述同一安装目录中的 Clang AST/Tooling
+开发头、静态库和 resource headers。生成器使用该版本的 LibTooling，业务 C++ 编译、
+链接和 lint 使用同一发布包中的工具。
 编译参数由 LibTooling 驱动解析，不支持的参数或目标产生诊断。Clang 依赖仅进入
 [`vela_bindgen`](../../compiler/bindgen/BUILD.gn)，不进入 runtime 链接依赖。
 

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -439,12 +440,12 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
                             Value::Object(constants));
   if (!image.IsReloadable()) {
     const auto global_count = image.global_initializers.size;
-    std::unique_ptr<NativeProgramState::GlobalState[]> global_states(
-        new (std::nothrow) NativeProgramState::GlobalState[global_count]{});
-    data_->global_states = global_states.release();
-    if (data_->global_states == nullptr) {
+    data_->global_states = static_cast<NativeProgramState::GlobalState*>(
+        heap.AllocateNative(global_count * sizeof(NativeProgramState::GlobalState)));
+    if (global_count != 0 && data_->global_states == nullptr) {
       return OutOfMemory("out of memory creating native global states");
     }
+    std::uninitialized_value_construct_n(data_->global_states, global_count);
     auto* globals = heap.AllocateValueSlots(global_count);
     if (globals == nullptr) {
       return OutOfMemory("out of memory creating native program state");
@@ -452,12 +453,16 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
     heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kGlobals,
                               Value::Object(globals));
   } else {
-    std::unique_ptr<NativeGlobalCache[]> caches(
-        new (std::nothrow) NativeGlobalCache[image.global_initializers.size]{});
-    data_->global_caches = caches.release();
-    if (data_->global_caches == nullptr) {
+    const auto global_count = image.global_initializers.size;
+    if (global_count > std::numeric_limits<std::size_t>::max() / sizeof(NativeGlobalCache)) {
       return OutOfMemory("out of memory creating reloadable global bindings");
     }
+    data_->global_caches = static_cast<NativeGlobalCache*>(
+        heap.AllocateNative(global_count * sizeof(NativeGlobalCache)));
+    if (global_count != 0 && data_->global_caches == nullptr) {
+      return OutOfMemory("out of memory creating reloadable global bindings");
+    }
+    std::uninitialized_value_construct_n(data_->global_caches, global_count);
   }
   const auto strings = image.strings.values();
   for (std::size_t index = 0; index < strings.size(); ++index) {

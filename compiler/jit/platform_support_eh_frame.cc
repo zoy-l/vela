@@ -28,7 +28,6 @@ llvm::Error InstallPlatformSupport(llvm::orc::LLJIT& jit) {
   };
   // 静态 SDK 的注册入口不依赖宿主导出其全部符号；同一张表负责强制链接与 ORC 解析。
   bind("llvm_orc_registerJITLoaderGDBAllocAction", &llvm_orc_registerJITLoaderGDBAllocAction);
-  bind("llvm_orc_registerJITLoaderGDBWrapper", &llvm_orc_registerJITLoaderGDBWrapper);
   bind("llvm_orc_registerEHFrameSectionAllocAction", &llvm_orc_registerEHFrameSectionAllocAction);
   bind("llvm_orc_deregisterEHFrameSectionAllocAction",
        &llvm_orc_deregisterEHFrameSectionAllocAction);

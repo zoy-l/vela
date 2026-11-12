@@ -1,6 +1,7 @@
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -25,7 +26,7 @@
 namespace vela::ir {
 namespace {
 
-using MemberKind = reflection::MemberKind;
+using reflection::MemberKind;
 using SelectionKind = frontend::ReflectionMemberKind;
 
 MemberKind ReflectKind(SelectionKind kind) {
@@ -161,6 +162,14 @@ reflection::Member Lowerer::DescribeReflectionMethod(
   const auto declaration = interface ? declarations_->selectors.at(key)
                                      : declarations_->functions.at(&source).declaration;
   const auto* signature = interface || source.application ? &methods.at(source.name) : nullptr;
+  CallSignature call_signature;
+  if (interface) {
+    call_signature = DescribeCallSignature(*signature);
+  } else {
+    const auto& native_signature = program_.functions.at(target).signature;
+    assert(native_signature.has_value());
+    call_signature = *native_signature;
+  }
   reflection::Member result{
       .declaration = declaration,
       .declaring_type = declaring_type,
@@ -171,8 +180,7 @@ reflection::Member Lowerer::DescribeReflectionMethod(
       .target = target,
       .getter = {},
       .setter = {},
-      .signature =
-          interface ? DescribeCallSignature(*signature) : *program_.functions.at(target).signature,
+      .signature = std::move(call_signature),
       .default_parameters = {},
       .type_arguments = {},
   };

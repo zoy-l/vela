@@ -56,7 +56,7 @@ done:
     ASSERT_NE(mapped_instruction, nullptr);
     EXPECT_EQ(mapped_instruction->getParent(), cloned);
   }
-  const auto& dispatch = llvm::cast<llvm::BranchInst>(*function.getEntryBlock().getTerminator());
+  const auto& dispatch = llvm::cast<llvm::CondBrInst>(*function.getEntryBlock().getTerminator());
   EXPECT_EQ(dispatch.getCondition(), function.getArg(0));
   EXPECT_EQ(dispatch.getSuccessor(0), cloned);
   EXPECT_EQ(dispatch.getSuccessor(1), header);
@@ -64,7 +64,7 @@ done:
   const auto& cloned_induction = llvm::cast<llvm::PHINode>(cloned->front());
   EXPECT_EQ(cloned_induction.getIncomingBlock(1), cloned);
   EXPECT_EQ(cloned_induction.getIncomingValue(1), mapped.lookup(induction.getIncomingValue(1)));
-  const auto& backedge = llvm::cast<llvm::BranchInst>(*cloned->getTerminator());
+  const auto& backedge = llvm::cast<llvm::CondBrInst>(*cloned->getTerminator());
   EXPECT_EQ(backedge.getSuccessor(0), cloned);
   const auto& result = llvm::cast<llvm::PHINode>(backedge.getSuccessor(1)->front());
   EXPECT_EQ(result.getIncomingValueForBlock(cloned), mapped.lookup(induction.getIncomingValue(1)));

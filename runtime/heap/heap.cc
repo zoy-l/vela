@@ -286,7 +286,7 @@ void Heap::StartCollection() noexcept {
     return;
   }
 
-  barrier_state_.mark_bit ^= 1;
+  barrier_state_.mark_bit ^= 1U;
   gray_ = nullptr;
   sweep_link_ = nullptr;
   barrier_state_.phase = GcPhase::Mark;

@@ -59,12 +59,12 @@ std::optional<Builtin> Lowerer::SnapshotCountBuiltin(Builtin builtin) {
   }
 }
 
-void Lowerer::EmitSnapshotArray(Builtin builtin,
+void Lowerer::EmitSnapshotArray(Builtin count_builtin,
                                 RegisterId base,
                                 const frontend::TypeDescriptor& type,
                                 frontend::SourceLocation location) {
   const auto count = AllocateRegister(location);
-  EmitBuiltinCall(*SnapshotCountBuiltin(builtin), count, base, location);
+  EmitBuiltinCall(count_builtin, count, base, location);
   Emit({
       .opcode = Opcode::NewDynamicArray,
       .dst = base + 1,
@@ -74,13 +74,14 @@ void Lowerer::EmitSnapshotArray(Builtin builtin,
   });
 }
 
-Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& expression) {
+Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& expression,
+                                                  Builtin count_builtin) {
   const auto builtin = model_.builtin_calls.at(&expression);
   const auto receiver = LowerExpression(*expression.callee->object);
   const auto base = AllocateRegisterWindow(2, expression.location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = expression.location});
   const auto& type = model_.expression_types.at(&expression);
-  EmitSnapshotArray(builtin, base, type, expression.location);
+  EmitSnapshotArray(count_builtin, base, type, expression.location);
   const auto result = AllocateRegister(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   return {.reg = result, .type = type};

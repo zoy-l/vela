@@ -172,8 +172,11 @@ TEST_F(DevelopmentFilesTest, AcceptingAnOlderReflectionCaptureKeepsTheCurrentCon
   ASSERT_TRUE(files.Accept(session.snapshot()));
   const auto pending = files.Poll();
   ASSERT_TRUE(pending) << frontend::DiagnosticsText(pending.error());
-  ASSERT_TRUE(pending->has_value());
-  const auto& update = **pending;
+  const auto& captured = *pending;
+  if (!captured) {
+    FAIL() << "missing pending update";
+  }
+  const auto& update = *captured;
   const auto& registration = update.reflection;
   if (!registration) {
     FAIL() << "accepting an older capture lost pending registrations";

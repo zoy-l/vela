@@ -53,8 +53,9 @@ class IntegerRangeAnalysis final {
 
   void MergeCall(const ir::Instruction& instruction, std::span<const llvm::ConstantRange> state);
   void Propagate(std::size_t index);
-  void Solve(std::size_t index);
+  void Solve(std::size_t index, FunctionFlow& flow);
   void MergeEdge(std::size_t function_index,
+                 FunctionFlow& flow,
                  const ir::BasicBlock& block,
                  const State& state,
                  std::size_t successor);
@@ -63,6 +64,7 @@ class IntegerRangeAnalysis final {
                 State& state,
                 std::span<const std::uint64_t> arrays) const;
   [[nodiscard]] std::optional<EdgeRanges> RefineEdge(std::size_t function_index,
+                                                     const FunctionFlow& flow,
                                                      const ir::BasicBlock& block,
                                                      std::size_t successor,
                                                      const State& state) const;

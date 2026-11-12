@@ -55,7 +55,7 @@ struct TypeChecker::ReflectionDeclarations final {
       AddMethods(source->method_templates);
     }
   }
-  std::expected<const Function*, std::string> Find(
+  [[nodiscard]] std::expected<const Function*, std::string> Find(
       const ReflectionMemberSelection& selection) const;
 
   void AddMethods(std::span<const Function> declarations) {

@@ -15,10 +15,12 @@ extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
                                                  std::uint32_t type,
                                                  const NativeValue* value) noexcept;
 enum class NativeGlobalFrame : std::uint8_t { Current, Leaf };
+enum class NativeGlobalIndex : std::uint32_t {};
+enum class NativeArrayLayoutIndex : std::uint32_t {};
 
 // Ready 槽由生成代码读取；叶函数调用者需要在初始化期间临时登记逻辑帧。
 extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execution,
-                                                         std::uint32_t index,
+                                                         NativeGlobalIndex index,
                                                          std::uint64_t position,
                                                          NativeGlobalFrame frame_kind,
                                                          NativeValue* result);
@@ -28,7 +30,7 @@ extern "C" std::uint8_t vela_native_v10_new_callable(NativeExecution* execution,
                                                      std::uint32_t index,
                                                      NativeValue* result) noexcept;
 extern "C" HeapObject* vela_native_v10_new_array(NativeExecution* execution,
-                                                 std::uint32_t index,
+                                                 NativeArrayLayoutIndex index,
                                                  std::uint64_t length) noexcept;
 extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution,
                                                       std::uint32_t index,

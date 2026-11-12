@@ -1,6 +1,7 @@
 #include "compiler/native/function_emitter.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -293,6 +294,7 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     result_type = ValueType(context, return_type);
   }
   auto* target = builder_.CreateExtractValue(entries, 0);
+  assert(callee.signature.has_value());
   const auto& call_signature = *callee.signature;
   std::vector<llvm::Value*> parameters(arguments.begin(), arguments.end());
   for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -353,6 +355,7 @@ bool FunctionEmitter::CanInlineImportCall(const ir::Function& callee) const {
   }
   // 调用点的根计划包含全部托管实参，包括最后一次使用的 receiver。直接调用
   // 从包装对象固定位置借用原生指针，原生调用期间仍保留调用者的根登记。
+  assert(callee.signature.has_value());
   const auto& signature = *callee.signature;
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     const auto& type = callee.value_types[index];
@@ -422,8 +425,8 @@ void FunctionEmitter::EmitImport() {
   std::vector<llvm::Value*> parameters;
   for (std::size_t index = 0; index < source_.parameter_count; ++index) {
     const auto reg = static_cast<ir::RegisterId>(index);
-    if (const auto slot = roots_.slots.at(reg)) {
-      StoreRootValue(reg, RootAddress(*slot));
+    if (const auto slot = roots_.slots.find(reg); slot != roots_.slots.end()) {
+      StoreRootValue(reg, RootAddress(slot->second));
     }
     const auto& type = source_.value_types.at(reg);
     parameters.push_back(type.kind == Kind::Dynamic || HasValidity(type) ? Pack(Encode(reg), index)

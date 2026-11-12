@@ -221,8 +221,11 @@ TEST(HostCollectionTest, NestedNullableElementsUseOneOptionalAtTheHostBoundary) 
   const auto null = values->Get(scope, 1);
   ASSERT_TRUE(present.has_value());
   ASSERT_TRUE(null.has_value());
-  ASSERT_TRUE(present->has_value());
-  EXPECT_EQ((**present).Utf8(), "flattened");
+  const auto& element = *present;
+  if (!element) {
+    FAIL() << "missing array element";
+  }
+  EXPECT_EQ(element->Utf8(), "flattened");
   EXPECT_FALSE(*null);
 }
 

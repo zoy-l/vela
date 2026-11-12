@@ -42,7 +42,8 @@ struct NativeType final {
     NativeType type);
 
 [[nodiscard]] TypeConstraint InstantiateNativeType(Isolate& isolate,
-                                                   NativeType type,
+                                                   const layout::Program& layouts,
+                                                   const layout::Type& type,
                                                    LayoutCache& cache);
 
 }  // namespace vela::runtime

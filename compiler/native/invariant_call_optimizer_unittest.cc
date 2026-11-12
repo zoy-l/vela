@@ -94,7 +94,7 @@ failed:
   const auto block =
       std::ranges::find_if(function, [](const auto& item) { return item.getName() == "binding"; });
   ASSERT_NE(block, function.end());
-  auto& branch = llvm::cast<llvm::BranchInst>(*block->getTerminator());
+  auto& branch = llvm::cast<llvm::CondBrInst>(*block->getTerminator());
   const auto scenario = GetParam();
   if (scenario != BindingGuard::Unmarked) {
     MarkInvariantCall(branch);
@@ -185,9 +185,8 @@ done:
   std::size_t changing_guards = 0;
   for (auto& block : function) {
     initialized_versions += block.getName().ends_with(".intrinsic") ? 1 : 0;
-    if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(block.getTerminator());
-        branch != nullptr && branch->isConditional() &&
-        llvm::isa<llvm::PHINode>(branch->getCondition())) {
+    if (const auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block.getTerminator());
+        branch != nullptr && llvm::isa<llvm::PHINode>(branch->getCondition())) {
       ++changing_guards;
     }
     for (const auto& instruction : block) {
@@ -262,7 +261,7 @@ done:
   const auto monotonic = GetParam();
   if (!monotonic) {
     for (auto& block : function) {
-      auto* branch = llvm::dyn_cast<llvm::BranchInst>(block.getTerminator());
+      auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block.getTerminator());
       if (block.getName() == "first") {
         branch->setCondition(function.getArg(0));
       } else if (block.getName() == "second") {
