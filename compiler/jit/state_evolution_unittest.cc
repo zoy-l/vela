@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -1010,12 +1011,21 @@ TEST_P(JitStateTest, DiscardedCandidatesReleaseNewNominalsEnumsAndInternedSchema
   }
   // 自动 GC 常在实例化事务内完成；事务退出后也必须兑现延迟的元数据清扫。
   constexpr std::uint32_t kAutomaticGcAttempts = 64;
-  for (std::uint32_t iteration = 0; iteration < kAutomaticGcAttempts; ++iteration) {
-    const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->code.image);
-    ASSERT_TRUE(candidate);
-  }
+  constexpr std::uint32_t kObservationWindow = 16;
   constexpr std::size_t kTransientNominalLimit = 8;
-  EXPECT_LE(isolate_.layout_counts().nominal_types, initial.nominal_types + kTransientNominalLimit);
+  auto minimum_retained = std::numeric_limits<std::size_t>::max();
+  for (std::uint32_t iteration = 0; iteration < kAutomaticGcAttempts; ++iteration) {
+    {
+      const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->code.image);
+      ASSERT_TRUE(candidate);
+    }
+    minimum_retained = std::min(minimum_retained, isolate_.layout_counts().nominal_types);
+    if ((iteration + 1) % kObservationWindow == 0) {
+      // 检查每段连续分配中的回收进展，而不是依赖最后一次分配恰好落在清扫后。
+      EXPECT_LE(minimum_retained, initial.nominal_types + kTransientNominalLimit);
+      minimum_retained = std::numeric_limits<std::size_t>::max();
+    }
+  }
   isolate_.heap().Collect();
   EXPECT_EQ(isolate_.layout_counts(), initial);
   auto accepted = isolate_.native_dispatch().Prepare(1, compiled->code.image);

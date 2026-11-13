@@ -27,14 +27,15 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_program_state.h"
 #include "runtime/reflection/reflection_access.h"
 #include "runtime/reflection/reflection_description.h"
 #include "runtime/reflection/reflection_handle.h"
 #include "runtime/reflection/reflection_index.h"
+#include "runtime/reflection/reflection_lookup_cache.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_buffer.h"
 #include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
@@ -43,11 +44,6 @@ namespace {
 using reflection::MemberKind;
 using reflection::Operation;
 using ResultValue = std::expected<Value, ExecutionStatus>;
-
-struct Invocation final {
-  Value receiver;
-  Value arguments;
-};
 
 enum class Descriptor : std::uint8_t {
   Type,
@@ -125,6 +121,10 @@ const ReflectionHandle* DescriptorHandle(Value value) {
              : nullptr;
 }
 
+bool IsMemberHandle(const ReflectionHandle& handle) noexcept {
+  return handle.member != DeclarationId{};
+}
+
 std::expected<std::vector<ReflectedType>, ExecutionStatus> TypeArguments(Value value) {
   std::vector<ReflectedType> result;
   if (value.IsNull()) {
@@ -134,7 +134,7 @@ std::expected<std::vector<ReflectedType>, ExecutionStatus> TypeArguments(Value v
   result.reserve(*count);
   for (std::uint32_t index = 0; index < *count; ++index) {
     const auto* handle = DescriptorHandle(*Heap::GetElement(*value.AsObject(), index));
-    if (handle == nullptr || handle->member != DeclarationId{}) {
+    if (handle == nullptr || IsMemberHandle(*handle)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     result.push_back(handle->type);
@@ -170,7 +170,7 @@ class ScriptReflection final {
   ResultValue Wrap(Descriptor descriptor, Value payload, const TypeConstraint* requested = nullptr);
   ResultValue Handle(Descriptor descriptor,
                      ReflectedType type,
-                     DeclarationId member,
+                     const NativeReflectionMember* member,
                      const TypeConstraint* contract = nullptr);
   ResultValue Member(const NativeReflectionMember& member,
                      const TypeConstraint* contract = nullptr);
@@ -189,7 +189,6 @@ class ScriptReflection final {
                              const ReflectionHandle& handle,
                              const NativeReflectionMember& member);
   ResultValue Members(Operation operation, ReflectedType type, std::span<const Value> arguments);
-  ResultValue Invoke(const ReflectionHandle& handle, Invocation invocation);
   ResultValue ExecuteTarget(Operation operation, std::span<const Value> arguments);
   ResultValue Text(std::string_view text);
   ResultValue CopyAttribute(const NativeAttribute& attribute);
@@ -197,22 +196,35 @@ class ScriptReflection final {
   ReflectionIndex* index_;
   Heap* heap_;
   TypeConstraint result_;
-  std::array<TypeConstraint, kDescriptorNames.size()> contracts_;
+  std::array<const TypeConstraint*, kDescriptorNames.size()> contracts_{};
 };
 
 template <class Action>
-ResultValue WithReflection(NativeExecution& execution,
-                           HeapObject& state,
-                           TypeConstraint result,
-                           const Action& action) {
+ResultValue WithReflection(NativeExecution& execution, HeapObject& state, const Action& action) {
+  const auto execute = [&] -> ResultValue {
+    const auto index = PrepareReflectionIndex(execution.instance());
+    if (!index) {
+      return std::unexpected(index.error());
+    }
+    return action(**index);
+  };
+  if (&state == execution.instance().state().front().AsObject()) {
+    return execute();
+  }
   auto current = NativeInstance::Borrow(state);
   const NativeInstanceScope scope(execution, current);
-  const auto index = PrepareReflectionIndex(current);
-  if (!index) {
-    return std::unexpected(index.error());
-  }
-  ScriptReflection reflection(execution, **index, result);
-  return action(reflection);
+  return execute();
+}
+
+template <class Action>
+ResultValue WithScriptReflection(NativeExecution& execution,
+                                 HeapObject& state,
+                                 const TypeConstraint& result,
+                                 Action&& action) {
+  return WithReflection(execution, state, [&](auto& index) -> ResultValue {
+    ScriptReflection reflection(execution, index, result);
+    return std::forward<Action>(action)(reflection);
+  });
 }
 
 ResultValue ScriptReflection::Text(std::string_view text) {
@@ -224,16 +236,16 @@ ResultValue ScriptReflection::Text(std::string_view text) {
 const TypeConstraint& ScriptReflection::Contract(Descriptor descriptor) {
   const auto position = static_cast<std::size_t>(descriptor);
   auto& contract = contracts_[position];
-  if (contract.nominal == nullptr) {
+  if (contract == nullptr) {
     const std::array dynamic{ReflectedType{.constraint = {.dynamic = true}}};
     const auto generic = descriptor == Descriptor::Type || descriptor == Descriptor::Field ||
                          descriptor == Descriptor::Property || descriptor == Descriptor::Method;
     const auto* type =
         index_->FindDescribedType(reflection::kModule, kDescriptorNames[position],
                                   generic ? std::span(dynamic) : std::span<const ReflectedType>{});
-    contract = index_->TypeAt(type->type).constraint;
+    contract = &execution_->instance().layouts().types[type->type];
   }
-  return contract;
+  return *contract;
 }
 
 ResultValue ScriptReflection::Wrap(Descriptor descriptor,
@@ -241,26 +253,29 @@ ResultValue ScriptReflection::Wrap(Descriptor descriptor,
                                    const TypeConstraint* requested) {
   const RootRange root(*heap_, &payload, 1, std::nullopt);
   const auto& contract = requested != nullptr ? *requested : Contract(descriptor);
-  auto* object = heap_->AllocateInstance(*contract.nominal->fixed_layout());
+  const std::array fields{payload};
+  auto* object = heap_->AllocateInstance(*contract.nominal->fixed_layout(), fields);
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  if (const auto stored = heap_->SetField(*object, 0, payload); !stored) {
-    return std::unexpected(stored.error());
   }
   return Value::Object(object);
 }
 
 ResultValue ScriptReflection::Handle(Descriptor descriptor,
                                      ReflectedType type,
-                                     DeclarationId member,
+                                     const NativeReflectionMember* member,
                                      const TypeConstraint* contract) {
   const auto& instance = execution_->instance();
   const ReflectionHandle description{
       .type = type,
-      .member = member,
+      .member = member != nullptr ? member->declaration : DeclarationId{},
       .anchor = instance.context_anchor(),
       .dispatch = instance.dispatch(),
+      .cached_member = member,
+      .cached_revision = instance.current_revision(),
+      .field_cache = {},
+      .call_cache = {},
+      .lookup_cache = {},
   };
   auto* handle = heap_->AllocateReflectionHandle(description);
   return handle == nullptr ? ResultValue(std::unexpected(ExecutionStatus::OutOfMemory))
@@ -268,7 +283,7 @@ ResultValue ScriptReflection::Handle(Descriptor descriptor,
 }
 
 ResultValue ScriptReflection::Type(ReflectedType type, const TypeConstraint* contract) {
-  return Handle(Descriptor::Type, type, {}, contract);
+  return Handle(Descriptor::Type, type, nullptr, contract);
 }
 
 ResultValue ScriptReflection::CopyAttribute(const NativeAttribute& attribute) {
@@ -384,7 +399,7 @@ ResultValue ScriptReflection::Member(const NativeReflectionMember& member,
       descriptor = Descriptor::StaticMethod;
     }
   }
-  return Handle(descriptor, index_->TypeAt(member.declaring_type), member.declaration, contract);
+  return Handle(descriptor, index_->TypeAt(member.declaring_type), &member, contract);
 }
 
 ResultValue ScriptReflection::Array(Descriptor element,
@@ -624,29 +639,91 @@ ResultValue ScriptReflection::Members(Operation operation,
       &result_.array->element);
 }
 
-ResultValue ScriptReflection::Invoke(const ReflectionHandle& handle, Invocation invocation) {
-  const auto& items = *Heap::LoadField(*invocation.arguments.AsObject(), 0).AsObject();
-  const auto count = *Heap::ArrayLength(items);
-  ValueBuffer storage(count);
-  if (!storage.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+ResultValue InvokeScriptMember(NativeExecution& execution,
+                               const NativeReflectionMember& member,
+                               Value receiver,
+                               const HeapObject& arguments,
+                               const ReflectionHandle& handle) {
+  const auto& items = *Heap::LoadField(arguments, 0).AsObject();
+  return InvokeScriptReflectedMember(execution, member, receiver, items, handle);
+}
+
+bool IsMemberExecution(Operation operation) {
+  switch (operation) {
+    case Operation::GetValue:
+    case Operation::SetValue:
+    case Operation::GetStaticValue:
+    case Operation::SetStaticValue:
+    case Operation::Invoke:
+    case Operation::InvokeStatic:
+    case Operation::Construct:
+      return true;
+    default:
+      return false;
   }
-  const auto values = storage.values();
-  const RootRange roots(*heap_, values.data(), values.size(), std::nullopt);
-  std::vector<std::string_view> names;
-  names.reserve(count);
-  for (std::uint32_t index = 0; index < count; ++index) {
-    const auto argument = *Heap::GetElement(items, index);
-    const auto& object = *argument.AsObject();
-    const auto name = Heap::LoadField(object, 1);
-    const auto text = name.IsNull() ? std::string_view{} : name.AsString()->value();
-    if (!name.IsNull() && text.empty()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+}
+
+ResultValue ExecuteMember(NativeExecution& execution,
+                          const NativeReflectionMember& member,
+                          Operation operation,
+                          std::span<const Value> arguments,
+                          const ReflectionHandle& handle) {
+  switch (operation) {
+    case Operation::GetValue:
+      return ReadReflectedMember(execution, member, arguments[1]);
+    case Operation::SetValue:
+      return WriteReflectedMember(execution, member, arguments[1], arguments[2]).transform([] {
+        return Value::Null();
+      });
+    case Operation::GetStaticValue:
+      return ReadReflectedMember(execution, member, Value::Null());
+    case Operation::SetStaticValue:
+      return WriteReflectedMember(execution, member, Value::Null(), arguments[1]).transform([] {
+        return Value::Null();
+      });
+    case Operation::Invoke:
+      return InvokeScriptMember(execution, member, arguments[1], *arguments[2].AsObject(), handle);
+    case Operation::InvokeStatic:
+    case Operation::Construct:
+      return InvokeScriptMember(execution, member, Value::Null(), *arguments[1].AsObject(), handle);
+    default:
+      std::unreachable();
+  }
+}
+
+template <class Action>
+ResultValue WithResolvedMember(NativeExecution& execution,
+                               const ReflectionHandle& handle,
+                               Action&& action) {
+  const auto program = ReflectionProgram(handle);
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  return WithReflection(execution, **program, [&](auto& index) -> ResultValue {
+    const auto member = handle.ResolveMember(index, execution.instance().current_revision());
+    if (!member) {
+      return std::unexpected(member.error());
     }
-    values[index] = Heap::LoadField(object, 0);
-    names.push_back(text);
+    return std::forward<Action>(action)(**member);
+  });
+}
+
+ResultValue ExecuteMemberOperation(NativeExecution& execution,
+                                   Operation operation,
+                                   std::span<const Value> arguments) {
+  const auto* handle = DescriptorHandle(arguments[0]);
+  if (handle == nullptr || !IsMemberHandle(*handle)) {
+    return std::unexpected(ExecutionStatus::TypeError);
   }
-  return InvokeReflectedMember(*execution_, handle.member, invocation.receiver, values, names);
+  return WithResolvedMember(execution, *handle, [&](const auto& member) -> ResultValue {
+    const auto* dispatch = execution.instance().dispatch();
+    const auto epoch = dispatch != nullptr ? dispatch->publication_epoch() : 0;
+    const auto result = ExecuteMember(execution, member, operation, arguments, *handle);
+    if (result && (dispatch == nullptr || dispatch->publication_epoch() == epoch)) {
+      handle->CacheField(execution.instance(), member, arguments[1]);
+    }
+    return result;
+  });
 }
 
 ResultValue ScriptReflection::Execute(Operation operation, std::span<const Value> arguments) {
@@ -670,7 +747,8 @@ ResultValue ScriptReflection::Execute(Operation operation, std::span<const Value
     }
     const auto* type =
         index_->FindType(subject.AsString()->value(), arguments[1].AsString()->value(), *types);
-    return type == nullptr ? ResultValue(Value::Null()) : Type(index_->TypeAt(type->type));
+    return type == nullptr ? ResultValue(Value::Null())
+                           : Type(index_->TypeAt(type->type), &result_);
   }
   if (operation == Operation::Revision) {
     return Value::Integer(static_cast<std::int64_t>(execution_->instance().current_revision()));
@@ -689,7 +767,7 @@ ResultValue ScriptReflection::ExecuteTarget(Operation operation, std::span<const
   if (handle == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto is_member = handle->member != DeclarationId{};
+  const auto is_member = IsMemberHandle(*handle);
   if (operation == Operation::Id) {
     return Wrap(is_member ? Descriptor::MemberId : Descriptor::TypeId,
                 Heap::LoadField(*subject.AsObject(), 0));
@@ -712,36 +790,104 @@ ResultValue ScriptReflection::ExecuteTarget(Operation operation, std::span<const
   if (!is_member) {
     return Describe(operation, *handle);
   }
-  if (operation == Operation::GetValue) {
-    return ReadReflectedMember(*execution_, handle->member, arguments[1]);
-  }
-  if (operation == Operation::SetValue) {
-    return WriteReflectedMember(*execution_, handle->member, arguments[1], arguments[2])
-        .transform([] { return Value::Null(); });
-  }
-  if (operation == Operation::GetStaticValue) {
-    return ReadReflectedMember(*execution_, handle->member, Value::Null());
-  }
-  if (operation == Operation::SetStaticValue) {
-    return WriteReflectedMember(*execution_, handle->member, Value::Null(), arguments[1])
-        .transform([] { return Value::Null(); });
-  }
-  // 实参快照会检查名称；先解析目标，保留撤回或删除优先于实参错误的契约。
-  const auto member = index_->ResolveMember(handle->member);
+  const auto member = handle->ResolveMember(*index_, execution_->instance().current_revision());
   if (!member) {
     return std::unexpected(member.error());
-  }
-  if (operation == Operation::Invoke || operation == Operation::Construct ||
-      operation == Operation::InvokeStatic) {
-    const auto invocation = operation == Operation::Invoke
-                                ? Invocation{.receiver = arguments[1], .arguments = arguments[2]}
-                                : Invocation{.receiver = Value::Null(), .arguments = arguments[1]};
-    return Invoke(*handle, invocation);
   }
   return DescribeMember(operation, *handle, **member);
 }
 
+struct LookupSelection final {
+  ReflectedLookupCache* cache = nullptr;
+  HeapObject* owner = nullptr;
+  Value qualifier;
+  Value name;
+};
+
+std::optional<LookupSelection> SelectLookupCache(NativeInstance& instance,
+                                                 Operation operation,
+                                                 std::span<const Value> arguments) {
+  if (operation == Operation::FindType && arguments[2].IsNull()) {
+    return LookupSelection{
+        .cache = &instance.program().reflection_type_cache,
+        .owner = &instance.current_state(),
+        .qualifier = arguments[0],
+        .name = arguments[1],
+    };
+  }
+  const auto method =
+      operation == Operation::FindMethod || operation == Operation::FindStaticMethod;
+  if (!IsCachedMemberLookup(operation) || !arguments[2].IsNull() ||
+      (method && !arguments[3].IsNull())) {
+    return std::nullopt;
+  }
+  const auto* handle = DescriptorHandle(arguments[0]);
+  if (handle == nullptr || IsMemberHandle(*handle)) {
+    return std::nullopt;
+  }
+  return LookupSelection{
+      .cache = &handle->lookup_cache,
+      .owner = Heap::LoadField(*arguments[0].AsObject(), 0).AsObject(),
+      .qualifier = {},
+      .name = arguments[1],
+  };
+}
+
+ResultValue ExecuteMetadataLookup(NativeExecution& execution,
+                                  ScriptReflection& reflection,
+                                  Operation operation,
+                                  std::span<const Value> arguments,
+                                  std::uint32_t result_type,
+                                  const NativeProgramState& caller) {
+  const auto& instance = execution.instance();
+  const auto& program = instance.program();
+  const auto selected = SelectLookupCache(execution.instance(), operation, arguments);
+  if (!selected || &caller != &program) {
+    return reflection.Execute(operation, arguments);
+  }
+  auto& cache = *selected->cache;
+  const auto* dispatch = instance.dispatch();
+  const auto* epoch = dispatch != nullptr ? &dispatch->publication_epoch() : &cache.observed;
+  const auto observed = *epoch;
+  const auto encoded = static_cast<std::uint32_t>(operation);
+  if (cache.epoch == epoch && cache.observed == observed && cache.program == &program &&
+      cache.operation == encoded && cache.result_type == result_type &&
+      cache.name.AsString() == selected->name.AsString() &&
+      cache.qualifier.AsString() == selected->qualifier.AsString()) {
+    return cache.result;
+  }
+  const auto result = reflection.Execute(operation, arguments);
+  if (result && *epoch == observed) {
+    cache.program = &program;
+    cache.operation = encoded;
+    cache.result_type = result_type;
+    cache.qualifier = selected->qualifier;
+    cache.name = selected->name;
+    cache.result = *result;
+    cache.observed = observed;
+    cache.epoch = epoch;
+    auto& heap = execution.isolate().heap();
+    heap.WriteBarrier(*selected->owner, cache.qualifier);
+    heap.WriteBarrier(*selected->owner, cache.name);
+    heap.WriteBarrier(*selected->owner, cache.result);
+  }
+  return result;
+}
+
 }  // namespace
+
+std::expected<Value, ExecutionStatus> ExecuteReflectedInvocation(
+    NativeExecution& execution,
+    std::span<const NativeValue> snapshot) {
+  const auto* handle = DescriptorHandle(DecodeNativeValue(snapshot[1]));
+  if (handle == nullptr || !IsMemberHandle(*handle)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return WithResolvedMember(execution, *handle, [&](const auto& member) -> ResultValue {
+    return InvokeScriptReflectedMember(execution, member, DecodeNativeValue(snapshot[2]),
+                                       snapshot.subspan(kReflectionInvokeHeaderArity), *handle);
+  });
+}
 
 std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& execution,
                                                               Builtin builtin,
@@ -757,19 +903,22 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
     const RootRange type_root(isolate.heap(), std::span(&type.constraint, 1));
     const auto result =
         execution.instance().layouts().types[static_cast<std::uint32_t>(arguments[1].AsInteger())];
-    return WithReflection(execution, execution.instance().current_state(), result,
-                          [&](auto& reflection) { return reflection.Type(type, &result); });
+    return WithScriptReflection(execution, execution.instance().current_state(), result,
+                                [&](auto& reflection) { return reflection.Type(type, &result); });
+  }
+  const auto decoded = DecodeOperation<Operation::InvokeStatic>(arguments[0]);
+  if (!decoded) {
+    return std::unexpected(decoded.error());
+  }
+  const auto operation = *decoded;
+  if (IsMemberExecution(operation)) {
+    return ExecuteMemberOperation(execution, operation, arguments.subspan(1));
   }
   const auto result_index = static_cast<std::uint32_t>(arguments.back().AsInteger());
   const auto result = result_index == kNoNativeIndex
                           ? TypeConstraint{}
                           : execution.instance().layouts().types[result_index];
   const RootRange result_root(isolate.heap(), std::span(&result, 1));
-  const auto decoded = DecodeOperation<Operation::InvokeStatic>(arguments[0]);
-  if (!decoded) {
-    return std::unexpected(decoded.error());
-  }
-  const auto operation = *decoded;
   if (operation == Operation::FindAttributedMethods) {
     const auto& types = execution.instance().layouts().types;
     const std::array constraints{
@@ -777,11 +926,11 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
         types[static_cast<std::uint32_t>(arguments[2].AsInteger())],
     };
     const RootRange type_roots(isolate.heap(), constraints);
-    return WithReflection(execution, execution.instance().current_state(), result,
-                          [&](auto& reflection) {
-                            return reflection.FindMethods({.constraint = constraints.front()},
-                                                          constraints.back(), arguments[3]);
-                          });
+    return WithScriptReflection(execution, execution.instance().current_state(), result,
+                                [&](auto& reflection) {
+                                  return reflection.FindMethods({.constraint = constraints.front()},
+                                                                constraints.back(), arguments[3]);
+                                });
   }
   HeapObject* state = nullptr;
   if (const auto* handle = DescriptorHandle(arguments[1])) {
@@ -793,8 +942,10 @@ std::expected<Value, ExecutionStatus> ExecuteNativeReflection(NativeExecution& e
   } else {
     state = &execution.instance().current_state();
   }
-  return WithReflection(execution, *state, result, [&](auto& reflection) {
-    return reflection.Execute(operation, arguments.subspan(1));
+  const auto& caller = execution.instance().program();
+  return WithScriptReflection(execution, *state, result, [&](auto& reflection) {
+    return ExecuteMetadataLookup(execution, reflection, operation, arguments.subspan(1),
+                                 result_index, caller);
   });
 }
 

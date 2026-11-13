@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <vector>
 #include "base/builtin.h"
@@ -20,9 +21,11 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/typing/type_names.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/map_analysis.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_memory_layout.h"
@@ -123,12 +126,12 @@ llvm::Value* FunctionEmitter::Encode(ir::RegisterId reg) {
 llvm::Value* FunctionEmitter::Pack(llvm::Value* encoded, std::size_t index) {
   auto* slot =
       builder_.CreateConstGEP1_64(NativeRecordType(module_.getContext()), arguments_, index);
-  builder_.CreateStore(encoded, slot);
+  StoreMemory(encoded, slot, MemoryRegion::Values);
   return slot;
 }
 
 void FunctionEmitter::Unpack(ir::RegisterId reg) {
-  auto* record = builder_.CreateLoad(NativeRecordType(module_.getContext()), result_);
+  auto* record = LoadMemory(NativeRecordType(module_.getContext()), result_, MemoryRegion::Values);
   const auto& type = source_.value_types.at(reg);
   auto* value = DecodeValue(builder_, record, type);
   AssumeNonNull(builder_, value, type);
@@ -168,9 +171,27 @@ void FunctionEmitter::ClearRoots(std::size_t index) {
   if (leaf_entry_ || deferred_roots_) {
     return;
   }
-  for (const auto reg : roots_.clears.at(index)) {
+  const auto& clears = roots_.clears.at(index);
+  if (clears.empty()) {
+    return;
+  }
+  llvm::BasicBlock* ready = nullptr;
+  if (delayed_root_registration_) {
+    auto& context = module_.getContext();
+    auto* clear = llvm::BasicBlock::Create(context, "roots.clear", body_);
+    ready = llvm::BasicBlock::Create(context, "roots.ready", body_);
+    // 未挂链的槽没有 GC 可见值；清空它们只会让无运行时调用的路径访问冷栈存储。
+    builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), trace_initialized_), clear,
+                          ready);
+    builder_.SetInsertPoint(clear);
+  }
+  for (const auto reg : clears) {
     const auto& slot = roots_.slots.at(reg);
     ClearRoot(slot);
+  }
+  if (ready != nullptr) {
+    builder_.CreateBr(ready);
+    builder_.SetInsertPoint(ready);
   }
 }
 
@@ -345,14 +366,25 @@ void FunctionEmitter::EmitAppendCodePoint(const ir::Instruction& instruction) {
 
 std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
   const auto builtin = static_cast<Builtin>(instruction.index);
-  if (placement_ == NativeCodePlacement::Linked &&
-      builtin == Builtin::MutableStringAppendCodePoint) {
-    EmitAppendCodePoint(instruction);
-    return {};
+  switch (builtin) {
+    case Builtin::Reflection:
+    case Builtin::ReflectionInvoke:
+      EmitReflection(instruction);
+      return {};
+    default:
+      break;
   }
-  if (placement_ == NativeCodePlacement::Linked && builtin == Builtin::StringCodePointAt) {
-    EmitStringCodePointAt(instruction);
-    return {};
+  if (placement_ == NativeCodePlacement::Linked) {
+    switch (builtin) {
+      case Builtin::MutableStringAppendCodePoint:
+        EmitAppendCodePoint(instruction);
+        return {};
+      case Builtin::StringCodePointAt:
+        EmitStringCodePointAt(instruction);
+        return {};
+      default:
+        break;
+    }
   }
   if (builtin == Builtin::ScalarToString) {
     const auto& type = source_.value_types.at(instruction.lhs);
@@ -432,12 +464,61 @@ void FunctionEmitter::EmitRuntimeBuiltin(const ir::Instruction& instruction) {
 }
 
 llvm::Value* FunctionEmitter::CallRuntimeBuiltin(const ir::Instruction& instruction) {
-  PackArguments(instruction.lhs, BuiltinArity(static_cast<Builtin>(instruction.index)));
+  const auto count = ir::CallArgumentCount(instruction);
+  PackArguments(instruction.lhs, count);
+  if (instruction.index == static_cast<std::uint32_t>(Builtin::ReflectionInvoke)) {
+    auto invoke = module_.getOrInsertFunction(
+        runtime::kNativeReflectionInvokeSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
+    return builder_.CreateCall(invoke,
+                               {body_->getArg(0), arguments_, builder_.getInt64(count), result_});
+  }
   auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
   return builder_.CreateCall(
       helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_});
+}
+
+llvm::Value* FunctionEmitter::EmitTypeTest(const ir::Instruction& instruction) {
+  using runtime::NativeValueKind;
+  const auto type = instruction.index;
+  const auto& constraint = program_.layouts.types.at(type);
+  std::optional<NativeValueKind> expected;
+  switch (constraint.kind) {
+    case layout::Type::Kind::Dynamic:
+      return builder_.getTrue();
+    case layout::Type::Kind::Boolean:
+      expected = NativeValueKind::Boolean;
+      break;
+    case layout::Type::Kind::Integer:
+      expected = NativeValueKind::Integer;
+      break;
+    case layout::Type::Kind::Double:
+      expected = NativeValueKind::Double;
+      break;
+    case layout::Type::Kind::String:
+      expected = NativeValueKind::String;
+      break;
+    default:
+      break;
+  }
+  auto* encoded = Encode(instruction.lhs);
+  if (expected) {
+    auto* kind = builder_.CreateExtractValue(encoded, 1);
+    auto* matches =
+        builder_.CreateICmpEQ(kind, builder_.getInt8(static_cast<std::uint8_t>(*expected)));
+    return constraint.nullable
+               ? builder_.CreateOr(
+                     matches, builder_.CreateICmpEQ(kind, builder_.getInt8(NativeKind(Kind::Null))))
+               : matches;
+  }
+  auto helper =
+      module_.getOrInsertFunction(runtime::kNativeTypeTestSymbol, builder_.getInt8Ty(),
+                                  builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy());
+  auto* matches =
+      builder_.CreateCall(helper, {body_->getArg(0), builder_.getInt32(type), Pack(encoded, 0)});
+  return builder_.CreateICmpNE(matches, builder_.getInt8(0));
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitReference(
@@ -558,11 +639,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::IsType:
     case Opcode::CheckedCast: {
-      auto* value = Pack(Encode(instruction.lhs), 0);
-      auto helper = module_.getOrInsertFunction(runtime::kNativeTypeTestSymbol, status_type,
-                                                pointer, word, pointer);
-      auto* matches = builder_.CreateCall(helper, {context, index, value});
-      auto* condition = builder_.CreateICmpNE(matches, builder_.getInt8(0));
+      auto* condition = EmitTypeTest(instruction);
       if (instruction.opcode == Opcode::IsType) {
         Store(instruction.dst, condition, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       } else {

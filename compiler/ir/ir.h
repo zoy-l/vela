@@ -46,6 +46,8 @@ struct Instruction final {
   std::uint32_t array_type = kInvalidArrayType;
   std::optional<DeclarationId> field_declaration = std::nullopt;
   std::optional<DeclarationId> binding_receiver = std::nullopt;
+  // 封闭 AOT 在裁剪后证明的描述符来源，索引属于本程序的 reflection_members。
+  std::optional<std::uint32_t> reflection_member = std::nullopt;
   std::optional<Construction> construction = std::nullopt;
   bool completes_construction = false;
 };

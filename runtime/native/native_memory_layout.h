@@ -62,6 +62,10 @@ struct NativeMemoryLayout final {
       offsetof(NativeExecution, exception_allocation_failed_);
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
   static constexpr auto kProgramImage = offsetof(NativeProgramState, image);
+  static constexpr auto kProgramReflectionTypeCache =
+      offsetof(NativeProgramState, reflection_type_cache);
+  static constexpr auto kProgramDirectFieldLayouts =
+      offsetof(NativeProgramState, direct_field_layouts);
   static constexpr auto kInstanceAnchor = offsetof(NativeInstance, anchor_);
   static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
   static constexpr auto kProgramGlobalCaches = offsetof(NativeProgramState, global_caches);

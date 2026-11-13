@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <llvm/ADT/ArrayRef.h>
@@ -25,14 +26,22 @@
 #include <llvm/IR/Type.h>
 
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/memory_regions.h"
+#include "runtime/heap/field_storage.h"
+#include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
+#include "runtime/native/native_image.h"
 #include "runtime/native/native_memory_layout.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 
@@ -85,9 +94,14 @@ llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution) {
   auto* instance_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
                                                       NativeMemoryLayout::kExecutionInstance);
   auto* instance = builder.CreateLoad(builder.getPtrTy(), instance_address);
+  instance->setMetadata(llvm::LLVMContext::MD_tbaa,
+                        NativeMemoryTag(builder.getContext(), MemoryRegion::Execution));
   auto* data_address =
       builder.CreateConstGEP1_64(builder.getInt8Ty(), instance, NativeMemoryLayout::kInstanceData);
-  return builder.CreateLoad(builder.getPtrTy(), data_address);
+  auto* data = builder.CreateLoad(builder.getPtrTy(), data_address);
+  data->setMetadata(llvm::LLVMContext::MD_tbaa,
+                    NativeMemoryTag(builder.getContext(), MemoryRegion::InstanceHeader));
+  return data;
 }
 
 llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution) {
@@ -95,6 +109,42 @@ llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution) {
   auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), data,
                                              runtime::NativeMemoryLayout::kProgramImage);
   return builder.CreateLoad(builder.getPtrTy(), address);
+}
+
+NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode) {
+  using runtime::NativeMemoryLayout;
+  const auto address = [&](llvm::Value* base, std::size_t offset) {
+    return builder.CreateConstGEP1_64(builder.getInt8Ty(), base, offset);
+  };
+  const auto load = [&](llvm::Type* type, llvm::Value* from, MemoryRegion region) {
+    auto* value = builder.CreateLoad(type, from);
+    value->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(builder.getContext(), region));
+    return value;
+  };
+  auto* inline_count = address(object, NativeMemoryLayout::kObjectFieldCount);
+  llvm::Value* fields = address(object, sizeof(runtime::HeapObject));
+  llvm::Value* count = nullptr;
+  if (mode == NativeProgramMode::Closed) {
+    auto* physical = load(builder.getInt32Ty(), inline_count, MemoryRegion::HeapHeader);
+    MarkInvariant(*physical);
+    count = physical;
+  } else {
+    auto* payload =
+        load(builder.getPtrTy(), address(object, NativeMemoryLayout::kObjectNativePayload),
+             MemoryRegion::HeapHeader);
+    // 调用方已建立普通脚本实例契约，不含宿主对象或 callable 环境。
+    // 此时 native_payload 仅在可重载实例中持有字段块；从物理存储读取字段数也支持派生类。
+    auto* indirect = builder.CreateIsNotNull(payload);
+    fields =
+        builder.CreateSelect(indirect, address(payload, sizeof(runtime::InstanceStorage)), fields);
+    auto* count_address = builder.CreateSelect(
+        indirect, address(payload, offsetof(runtime::InstanceStorage, count)), inline_count);
+    // 选择后的地址可属于任一区域，不能附加互斥的 header 标签。
+    count = builder.CreateLoad(builder.getInt32Ty(), count_address);
+  }
+  auto* offset = builder.CreateMul(builder.CreateZExt(count, builder.getInt64Ty()),
+                                   builder.getInt64(runtime::FieldStorage::kPayloadBytes));
+  return {.payloads = fields, .kinds = builder.CreateGEP(builder.getInt8Ty(), fields, offset)};
 }
 
 llvm::Constant* EmitConstantTable(llvm::Module& module,
@@ -377,37 +427,168 @@ void EmitExecutionBoundary(Builder& builder) {
   builder.SetInsertPoint(ready);
 }
 
-void EmitWrapper(llvm::Module& module,
-                 const ir::Function& source,
-                 std::uint32_t function_index,
-                 const GeneratedFunction& function,
-                 llvm::Constant* image,
-                 NativeCodePlacement placement) {
-  auto* body = function.body;
-  auto* entry = function.entry;
-  auto& context = module.getContext();
-  Builder builder(llvm::BasicBlock::Create(context, "entry", entry));
-  auto* invalid = llvm::BasicBlock::Create(context, "invalid", entry);
-  auto* unpack = llvm::BasicBlock::Create(context, "unpack", entry);
+namespace {
+
+using ReflectionRecord = std::pair<llvm::Value*, llvm::Value*>;
+
+std::vector<ReflectionRecord> ReflectionRecords(Builder& builder,
+                                                const ir::Program& program,
+                                                ReflectionCallInputs inputs,
+                                                std::size_t count) {
+  using runtime::NativeMemoryLayout;
+  auto& context = builder.getContext();
+  auto* function = builder.GetInsertBlock()->getParent();
+  auto* objects = llvm::BasicBlock::Create(context, "arguments.objects", function);
+  auto* snapshots = llvm::BasicBlock::Create(context, "arguments.snapshots", function);
+  auto* merged = llvm::BasicBlock::Create(context, "arguments.records", function);
+  builder.CreateCondBr(builder.CreateIsNotNull(inputs.snapshots), snapshots, objects);
+  builder.SetInsertPoint(objects);
+  auto* data_address =
+      builder.CreateConstGEP1_64(builder.getInt8Ty(), inputs.items, NativeMemoryLayout::kArrayData);
+  auto* data = builder.CreateLoad(builder.getPtrTy(), data_address);
+  data->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(context, MemoryRegion::HeapHeader));
+  const auto value_field = ClosedFieldDeclaration(program, reflection::kCallArgumentName, 0);
+  const auto name_field = ClosedFieldDeclaration(program, reflection::kCallArgumentName, 1);
+  std::vector<ReflectionRecord> object_records;
+  object_records.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    auto* slot = builder.CreateConstGEP1_64(builder.getPtrTy(), data, index);
+    auto* argument = builder.CreateLoad(builder.getPtrTy(), slot);
+    argument->setMetadata(llvm::LLVMContext::MD_tbaa,
+                          NativeMemoryTag(context, MemoryRegion::Elements));
+    const auto fields = LoadObjectFields(builder, argument, program.native_mode);
+    auto* kind = builder.CreateLoad(builder.getInt8Ty(), fields.kinds);
+    kind->setMetadata(llvm::LLVMContext::MD_tbaa,
+                      NativeMemoryTag(context, MemoryRegion::FieldKinds, value_field));
+    auto* name_address =
+        builder.CreateConstGEP1_64(builder.getInt8Ty(), fields.kinds, sizeof(runtime::ValueKind));
+    auto* name = builder.CreateLoad(builder.getInt8Ty(), name_address);
+    name->setMetadata(llvm::LLVMContext::MD_tbaa,
+                      NativeMemoryTag(context, MemoryRegion::FieldKinds, name_field));
+    auto* payload = builder.CreateLoad(builder.getInt64Ty(), fields.payloads);
+    payload->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::FieldPayloads, value_field));
+    auto* record = builder.CreateInsertValue(
+        builder.CreateInsertValue(llvm::Constant::getNullValue(NativeRecordType(context)), payload,
+                                  0),
+        kind, 1);
+    object_records.emplace_back(record, name);
+  }
+  builder.CreateBr(merged);
+  builder.SetInsertPoint(snapshots);
+  std::vector<ReflectionRecord> records;
+  records.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), inputs.snapshots,
+                                               index * 2 * sizeof(runtime::NativeValue));
+    auto* record = builder.CreateLoad(NativeRecordType(context), address);
+    record->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(context, MemoryRegion::Values));
+    auto* name_address =
+        builder.CreateConstGEP1_64(builder.getInt8Ty(), address, sizeof(runtime::NativeValue));
+    auto* name_kind_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), name_address,
+                                                         NativeMemoryLayout::kValueKind);
+    auto* name = builder.CreateLoad(builder.getInt8Ty(), name_kind_address);
+    name->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(context, MemoryRegion::Values));
+    records.emplace_back(record, name);
+  }
+  builder.CreateBr(merged);
+  builder.SetInsertPoint(merged);
+  for (std::size_t index = 0; index < count; ++index) {
+    auto& [record, name] = records[index];
+    const auto& [object_record, object_name] = object_records[index];
+    auto* value = builder.CreatePHI(NativeRecordType(context), 2);
+    value->addIncoming(record, snapshots);
+    value->addIncoming(object_record, objects);
+    auto* name_kind = builder.CreatePHI(builder.getInt8Ty(), 2);
+    name_kind->addIncoming(name, snapshots);
+    name_kind->addIncoming(object_name, objects);
+    record = value;
+    name = name_kind;
+  }
+  return records;
+}
+
+std::vector<llvm::Value*> ReflectionArguments(Builder& builder,
+                                              llvm::Function& entry,
+                                              const ir::Program& program,
+                                              const ir::Function& source) {
+  auto* miss = llvm::BasicBlock::Create(builder.getContext(), "arguments.unmatched", &entry);
+  Builder unmatched(miss);
+  unmatched.CreateRet(unmatched.getInt8(runtime::kNativeReflectionCallMiss));
+  return UnpackReflectionArguments(builder, program, source,
+                                   {
+                                       .execution = entry.getArg(0),
+                                       .receiver = entry.getArg(1),
+                                       .items = entry.getArg(2),
+                                       .snapshots = entry.getArg(3),
+                                   },
+                                   *miss);
+}
+
+}  // namespace
+
+std::vector<llvm::Value*> UnpackReflectionArguments(Builder& builder,
+                                                    const ir::Program& program,
+                                                    const ir::Function& source,
+                                                    ReflectionCallInputs inputs,
+                                                    llvm::BasicBlock& unmatched) {
+  auto& context = builder.getContext();
+  if (!source.signature) {
+    std::unreachable();
+  }
+  const auto hidden = source.signature->hidden_parameters;
+  const auto records = ReflectionRecords(builder, program, inputs, source.parameter_count - hidden);
+  auto* function = builder.GetInsertBlock()->getParent();
+  std::vector<llvm::Value*> arguments{inputs.execution};
+  for (std::size_t index = 0; index < source.parameter_count; ++index) {
+    const auto& type = source.value_types[index];
+    if (index < hidden) {
+      auto* receiver = EncodeValue(builder, inputs.receiver, {.kind = Kind::Class, .name = {}});
+      arguments.push_back(DecodeValue(builder, receiver, type));
+      continue;
+    }
+    const auto& [record, name] = records[index - hidden];
+    auto* kind = builder.CreateExtractValue(record, 1);
+    llvm::Value* matches = type.kind == Kind::Dynamic
+                               ? builder.getTrue()
+                               : builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(type.kind)));
+    if (type.nullable) {
+      matches = builder.CreateOr(
+          matches, builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(Kind::Null))));
+    }
+    matches = builder.CreateAnd(
+        matches, builder.CreateICmpEQ(name, builder.getInt8(NativeKind(Kind::Null))));
+    auto* next = llvm::BasicBlock::Create(context, "argument", function);
+    builder.CreateCondBr(matches, next, &unmatched);
+    builder.SetInsertPoint(next);
+    arguments.push_back(DecodeValue(builder, record, type));
+  }
+  return arguments;
+}
+
+namespace {
+
+std::vector<llvm::Value*> ExternalArguments(Builder& builder,
+                                            llvm::Function& entry,
+                                            const ir::Function& source) {
+  auto& context = builder.getContext();
+  auto* invalid = llvm::BasicBlock::Create(context, "invalid", &entry);
+  auto* unpack = llvm::BasicBlock::Create(context, "unpack", &entry);
   auto* count_matches =
-      builder.CreateICmpEQ(entry->getArg(2), builder.getInt64(source.parameter_count));
-  auto* valid = builder.CreateAnd(count_matches, builder.CreateIsNotNull(entry->getArg(3)));
+      builder.CreateICmpEQ(entry.getArg(2), builder.getInt64(source.parameter_count));
+  auto* valid = builder.CreateAnd(count_matches, builder.CreateIsNotNull(entry.getArg(3)));
   if (source.parameter_count != 0) {
-    valid = builder.CreateAnd(valid, builder.CreateIsNotNull(entry->getArg(1)));
+    valid = builder.CreateAnd(valid, builder.CreateIsNotNull(entry.getArg(1)));
   }
   builder.CreateCondBr(valid, unpack, invalid);
   Builder invalid_builder(invalid);
   invalid_builder.CreateRet(Status(invalid_builder, ExecutionStatus::InvalidEntry));
   builder.SetInsertPoint(unpack);
   EmitExecutionBoundary(builder);
-  llvm::Value* current_image = image;
-  if (function.baseline_body != nullptr) {
-    current_image = LoadProgramImage(builder, entry->getArg(0));
-  }
-  std::vector<llvm::Value*> arguments{entry->getArg(0)};
+  std::vector<llvm::Value*> arguments{entry.getArg(0)};
   for (std::size_t index = 0; index < source.parameter_count; ++index) {
     const auto& type = source.value_types.at(index);
-    auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), entry->getArg(1),
+    auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), entry.getArg(1),
                                                index * sizeof(runtime::NativeValue));
     auto* record = builder.CreateLoad(NativeRecordType(context), address);
     auto* kind = builder.CreateExtractValue(record, 1);
@@ -434,22 +615,72 @@ void EmitWrapper(llvm::Module& module,
                                          builder.CreateICmpULE(bits, builder.getInt64(1)));
       matches = builder.CreateAnd(matches, canonical);
     }
-    auto* next = llvm::BasicBlock::Create(context, "argument", entry);
-    auto* wrong_type = llvm::BasicBlock::Create(context, "type.error", entry);
+    auto* next = llvm::BasicBlock::Create(context, "argument", &entry);
+    auto* wrong_type = llvm::BasicBlock::Create(context, "type.error", &entry);
     builder.CreateCondBr(matches, next, wrong_type);
     Builder wrong(wrong_type);
     wrong.CreateRet(Status(wrong, ExecutionStatus::TypeError));
     builder.SetInsertPoint(next);
     arguments.push_back(DecodeValue(builder, record, type));
   }
+  return arguments;
+}
+
+}  // namespace
+
+void EmitWrapper(llvm::Module& module,
+                 const ir::Program& program,
+                 std::uint32_t function_index,
+                 const GeneratedFunction& function,
+                 llvm::Constant* image,
+                 NativeCodePlacement placement,
+                 NativeEntryContract contract) {
+  const auto& source = program.functions[function_index];
+  const auto external = contract == NativeEntryContract::External;
+  const auto bounded = !external && function.bounded_reflection_body != nullptr;
+  auto* body = bounded ? function.bounded_reflection_body : function.body;
+  auto* entry = external ? function.entry : function.reflection_entry;
+  auto& context = module.getContext();
+  Builder builder(llvm::BasicBlock::Create(context, "entry", entry));
+  if (bounded) {
+    using runtime::NativeMemoryLayout;
+    auto* miss = llvm::BasicBlock::Create(context, "bounded.unready", entry);
+    Builder unmatched(miss);
+    unmatched.CreateRet(unmatched.getInt8(runtime::kNativeReflectionCallMiss));
+    // 调用点已验证本次边界没有请求并保存观察状态；有界体中没有成功的发布边界。
+    // 初始化未完成时必须在任何副作用之前交还完整入口，不能执行后再重放。
+    auto* storage_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), entry->getArg(1),
+                                                       NativeMemoryLayout::kObjectNativePayload);
+    auto* storage = builder.CreateLoad(builder.getPtrTy(), storage_address);
+    storage->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::HeapHeader));
+    auto* unready_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), storage,
+                                                       offsetof(runtime::InstanceStorage, unready));
+    auto* unready = builder.CreateLoad(builder.getInt32Ty(), unready_address);
+    unready->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::InstanceHeader));
+    auto* initialized = llvm::BasicBlock::Create(context, "bounded.initialized", entry);
+    builder.CreateCondBr(builder.CreateICmpEQ(unready, builder.getInt32(0)), initialized, miss,
+                         llvm::MDBuilder(context).createLikelyBranchWeights());
+    builder.SetInsertPoint(initialized);
+  }
+  auto arguments = external ? ExternalArguments(builder, *entry, source)
+                            : ReflectionArguments(builder, *entry, program, source);
+  llvm::Value* current_image = image;
+  if (external && function.baseline_body != nullptr) {
+    current_image = LoadProgramImage(builder, entry->getArg(0));
+  }
   auto* result_type = ValueType(context, source.return_type);
-  auto* result = builder.CreateAlloca(result_type);
+  // 实参检查会创建多个块；结果槽仍放在真实入口，供内联后的 SROA/SSA 提升，
+  // 避免把固定大小结果误生成为每次调用都调整 SP 的动态栈分配。
+  Builder allocation(&entry->getEntryBlock(), entry->getEntryBlock().begin());
+  auto* result = allocation.CreateAlloca(result_type);
   if (!source.native_symbol.empty()) {
     arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index, placement));
   }
   arguments.push_back(result);
   llvm::Value* status = nullptr;
-  if (function.baseline_body != nullptr) {
+  if (external && function.baseline_body != nullptr) {
     auto helper = module.getOrInsertFunction(runtime::kNativeCanOptimizeSymbol, builder.getInt8Ty(),
                                              builder.getPtrTy(), builder.getPtrTy());
     auto* optimized = llvm::BasicBlock::Create(context, "optimized", entry);
@@ -476,7 +707,8 @@ void EmitWrapper(llvm::Module& module,
   if (source.return_type.kind != Kind::Void) {
     value = builder.CreateLoad(result_type, result);
   }
-  builder.CreateStore(EncodeValue(builder, value, source.return_type), entry->getArg(3));
+  builder.CreateStore(EncodeValue(builder, value, source.return_type),
+                      entry->getArg(external ? 3 : 4));
   builder.CreateRet(status);
 }
 

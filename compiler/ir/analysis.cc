@@ -103,7 +103,10 @@ std::uint32_t CallArgumentCount(const Instruction& instruction) {
     case Opcode::CallInterface:
       return static_cast<std::uint32_t>(instruction.immediate);
     case Opcode::BuiltinCall:
-      return static_cast<std::uint32_t>(BuiltinArity(static_cast<Builtin>(instruction.index)));
+      return instruction.index == static_cast<std::uint32_t>(Builtin::ReflectionInvoke)
+                 ? static_cast<std::uint32_t>(instruction.immediate)
+                 : static_cast<std::uint32_t>(
+                       BuiltinArity(static_cast<Builtin>(instruction.index)));
     case Opcode::AsyncCall:
       return static_cast<std::uint32_t>(AsyncArity(static_cast<AsyncOperation>(instruction.index)));
     case Opcode::StringInterpolate:

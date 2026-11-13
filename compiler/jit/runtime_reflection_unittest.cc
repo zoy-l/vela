@@ -22,6 +22,7 @@
 #include "compiler/project/project_config.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/reflection_test_support.h"
+#include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/native_dispatch.h"
@@ -262,6 +263,326 @@ class Box {
   EXPECT_EQ(internal::HandleAccess::Read(*value).AsInteger(), 0);
 }
 
+TEST_P(RuntimeReflectionTest, PreservesLargeNamedArgumentSnapshotsAcrossCollection) {
+  Load({
+      .source = R"(
+[Reflect]
+class Box {
+  join(a: string, b: string, c: string, d: string, e: string,
+       f: string, g: string, h: string, i: string): string {
+    return a + b + c + d + e + f + g + h + i;
+  }
+}
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('join');
+  if (method == null) { return -1; }
+  const receiver = Box();
+  const arguments = CallArguments(items: [
+    CallArgument(value: 'i', name: 'i'), CallArgument(value: 'h', name: 'h'),
+    CallArgument(value: 'g', name: 'g'), CallArgument(value: 'f', name: 'f'),
+    CallArgument(value: 'e', name: 'e'), CallArgument(value: 'd', name: 'd'),
+    CallArgument(value: 'c', name: 'c'), CallArgument(value: 'b', name: 'b'),
+    CallArgument(value: 'a', name: 'a'),
+  ]);
+  for (let i = 0; i < 2; i++) {
+    if (method.invoke(receiver, arguments) != 'abcdefghi') { return -2; }
+  }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, PreservesPositionalArgumentSnapshotsAcrossCollection) {
+  Load({
+      .source = R"(
+const first = CallArgument(value: 'a');
+const second = CallArgument(value: 'b');
+[Reflect]
+class Box {
+  pair(a: string, b: string): string {
+    first.value = 'changed';
+    second.value = null;
+    return a + b;
+  }
+  join(a: string, b: string, c: string, d: string, e: string,
+       f: string, g: string, h: string, i: string): string {
+    return a + b + c + d + e + f + g + h + i;
+  }
+}
+export func answer(): int {
+  const info = Reflect.typeInfo<Box>();
+  const foundPair = info.findMethod('pair');
+  const join = info.findMethod('join');
+  if (foundPair == null || join == null) { return -1; }
+  const pair: MethodInfo<Box> = foundPair;
+  const receiver = Box();
+  const arguments = CallArguments(items: [first, second]);
+  const large = CallArguments(items: [
+    CallArgument(value: 'a'), CallArgument(value: 'b'), CallArgument(value: 'c'),
+    CallArgument(value: 'd'), CallArgument(value: 'e'), CallArgument(value: 'f'),
+    CallArgument(value: 'g'), CallArgument(value: 'h'), CallArgument(value: 'i'),
+  ]);
+  for (let i = 0; i < 3; i++) {
+    first.value = 'a';
+    second.value = 'b';
+    if (pair.invoke(receiver, arguments) != 'ab') { return -2; }
+    if (join.invoke(receiver, large) != 'abcdefghi') { return -3; }
+  }
+  first.value = 0;
+  second.name = '';
+  try { pair.invoke(receiver, arguments); return -4; }
+  catch (error: Error) { if (error.code != 'TypeError') { return -5; } }
+  second.name = null;
+  try { pair.invoke(receiver, arguments); return -6; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -7; } }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, LiteralSnapshotsPreserveEvaluationOrderAndBindingFailures) {
+  Load({
+      .source = R"(
+let order = '';
+let calls = 0;
+func value(label: string): string { order += label; return label + '!'; }
+func name(): string? { order += 'n'; return 'a'; }
+[Reflect]
+class Box {
+  join(a: string, b: string): string {
+    calls++;
+    return a + b;
+  }
+  static read(value: int): int { return value; }
+}
+func receiver(): Box { order += 'r'; return Box(); }
+export func answer(): int {
+  const info = Reflect.typeInfo<Box>();
+  const foundMethod = info.findMethod('join');
+  const foundRead = info.findStaticMethod('read');
+  if (foundMethod == null || foundRead == null) { return -1; }
+  const method: MethodInfo<Box> = foundMethod;
+  const read: StaticMethodInfo = foundRead;
+  const joined = method.invoke(arguments: CallArguments(items: [
+    CallArgument(name: name(), value: value('a')),
+    CallArgument(value: value('b'), name: 'b'),
+  ]), receiver: receiver());
+  if (joined != 'a!b!' || order != 'nabr' || calls != 1) { return -2; }
+  if (method.invoke(Box(), CallArguments(items: [CallArgument(value: 'x'), CallArgument(value: 'y')])) != 'xy') { return -3; }
+  if (method.invoke(Box(), CallArguments(items: [CallArgument(value: 'z', name: 'b'),
+      CallArgument(value: 'y', name: 'a')])) != 'yz') { return -4; }
+  for (let index = 0; index < 3; index++) {
+    if (read.invoke(CallArguments(items: [CallArgument(value: 42)])) != 42) { return -5; }
+  }
+  try { method.invoke(Box(), CallArguments(items: [CallArgument(value: 1, name: '')])); return -6; }
+  catch (error: Error) { if (error.code != 'TypeError') { return -7; } }
+  try { read.invoke(CallArguments(items: [CallArgument(value: 'wrong')])); return -8; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -9; } }
+  return calls == 3 ? 42 : -10;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, LargeLiteralSnapshotsKeepComputedValuesAliveAcrossCollection) {
+  Load({
+      .source = R"(
+func text(value: int): string { return '${value}!'; }
+[Reflect]
+class Box {
+  join(a: string, b: string, c: string, d: string, e: string,
+       f: string, g: string, h: string, i: string): string {
+    return a + b + c + d + e + f + g + h + i;
+  }
+}
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('join');
+  if (method == null) { return -1; }
+  for (let index = 0; index < 3; index++) {
+    const result = method.invoke(Box(), CallArguments(items: [
+      CallArgument(value: text(9), name: 'i'), CallArgument(value: text(8), name: 'h'),
+      CallArgument(value: text(7), name: 'g'), CallArgument(value: text(6), name: 'f'),
+      CallArgument(value: text(5), name: 'e'), CallArgument(value: text(4), name: 'd'),
+      CallArgument(value: text(3), name: 'c'), CallArgument(value: text(2), name: 'b'),
+      CallArgument(value: text(1), name: 'a'),
+    ]));
+    if (result != '1!2!3!4!5!6!7!8!9!') { return -2; }
+  }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, LiteralSnapshotsSurviveSuspensionBetweenArguments) {
+  Load({
+      .source = R"(
+const gate = Completer<string>();
+[Reflect]
+class Box { join(a: string, b: string): string { return a + b; } }
+export func release(): void { gate.complete('b'); }
+async func main(): Future<int> {
+  const method = Reflect.typeInfo<Box>().findMethod('join');
+  if (method == null) { return -1; }
+  const result = method.invoke(Box(), CallArguments(items: [
+    CallArgument(value: '${42}'), CallArgument(value: await gate.future),
+  ]));
+  return result == '42b' ? 42 : -2;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  auto pending = test::StartFuture(instance());
+  auto& scheduler = isolate().scheduler();
+  while (scheduler.PumpOne() == runtime::FuturePumpStep::Executed) {
+  }
+  EXPECT_EQ(scheduler.suspended_frame_count(), 1U);
+  isolate().heap().Collect();
+  const auto released = test::Execute(instance(), "release");
+  ASSERT_TRUE(released.Succeeded()) << released.message;
+  const auto completed = test::AwaitInteger(pending, isolate());
+  ASSERT_TRUE(completed) << completed.error();
+  EXPECT_EQ(*completed, 42);
+}
+
+TEST_P(RuntimeReflectionTest, ArgumentFactoriesPreserveCallsAndEffects) {
+  Load({
+      .source = R"(
+let effects = 0;
+[Reflect]
+class Box { read(value: int): int { return value; } }
+func argument(): CallArgument {
+  effects += 1;
+  return CallArgument(value: 42);
+}
+func arguments(): CallArguments {
+  effects += 10;
+  return CallArguments(items: [argument()]);
+}
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('read');
+  if (method == null) { return -1; }
+  const object = Box();
+  if (method.invoke(object, arguments()) != 42 || effects != 11) { return -2; }
+  if (method.invoke(object, CallArguments(items: [argument()])) != 42 || effects != 12) {
+    return -3;
+  }
+  const CallArguments = arguments;
+  if (method.invoke(object, CallArguments()) != 42 || effects != 23) { return -4; }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, CachedCallsReadDerivedArgumentStorage) {
+  const std::string source = std::string(test::kDerivedCallArgumentsSource) + R"(
+[Reflect]
+class Box { read(value: int): int { return value; } }
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('read');
+  if (method == null) { return -1; }
+  const receiver = Box();
+  const argument = Argument(value: 42);
+  const arguments = Arguments(items: [argument]);
+  for (let i = 0; i < 3; i++) {
+    if (method.invoke(receiver, arguments) != 42) { return -2; }
+  }
+  argument.name = 'value';
+  if (method.invoke(receiver, arguments) != 42) { return -3; }
+  return argument.extra.length + arguments.extra + 33;
+}
+)";
+  Load({
+      .source = source,
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, CachedCallsKeepCompletedEffectsWhenScalarCodeFails) {
+  Load({
+      .source = R"(
+[Reflect]
+class Box {
+  calls: int = 0;
+  add(value: int): int { this.calls += 1; return value + 1; }
+}
+export func answer(): int {
+  const method = Reflect.typeInfo<Box>().findMethod('add');
+  if (method == null) { return -1; }
+  const receiver = Box();
+  const argument = CallArgument(value: 20);
+  const arguments = CallArguments(items: [argument]);
+  if (method.invoke(receiver, arguments) != 21) { return -2; }
+  argument.value = 9223372036854775807;
+  try { method.invoke(receiver, arguments); return -3; }
+  catch (error: Error) { if (error.code != 'IntegerOverflow') { return -4; } }
+  return receiver.calls + 40;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, CachedFieldsPreserveNullableDynamicAndBoundAccess) {
+  Load({
+      .source = R"(
+[Reflect]
+class Box { text: string? = null; value: dynamic = null; }
+export func answer(): int {
+  const object = Box();
+  const info = Reflect.typeInfo<Box>();
+  const text = info.findField('text');
+  const value = info.findField('value');
+  if (text == null || value == null) { return -1; }
+  const read = text.getValue;
+  const write = text.setValue;
+  for (let i = 0; i < 3; i++) {
+    text.setValue(object, 'kept' + i.toString());
+    value.setValue(object, text.getValue(object));
+    if (value.getValue(object) != 'kept' + i.toString()) { return -2; }
+    write(object, null);
+    if (read(object) != null) { return -3; }
+    value.setValue(object, 42);
+    if (value.getValue(object) != 42) { return -4; }
+    value.setValue(object, true);
+    if (value.getValue(object) != true) { return -5; }
+    value.setValue(object, null);
+    if (value.getValue(object) != null) { return -6; }
+  }
+  try { text.setValue(object, 0); return -7; }
+  catch (error: Error) { if (error.code != 'InvalidCast') { return -8; } }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
 TEST_P(RuntimeReflectionTest, StaticEnumFieldsPreserveDynamicBoxingAndNominalIdentity) {
   Load({
       .source = R"(
@@ -347,6 +668,9 @@ export func answer(): int {
   if (foundField == null || foundMethod == null) { return -6; }
   const field: FieldInfo<dynamic> = foundField;
   const method: MethodInfo<dynamic> = foundMethod;
+  field.setValue(object, 0);
+  if (field.getValue(object) != 0 ||
+      method.invoke(object, CallArguments(items: [CallArgument(value: 0)])) != 0) { return -14; }
   try { field.setValue('wrong receiver', 20); return -7; }
   catch (error: Error) { if (error.code != 'InvalidCast') { return -8; } }
   try { field.setValue(object, 'wrong value'); return -9; }
@@ -753,6 +1077,71 @@ export func remember(): void {
   ReleaseInstance();
   isolate().heap().Collect();
   EXPECT_EQ(isolate().heap().object_count(), 0U);
+}
+
+TEST_P(RuntimeReflectionTest, CachedLookupDescriptorsSurviveCollectionWithoutRetainingPrograms) {
+  Load({
+      .source = R"(
+[Reflect]
+class Box { value: int = 42; }
+const info = Reflect.typeInfo<Box>();
+const module = info.module;
+export func field(): FieldInfo<Box>? { return info.findField('value'); }
+export func lookupType(): TypeInfo<dynamic>? {
+  const owner = module;
+  if (owner == null) { return null; }
+  return Reflect.findType(owner, 'Box');
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  const auto field = test::Execute(instance(), "field");
+  const auto type = test::Execute(instance(), "lookupType");
+  ASSERT_TRUE(field.Succeeded() && type.Succeeded());
+  ASSERT_TRUE(field.value.IsObject() && type.value.IsObject());
+  isolate().heap().Collect();
+  const auto repeated_field = test::Execute(instance(), "field");
+  const auto repeated_type = test::Execute(instance(), "lookupType");
+  ASSERT_TRUE(repeated_field.Succeeded() && repeated_type.Succeeded());
+  EXPECT_EQ(repeated_field.value.AsObject(), field.value.AsObject());
+  EXPECT_EQ(repeated_type.value.AsObject(), type.value.AsObject());
+  ReleaseInstance();
+  isolate().heap().Collect();
+  EXPECT_EQ(isolate().heap().object_count(), 0U);
+}
+
+TEST_P(RuntimeReflectionTest, CachedLookupsKeepNamesQueriesAndGenericResultContractsDistinct) {
+  Load({
+      .source = R"(
+[Reflect]
+class Box { value: int = 42; other: int = 1; }
+const info = Reflect.typeInfo<Box>();
+export func answer(): int {
+  const first = info.findField('value');
+  const missing = info.findField('missing');
+  const second = info.findField('other');
+  const repeated = info.findField('value');
+  if (first == null || missing != null || second == null || repeated == null) { return -1; }
+  if (first.name != 'value' || second.name != 'other' || repeated.name != 'value') { return -2; }
+  if (info.findField('value') == null) { return -3; }
+  if (info.findField('value', MemberQuery(visibility: MemberVisibilityFilter.Private)) != null) { return -4; }
+  if (info.findField('value') == null) { return -5; }
+  const module = info.module;
+  if (module == null) { return -6; }
+  const generic = Reflect.findType(module, 'Box');
+  if (generic == null) { return -7; }
+  const erased = generic.findField('value');
+  if (erased == null) { return -8; }
+  const object = Box();
+  if (first.getValue(object) != 42 || erased.getValue(object) != 42) { return -9; }
+  return 42;
+}
+)",
+      .configuration = "{}",
+  });
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, MetadataQueriesArePureAndAccessorFailuresRemainDistinct) {

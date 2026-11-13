@@ -28,6 +28,33 @@ namespace {
 
 using test::Prepare;
 
+TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
+  const auto prepared = Prepare("import 'sdk:mock' as mock; func main(): void {}");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  constexpr std::array kBuiltins{
+      Builtin::MockInspect,
+      Builtin::TestInspect,
+      Builtin::TestControl,
+  };
+  std::array<std::size_t, kBuiltins.size()> operations{};
+  const auto builtins = std::span(kBuiltins);
+  for (const auto& function : prepared.program.functions) {
+    for (const auto& instruction : function.instructions) {
+      const auto builtin = static_cast<Builtin>(instruction.index);
+      const auto selected = std::ranges::find(builtins, builtin);
+      if (instruction.opcode != Opcode::BuiltinCall || selected == builtins.end()) {
+        continue;
+      }
+      const auto slot = selected - builtins.begin();
+      ++operations[slot];
+      EXPECT_GE(instruction.lhs, function.parameter_count) << function.name;
+    }
+  }
+  for (const auto count : operations) {
+    EXPECT_GT(count, 0U);
+  }
+}
+
 TEST(PreparationTest, FieldIdentitiesApplyOnlyToReloadableInstances) {
   const frontend::SourceInput input{
       .path = "main.vela",

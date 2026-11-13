@@ -17,6 +17,8 @@ inline constexpr std::string_view kAttributeName = "Attribute";
 inline constexpr std::string_view kAttributeUsageName = "AttributeUsage";
 inline constexpr std::string_view kReflectName = "Reflect";
 inline constexpr std::string_view kTypeInfoName = "TypeInfo";
+inline constexpr std::string_view kCallArgumentName = "CallArgument";
+inline constexpr std::string_view kCallArgumentsName = "CallArguments";
 
 enum class TypeKind : std::uint8_t {
   Void,

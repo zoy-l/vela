@@ -61,7 +61,6 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeStoreGlobalSymbol, &runtime::vela_native_v10_store_global);
   bind(runtime::kNativeLoadFieldSymbol, &runtime::vela_native_v3_load_field);
   bind(runtime::kNativeFieldCachesSymbol, &runtime::vela_native_v10_field_caches);
-  bind(runtime::kNativeDirectFieldLayoutsSymbol, &runtime::vela_native_v10_direct_field_layouts);
   bind(runtime::kNativeScalarTextLengthSymbol, &runtime::vela_native_v9_scalar_text_length);
   bind(runtime::kNativeScalarToStringSymbol, &runtime::vela_native_v10_scalar_to_string);
   bind(runtime::kNativeMapGetSymbol, &runtime::vela_native_v11_map_get);
@@ -78,6 +77,7 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeNewCollectionSymbol, &runtime::vela_native_v1_new_collection);
   bind(runtime::kNativeWriteBarrierSymbol, &runtime::vela_native_v1_write_barrier);
   bind(runtime::kNativeBuiltinSymbol, &runtime::vela_native_v1_builtin);
+  bind(runtime::kNativeReflectionInvokeSymbol, &runtime::vela_native_v12_reflection_invoke);
   bind(runtime::kNativeConcatSymbol, &runtime::vela_native_v1_concat);
   bind(runtime::kNativeInterpolateSymbol, &runtime::vela_native_v1_interpolate);
   bind(runtime::kNativeCompareStringsSymbol, &runtime::vela_native_v2_compare_strings);

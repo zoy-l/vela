@@ -12,7 +12,7 @@ clang-tidy、clang-format、clangd、运行时资源和 LLVM/LibTooling 开发�
 
 `tools/config.py` 从仓库根目录解析这些工具的路径，并以绝对路径形式传递给 GN 参数。生成的工具链在编译、归档、链接和格式化时均使用相同路径。这使得 Debug 和 Release 构建输出完全隔离，并避免在环境中盲目查找系统自带的工具。
 
-`python -m tools.vl build release` 默认对 C 和 C++ 编译启用 ThinLTO，包括 GN 构建的运行库和第三方源码。Debug 构建仍生成原生目标文件。`vela_thin_lto` GN 参数记录这一选择，每个 Release 输出目录的 `thinlto-cache/` 保存增量链接缓存。
+`python -m tools.vl build release` 默认对 C 和 C++ 编译启用 ThinLTO，包括 GN 构建的运行库和第三方源码。Debug 构建仍生成原生目标文件。`vela_thin_lto` GN 参数记录这一编译选择。Debug 和 Release 输出目录各自使用独立的 `thinlto-cache/` 保存增量链接缓存：预编译 LLVM SDK 可能自带 ThinLTO bitcode，不受项目编译模式控制，因此 Debug 可执行程序和测试链接时也缓存 SDK 的后端编译结果。
 
 Clang 与 LLD 使用同一固定正式版本，使 ThinLTO bitcode 的生产与消费保持一致。
 开发构建和原生发行包均使用该版本的 LLVM 归档工具与 LLD 链接器。

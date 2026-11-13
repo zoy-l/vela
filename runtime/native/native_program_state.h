@@ -18,6 +18,7 @@
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
+#include "runtime/reflection/reflection_lookup_cache.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -63,6 +64,7 @@ struct NativeProgramState final {
   ProgramLayouts layouts;
   MemberTable members;
   std::unique_ptr<ReflectionIndex> reflection;
+  ReflectedLookupCache reflection_type_cache;
   absl::flat_hash_map<const NominalType*, std::uint32_t> class_indices;
   absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::uint32_t> enum_members;
   absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;
@@ -72,7 +74,7 @@ struct NativeProgramState final {
   NativeFunctionRoot* function_roots = nullptr;
   std::vector<std::vector<NativeFieldCache>> field_caches;
   // 仅在稳定槽序与源描述完全一致时允许常量偏移访问；槽序演化的版本继续按声明解析。
-  std::vector<const ClassLayout*> direct_field_layouts;
+  const ClassLayout** direct_field_layouts = nullptr;
   // 数量由不可变 image 确定；Heap 核算并由本状态独占的定长存储供生成代码直接读取。
   GlobalState* global_states = nullptr;
   NativeGlobalCache* global_caches = nullptr;

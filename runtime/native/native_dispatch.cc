@@ -866,12 +866,6 @@ extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execu
   return state.field_caches[function].data();
 }
 
-extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
-    NativeExecution* execution) noexcept {
-  auto& state = execution->instance().program();
-  return state.direct_field_layouts.data();
-}
-
 std::optional<std::uint32_t> NativeFieldCache::Resolve(const ClassLayout& layout,
                                                        DeclarationId field) noexcept {
   if (layout_id == layout.id()) {

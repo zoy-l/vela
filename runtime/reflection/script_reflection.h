@@ -10,6 +10,11 @@
 
 namespace vela::runtime {
 
+// 快照借用生成调用帧；帧在整个 helper 调用期间保根所有 NativeValue。
+[[nodiscard]] std::expected<Value, ExecutionStatus> ExecuteReflectedInvocation(
+    NativeExecution& execution,
+    std::span<const NativeValue> snapshot);
+
 [[nodiscard]] std::expected<Value, ExecutionStatus> ExecuteNativeReflection(
     NativeExecution& execution,
     Builtin builtin,

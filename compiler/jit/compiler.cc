@@ -225,6 +225,7 @@ class BatchSymbols final {
 
 struct FunctionEntrySymbols final {
   std::string boxed;
+  std::string reflection;
   std::string typed;
 };
 
@@ -236,6 +237,8 @@ std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& gener
     const auto reused = !reuse_plan.reused.empty() && reuse_plan.reused[index] != 0;
     entry_symbols.push_back({
         .boxed = reused ? std::string() : entry->getName().str(),
+        .reflection =
+            reused ? std::string() : generated.reflection_functions[index]->getName().str(),
         .typed = reused ? std::string() : generated.typed_functions[index]->getName().str(),
     });
   }
@@ -271,6 +274,7 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
   for (const auto& symbol : entry_symbols) {
     if (!symbol.boxed.empty()) {
       requested.insert(interned.Get(symbol.boxed));
+      requested.insert(interned.Get(symbol.reflection));
       requested.insert(interned.Get(symbol.typed));
     }
   }
@@ -296,6 +300,7 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
                                              const llvm::orc::SymbolMap& resolved,
                                              const CodeReuseCache* reuse) {
   std::vector<runtime::NativeEntry> addresses;
+  std::vector<runtime::NativeReflectionEntry> reflection_addresses;
   std::vector<runtime::NativeTypedEntry> typed_addresses;
   for (std::size_t index = 0; index < entry_symbols.size(); ++index) {
     const auto& symbol = entry_symbols[index];
@@ -303,12 +308,17 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
                                              : resolved.find(interned.Get(symbol.boxed))
                                                    ->second.getAddress()
                                                    .toPtr<runtime::NativeEntry>());
+    reflection_addresses.push_back(symbol.reflection.empty()
+                                       ? reuse->sources[index].reflection_entry
+                                       : resolved.find(interned.Get(symbol.reflection))
+                                             ->second.getAddress()
+                                             .toPtr<runtime::NativeReflectionEntry>());
     typed_addresses.push_back(symbol.typed.empty() ? reuse->sources[index].typed_entry
                                                    : resolved.find(interned.Get(symbol.typed))
                                                          ->second.getAddress()
                                                          .toPtr<runtime::NativeTypedEntry>());
   }
-  image_data.BindEntries(addresses, typed_addresses);
+  image_data.BindEntries(addresses, reflection_addresses, typed_addresses);
   return image_data.image();
 }
 
@@ -351,6 +361,7 @@ void UpdateSourceCache(CodeReuseCache& reuse,
         .symbols = std::move(generated.function_symbols[index]),
         .metrics = generated.function_metrics[index],
         .entry = function.entry,
+        .reflection_entry = function.reflection_entry,
         .typed_entry = function.typed_entry,
         .body_dependencies = std::move(generated.body_dependencies[index]),
     });

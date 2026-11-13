@@ -42,6 +42,10 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
                                                std::uint32_t operation,
                                                const NativeValue* arguments,
                                                NativeValue* result);
+extern "C" std::uint8_t vela_native_v12_reflection_invoke(NativeExecution* execution,
+                                                          const NativeValue* arguments,
+                                                          std::uint64_t count,
+                                                          NativeValue* result);
 extern "C" std::uint64_t vela_native_v9_scalar_text_length(const NativeValue* value);
 extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execution,
                                                           const NativeValue* value) noexcept;

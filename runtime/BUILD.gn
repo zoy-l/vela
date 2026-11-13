@@ -239,6 +239,7 @@ source_set("runtime") {
     "reflection/reflection_handle.h",
     "reflection/reflection_index.cc",
     "reflection/reflection_index.h",
+    "reflection/reflection_lookup_cache.h",
     "reflection/script_reflection.cc",
     "reflection/script_reflection.h",
     "regexp/regexp.cc",

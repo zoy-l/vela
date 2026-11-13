@@ -84,7 +84,7 @@ Result MakeResult() { return {.value = 1, .payload = {}}; }
 
 
 class ThinLtoTest(unittest.TestCase):
-    def test_gn_compiles_archives_links_and_caches_release_bitcode(self) -> None:
+    def test_gn_caches_project_and_dependency_bitcode_without_changing_native_objects(self) -> None:
         tools = toolchain_tools()
         with tempfile.TemporaryDirectory(prefix="vela-thinlto build ") as temporary:
             root = Path(temporary)
@@ -96,8 +96,18 @@ class ThinLtoTest(unittest.TestCase):
                 shutil.copyfile(ROOT / relative, destination)
             (root / ".gn").write_text('buildconfig = "//build/BUILDCONFIG.gn"\n',
                                       encoding="utf-8", newline="\n")
-            (root / "BUILD.gn").write_text('''static_library("values") {
+            (root / "BUILD.gn").write_text('''declare_args() {
+  bitcode_dependency = false
+}
+static_library("values") {
   sources = [ "calculate.cc" ]
+  if (bitcode_dependency) {
+    if (target_os == "win") {
+      cflags = [ "/clang:-flto=thin" ]
+    } else {
+      cflags = [ "-flto=thin" ]
+    }
+  }
 }
 executable("sample") {
   sources = [ "main.c" ]
@@ -110,12 +120,15 @@ executable("sample") {
             (root / "main.c").write_text(
                 "int Calculate(int input);\nint main(void) { return Calculate(21) != 42; }\n",
                 encoding="utf-8", newline="\n")
-            for variant in ("debug", "release"):
-                with self.subTest(variant=variant):
-                    output = root / variant
+            for variant, bitcode_dependency in (("debug", False), ("debug", True),
+                                                ("release", False)):
+                with self.subTest(variant=variant, bitcode_dependency=bitcode_dependency):
+                    project_bitcode = variant == "release"
+                    output = root / (variant + ("-bitcode-sdk" if bitcode_dependency else ""))
                     args = {
                         "cc_wrapper": "", "target_os": target_os(), "target_cpu": target_cpu(),
-                        "vela_build_config": variant, "vela_thin_lto": variant == "release",
+                        "vela_build_config": variant, "vela_thin_lto": project_bitcode,
+                        "bitcode_dependency": bitcode_dependency,
                         "vela_cc": tools["cc"].as_posix(), "vela_cxx": tools["cxx"].as_posix(),
                         "vela_archiver": tools["archiver"].as_posix(),
                         "vela_linker": tools["linker"].as_posix(),
@@ -139,10 +152,12 @@ executable("sample") {
                     self.assertEqual(len(objects), 2)
                     for obj in objects:
                         magic = obj.read_bytes()[:4]
+                        expected_bitcode = (project_bitcode or
+                                            (bitcode_dependency and "calculate" in obj.name))
                         self.assertEqual(magic in (b"BC\xc0\xde", b"\xde\xc0\x17\x0b"),
-                                         variant == "release", str(obj))
+                                         expected_bitcode, str(obj))
                     cached = list((output / "thinlto-cache").glob("llvmcache-*"))
-                    self.assertEqual(bool(cached), variant == "release")
+                    self.assertEqual(bool(cached), project_bitcode or bitcode_dependency)
 
 
 if __name__ == "__main__":

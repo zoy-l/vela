@@ -222,6 +222,38 @@ TEST_P(JitDebuggerTest, PublishingWhilePausedPreservesOldFrameSourcesAndCallsThe
   EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
+TEST_P(JitDebuggerTest, AttachingAfterWarmingReflectionCachesObservesTheCalledMethod) {
+  session_->SetDebugger(nullptr);
+  Load(R"(
+[Reflect]
+class Box { value: int = 40; read(value: int): int { return this.value + value; } }
+const receiver = Box();
+const method = Reflect.typeInfo<Box>().findMethod('read');
+const arguments = CallArguments(items: [CallArgument(value: 2)]);
+export func caller(): int {
+  const target = method;
+  if (target == null) { return -1; }
+  const result = target.invoke(receiver, arguments);
+  if (result is int) { return result; }
+  return -2;
+}
+)");
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    const auto warm = session_->Invoke("main.vela", "caller");
+    ASSERT_TRUE(warm);
+    EXPECT_EQ(warm->AsInteger(), 42);
+  }
+  snapshots_.clear();
+  session_->SetDebugger(this);
+  const auto result = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->AsInteger(), 42);
+  const auto observed = std::ranges::any_of(snapshots_, [](const auto& snapshot) {
+    return snapshot.frames.front().name.ends_with(".read");
+  });
+  EXPECT_TRUE(observed);
+}
+
 TEST_P(JitDebuggerTest, RecursiveFramesRecoverWithoutReplayingCompletedCalls) {
   Load(
       "func descend(depth: int): int { "

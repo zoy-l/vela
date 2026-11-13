@@ -19,6 +19,7 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/invariant_call_optimizer.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_symbols.h"
@@ -139,7 +140,7 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   // 调用者已经建立自己的逻辑帧；叶入口直接消费其深度，避免在循环中重新读取执行状态。
   leaf_arguments.insert(leaf_arguments.begin() + layout.depth,
                         builder_.CreateAdd(entry_depth_, builder_.getInt64(1)));
-  // 调试器及控制请求需要真正的被调用帧；无请求时只执行有界的纯计算。
+  // 调试器及控制请求需要真正的被调用帧；无请求时只执行有界叶片段。
   llvm::Value* ready = builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0));
   if (target.budgeted_recursion) {
     // 纯计算最多展开固定深度；一次预留逻辑和物理栈预算，内层不维护可观察帧。
@@ -153,7 +154,7 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   auto* branch = builder_.CreateCondBr(builder_.CreateNot(ready), observable, leaf,
                                        llvm::MDBuilder(context).createUnlikelyBranchWeights());
   if (target.leaf_guard == nullptr && !target.budgeted_recursion) {
-    // 纯叶调用沿用循环的有界轮询预算；异常分支仍建立完整调用链。
+    // 有界叶调用沿用循环的轮询预算；异常分支仍建立完整调用链。
     branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(leaf);

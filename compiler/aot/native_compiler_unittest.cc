@@ -20,6 +20,7 @@
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -33,11 +34,14 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/SourceMgr.h>
 
+#include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/aot/native_reflection_optimizer.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
@@ -55,6 +59,104 @@ namespace vela::compiler::aot {
 namespace {
 
 using ir::test::Prepare;
+
+TEST(NativeCompilerTest, BindsOnlyImmutableClosedReflectionDescriptorSources) {
+  auto prepared = Prepare(R"(
+[Reflect]
+export class Counter {
+  value: int = 0;
+  add(value: int): int { this.value = value; return value; }
+  twice(value: int): int { return value * 2; }
+}
+export class Derived extends Counter {}
+const info = Reflect.typeInfo<Counter>();
+const cached = info.findMethod('add');
+const module = info.module;
+let selected = cached;
+let selectedField = info.findField('value');
+export func replace(): void {
+  selected = info.findMethod('twice');
+  selectedField = info.findField('missing');
+}
+export func known(object: Counter, value: int): dynamic {
+  const method = cached;
+  if (method == null) { return null; }
+  return method.invoke(object, CallArguments(items: [CallArgument(value: value)]));
+}
+export func queried(object: Counter, value: int): dynamic {
+  const qualifier = module;
+  if (qualifier == null) { return null; }
+  const selectedType = Reflect.findType(qualifier, 'Counter');
+  if (selectedType == null) { return null; }
+  const method = selectedType.findMethod('add');
+  if (method == null) { return null; }
+  return method.invoke(object, CallArguments(items: [CallArgument(value: value)]));
+}
+export func mutableGlobal(object: Counter, value: int): dynamic {
+  const method = selected;
+  if (method == null) { return null; }
+  return method.invoke(object, CallArguments(items: [CallArgument(value: value)]));
+}
+func parameter(method: MethodInfo<Counter>, object: Counter): dynamic {
+  return method.invoke(object, CallArguments());
+}
+export func knownField(object: Counter, value: int): dynamic {
+  const field = info.findField('value');
+  if (field == null) { return null; }
+  field.setValue(object, value);
+  return field.getValue(object);
+}
+export func mutableField(object: Counter, value: int): dynamic {
+  const field = selectedField;
+  if (field == null) { return null; }
+  field.setValue(object, value);
+  return field.getValue(object);
+}
+func parameterField(field: FieldInfo<Counter>, object: Counter): dynamic {
+  return field.getValue(object);
+}
+export func inherited(object: Derived): dynamic {
+  const method = Reflect.typeInfo<Derived>().findMethod('add');
+  if (method == null) { return null; }
+  return method.invoke(object, CallArguments(items: [CallArgument(value: 4)]));
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  auto& program = prepared.program;
+  BindNativeReflectedMembers(program);
+  for (const auto& [name, expected] : std::array{
+           std::pair{"known", 1},
+           std::pair{"queried", 1},
+           std::pair{"mutableGlobal", 0},
+           std::pair{"parameter", 0},
+           std::pair{"knownField", 2},
+           std::pair{"mutableField", 0},
+           std::pair{"parameterField", 0},
+           std::pair{"inherited", 0},
+       }) {
+    const auto found = std::ranges::find(program.functions, name, &ir::Function::name);
+    ASSERT_NE(found, program.functions.end());
+    const auto bound = std::ranges::count_if(found->instructions, [](const auto& instruction) {
+      return (ir::IsBuiltinCall(instruction, Builtin::Reflection) ||
+              ir::IsBuiltinCall(instruction, Builtin::ReflectionInvoke)) &&
+             instruction.reflection_member;
+    });
+    EXPECT_EQ(bound, expected) << name;
+  }
+  const auto compiled = Compile(program, {
+                                             .exports =
+                                                 {
+                                                     "known",
+                                                     "queried",
+                                                     "mutableGlobal",
+                                                     "knownField",
+                                                     "mutableField",
+                                                     "inherited",
+                                                     "replace",
+                                                 },
+                                         });
+  ASSERT_TRUE(compiled) << frontend::DiagnosticsText(compiled.error());
+}
 
 ir::LoweringResult PrepareReloadable(std::string_view source) {
   auto prepared = Prepare(source);
@@ -178,6 +280,44 @@ export func repeated(value: int): int {
            std::pair{"leaf_frames_" + repeated_index + "_optimized", true},
        }) {
     const auto* body = module.getFunction(name);
+    ASSERT_NE(body, nullptr) << name;
+    EXPECT_EQ(std::ranges::any_of(
+                  llvm::instructions(body),
+                  [](const auto& instruction) { return instruction.getName() == "leaf.result"; }),
+              expected)
+        << name;
+  }
+}
+
+TEST(NativeCompilerTest, ReservesDistinctLeafResultsForBoundReflectedCalls) {
+  auto prepared = Prepare(R"(
+[Reflect]
+class Counter {
+  value: int = 0;
+  add(value: int): int { this.value = value; return value; }
+}
+const info = Reflect.typeInfo<Counter>();
+export func bound(object: Counter, value: int): dynamic {
+  const method = info.findMethod('add');
+  if (method == null) { return null; }
+  return method.invoke(object, CallArguments(items: [CallArgument(value: value)]));
+}
+export func unbound(method: MethodInfo<Counter>, object: Counter, value: int): dynamic {
+  return method.invoke(object, CallArguments(items: [CallArgument(value: value)]));
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  auto& program = prepared.program;
+  BindNativeReflectedMembers(program);
+  const auto generated = GenerateForTest(program, "reflected_results", NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& functions = program.functions;
+  for (const auto& [name, expected] :
+       std::array{std::pair{"bound", true}, std::pair{"unbound", false}}) {
+    const auto found = std::ranges::find(functions, name, &ir::Function::name);
+    ASSERT_NE(found, functions.end());
+    const auto* body = generated->module->getFunction("reflected_results_body_" +
+                                                      std::to_string(found - functions.begin()));
     ASSERT_NE(body, nullptr) << name;
     EXPECT_EQ(std::ranges::any_of(
                   llvm::instructions(body),
@@ -339,7 +479,8 @@ TEST(NativeCompilerTest, StackRootCleanupRestoresTheHeadLoadedOnEntry) {
   const auto& functions = program.functions;
   const auto found = std::ranges::find(functions, "length", &ir::Function::name);
   ASSERT_NE(found, functions.end());
-  const auto generated = GenerateForTest(program, "root_restore", NativeCodePlacement::Dynamic);
+  const auto generated = GenerateForTest(program, "root_restore", NativeCodePlacement::Dynamic,
+                                         NativeCodeTier::Baseline);
   ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
   const auto* body = generated->module->getFunction("root_restore_body_" +
                                                     std::to_string(found - functions.begin()));
@@ -355,6 +496,75 @@ TEST(NativeCompilerTest, StackRootCleanupRestoresTheHeadLoadedOnEntry) {
   ASSERT_NE(previous, nullptr);
   EXPECT_EQ(previous->getPointerOperand(), store.getPointerOperand());
   EXPECT_NE(previous->getParent(), &*cleanup);
+}
+
+TEST(NativeCompilerTest, DelayedStackRootCleanupRestoresTheHeadOnlyAfterRegistration) {
+  auto prepared = PrepareReloadable("func length(values: int[]): int { return values.length; }");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& program = prepared.program;
+  const auto& functions = program.functions;
+  const auto found = std::ranges::find(functions, "length", &ir::Function::name);
+  ASSERT_NE(found, functions.end());
+  const auto generated = GenerateForTest(program, "delayed_roots", NativeCodePlacement::Dynamic);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto* body =
+      module.getFunction("delayed_roots_body_" + std::to_string(found - functions.begin()));
+  ASSERT_NE(body, nullptr);
+  const auto initialize =
+      std::ranges::find(*body, llvm::StringRef("frame.initialize"), &llvm::BasicBlock::getName);
+  const auto restore =
+      std::ranges::find(*body, llvm::StringRef("frame.restore"), &llvm::BasicBlock::getName);
+  const auto restored =
+      std::ranges::find(*body, llvm::StringRef("frame.restored"), &llvm::BasicBlock::getName);
+  ASSERT_NE(initialize, body->end());
+  ASSERT_NE(restore, body->end());
+  ASSERT_NE(restored, body->end());
+  const auto link = std::ranges::find_if(*initialize, [&](const auto& instruction) {
+    const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+    const auto* head =
+        store != nullptr ? llvm::dyn_cast<llvm::LoadInst>(store->getPointerOperand()) : nullptr;
+    if (head == nullptr) {
+      return false;
+    }
+    std::int64_t offset = 0;
+    const auto* base = llvm::GetPointerBaseWithConstantOffset(head->getPointerOperand(), offset,
+                                                              module.getDataLayout());
+    return base == body->getArg(0) &&
+           std::cmp_equal(offset, runtime::NativeMemoryLayout::kExecutionStackRoots);
+  });
+  ASSERT_NE(link, initialize->end());
+  const auto* head = llvm::cast<llvm::StoreInst>(*link).getPointerOperand();
+  const auto save = std::ranges::find_if(*initialize, [&](const auto& instruction) {
+    const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+    const auto* previous =
+        store != nullptr ? llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand()) : nullptr;
+    return previous != nullptr && previous->getPointerOperand() == head;
+  });
+  ASSERT_NE(save, initialize->end());
+  const auto cleanup = std::ranges::find_if(*restore, [&](const auto& instruction) {
+    const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+    return store != nullptr && store->getPointerOperand() == head;
+  });
+  ASSERT_NE(cleanup, restore->end());
+  const auto* previous =
+      llvm::dyn_cast<llvm::LoadInst>(llvm::cast<llvm::StoreInst>(*cleanup).getValueOperand());
+  ASSERT_NE(previous, nullptr);
+  std::int64_t loaded_offset = 0;
+  std::int64_t stored_offset = 0;
+  const auto* loaded_base = llvm::GetPointerBaseWithConstantOffset(
+      previous->getPointerOperand(), loaded_offset, module.getDataLayout());
+  const auto* stored_base =
+      llvm::GetPointerBaseWithConstantOffset(llvm::cast<llvm::StoreInst>(*save).getPointerOperand(),
+                                             stored_offset, module.getDataLayout());
+  EXPECT_EQ(loaded_base, stored_base);
+  EXPECT_EQ(loaded_offset, stored_offset);
+  const auto* predecessor = restore->getSinglePredecessor();
+  ASSERT_NE(predecessor, nullptr);
+  const auto* guard = llvm::dyn_cast<llvm::CondBrInst>(predecessor->getTerminator());
+  ASSERT_NE(guard, nullptr);
+  EXPECT_EQ(guard->getSuccessor(0), &*restore);
+  EXPECT_EQ(guard->getSuccessor(1), &*restored);
 }
 
 TEST(NativeCompilerTest, EmitsOfflineObjectWithScalarCallsAndControlFlow) {
@@ -399,6 +609,12 @@ export func run(): int { return read([1, 2, 3], 2); }
         };
         EXPECT_EQ(checked_adds(generic), 1);
         EXPECT_EQ(checked_adds(specialized), 0);
+        EXPECT_FALSE(generic.hasParamAttribute(2, llvm::Attribute::Range));
+        ASSERT_TRUE(specialized.hasParamAttribute(2, llvm::Attribute::Range));
+        const auto& range =
+            specialized.getAttributes().getParamAttr(2, llvm::Attribute::Range).getRange();
+        EXPECT_EQ(range.getLower().getSExtValue(), 2);
+        EXPECT_EQ(range.getUpper().getSExtValue(), 3);
         const auto dynamic = GenerateForTest(program, "ranges", NativeCodePlacement::Dynamic);
         ASSERT_TRUE(dynamic) << frontend::DiagnosticsText(dynamic.error());
         EXPECT_EQ(dynamic->module->getFunction(name + "_range"), nullptr);
@@ -1157,7 +1373,7 @@ export func sum(): int {
   ASSERT_NE(module, nullptr);
   const auto entry = std::ranges::find(result->exports, "sum", &NativeExport::name);
   ASSERT_NE(entry, result->exports.end());
-  const auto* function = module->getFunction("vela_aot_entry_" + std::to_string(entry->function));
+  const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
   ASSERT_NE(function, nullptr);
   const auto vector_sum =
       std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {

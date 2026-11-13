@@ -19,9 +19,11 @@ Release outputs separate and avoids ambient tool discovery.
 
 `python -m tools.vl build release` enables ThinLTO for C and C++ compilation,
 including the runtime and third-party sources built by GN. Debug builds keep
-native object files. The `vela_thin_lto` GN argument records this choice, and
-each Release output directory stores incremental link results in
-`thinlto-cache/`.
+native object files. The `vela_thin_lto` GN argument records this compilation
+choice. Both Debug and Release output directories store incremental link
+results in their own `thinlto-cache/`: the prebuilt LLVM SDK can contain
+ThinLTO bitcode independently of the project compilation mode. This also
+caches SDK backend results when linking Debug executables and tests.
 
 Clang and LLD use the same pinned release to keep ThinLTO bitcode production and
 consumption aligned. Builds and native distribution packages use that release's

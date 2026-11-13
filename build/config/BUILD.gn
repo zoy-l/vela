@@ -74,22 +74,26 @@ config("vela_defaults") {
   }
 
   if (vela_thin_lto) {
-    thin_lto_cache = rebase_path("$root_out_dir/thinlto-cache", root_build_dir)
     if (target_os == "win") {
       cflags += [ "/clang:-flto=thin" ]
-      ldflags += [
-        "-Xlinker",
-        "/lldltocache:$thin_lto_cache",
-      ]
     } else {
       cflags += [ "-flto=thin" ]
       ldflags += [ "-flto=thin" ]
-      if (target_os == "mac") {
-        ldflags += [ "-Wl,-cache_path_lto,$thin_lto_cache" ]
-      } else {
-        ldflags += [ "-Wl,--thinlto-cache-dir=$thin_lto_cache" ]
-      }
     }
+  }
+
+  # The prebuilt LLVM SDK can contain ThinLTO bitcode even when project
+  # sources compile to native objects. Cache those backend results in Debug too.
+  thin_lto_cache = rebase_path("$root_out_dir/thinlto-cache", root_build_dir)
+  if (target_os == "win") {
+    ldflags += [
+      "-Xlinker",
+      "/lldltocache:$thin_lto_cache",
+    ]
+  } else if (target_os == "mac") {
+    ldflags += [ "-Wl,-cache_path_lto,$thin_lto_cache" ]
+  } else {
+    ldflags += [ "-Wl,--thinlto-cache-dir=$thin_lto_cache" ]
   }
 }
 

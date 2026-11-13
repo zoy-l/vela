@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include <llvm/ADT/APInt.h>
@@ -21,9 +20,9 @@
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/Casting.h>
 
 #include "base/builtin.h"
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/opcode.h"
@@ -32,6 +31,7 @@
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
@@ -80,37 +80,35 @@ llvm::Value* FunctionEmitter::ByteAddress(llvm::Value* object, std::uint64_t off
 }
 
 llvm::MDNode* FunctionEmitter::MemoryTag(MemoryRegion region) {
-  auto*& tag = memory_tags_.at(static_cast<std::size_t>(region));
-  constexpr std::array kNames{
-      "heap header",    "class layout",   "field cache",     "instance header",  "field states",
-      "managed values", "array elements", "global cache",    "shadow roots",     "GC state",
-      "field payloads", "field kinds",    "execution state", "stack root links",
-  };
-  static_assert(kNames.size() == static_cast<std::size_t>(MemoryRegion::Count));
-  llvm::MDBuilder metadata(module_.getContext());
-  if (tag == nullptr) {
-    auto* root = metadata.createTBAARoot("Vela native storage");
-    auto* type =
-        metadata.createTBAAScalarTypeNode(kNames.at(static_cast<std::size_t>(region)), root);
-    tag = metadata.createTBAAStructTagNode(type, type, 0);
-  }
-  if (region == MemoryRegion::FieldPayloads &&
+  DeclarationId field;
+  if ((region == MemoryRegion::FieldPayloads || region == MemoryRegion::FieldKinds) &&
       IsClosedLinkedProgram(program_.native_mode, placement_)) {
     const auto& instruction = source_.instructions[instruction_index_];
     if (!instruction.field_declaration &&
         (instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField)) {
-      // 封闭内联对象的同一物理槽始终具有相同偏移；不同槽不重叠，通用载荷访问仍是父域。
-      auto [entry, inserted] = field_payload_tags_.try_emplace(instruction.index, nullptr);
-      if (inserted) {
-        auto* parent = llvm::cast<llvm::MDNode>(tag->getOperand(0).get());
-        auto* field = metadata.createTBAAScalarTypeNode(
-            "field payload " + std::to_string(instruction.index), parent);
-        entry->second = metadata.createTBAAStructTagNode(field, field, 0);
+      const auto receiver =
+          instruction.opcode == Opcode::GetField ? instruction.lhs : instruction.dst;
+      auto& cached = closed_field_declarations_.at(instruction_index_);
+      if (!cached) {
+        cached =
+            ClosedFieldDeclaration(program_, source_.value_types[receiver].name, instruction.index);
       }
-      return entry->second;
+      field = *cached;
     }
   }
-  return tag;
+  if (field == DeclarationId{}) {
+    auto*& tag = memory_tags_.at(static_cast<std::size_t>(region));
+    if (tag == nullptr) {
+      tag = NativeMemoryTag(module_.getContext(), region);
+    }
+    return tag;
+  }
+  auto& tags = region == MemoryRegion::FieldPayloads ? field_payload_tags_ : field_kind_tags_;
+  auto [entry, inserted] = tags.try_emplace(field.value, nullptr);
+  if (inserted) {
+    entry->second = NativeMemoryTag(module_.getContext(), region, field);
+  }
+  return entry->second;
 }
 
 llvm::LoadInst* FunctionEmitter::LoadMemory(llvm::Type* type,
@@ -153,6 +151,25 @@ FunctionEmitter::StoredValueAddress FunctionEmitter::FieldAddress(llvm::Value* s
       .payload_region = MemoryRegion::FieldPayloads,
       .kind_region = MemoryRegion::FieldKinds,
   };
+}
+
+FunctionEmitter::StoredValueAddress FunctionEmitter::ObjectFieldAddress(llvm::Value* object,
+                                                                        std::uint32_t index) {
+  const auto fields = LoadObjectFields(builder_, object, program_.native_mode);
+  return {
+      .payload = ByteAddress(fields.payloads, index * runtime::FieldStorage::kPayloadBytes),
+      .kind = ByteAddress(fields.kinds, index * sizeof(runtime::ValueKind)),
+      .payload_region = MemoryRegion::FieldPayloads,
+      .kind_region = MemoryRegion::FieldKinds,
+  };
+}
+
+FunctionEmitter::StoredValueAddress FunctionEmitter::DirectFieldAddress(llvm::Value* storage,
+                                                                        std::uint32_t slot,
+                                                                        std::uint32_t count) {
+  using runtime::InstanceStorage;
+  return FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), *builder_.getInt32(slot),
+                      builder_.getInt64(runtime::FieldStorage::KindOffset(count, slot)));
 }
 
 llvm::Value* FunctionEmitter::ReadHeapValue(llvm::Value* address, const SourceType& type) {
@@ -480,12 +497,35 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
     std::unreachable();
   }
   const auto& direct = field_layouts_.at(*declaration);
+  bool guarded_receiver = false;
+  if (kind_ == NativeEntryKind::BoundedReflection) {
+    if (!source_.signature) {
+      std::unreachable();
+    }
+    const auto& signature = *source_.signature;
+    if (!signature.receiver) {
+      std::unreachable();
+    }
+    const auto receiver = *signature.receiver;
+    guarded_receiver =
+        field_targets_.at(*declaration).owner == program_.layouts.types[receiver].index;
+  }
+  if (guarded_receiver) {
+    // 此入口仅由 CacheCall 在规范接收者布局下发布；调用点以唯一 layout id 守卫。
+    // 包装器统一验证全部字段就绪；有界片段没有发布、分配或其他用户调用。
+    auto* storage = LoadMemory(builder_.getPtrTy(),
+                               ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
+                               MemoryRegion::HeapHeader);
+    const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
+    EmitFieldAccess(instruction, object, address);
+    return;
+  }
   auto& context = module_.getContext();
+  auto* matched = llvm::BasicBlock::Create(context, "field.matched", body_);
+  auto* recover = llvm::BasicBlock::Create(context, "field.recover", body_);
   auto* layout =
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),
                  MemoryRegion::HeapHeader);
-  auto* matched = llvm::BasicBlock::Create(context, "field.matched", body_);
-  auto* recover = llvm::BasicBlock::Create(context, "field.recover", body_);
   builder_.CreateCondBr(builder_.CreateICmpEQ(layout, direct.layout), matched, recover,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(matched);
@@ -502,9 +542,7 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   StoreCheckpoint();
   Recover();
   builder_.SetInsertPoint(ready);
-  const auto address =
-      FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), *builder_.getInt32(direct.slot),
-                   builder_.getInt64(runtime::FieldStorage::KindOffset(direct.count, direct.slot)));
+  const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
   EmitFieldAccess(instruction, object, address);
 }
 

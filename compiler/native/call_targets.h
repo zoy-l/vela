@@ -34,6 +34,9 @@ inline constexpr std::size_t kMaximumInlineInstructions = 64;
 enum class LeafKind : std::uint8_t { None, Bounded, Guarded, Recursive };
 
 [[nodiscard]] bool CanInlineSmallFunction(const ir::Function& function);
+[[nodiscard]] bool CanUseScalarFieldBody(const ir::Function& function,
+                                         NativeProgramMode mode,
+                                         NativeDebugging debugging);
 [[nodiscard]] bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode);
 [[nodiscard]] LeafKind PlanNonrecursiveLeaf(const ir::Function& function,
                                             NativeDebugging debugging);

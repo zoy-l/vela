@@ -14,6 +14,8 @@
 
 namespace vela::runtime {
 
+struct HeapObject;
+
 inline constexpr std::uint32_t kNoNativeIndex = std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::uint32_t kNativeOptionalParameter = 1;
 inline constexpr std::uint32_t kNativeRestParameter = 2;
@@ -25,6 +27,8 @@ inline constexpr std::uint32_t kNativeTypedFunction = 4;
 inline constexpr std::uint32_t kNativeEnumResult = 8;
 inline constexpr std::uint32_t kNativeGeneratedConstructor = 16;
 inline constexpr std::uint32_t kNativePrivateFunction = 32;
+// 反射缓存仅在接收者与该版本的规范物理布局相同时使用这个入口。
+inline constexpr std::uint32_t kNativeReflectionReceiverLayout = 64;
 inline constexpr std::uint32_t kNativePrivateField = 1;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
@@ -112,6 +116,14 @@ using NativeEntry = std::uint8_t (*)(NativeExecution*,
                                      std::uint64_t,
                                      NativeValue*) noexcept;
 
+// items 与 interleaved value/name 快照二选一；不匹配时尚未进入用户代码。
+inline constexpr std::uint8_t kNativeReflectionCallMiss = 255;
+using NativeReflectionEntry = std::uint8_t (*)(NativeExecution*,
+                                               HeapObject*,
+                                               const HeapObject*,
+                                               const NativeValue*,
+                                               NativeValue*) noexcept;
+
 // 仅保存 typed ABI 地址，生成代码按静态签名调用；C++ 不通过擦除后的类型调用。
 using NativeTypedEntry = void (*)() noexcept;
 
@@ -150,6 +162,9 @@ struct NativeFunctionDescription final {
   NativeTable<NativeCallParameter> parameters;
   NativeTable<SourceLocation> locations;
   NativeEntry entry = nullptr;
+  // 调用者保存根/检查点并确认本次安全点未处理请求，再验证 epoch、接收者和执行实例。
+  // 入口按具体签名拆包；有界入口复用该安全点并在副作用前检查字段就绪。
+  NativeReflectionEntry reflection_entry = nullptr;
   // 可重载 JIT 在发布前绑定；仅优化层的当前版本跨分量调用读取此槽。
   NativeTypedEntry typed_entry = nullptr;
   std::uint32_t parameter_count = 0;

@@ -30,6 +30,7 @@ NativeProgramState::~NativeProgramState() {
     auto& heap = isolate->heap();
     heap.FreeNative(global_states);
     heap.FreeNative(global_caches);
+    heap.FreeNative(static_cast<void*>(direct_field_layouts));
   }
 }
 
@@ -79,9 +80,11 @@ HeapObject* Heap::NativeEnvironment(const HeapObject& callable) noexcept {
 }
 
 void Heap::MarkNativeProgram(HeapObject& object) noexcept {
-  for (const auto value : NativeProgram(object).values) {
+  const auto& program = NativeProgram(object);
+  for (const auto value : program.values) {
     MarkValue(value);
   }
+  program.reflection_type_cache.TraceValues([this](Value value) { MarkValue(value); });
 }
 
 void Heap::ReleaseNativeProgram(HeapObject& object) noexcept {

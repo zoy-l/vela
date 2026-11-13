@@ -67,6 +67,7 @@ struct NativeModule final {
   std::string image_symbol;
   std::shared_ptr<NativeImageData> image_data;
   std::vector<llvm::Function*> entry_functions;
+  std::vector<llvm::Function*> reflection_functions;
   std::vector<llvm::Function*> typed_functions;
   std::vector<llvm::Function*> recursive_functions;
   std::vector<NativeFunctionMetrics> function_metrics;

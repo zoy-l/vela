@@ -200,6 +200,14 @@ extern "C" std::uint8_t vela_native_v1_string_int_map_set(NativeExecution* execu
                                                                   Value::Integer(value), *lookup));
 }
 
+extern "C" std::uint8_t vela_native_v12_reflection_invoke(NativeExecution* execution,
+                                                          const NativeValue* arguments,
+                                                          std::uint64_t count,
+                                                          NativeValue* result) {
+  return StoreNativeResult(result,
+                           ExecuteReflectedInvocation(*execution, std::span(arguments, count)));
+}
+
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
                                                std::uint32_t operation,
                                                const NativeValue* arguments,

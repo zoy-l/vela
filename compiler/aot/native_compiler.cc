@@ -29,6 +29,7 @@
 #include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_export_emitter.h"
 #include "compiler/aot/native_field_optimizer.h"
+#include "compiler/aot/native_reflection_optimizer.h"
 #include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
 #include "compiler/frontend/diagnostic.h"
@@ -129,6 +130,7 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
   PruneNativeProgram(program, main);
   ElideNativeResultBindings(program);
   DevirtualizeNativeCalls(program);
+  BindNativeReflectedMembers(program);
   if (main) {
     if (const auto imports = CheckStandaloneImports(program); !imports) {
       return std::unexpected(imports.error());

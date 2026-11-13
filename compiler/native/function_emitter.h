@@ -20,6 +20,8 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
+#include "base/reflection.h"
+#include "base/reflection_operation.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/call_targets.h"
@@ -27,6 +29,7 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
@@ -44,6 +47,8 @@ inline constexpr std::uint8_t kNativeLeafRetry = 255;
 struct GeneratedFunction final {
   llvm::Function* body = nullptr;
   llvm::Function* entry = nullptr;
+  llvm::Function* reflection_entry = nullptr;
+  llvm::Function* bounded_reflection_body = nullptr;
   llvm::Function* resume = nullptr;
   llvm::Function* baseline_body = nullptr;
   llvm::Function* baseline_resume = nullptr;
@@ -61,6 +66,7 @@ struct GeneratedFunction final {
 
 enum class NativeEntryKind : std::uint8_t {
   Initial,
+  BoundedReflection,
   Resume,
   RecoverInitial,
   RecoverResume,
@@ -77,6 +83,7 @@ struct FunctionEmissionFacts final {
   std::vector<std::optional<std::uint32_t>> field_accesses;
   std::vector<FieldKindWrite> field_kind_writes;
   std::vector<std::optional<CallableTarget>> direct_calls;
+  std::vector<std::optional<reflection::Operation>> reflection_operations;
   ArrayEmissionFacts arrays;
   const GlobalAccessFacts* global_access = nullptr;
 };
@@ -116,33 +123,15 @@ class FunctionEmitter final {
         builder_(module.getContext()),
         array_access_(facts.arrays),
         global_access_(*facts.global_access),
-        roots_(roots) {}
+        roots_(roots),
+        reflection_operations_(facts.reflection_operations),
+        closed_field_declarations_(source_.instructions.size()) {}
 
   std::expected<void, std::string> Emit();
   const NativeFrameLayout& PlanFrame();
   [[nodiscard]] std::uint64_t frame_bytes() const noexcept { return frame_bytes_; }
 
  private:
-  // 这些存储区域互不覆盖；装箱 Value 共用别名域，拆分字段的载荷与标签各自独立。
-  enum class MemoryRegion : std::uint8_t {
-    HeapHeader,
-    ClassLayout,
-    FieldCache,
-    InstanceHeader,
-    FieldStates,
-    Values,
-    Elements,
-    GlobalCache,
-    Roots,
-    GcState,
-    FieldPayloads,
-    FieldKinds,
-    Execution,
-    StackRoots,
-    Count,
-  };
-  std::array<llvm::MDNode*, static_cast<std::size_t>(MemoryRegion::Count)> memory_tags_{};
-  absl::flat_hash_map<std::uint32_t, llvm::MDNode*> field_payload_tags_;
   llvm::MDNode* MemoryTag(MemoryRegion region);
   llvm::LoadInst* LoadMemory(llvm::Type* type, llvm::Value* address, MemoryRegion region);
   llvm::StoreInst* StoreMemory(llvm::Value* value, llvm::Value* address, MemoryRegion region);
@@ -210,7 +199,7 @@ class FunctionEmitter final {
                                          CallableTarget selected,
                                          std::span<llvm::Value* const> arguments);
   std::uint64_t TracePosition() const;
-  void Poll();
+  llvm::Value* Poll();
   bool IsBoundaryPollRequired(std::size_t index) const;
   bool HasInlineRuntimePath(std::size_t index) const;
   void CacheRuntimeCalls();
@@ -265,6 +254,10 @@ class FunctionEmitter final {
   StoredValueAddress FieldAddress(llvm::Value* storage,
                                   llvm::Value& index,
                                   llvm::Value* kind_offset);
+  StoredValueAddress ObjectFieldAddress(llvm::Value* object, std::uint32_t index);
+  StoredValueAddress DirectFieldAddress(llvm::Value* storage,
+                                        std::uint32_t slot,
+                                        std::uint32_t count);
   llvm::Value* ReadStoredValue(StoredValueAddress address, const SourceType& type);
   void WriteStoredValue(StoredValueAddress address,
                         StoredValue& stored,
@@ -306,6 +299,24 @@ class FunctionEmitter final {
   void Unpack(ir::RegisterId reg);
   void CompleteCall(llvm::Value* status, ir::RegisterId result);
   void EmitRuntimeBuiltin(const ir::Instruction& instruction);
+  llvm::Value* EmitTypeTest(const ir::Instruction& instruction);
+  void EmitReflectedField(const ir::Instruction& instruction, reflection::Operation operation);
+  void EmitReflectedCall(const ir::Instruction& instruction, reflection::Operation operation);
+  const reflection::Member* BoundReflectedMember(const ir::Instruction& instruction,
+                                                 reflection::Operation operation) const;
+  llvm::Value* EmitReflectedCallTarget(const ir::Instruction& instruction,
+                                       reflection::Operation operation,
+                                       llvm::Value* entry,
+                                       std::span<llvm::Value* const> arguments);
+  void EmitReflectedLookup(const ir::Instruction& instruction, reflection::Operation operation);
+  void CacheReflectionMembers();
+  llvm::Value* ReflectionCacheAddress(std::size_t offset);
+  llvm::Value* IsReflectionCacheReady(llvm::Value* epoch);
+  llvm::Value* IsReflectionEpochCurrent(llvm::Value& epoch_address, llvm::Value* epoch_observed);
+  llvm::Value* IsReflectionReceiver(ir::RegisterId receiver);
+  void GuardReflectionLayout(llvm::Value& receiver,
+                             llvm::Value* receiver_layout_id,
+                             llvm::BasicBlock& slow);
   void StoreRoots(std::size_t index);
   void ClearRoots(std::size_t index);
   llvm::Value* RootAddress(std::size_t slot);
@@ -333,10 +344,14 @@ class FunctionEmitter final {
   [[nodiscard]] bool CanUseLeafEntry() const;
   [[nodiscard]] bool CanUseSynchronousStackFrame() const;
   [[nodiscard]] bool CanDeferRoots() const;
+  [[nodiscard]] bool CanDelayRootRegistration() const;
   [[nodiscard]] bool CanExecuteWithoutCollection(std::size_t index) const;
   void BindFrameStorage();
   llvm::Value* HasStackBudget(llvm::Value* depth, std::uint64_t reserved_bytes = 0);
   void EmitFrameEntry();
+  void EmitTraceFrame(llvm::Value* frame, Builder& cleanup, llvm::Value* depth);
+  void EmitReflection(const ir::Instruction& instruction);
+  llvm::Value* LinkStackRoots();
   void CacheImports();
   void BorrowHostExecution();
   void CacheConstants();
@@ -396,7 +411,10 @@ class FunctionEmitter final {
   llvm::Value* leaf_result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
   llvm::Value* root_slots_ = nullptr;
+  llvm::Value* stack_roots_frame_ = nullptr;
+  llvm::Value* stack_roots_head_ = nullptr;
   llvm::Value* control_state_ = nullptr;
+  llvm::Value* boundary_ready_ = nullptr;
   llvm::Value* frame_storage_ = nullptr;
   llvm::Value* construction_depth_ = nullptr;
   llvm::Value* checkpoint_ = nullptr;
@@ -419,6 +437,7 @@ class FunctionEmitter final {
   absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
   bool leaf_entry_ = false;
   bool deferred_roots_ = false;
+  bool delayed_root_registration_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::vector<std::optional<unsigned>> frame_locals_;
   unsigned temporary_field_ = 0;
@@ -443,6 +462,12 @@ class FunctionEmitter final {
   ArrayEmissionFacts array_access_;
   const GlobalAccessFacts& global_access_;
   const NativeRootPlan& roots_;
+  std::span<const std::optional<reflection::Operation>> reflection_operations_;
+  std::vector<const reflection::Member*> reflection_members_;
+  std::array<llvm::MDNode*, static_cast<std::size_t>(MemoryRegion::Count)> memory_tags_{};
+  absl::flat_hash_map<std::uint64_t, llvm::MDNode*> field_payload_tags_;
+  absl::flat_hash_map<std::uint64_t, llvm::MDNode*> field_kind_tags_;
+  std::vector<std::optional<DeclarationId>> closed_field_declarations_;
 };
 
 struct NativeFunctionAnalysis final {

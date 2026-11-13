@@ -21,10 +21,15 @@ struct EmittedNativeImage final {
   llvm::Constant* data = nullptr;
 };
 
+struct NativeImageEntries final {
+  std::span<llvm::Function* const> external;
+  std::span<llvm::Function* const> reflection;
+};
+
 std::expected<EmittedNativeImage, std::string> EmitNativeImage(
     llvm::Module& module,
     const runtime::NativeImage& description,
-    std::span<llvm::Function* const> entries,
+    NativeImageEntries entries,
     std::string_view module_name);
 
 }  // namespace vela::compiler::native

@@ -124,6 +124,20 @@ class Lowerer final {
                               const frontend::Function& source,
                               const frontend::Class* owner,
                               Builtin builtin);
+  RegisterId EmitReflectionCall(const frontend::FunctionDescriptor& signature,
+                                RegisterId arguments,
+                                frontend::SourceLocation location,
+                                std::size_t count);
+  RegisterId EmitIntrinsicOperationArguments(Builtin builtin,
+                                             std::uint32_t operation,
+                                             std::span<const std::uint32_t> prefix,
+                                             RegisterId argument_start,
+                                             frontend::SourceLocation location,
+                                             std::size_t argument_count,
+                                             const frontend::TypeDescriptor& return_type);
+  std::optional<LoweredValue> LowerReflectedInvocation(const frontend::Expression& expression,
+                                                       const frontend::FunctionDescriptor& function,
+                                                       const LoweredValue& descriptor);
   void LowerFunctionParameters(const frontend::Function& source,
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
@@ -481,6 +495,9 @@ class Lowerer final {
                                    const frontend::TypeDescriptor& type);
 
   void LowerArguments(const frontend::Expression& expression, RegisterId base);
+  void InitializeOptionalArguments(const frontend::FunctionDescriptor& function,
+                                   RegisterId base,
+                                   frontend::SourceLocation location);
 
   LoweredValue LowerInvocation(const frontend::Expression& expression,
                                const frontend::FunctionDescriptor& function,

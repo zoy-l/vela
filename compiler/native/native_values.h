@@ -12,6 +12,7 @@
 #include <vector>
 #include "base/execution_status.h"
 #include "base/layout_description.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
@@ -26,6 +27,7 @@ class ConstantInt;
 class Module;
 class Function;
 class LoadInst;
+class BasicBlock;
 }  // namespace llvm
 
 namespace vela::compiler::native {
@@ -74,6 +76,12 @@ llvm::Value* LoadImport(Builder& builder,
                         NativeCodePlacement placement);
 llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution);
 llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution);
+struct NativeObjectFields final {
+  llvm::Value* payloads;
+  llvm::Value* kinds;
+};
+// 只接受普通脚本实例；不接受宿主对象或 native callable 环境，地址不跨安全点借用。
+NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* MakeOptional(Builder& builder,
@@ -93,11 +101,26 @@ llvm::Value* Convert(Builder& builder,
                      llvm::Value* value,
                      const SourceType& source,
                      const SourceType& target);
+enum class NativeEntryContract : std::uint8_t { External, Reflection };
+struct ReflectionCallInputs final {
+  llvm::Value* execution;
+  llvm::Value* receiver;
+  llvm::Value* items;
+  llvm::Value* snapshots;
+};
+
+// 在任何用户副作用前完成全部实参快照、类型和位置参数检查；不匹配交还完整 binder。
+std::vector<llvm::Value*> UnpackReflectionArguments(Builder& builder,
+                                                    const ir::Program& program,
+                                                    const ir::Function& source,
+                                                    ReflectionCallInputs inputs,
+                                                    llvm::BasicBlock& unmatched);
 void EmitWrapper(llvm::Module& module,
-                 const ir::Function& source,
+                 const ir::Program& program,
                  std::uint32_t function_index,
                  const GeneratedFunction& function,
                  llvm::Constant* image,
-                 NativeCodePlacement placement);
+                 NativeCodePlacement placement,
+                 NativeEntryContract contract);
 
 }  // namespace vela::compiler::native

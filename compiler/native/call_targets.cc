@@ -273,16 +273,65 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program,
 }
 
 bool CanInlineSmallFunction(const ir::Function& function) {
-  // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
+  // 以源操作限制展开规模；字段访问的初始化、迁移和失败分支仍随函数体一起内联。
+  // 这些冷分支不应阻止几个标量或字段操作与调用方的拆包、结果编码合并。
   if (!ir::CanAnalyzeSynchronousFunction(function) ||
       function.parameter_count > kMaximumInlineInstructions ||
       function.instructions.size() > kMaximumInlineInstructions) {
     return false;
   }
   return std::ranges::all_of(function.instructions, [](const ir::Instruction& instruction) {
-    return instruction.opcode == Opcode::Return ||
+    return instruction.opcode == Opcode::Return || instruction.opcode == Opcode::GetField ||
+           instruction.opcode == Opcode::SetField ||
            !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
   });
+}
+
+bool CanUseScalarFieldBody(const ir::Function& function,
+                           NativeProgramMode mode,
+                           NativeDebugging debugging) {
+  if (debugging != NativeDebugging::Safepoints || !CanInlineSmallFunction(function) ||
+      !function.signature || function.signature->hidden_parameters != 1 ||
+      !function.signature->receiver || function.value_types[0].kind != Kind::Class ||
+      !IsScalar(function.return_type)) {
+    return false;
+  }
+  const auto parameters =
+      std::span(function.value_types).first(function.parameter_count).subspan(1);
+  if (!std::ranges::all_of(parameters, IsScalar)) {
+    return false;
+  }
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, {});
+  const auto flow = ir::AnalyzeRegisterFlow(function, accesses);
+  bool fields = false;
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions[index];
+    if (ir::IsBackJump(instruction, index) || instruction.construction ||
+        instruction.completes_construction) {
+      return false;
+    }
+    if (instruction.opcode == Opcode::Return) {
+      continue;
+    }
+    if (instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField) {
+      const auto reading = instruction.opcode == Opcode::GetField;
+      const auto value = reading ? instruction.dst : instruction.lhs;
+      const auto receiver = reading ? instruction.lhs : instruction.dst;
+      if (instruction.field_declaration.has_value() != (mode == NativeProgramMode::Reloadable) ||
+          !IsScalar(function.value_types[value]) || flow.origins[receiver] != 0) {
+        return false;
+      }
+      fields = true;
+      continue;
+    }
+    const auto effects = ir::AnalyzeEffects(instruction);
+    if (effects.MayCollectOnSuccess() || effects.reads_state || effects.writes_state ||
+        effects.may_suspend) {
+      return false;
+    }
+  }
+  // 仅接收者的标量字段允许副作用；封闭布局与可重载布局各自由对应入口建立访问契约。
+  return fields;
 }
 
 LeafKind PlanNonrecursiveLeaf(const ir::Function& function, NativeDebugging debugging) {

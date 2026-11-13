@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -84,9 +85,12 @@ class LinkConfigurationTest(unittest.TestCase):
                     self.assertEqual(configuration[prefix + "_system_libraries"],
                                      ["psapi.lib", "shell32.lib", "ole32.lib", "uuid.lib",
                                       "advapi32.lib", "ws2_32.lib", "ntdll.lib"])
-                system = "S:/unmanaged/dependency.lib"
-                with self.assertRaisesRegex(RuntimeError, "Unmanaged LLVM system library"):
-                    llvm.link_configuration()
+                for unmanaged in ("S:/unmanaged/dependency.lib", r"S:\unmanaged\dependency.lib",
+                                  "unmanaged/dependency.lib", r"unmanaged\dependency.lib"):
+                    system = shlex.quote(unmanaged)
+                    with self.subTest(system=unmanaged), self.assertRaisesRegex(
+                            RuntimeError, "Unmanaged LLVM system library"):
+                        llvm.link_configuration()
 
 
 class ArchiveExtractionTest(unittest.TestCase):

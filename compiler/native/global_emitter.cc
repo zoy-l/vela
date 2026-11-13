@@ -18,6 +18,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_operations.h"

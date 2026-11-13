@@ -455,9 +455,12 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
     case ObjectKind::NativeProgram:
       MarkNativeProgram(object);
       return;
-    case ObjectKind::Reflection:
-      MarkValue(StorageAfter<ReflectionHandle>(object)->anchor);
+    case ObjectKind::Reflection: {
+      const auto& handle = *StorageAfter<ReflectionHandle>(object);
+      MarkValue(handle.anchor);
+      handle.lookup_cache.TraceValues([this](Value value) { MarkValue(value); });
       return;
+    }
     case ObjectKind::Future:
     case ObjectKind::Completer:
       StorageAfter<Future>(object)->Trace(*this);

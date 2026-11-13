@@ -33,6 +33,7 @@ struct CodeReuseCache final {
     std::vector<std::string> symbols;
     native::NativeFunctionMetrics metrics;
     runtime::NativeEntry entry = nullptr;
+    runtime::NativeReflectionEntry reflection_entry = nullptr;
     runtime::NativeTypedEntry typed_entry = nullptr;
     std::vector<std::size_t> body_dependencies;
   };

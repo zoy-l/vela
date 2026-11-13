@@ -17,6 +17,7 @@
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/ConstantRange.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Dominators.h>
@@ -39,6 +40,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/IPO/AlwaysInliner.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
@@ -233,7 +235,9 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   llvm::FunctionPassManager integer_loops;
   AddIntegerLoopPasses(integer_loops);
   AddInvariantCallPasses(integer_loops);
+  AddBoundedPollPasses(integer_loops);
   llvm::ModulePassManager preparation;
+  preparation.addPass(llvm::AlwaysInlinerPass());
   preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
   preparation.run(module, modules);
   auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
@@ -356,6 +360,11 @@ InliningPlan PlanInlining(const ir::Function& function,
   auto leaf = LeafKind::None;
   if (mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized) {
     leaf = PlanNonrecursiveLeaf(function, debugging);
+    if (leaf == LeafKind::None && mode == NativeProgramMode::Closed &&
+        placement == NativeCodePlacement::Linked &&
+        CanUseScalarFieldBody(function, mode, debugging)) {
+      leaf = LeafKind::Bounded;
+    }
     if (leaf == LeafKind::None && debugging == NativeDebugging::Safepoints &&
         mode == NativeProgramMode::Closed && placement == NativeCodePlacement::Linked &&
         CanUseRecursiveLeaf(function, function_index)) {
@@ -467,10 +476,15 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
     auto* entry = llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage,
                                          symbol("_entry_"), module);
+    auto* reflection_type = llvm::FunctionType::get(
+        llvm::Type::getInt8Ty(context), {pointer, pointer, pointer, pointer, pointer}, false);
+    auto* reflection = llvm::Function::Create(reflection_type, llvm::GlobalValue::InternalLinkage,
+                                              symbol("_reflection_"), module);
     auto* resume = AddResumeEntry(module, function, symbol("_resume_"));
     GeneratedFunction baseline{
         .body = body,
         .entry = entry,
+        .reflection_entry = reflection,
         .resume = resume,
         .square_root = IsSquareRootImport(function, program.layouts),
     };
@@ -491,6 +505,15 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     if (inlining.enabled) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
       current.body->addFnAttr(llvm::Attribute::AlwaysInline);
+      if (program.native_mode == NativeProgramMode::Closed) {
+        reflection->addFnAttr(llvm::Attribute::AlwaysInline);
+      }
+    }
+    if (program.native_mode == NativeProgramMode::Reloadable && tier == NativeCodeTier::Optimized &&
+        CanUseScalarFieldBody(function, program.native_mode, debugging)) {
+      current.bounded_reflection_body = llvm::Function::Create(
+          *body_type, llvm::GlobalValue::InternalLinkage, prefix + "_reflection_body", module);
+      current.bounded_reflection_body->addFnAttr(llvm::Attribute::AlwaysInline);
     }
     if (const auto& borrow = borrows[index]) {
       baseline.borrowed = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
@@ -498,7 +521,9 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       borrowable.at(index) = borrow->type;
       current.borrowed = baseline.borrowed;
     }
-    const std::array typed_entries{body, current.body, current.leaf, baseline.borrowed};
+    const std::array typed_entries{
+        body, current.body, current.leaf, baseline.borrowed, current.bounded_reflection_body,
+    };
     SetTypedArguments(typed_entries, function);
     generated.push_back(baseline);
     optimized.push_back(current);
@@ -519,28 +544,40 @@ void DeclareRangeSpecializations(llvm::Module& module,
       continue;
     }
     const auto& source = program.functions[index];
+    const auto& parameters = facts.parameters[index];
     const auto& ranges = facts.functions[index];
     bool constrained = false;
     for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
       const auto& type = source.value_types[parameter];
-      constrained |= (type.kind == Kind::Int && !type.nullable &&
-                      !facts.parameters[index][parameter].isFullSet()) ||
-                     (type.kind == Kind::Array &&
-                      (ranges.fixed_storage[parameter] != 0 ||
-                       ranges.element_bits[parameter] != kUnknownArrayElementBits));
+      constrained |=
+          (type.kind == Kind::Int && !type.nullable && !parameters[parameter].isFullSet()) ||
+          (type.kind == Kind::Array &&
+           (ranges.fixed_storage[parameter] != 0 ||
+            ranges.element_bits[parameter] != kUnknownArrayElementBits));
     }
     if (!constrained) {
       continue;
     }
     auto& target = declarations.specialized[index];
-    const auto create = [&](llvm::Function* source) {
-      if (source == nullptr) {
-        return source;
+    const auto create = [&](llvm::Function* entry) {
+      if (entry == nullptr) {
+        return entry;
       }
       auto* result =
-          llvm::Function::Create(source->getFunctionType(), llvm::GlobalValue::InternalLinkage,
-                                 source->getName() + "_range", module);
-      result->copyAttributesFrom(source);
+          llvm::Function::Create(entry->getFunctionType(), llvm::GlobalValue::InternalLinkage,
+                                 entry->getName() + "_range", module);
+      result->copyAttributesFrom(entry);
+      // 逐指令发射证明与 LLVM 参数域必须一致，否则内联后的循环守卫仍按完整整数域优化。
+      // 仅特化入口消费这些事实；映像表中的通用入口保持原来的参数契约。
+      for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
+        const auto& type = source.value_types[parameter];
+        const auto& range = parameters[parameter];
+        if (type.kind == Kind::Int && !type.nullable && !range.isFullSet() && !range.isEmptySet()) {
+          result->addParamAttr(
+              static_cast<unsigned>(parameter + 1),
+              llvm::Attribute::get(module.getContext(), llvm::Attribute::Range, range));
+        }
+      }
       return result;
     };
     // 受约束版本不进入 NativeImage；运行时索引和 callable 仍只引用通用入口。
@@ -557,11 +594,13 @@ std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
   const std::array functions{
       baseline.body,
       baseline.entry,
+      baseline.reflection_entry,
       baseline.resume,
       baseline.recovery,
       baseline.resume_recovery,
       baseline.borrowed,
       optimized.body,
+      optimized.bounded_reflection_body,
       optimized.resume,
       optimized.leaf,
       optimized.leaf_guard,
@@ -600,7 +639,6 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     std::span<const std::optional<BorrowedFunction>> borrows) {
   const auto& generated = declarations.baseline;
   const auto& optimized = declarations.optimized;
-  const auto& function = program.functions.at(index);
   const auto& target = optimized.at(index);
   auto emission_entries = tier == NativeCodeTier::Optimized && target.baseline_body == nullptr
                               ? std::span<const GeneratedFunction>(optimized)
@@ -661,7 +699,11 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     }
     emitted = std::move(optimized_metrics);
   }
-  EmitWrapper(module, function, static_cast<std::uint32_t>(index), target, image, placement);
+  const auto function_index = static_cast<std::uint32_t>(index);
+  EmitWrapper(module, program, function_index, target, image, placement,
+              NativeEntryContract::External);
+  EmitWrapper(module, program, function_index, target, image, placement,
+              NativeEntryContract::Reflection);
   return emitted;
 }
 
@@ -672,6 +714,11 @@ void BindDynamicEntries(NativeModule& output,
   for (const auto& function : functions) {
     auto* typed = function.body;
     output.typed_functions.push_back(typed);
+    auto* reflection = function.reflection_entry;
+    output.reflection_functions.push_back(reflection);
+    if (reflection != nullptr) {
+      reflection->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    }
     if (typed != nullptr) {
       typed->setLinkage(llvm::GlobalValue::ExternalLinkage);
     }
@@ -701,6 +748,25 @@ void PlanRecursiveExpansion(NativeModule& output,
   add(function);
   if (declarations.HasRangeSpecialization(index)) {
     add(declarations.specialized[index]);
+  }
+}
+
+void RequireReflectionReceiverLayouts(const ir::Program& program,
+                                      std::span<const GeneratedFunction> functions,
+                                      NativeDebugging debugging,
+                                      NativeCodeTier tier,
+                                      NativeImageData& image) {
+  if (program.native_mode != NativeProgramMode::Reloadable || tier != NativeCodeTier::Optimized) {
+    return;
+  }
+  for (std::size_t index = 0; index < functions.size(); ++index) {
+    const auto& function = functions[index];
+    // 复用函数没有本次 LLVM 声明，仍需从其规范 IR 恢复入口契约。
+    if (function.bounded_reflection_body != nullptr ||
+        (function.body == nullptr &&
+         CanUseScalarFieldBody(program.functions[index], program.native_mode, debugging))) {
+      image.RequireReflectionReceiverLayout(index);
+    }
   }
 }
 
@@ -787,11 +853,15 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   const auto& generated = declarations->baseline;
   const auto& optimized = declarations->optimized;
   std::vector<llvm::Function*> entries;
+  std::vector<llvm::Function*> reflection_entries;
   entries.reserve(generated.size());
+  reflection_entries.reserve(generated.size());
   for (const auto& function : generated) {
     entries.push_back(function.entry);
+    reflection_entries.push_back(function.reflection_entry);
   }
   auto description = DescribeNativeImage(program);
+  RequireReflectionReceiverLayouts(program, optimized, debugging, tier, *description);
   llvm::Constant* image =
       llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context));
   if (placement == NativeCodePlacement::Dynamic &&
@@ -799,7 +869,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     output.image_data = std::move(description);
     BindDynamicEntries(output, entries, optimized);
   } else {
-    const auto emitted = EmitNativeImage(module, *description->image(), entries, module_name);
+    const auto emitted =
+        EmitNativeImage(module, *description->image(),
+                        {.external = entries, .reflection = reflection_entries}, module_name);
     if (!emitted) {
       return diagnostic(emitted.error());
     }

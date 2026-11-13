@@ -69,7 +69,7 @@ class ImageEmitter final {
   ImageEmitter(ImageEmitter&&) = delete;
   ImageEmitter& operator=(ImageEmitter&&) = delete;
   std::expected<llvm::Constant*, std::string> Emit(const NativeImage& image,
-                                                   std::span<llvm::Function* const> entries);
+                                                   NativeImageEntries entries);
 
  private:
   template <class Record, std::size_t Count>
@@ -105,7 +105,7 @@ class ImageEmitter final {
   llvm::Constant* Collections(std::span<const NativeCollectionDescription> collections);
   llvm::Constant* Signatures(std::span<const NativeSignatureDescription> signatures);
   llvm::Constant* Functions(std::span<const NativeFunctionDescription> functions,
-                            std::span<llvm::Function* const> entries);
+                            NativeImageEntries entries);
   llvm::Constant* Dependencies(const NativeFunctionDependencies* dependencies);
   llvm::Constant* DependencyBlocks(std::span<const NativeDependencyBlock> descriptions);
   llvm::Constant* Members(std::span<const NativeMemberDescription> members);
@@ -287,6 +287,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           table_,
           pointer_,
           pointer_,
+          pointer_,
           word_,
           word_,
           word_,
@@ -301,6 +302,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeFunctionDescription, parameters),
           offsetof(NativeFunctionDescription, locations),
           offsetof(NativeFunctionDescription, entry),
+          offsetof(NativeFunctionDescription, reflection_entry),
           offsetof(NativeFunctionDescription, typed_entry),
           offsetof(NativeFunctionDescription, parameter_count),
           offsetof(NativeFunctionDescription, result_type),
@@ -633,11 +635,11 @@ llvm::Constant* ImageEmitter::Signatures(std::span<const NativeSignatureDescript
 }
 
 llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescription> functions,
-                                        std::span<llvm::Function* const> entries) {
+                                        NativeImageEntries entries) {
   std::vector<llvm::Constant*> constants;
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
-    auto* entry = entries[index];
+    auto* entry = entries.external[index];
     std::vector<llvm::Constant*> locations;
     for (const auto& location : function.locations.values()) {
       locations.push_back(Record(
@@ -649,6 +651,7 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
                                               CallParameters(function.parameters.values()),
                                               Table(location_, locations),
                                               entry,
+                                              entries.reflection[index],
                                               llvm::Constant::getNullValue(pointer_),
                                               Word(function.parameter_count),
                                               Word(function.result_type),
@@ -723,9 +726,8 @@ llvm::Constant* ImageEmitter::Members(std::span<const NativeMemberDescription> m
   return Table(member_, constants);
 }
 
-std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
-    const NativeImage& image,
-    std::span<llvm::Function* const> entries) {
+std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(const NativeImage& image,
+                                                               NativeImageEntries entries) {
   if (!has_compatible_layout_) {
     return std::unexpected(
         "LLVM target data layout does not match the native runtime descriptor ABI");
@@ -865,11 +867,10 @@ llvm::Constant* ImageEmitter::Attributes(std::span<const runtime::NativeAttribut
 
 }  // namespace
 
-std::expected<EmittedNativeImage, std::string> EmitNativeImage(
-    llvm::Module& module,
-    const NativeImage& description,
-    std::span<llvm::Function* const> entries,
-    std::string_view module_name) {
+std::expected<EmittedNativeImage, std::string> EmitNativeImage(llvm::Module& module,
+                                                               const NativeImage& description,
+                                                               NativeImageEntries entries,
+                                                               std::string_view module_name) {
   const auto image = ImageEmitter(module).Emit(description, entries);
   if (!image) {
     return std::unexpected(image.error());

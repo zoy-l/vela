@@ -3,6 +3,7 @@
 #include <array>
 #include <string_view>
 
+#include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 
@@ -199,8 +200,8 @@ class SignatureParameterInfo {
 inline constexpr auto kReflectionStandardNames = std::to_array<std::string_view>({
     "Attribute",
     "AttributeUsage",
-    "CallArgument",
-    "CallArguments",
+    reflection::kCallArgumentName,
+    reflection::kCallArgumentsName,
     "ConstructorInfo",
     "EnumMemberInfo",
     "FieldInfo",

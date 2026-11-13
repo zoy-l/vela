@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <cstdint>
 #include <span>
 #include <string_view>
 
 #include <gtest/gtest.h>
 
+#include "base/builtin.h"
 #include "base/callable.h"
 #include "base/native_program_mode.h"
 #include "base/reflection.h"
@@ -12,11 +14,49 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/typing/type_checker.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 
 namespace vela::ir {
 namespace {
+
+TEST(ReflectionPreparationTest, ImmediateArgumentRecordsBecomeRootedValueWindows) {
+  const frontend::SourceInput source{
+      .path = "main.vela",
+      .text = R"(
+export func snapshot(method: MethodInfo<dynamic>, receiver: dynamic, value: int): dynamic {
+  return method.invoke(receiver, CallArguments(items: [CallArgument(value: value)]));
+}
+)",
+  };
+  auto parsed = frontend::LoadSources(std::span(&source, 1), source.path);
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded());
+  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+    frontend::DeclarationIds identities;
+    const auto prepared = PrepareProgram(parsed.program, checked.model,
+                                         {.declarations = &identities, .native_mode = mode});
+    ASSERT_TRUE(prepared.Succeeded());
+    const auto& functions = prepared.program.functions;
+    const auto function = std::ranges::find_if(
+        functions, [](const auto& candidate) { return candidate.name.ends_with("snapshot"); });
+    ASSERT_NE(function, functions.end());
+    const auto& instructions = function->instructions;
+    EXPECT_TRUE(std::ranges::none_of(instructions, [](const auto& instruction) {
+      return instruction.opcode == Opcode::NewInstance || instruction.opcode == Opcode::NewArray ||
+             instruction.construction.has_value() || instruction.completes_construction;
+    }));
+    const auto invocation = std::ranges::find_if(instructions, [](const auto& instruction) {
+      return instruction.opcode == Opcode::BuiltinCall &&
+             instruction.index == static_cast<std::uint32_t>(Builtin::ReflectionInvoke);
+    });
+    ASSERT_NE(invocation, instructions.end());
+    const auto access = AnalyzeRegisters(*invocation, functions);
+    EXPECT_EQ(access.argument_count, kReflectionInvokeHeaderArity + 2);
+  }
+}
 
 TEST(ReflectionPreparationTest, EmitsStablePropertiesLogicalSignaturesAndExplicitSelections) {
   const frontend::SourceInput source{

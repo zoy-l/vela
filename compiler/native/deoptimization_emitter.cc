@@ -26,6 +26,8 @@ llvm::Function* FunctionEmitter::SelectBody(const GeneratedFunction& function,
   switch (kind) {
     case NativeEntryKind::Initial:
       return function.body;
+    case NativeEntryKind::BoundedReflection:
+      return function.bounded_reflection_body;
     case NativeEntryKind::Resume:
       return function.resume;
     case NativeEntryKind::RecoverInitial:
@@ -98,8 +100,6 @@ void FunctionEmitter::InitializeCheckpoint() {
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   checkpoint_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
   builder_.CreateStore(builder_.getFalse(), checkpoint_initialized_);
-  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
-                       ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
 }
 
 void FunctionEmitter::StoreRecoveryDescription() {
@@ -129,6 +129,8 @@ void FunctionEmitter::PrepareCheckpoint() {
   // 已初始化的数据，不能覆盖被嵌套调用或发布请求修改的 tier。
   using runtime::NativeCheckpoint;
   using runtime::NativeVirtualState;
+  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
+                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, tier)));
   auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
   builder_.CreateStore(virtual_state_ == nullptr ? null_pointer : virtual_state_,
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, materialization)));

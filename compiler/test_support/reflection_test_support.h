@@ -15,6 +15,17 @@ struct ReflectionInput final {
   std::string_view configuration;
 };
 
+inline constexpr std::string_view kDerivedCallArgumentsSource = R"(
+class Argument extends CallArgument {
+  extra: string = 'retained';
+  constructor(value: dynamic) { super(value: value); }
+}
+class Arguments extends CallArguments {
+  extra: int = 1;
+  constructor(items: CallArgument[]) { super(items: items); }
+}
+)";
+
 template <class T>
 std::expected<T, std::string> RequireReflectionValue(Result<std::optional<T>> result) {
   if (!result) {

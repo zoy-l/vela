@@ -149,6 +149,8 @@ class NativeDispatch final {
   NativeDispatch(NativeDispatch&&) = delete;
   NativeDispatch& operator=(NativeDispatch&&) = delete;
   [[nodiscard]] std::uint64_t revision() const noexcept;
+  // 发布与 Close 都使弱执行缓存失效；地址在本 Isolate 的整个寿命内稳定。
+  [[nodiscard]] const std::uint64_t& publication_epoch() const noexcept { return global_epoch_; }
   [[nodiscard]] bool HasExecutions() const noexcept { return executions_ != nullptr; }
   [[nodiscard]] std::uint64_t deoptimized_frames() const noexcept { return deoptimized_frames_; }
   [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
@@ -230,8 +232,6 @@ extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
 // 缓存数组由当前函数版本持有，借用期覆盖本次调用及恢复；提交只更新缓存内容。
 extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execution,
                                                           std::uint32_t function) noexcept;
-extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
-    NativeExecution* execution) noexcept;
 extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
                                                      std::uint32_t index,
                                                      const NativeValue* value) noexcept;

@@ -166,17 +166,29 @@ void PrepareFieldCaches(NativeProgramState& state) {
   }
 }
 
-void PrepareDirectFieldLayouts(NativeProgramState& state) {
+std::expected<void, NativeInstantiationError> InitializeDirectFieldLayouts(
+    NativeProgramState& state) {
   const auto classes = state.image->classes.values();
-  state.direct_field_layouts.reserve(classes.size());
-  for (std::size_t index = 0; index < classes.size(); ++index) {
+  const auto count = classes.size();
+  if (count > std::numeric_limits<std::size_t>::max() / sizeof(const ClassLayout*)) {
+    return OutOfMemory("out of memory creating native direct field layouts");
+  }
+  auto& heap = state.isolate->heap();
+  state.direct_field_layouts =
+      static_cast<const ClassLayout**>(heap.AllocateNative(count * sizeof(const ClassLayout*)));
+  if (count != 0 && state.direct_field_layouts == nullptr) {
+    return OutOfMemory("out of memory creating native direct field layouts");
+  }
+  const auto direct_layouts = std::span(state.direct_field_layouts, count);
+  for (std::size_t index = 0; index < count; ++index) {
     const auto& description = classes[index];
     const auto* layout = state.layouts.classes[index];
     const auto canonical =
         std::ranges::equal(description.fields.values(), layout->field_declarations(), {},
                            &NativeFieldDescription::declaration);
-    state.direct_field_layouts.push_back(canonical ? layout : nullptr);
+    direct_layouts[index] = canonical ? layout : nullptr;
   }
+  return {};
 }
 
 layout::Program DescribeLayouts(const NativeImage& image) {
@@ -432,6 +444,13 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
 std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstants() {
   const auto& image = *data_->image;
   auto& heap = data_->isolate->heap();
+  if (image.IsReloadable()) {
+    // 程序锚点已保根，分配时类型图和规范布局均由该状态持有。
+    const auto initialized = InitializeDirectFieldLayouts(*data_);
+    if (!initialized) {
+      return initialized;
+    }
+  }
   auto* constants = heap.AllocateValueSlots(image.strings.size);
   if (constants == nullptr) {
     return OutOfMemory("out of memory creating native string constant slots");
@@ -565,9 +584,6 @@ NativeInstance::Instantiate(Isolate& isolate,
   state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
   if (!can_reuse) {
     BindNominalBases(image, state.layouts);
-  }
-  if (!closed) {
-    PrepareDirectFieldLayouts(state);
   }
   state.code_identity = cache.code_identity;
   auto members = DescribeMembers(image, state.layouts);

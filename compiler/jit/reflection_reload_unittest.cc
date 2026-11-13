@@ -89,6 +89,9 @@ export func read(): int {
   auto result = Update(prefix + "1" + suffix);
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   ASSERT_TRUE(session().Invoke("main.vela", "remember"));
+  const auto initial = session().Invoke("main.vela", "read");
+  ASSERT_TRUE(initial);
+  EXPECT_EQ(initial->AsInteger(), 11);
   const auto type = test::RequireReflectionValue(FindType("Box"));
   ASSERT_TRUE(type) << type.error();
   const auto method = test::RequireReflectionValue(type->FindMethod("read"));
@@ -100,6 +103,7 @@ export func read(): int {
   ASSERT_TRUE(receiver);
   result = Update(prefix + "2" + suffix);
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  session().isolate().heap().Collect();
   const auto invoked = method->Invoke(scope, *receiver);
   ASSERT_TRUE(invoked) << invoked.error().message;
   EXPECT_EQ(internal::HandleAccess::Read(*invoked).AsInteger(), 12);
@@ -108,6 +112,58 @@ export func read(): int {
   EXPECT_EQ(script->AsInteger(), 12);
   session().isolate().heap().Collect();
   EXPECT_EQ(session().code_resources().images, 1U);
+}
+
+TEST_P(ReflectionReloadTest, PositiveAndNegativeLookupCachesFollowRegistrationChanges) {
+  const std::string source = R"(
+class Box { value: int = 10; read(): int { return this.value; } }
+const info = Reflect.typeInfo<Box>();
+export func field(): bool { return info.findField('value') != null; }
+export func lookupType(): bool { return Reflect.findType('main.vela', 'Box') != null; }
+)";
+  auto result = Update(source);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  for (const auto* entry : {"field", "lookupType"}) {
+    const auto first = session().Invoke("main.vela", entry);
+    const auto repeated = session().Invoke("main.vela", entry);
+    ASSERT_TRUE(first && repeated);
+    EXPECT_TRUE(first->AsBoolean() && repeated->AsBoolean());
+  }
+  const auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
+    {"module":"main","type":"Box","members":[{"kind":"field","name":"value"}]}
+  ]})");
+  ASSERT_TRUE(configuration);
+  auto withdrawn_members = configuration->reflection;
+  withdrawn_members.front().members.clear();
+  result = Update(source, std::move(withdrawn_members));
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  for (const auto* entry : {"field", "lookupType"}) {
+    const auto first = session().Invoke("main.vela", entry);
+    const auto repeated = session().Invoke("main.vela", entry);
+    ASSERT_TRUE(first && repeated) << entry;
+    const auto registered = std::string_view(entry) == "lookupType";
+    EXPECT_EQ(first->AsBoolean(), registered);
+    EXPECT_EQ(repeated->AsBoolean(), registered);
+  }
+  result = Update(source, configuration->reflection);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  session().isolate().heap().Collect();
+  for (const auto* entry : {"field", "lookupType"}) {
+    const auto current = session().Invoke("main.vela", entry);
+    ASSERT_TRUE(current);
+    EXPECT_TRUE(current->AsBoolean());
+  }
+  result = Update(source, std::vector<frontend::ReflectionSelection>{});
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto missing = session().Invoke("main.vela", "lookupType");
+  const auto repeated_missing = session().Invoke("main.vela", "lookupType");
+  ASSERT_TRUE(missing && repeated_missing);
+  EXPECT_FALSE(missing->AsBoolean() || repeated_missing->AsBoolean());
+  result = Update(source, configuration->reflection);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto restored = session().Invoke("main.vela", "lookupType");
+  ASSERT_TRUE(restored);
+  EXPECT_TRUE(restored->AsBoolean());
 }
 
 TEST_P(ReflectionReloadTest, WithdrawalAndDeletionHaveDistinctErrorsAndOldNamesDoNotRevive) {
@@ -276,7 +332,11 @@ export func status(): int {
 TEST_P(ReflectionReloadTest, ResolvesMethodIdentityBeforeReadingInvalidArgumentSnapshots) {
   const std::string prefix = R"(
 let saved: StaticMethodInfo? = null;
-export func remember(): void { saved = Reflect.typeInfo<Box>().findStaticMethod('read'); }
+export func remember(): void {
+  saved = Reflect.typeInfo<Box>().findStaticMethod('read');
+  const target = saved;
+  if (target != null) { target.invoke(CallArguments(items: [CallArgument(value: 0)])); }
+}
 export func failure(): string {
   try {
     const target = saved;
@@ -293,6 +353,8 @@ export func failure(): string {
   ASSERT_TRUE(session().Invoke("main.vela", "remember"));
   result = Update(prefix + owner, std::vector<frontend::ReflectionSelection>{});
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  session().isolate().heap().Collect();
+  EXPECT_EQ(session().code_resources().images, 1U);
   const auto withdrawn = session().Invoke("main.vela", "failure");
   ASSERT_TRUE(withdrawn);
   EXPECT_EQ(withdrawn->AsString()->value(), "ReflectionUnavailable");
@@ -301,6 +363,148 @@ export func failure(): string {
   const auto deleted = session().Invoke("main.vela", "failure");
   ASSERT_TRUE(deleted);
   EXPECT_EQ(deleted->AsString()->value(), "TargetDeleted");
+}
+
+TEST_P(ReflectionReloadTest, CachedCallsFollowDerivedArgumentStorageAcrossPublication) {
+  const std::string source = std::string(test::kDerivedCallArgumentsSource) + R"(
+[Reflect]
+class Box { value: int = 0; read(value: int): int { return value; } }
+const receiver = Box();
+const method = Reflect.typeInfo<Box>().findMethod('read');
+const argument = Argument(value: 42);
+const arguments = Arguments(items: [argument]);
+export func read(): int {
+  const target = method;
+  if (target == null) { return -1; }
+  const result = target.invoke(receiver, arguments);
+  if (result is int) { return result; }
+  return -2;
+}
+)";
+  auto result = Update(source);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    const auto value = session().Invoke("main.vela", "read");
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->AsInteger(), 42);
+  }
+  std::string updated = source;
+  const auto extra = updated.find("extra: string");
+  ASSERT_NE(extra, std::string::npos);
+  updated.insert(extra, "newField: int = 7; ");
+  result = Update(std::move(updated));
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto value = session().Invoke("main.vela", "read");
+  ASSERT_TRUE(value);
+  EXPECT_EQ(value->AsInteger(), 42);
+}
+
+TEST_P(ReflectionReloadTest, CachedCallsKeepCompletedEffectsWhenBoundedBodyFails) {
+  auto result = Update(R"(
+[Reflect]
+class Box {
+  value: int = 0;
+  read(value: int): int { this.value += 1; return value + 1; }
+}
+const receiver = Box();
+const method = Reflect.typeInfo<Box>().findMethod('read');
+const argument = CallArgument(value: 0);
+const arguments = CallArguments(items: [argument]);
+export func read(): int {
+  const target = method;
+  if (target == null) { return -1; }
+  target.invoke(receiver, arguments);
+  argument.value = 9223372036854775807;
+  try { target.invoke(receiver, arguments); }
+  catch (error: Error) {
+    if (error.code == 'IntegerOverflow') { return receiver.value; }
+  }
+  return -2;
+}
+)");
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto value = session().Invoke("main.vela", "read");
+  ASSERT_TRUE(value);
+  EXPECT_EQ(value->AsInteger(), 2);
+}
+
+TEST_P(ReflectionReloadTest, CachedCallsRejectNoncanonicalReceiverLayouts) {
+  auto result = Update(R"(
+class Box { value: int = 40; read(value: int): int { return this.value + value; } }
+class Derived extends Box { extra: int = 7; }
+const receiver = Box();
+const derived = Derived();
+const method = Reflect.typeInfo<Box>().findMethod('read');
+const arguments = CallArguments(items: [CallArgument(value: 2)]);
+export func read(): int {
+  const target = method;
+  if (target == null) { return -1; }
+  target.invoke(receiver, arguments);
+  const result = target.invoke(derived, arguments);
+  if (!(result is int) || result != 42) { return -2; }
+  const final = target.invoke(receiver, arguments);
+  if (final is int) { return final; }
+  return -3;
+}
+)");
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto value = session().Invoke("main.vela", "read");
+  ASSERT_TRUE(value);
+  EXPECT_EQ(value->AsInteger(), 42);
+}
+
+TEST_P(ReflectionReloadTest, CachedCallsInitializeAddedFieldsBeforeBoundedEffects) {
+  const std::string prefix = R"(
+let defaults = 0;
+func next(): int { defaults++; return 7; }
+class Box {
+  value: int = 0;
+)";
+  const std::string suffix = R"(
+}
+const receiver = Box();
+const method = Reflect.typeInfo<Box>().findMethod('read');
+const argument = CallArgument(value: false);
+const arguments = CallArguments(items: [argument]);
+export func read(includeAdded: bool): int {
+  const target = method;
+  if (target == null) { return -1; }
+  argument.value = includeAdded;
+  const result = target.invoke(receiver, arguments);
+  if (result is int) { return result; }
+  return -2;
+}
+export func state(): int { return receiver.value * 10 + defaults; }
+)";
+  auto result = Update(prefix + R"(
+  read(includeAdded: bool): int { this.value++; return this.value; }
+)" + suffix);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const std::vector cold{runtime::Value::Boolean(false)};
+  const auto initial = session().Invoke("main.vela", "read", cold);
+  ASSERT_TRUE(initial);
+  EXPECT_EQ(initial->AsInteger(), 1);
+  result = Update(prefix + R"(
+  added: int = next();
+  read(includeAdded: bool): int {
+    this.value++;
+    return includeAdded ? this.value + this.added : this.value;
+  }
+)" + suffix);
+  ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
+  const auto warm = session().Invoke("main.vela", "read", cold);
+  ASSERT_TRUE(warm);
+  EXPECT_EQ(warm->AsInteger(), 2);
+  const auto pending = session().Invoke("main.vela", "state");
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->AsInteger(), 20);
+  const std::vector hot{runtime::Value::Boolean(true)};
+  const auto initialized = session().Invoke("main.vela", "read", hot);
+  ASSERT_TRUE(initialized);
+  EXPECT_EQ(initialized->AsInteger(), 10);
+  const auto state = session().Invoke("main.vela", "state");
+  ASSERT_TRUE(state);
+  EXPECT_EQ(state->AsInteger(), 31);
 }
 
 TEST_P(ReflectionReloadTest, ExternalDescriptorsBlockFullReloadAndManagedDescriptorsDoNot) {

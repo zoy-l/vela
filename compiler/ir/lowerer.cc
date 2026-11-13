@@ -1141,15 +1141,21 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
   const auto type = model_.types.at(object.type.name);
   const auto owner = frontend::NonNullableTypeName(type);
   const auto& method_owner = model_.classes.at(owner).methods.at(expression.text).member_owner;
-  const std::string method_key = MethodKey(method_owner, DeclarationKind::Getter, expression.text);
   std::optional<std::size_t> null_jump;
   if (expression.null_safe) {
     null_jump = BeginNullSafe(object.reg, location);
   }
   const auto base = AllocateRegister(location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = location});
-  const auto result = AllocateRegister(location);
   const auto& result_type = model_.expression_types.at(&expression);
+  const auto& signature = model_.classes.at(method_owner).methods.at(expression.text);
+  if (signature.intrinsic == Builtin::Reflection) {
+    const auto result = EmitReflectionCall(signature, base, location, 1);
+    FinishNullSafe(null_jump, result, location);
+    return {.reg = result, .type = result_type};
+  }
+  const std::string method_key = MethodKey(method_owner, DeclarationKind::Getter, expression.text);
+  const auto result = AllocateRegister(location);
   RecordValueType(result, result_type);
   Emit({
       .opcode = Opcode::Call,
@@ -1360,6 +1366,11 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
                                                std::uint32_t function_id,
                                                const LoweredValue* receiver,
                                                Opcode opcode) {
+  if (opcode == Opcode::Call && receiver != nullptr && function.intrinsic == Builtin::Reflection) {
+    if (const auto snapshot = LowerReflectedInvocation(expression, function, *receiver)) {
+      return *snapshot;
+    }
+  }
   const std::size_t receiver_count = receiver == nullptr ? 0 : 1;
   const std::size_t count = receiver_count + function.parameters.size();
   const auto base = AllocateRegisterWindow(count, expression.location);
@@ -1371,21 +1382,14 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
         .location = expression.location,
     });
   }
-  if (!function.optional_parameters.empty()) {
-    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-      if (function.optional_parameters.contains(function.parameters.at(index).name)) {
-        Emit({
-            .opcode = function.intrinsic == Builtin::DateFromUTC ||
-                              (function.intrinsic == Builtin::ByteDataView && index == 1)
-                          ? Opcode::LoadInt
-                          : Opcode::LoadNull,
-            .dst = static_cast<RegisterId>(base + receiver_count + index),
-            .location = expression.location,
-        });
-      }
-    }
+  const auto first_argument = static_cast<RegisterId>(base + receiver_count);
+  InitializeOptionalArguments(function, first_argument, expression.location);
+  LowerArguments(expression, first_argument);
+  if (opcode == Opcode::Call && (function.intrinsic == Builtin::Reflection ||
+                                 function.intrinsic == Builtin::ReflectionTypeInfo)) {
+    const auto result = EmitReflectionCall(function, base, expression.location, count);
+    return {.reg = result, .type = function.return_type};
   }
-  LowerArguments(expression, static_cast<RegisterId>(base + receiver_count));
   std::optional<DeclarationId> binding_receiver;
   if (receiver != nullptr && opcode == Opcode::Call) {
     binding_receiver = ReceiverDeclaration(receiver->type);
@@ -1413,6 +1417,26 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
       .binding_receiver = binding_receiver,
   });
   return {.reg = result, .type = function.return_type};
+}
+
+void Lowerer::InitializeOptionalArguments(const frontend::FunctionDescriptor& function,
+                                          RegisterId base,
+                                          frontend::SourceLocation location) {
+  if (function.optional_parameters.empty()) {
+    return;
+  }
+  for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+    if (function.optional_parameters.contains(function.parameters[index].name)) {
+      Emit({
+          .opcode = function.intrinsic == Builtin::DateFromUTC ||
+                            (function.intrinsic == Builtin::ByteDataView && index == 1)
+                        ? Opcode::LoadInt
+                        : Opcode::LoadNull,
+          .dst = static_cast<RegisterId>(base + index),
+          .location = location,
+      });
+    }
+  }
 }
 
 void Lowerer::LowerArguments(const frontend::Expression& expression, RegisterId base) {

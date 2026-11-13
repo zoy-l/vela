@@ -6,7 +6,7 @@ import argparse
 import ast
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import shlex
 import subprocess
@@ -171,7 +171,7 @@ def link_configuration() -> dict[str, str | list[str]]:
                 raise RuntimeError(f"Missing LLVM static library: {library}")
         system = []
         for argument in query("--system-libs", *components):
-            name = Path(argument).name
+            name = PureWindowsPath(argument).name
             if name == "xml2s.lib" and not any(
                     library.stem == "LLVMWindowsManifest" for library in libraries):
                 # llvm-config 汇总了全部组件的系统库；libxml2 只属于 WindowsManifest，
@@ -182,7 +182,7 @@ def link_configuration() -> dict[str, str | list[str]]:
                 continue
             if argument.startswith("-l"):
                 system.append(argument[2:])
-            elif not Path(argument).is_absolute() and argument.endswith(".lib"):
+            elif name == argument and argument.endswith(".lib"):
                 system.append(argument)
             else:
                 raise RuntimeError(f"Unmanaged LLVM system library: {argument}")

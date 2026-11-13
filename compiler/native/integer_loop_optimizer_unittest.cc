@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <string>
@@ -11,21 +12,26 @@
 
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/ValueSymbolTable.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include "base/declaration.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/test_support/native_pass_test_support.h"
 
 namespace vela::compiler::native {
@@ -338,6 +344,259 @@ TEST_P(BoundedPollBudgetTest, CountsFastWorkWithoutChargingColdRequestHandling) 
 }
 
 INSTANTIATE_TEST_SUITE_P(WorkBudgets, BoundedPollBudgetTest, testing::Bool());
+
+enum class GuardMutation : std::uint8_t { None, SameKind, OtherKind, Name, Items, Length, Call };
+enum class GuardPath : std::uint8_t {
+  Separate,
+  Combined,
+  Rejoined,
+  Conditional,
+  EarlyExit,
+  RepeatedBound,
+};
+
+class GuardedPollOptimizerTest
+    : public testing::TestWithParam<std::tuple<GuardMutation, GuardPath>> {};
+
+void TagGuardLoad(llvm::Instruction& instruction) {
+  const auto name = instruction.getName();
+  auto& context = instruction.getContext();
+  if (name == "items") {
+    instruction.setMetadata(
+        llvm::LLVMContext::MD_tbaa,
+        NativeMemoryTag(context, MemoryRegion::FieldPayloads, DeclarationId{1}));
+  } else if (name == "kind" || name == "name") {
+    instruction.setMetadata(llvm::LLVMContext::MD_tbaa,
+                            NativeMemoryTag(context, MemoryRegion::FieldKinds,
+                                            DeclarationId{name == "kind" ? 2U : 3U}));
+  } else if (name == "length" || name == "data") {
+    instruction.setMetadata(llvm::LLVMContext::MD_tbaa,
+                            NativeMemoryTag(context, MemoryRegion::HeapHeader));
+  } else if (name == "argument") {
+    instruction.setMetadata(llvm::LLVMContext::MD_tbaa,
+                            NativeMemoryTag(context, MemoryRegion::Elements));
+  }
+}
+
+TEST_P(GuardedPollOptimizerTest, MovesOnlyGuardsPreservedThroughoutTheSuccessfulChunk) {
+  const auto [mutation, path] = GetParam();
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  auto module = llvm::parseAssemblyString(R"(
+declare void @process()
+declare void @mutate()
+declare i64 @bind()
+define i64 @guarded(ptr %packet, ptr %requests.address, i64 %count, i1 %enabled,
+                    ptr %input, ptr %roots) {
+entry:
+  br label %header
+header:
+  %index = phi i64 [ 0, %entry ], [ %next.index, %latch ]
+  %total = phi i64 [ 0, %entry ], [ %next.total, %latch ]
+  %more = icmp slt i64 %index, %count
+  br i1 %more, label %arguments, label %done
+arguments:
+  %items = load ptr, ptr %packet, align 8
+  %length.address = getelementptr i8, ptr %items, i64 40
+  %length = load i32, ptr %length.address, align 4
+  %one = icmp eq i32 %length, 1
+  br i1 %one, label %types, label %slow
+types:
+  %data.address = getelementptr i8, ptr %items, i64 56
+  %data = load ptr, ptr %data.address, align 8
+  %argument = load ptr, ptr %data, align 8
+  %kind.address = getelementptr i8, ptr %argument, i64 72
+  %name.address = getelementptr i8, ptr %argument, i64 73
+  %kind = load i8, ptr %kind.address, align 1
+  %name = load i8, ptr %name.address, align 1
+  %integer = icmp eq i8 %kind, 2
+  %positional = icmp eq i8 %name, 0
+  %valid = and i1 %integer, %positional
+  br i1 %valid, label %poll, label %slow
+poll:
+  %requests = load atomic i8, ptr %requests.address monotonic, align 1, !vela.poll.ready.state !0
+  %pending = icmp ne i8 %requests, 0
+  br i1 %pending, label %process, label %calculate, !vela.poll.bounded !1
+process:
+  call void @process()
+  br label %calculate
+calculate:
+  %value.address = getelementptr i8, ptr %argument, i64 56
+  %value = load i64, ptr %value.address, align 8
+  %fast.total = xor i64 %total, %value
+  br label %latch
+slow:
+  %bound = call i64 @bind(), !vela.guard.failure !1
+  %slow.total = xor i64 %total, %bound
+  br label %latch
+latch:
+  %next.total = phi i64 [ %fast.total, %calculate ], [ %slow.total, %slow ]
+  %next.index = add nsw i64 %index, 1
+  br label %header
+done:
+  ret i64 %total
+}
+!0 = !{i8 0}
+!1 = !{}
+)",
+                                          diagnostic, context);
+  ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
+  auto& function = *module->getFunction("guarded");
+  const auto& symbols = *function.getValueSymbolTable();
+  auto* kind = symbols.lookup("kind.address");
+  auto* name = symbols.lookup("name.address");
+  auto* length = symbols.lookup("length.address");
+  auto* calculate = llvm::dyn_cast_or_null<llvm::BasicBlock>(symbols.lookup("calculate"));
+  auto* arguments = llvm::dyn_cast_or_null<llvm::BasicBlock>(symbols.lookup("arguments"));
+  auto* types = llvm::dyn_cast_or_null<llvm::BasicBlock>(symbols.lookup("types"));
+  auto* poll = llvm::dyn_cast_or_null<llvm::BasicBlock>(symbols.lookup("poll"));
+  auto* slow = llvm::dyn_cast_or_null<llvm::BasicBlock>(symbols.lookup("slow"));
+  auto* requests = llvm::dyn_cast_or_null<llvm::LoadInst>(symbols.lookup("requests"));
+  for (auto& instruction : llvm::instructions(function)) {
+    TagGuardLoad(instruction);
+  }
+  ASSERT_NE(calculate, nullptr);
+  ASSERT_NE(arguments, nullptr);
+  ASSERT_NE(types, nullptr);
+  ASSERT_NE(poll, nullptr);
+  ASSERT_NE(slow, nullptr);
+  ASSERT_NE(requests, nullptr);
+  if (path == GuardPath::RepeatedBound) {
+    auto* header = arguments->getSinglePredecessor();
+    auto* more = llvm::cast<llvm::ICmpInst>(symbols.lookup("more"));
+    llvm::IRBuilder<> condition(more);
+    auto* bound_address =
+        condition.CreateConstGEP1_64(condition.getInt8Ty(), function.getArg(4), 40);
+    auto* bound = condition.CreateLoad(condition.getInt32Ty(), bound_address);
+    auto* tag = NativeMemoryTag(context, MemoryRegion::HeapHeader);
+    bound->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+    more->setOperand(1, condition.CreateZExt(bound, condition.getInt64Ty()));
+    auto* bounds = llvm::BasicBlock::Create(context, "bounds", &function, arguments);
+    auto* invalid = llvm::BasicBlock::Create(context, "invalid", &function);
+    header->getTerminator()->replaceSuccessorWith(arguments, bounds);
+    llvm::IRBuilder<> checking(bounds);
+    auto* clear = checking.CreateStore(checking.getInt8(0), function.getArg(5));
+    clear->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(context, MemoryRegion::Roots));
+    clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(context, {}));
+    auto* reloaded = checking.CreateLoad(checking.getInt32Ty(), bound_address);
+    reloaded->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+    auto* valid = checking.CreateICmpSLT(&*header->phis().begin(),
+                                         checking.CreateZExt(reloaded, checking.getInt64Ty()));
+    checking.CreateCondBr(valid, arguments, invalid);
+    llvm::IRBuilder<>(invalid).CreateRet(condition.getInt64(-1));
+  }
+  if (path == GuardPath::Combined || path == GuardPath::Rejoined) {
+    auto* available = llvm::cast<llvm::CondBrInst>(arguments->getTerminator());
+    auto* polling = llvm::cast<llvm::CondBrInst>(poll->getTerminator());
+    requests->moveBefore(available->getIterator());
+    llvm::IRBuilder<> entry(available);
+    auto* ready = entry.CreateICmpEQ(requests, entry.getInt8(0));
+    auto* one = available->getCondition();
+    available->setCondition(entry.CreateAnd(one, ready));
+    available->setMetadata(kNativeBoundedPollMetadata,
+                           polling->getMetadata(kNativeBoundedPollMetadata));
+    llvm::UncondBrInst::Create(calculate, polling->getIterator());
+    polling->eraseFromParent();
+    if (path == GuardPath::Rejoined) {
+      auto* resolve = llvm::BasicBlock::Create(context, "resolve", &function);
+      llvm::IRBuilder<> resolving(resolve);
+      auto* call = resolving.CreateCall(module->getFunction("process"));
+      call->setMetadata(kNativeGuardFailureMetadata,
+                        slow->front().getMetadata(kNativeGuardFailureMetadata));
+      resolving.CreateBr(types);
+      auto* cached = llvm::BasicBlock::Create(context, "cached", &function);
+      llvm::IRBuilder<> caching(cached);
+      auto* address =
+          caching.CreateConstGEP1_64(caching.getInt8Ty(), function.getArg(0), sizeof(void*));
+      auto* flag = caching.CreateLoad(caching.getInt8Ty(), address);
+      flag->setMetadata(llvm::LLVMContext::MD_tbaa,
+                        NativeMemoryTag(context, MemoryRegion::ReflectionCache));
+      caching.CreateCondBr(caching.CreateICmpEQ(flag, caching.getInt8(1)), types, resolve);
+      available->setSuccessor(0, cached);
+      available->setSuccessor(1, resolve);
+    }
+  }
+  if (path == GuardPath::Conditional || path == GuardPath::EarlyExit) {
+    auto* header = arguments->getSinglePredecessor();
+    auto* selected = llvm::BasicBlock::Create(context, "selected", &function);
+    auto* skipped = llvm::BasicBlock::Create(context, "skipped", &function);
+    header->getTerminator()->replaceSuccessorWith(arguments, selected);
+    llvm::IRBuilder<>(selected).CreateCondBr(function.getArg(3), arguments, skipped);
+    llvm::IRBuilder<> skipping(skipped);
+    auto* total = &*std::next(header->phis().begin());
+    if (path == GuardPath::Conditional) {
+      auto* latch = calculate->getSingleSuccessor();
+      skipping.CreateBr(latch);
+      latch->phis().begin()->addIncoming(total, skipped);
+    } else {
+      skipping.CreateRet(total);
+    }
+  }
+  llvm::IRBuilder<> builder(&*calculate->getFirstInsertionPt());
+  llvm::StoreInst* store = nullptr;
+  switch (mutation) {
+    case GuardMutation::None:
+      break;
+    case GuardMutation::SameKind:
+    case GuardMutation::OtherKind:
+      store =
+          builder.CreateStore(builder.getInt8(mutation == GuardMutation::SameKind ? 2 : 3), kind);
+      store->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::FieldKinds, DeclarationId{2}));
+      break;
+    case GuardMutation::Name:
+      store = builder.CreateStore(builder.getInt8(4), name);
+      store->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::FieldKinds, DeclarationId{3}));
+      break;
+    case GuardMutation::Items:
+      store = builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                                  function.getArg(0));
+      store->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::FieldPayloads, DeclarationId{1}));
+      break;
+    case GuardMutation::Length:
+      store = builder.CreateStore(builder.getInt32(0), length);
+      store->setMetadata(llvm::LLVMContext::MD_tbaa,
+                         NativeMemoryTag(context, MemoryRegion::HeapHeader));
+      break;
+    case GuardMutation::Call:
+      builder.CreateCall(module->getFunction("mutate"));
+      break;
+  }
+  ASSERT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
+  test::RunFunctionPasses(function, AddBoundedPollPasses);
+  EXPECT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
+  llvm::DominatorTree dominators(function);
+  const llvm::LoopInfo loops(dominators);
+  bool unpolled = false;
+  for (const auto* loop : loops.getLoopsInPreorder()) {
+    unpolled = unpolled || (loop->getSubLoops().empty() && HasUnpolledArrayLoad(*loop));
+  }
+  std::string generated;
+  llvm::raw_string_ostream stream(generated);
+  function.print(stream);
+  const auto always_executed = path != GuardPath::Conditional && path != GuardPath::EarlyExit;
+  EXPECT_EQ(unpolled, always_executed &&
+                          (mutation == GuardMutation::None || mutation == GuardMutation::SameKind))
+      << generated;
+}
+
+INSTANTIATE_TEST_SUITE_P(GuardWrites,
+                         GuardedPollOptimizerTest,
+                         testing::Combine(testing::Values(GuardMutation::None,
+                                                          GuardMutation::SameKind,
+                                                          GuardMutation::OtherKind,
+                                                          GuardMutation::Name,
+                                                          GuardMutation::Items,
+                                                          GuardMutation::Length,
+                                                          GuardMutation::Call),
+                                          testing::Values(GuardPath::Separate,
+                                                          GuardPath::Combined,
+                                                          GuardPath::Rejoined,
+                                                          GuardPath::Conditional,
+                                                          GuardPath::EarlyExit,
+                                                          GuardPath::RepeatedBound)));
 
 }  // namespace
 }  // namespace vela::compiler::native

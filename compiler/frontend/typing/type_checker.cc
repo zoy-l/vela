@@ -155,6 +155,7 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
                                                         const FunctionInfo* context) {
   FunctionInfo info;
   info.intrinsic = function.intrinsic;
+  info.intrinsic_operation = function.intrinsic_operation;
   info.optional_parameters.insert(function.optional_parameters.begin(),
                                   function.optional_parameters.end());
   if (function.intrinsic == Builtin::IntParse || function.intrinsic == Builtin::IntTryParse) {

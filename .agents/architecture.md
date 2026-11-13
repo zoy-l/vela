@@ -159,9 +159,11 @@ The execution registers its exception root when it publishes an exception envelo
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
 
 Synchronous native stack roots form a LIFO chain owned by the Heap, including reloadable frames
-and their synchronous recovery calls. Async frames retain independent root registration. Synchronous
-frames initialize their root slots and link them on entry so loop optimizations see a fixed root chain.
-Linked frames restore the previous head on every exit. Closed synchronous
+and their synchronous recovery calls. Async frames retain independent root registration. Frames
+containing loops initialize their root slots and link them on entry so loop optimizations see a fixed
+root chain. Bounded, acyclic optimized synchronous frames may initialize and link their roots with
+the logical trace at the first observable boundary. Linked frames restore the previous head on every
+exit; a frame that never links neither clears root slots nor restores a root-chain head. Closed synchronous
 frames may defer roots when their complete successful path only performs inline scalar or field
 operations, initialized global access, and direct self-recursion using stack storage. These frames
 retain logical trace and depth bookkeeping. The first failure temporarily roots only its initialized
@@ -198,6 +200,52 @@ the caller's code-reuse fingerprint. Leaf execution checks pending control reque
 stack budgets; requested observation enters the complete function, while arithmetic failure
 materializes its original source frame. Active callers retain baseline recovery and resume after
 completed calls without replaying their effects.
+
+Script reflection caches borrow code from one publication and validate its epoch, execution program
+and unique receiver layout id before calling a signature-specific entry. Caches retain neither the
+receiver nor old layouts or code owners. Positional argument values are fully decoded before entering
+the callee, preserving snapshots when the callee changes the argument objects or collects garbage.
+Named, default and rest arguments retain the complete binding contract.
+
+Closed linked AOT binds reflected member identity only from single-definition descriptors, immutable
+global initializers and consistent no-argument return summaries. Public instance fields with primitive
+or dynamic values and a statically matching non-null receiver use ordinary field storage directly;
+writes retain value checks and GC barriers, including derived receivers with larger layouts. Small
+scalar methods may use the existing leaf entry after full positional argument validation. Mutable
+descriptors, unresolved inheritance queries and other value contracts retain general reflection.
+
+Counted loops may share request checks and stable reflection argument guards across bounded chunks.
+Both the iteration limit and successful-path instruction budget bound the observation delay. Guard
+loads must remain valid under every successful-path write; repeated writes of an already-checked
+kind tag preserve that fact. Guard checks retain their short-circuit order, and a failed guard enters
+the ordinary current iteration before any chunk effects. Each chunk reloads mutable arguments;
+user calls, allocation and other unproven mutations retain per-iteration observation and validation.
+
+Default type and member lookups reuse a single descriptor-cache slot keyed by operation, name,
+qualifier, result contract, execution program and publication epoch. Only lookups within the same
+program populate the slot, so generic descriptor contracts never cross program-local type indices.
+The cache traces its names and result through its owning program or handle, including null results;
+publication invalidates both positive and negative entries. Mutable query and type-argument objects
+do not participate in this cache.
+
+An immediately consumed standard `CallArguments` construction containing an array literal of
+standard `CallArgument` constructions lowers to an ordered value/name register window. These
+records have no escaping identity or user constructor effects. Expression evaluation order,
+conversions, GC roots, suspension and canonical recovery values remain in the ordinary IR pipeline.
+Existing argument objects are snapshotted at invocation. Both representations finish decoding before
+entering user code and share the same named, default, rest and constructor binding. Deleted or
+withdrawn targets are resolved before argument-binding errors.
+
+Reloadable optimized reflection may use a bounded entry for small synchronous scalar methods that
+access only their receiver's scalar fields and contain no loops, allocation or user calls. The caller
+checks requests and saves roots and observation state before probing the cache. The cache reuses the
+caller's no-request result; a boundary that processes requests enters the complete execution path,
+including persistent debugger observation. Cache construction requires the function version's
+canonical receiver layout, and the entry checks that all fields are ready before performing any
+effects. This bounded fragment reuses the caller's safety boundary;
+ordinary entries keep their full safepoints. Arithmetic failures materialize the original frame at the
+failing instruction without replaying completed writes. Unready fields and noncanonical layouts enter
+the ordinary binding and execution path before any bounded-body effects occur.
 
 String constants are borrowed from the current execution instance's immutable constant pool.
 Publication retains old pools with their instances, and host reentry restores the caller's instance.

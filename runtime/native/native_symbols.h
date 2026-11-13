@@ -5,8 +5,6 @@
 namespace vela::runtime {
 
 // 原生 ABI 的外部符号名由代码生成器和 JIT 绑定共同消费。
-inline constexpr std::string_view kNativeDirectFieldLayoutsSymbol =
-    "vela_native_v10_direct_field_layouts";
 inline constexpr std::string_view kNativeFieldCachesSymbol = "vela_native_v10_field_caches";
 inline constexpr std::string_view kNativeLoadGlobalSymbol = "vela_native_v10_load_global";
 inline constexpr std::string_view kNativeNewArraySymbol = "vela_native_v10_new_array";
@@ -24,6 +22,8 @@ inline constexpr std::string_view kNativeAsyncCallSymbol = "vela_native_v1_async
 inline constexpr std::string_view kNativeAsyncErrorSymbol = "vela_native_v1_async_error";
 inline constexpr std::string_view kNativeAsyncReturnSymbol = "vela_native_v1_async_return";
 inline constexpr std::string_view kNativeBuiltinSymbol = "vela_native_v1_builtin";
+inline constexpr std::string_view kNativeReflectionInvokeSymbol =
+    "vela_native_v12_reflection_invoke";
 inline constexpr std::string_view kNativeCallIndirectSymbol = "vela_native_v1_call_indirect";
 inline constexpr std::string_view kNativeCallInterfaceV1Symbol = "vela_native_v1_call_interface";
 inline constexpr std::string_view kNativeCatchSymbol = "vela_native_v1_catch";

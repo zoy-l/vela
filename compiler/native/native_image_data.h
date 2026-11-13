@@ -24,7 +24,9 @@ class NativeImageData final {
            (functions_.size() * sizeof(runtime::NativeFunctionDescription));
   }
   void BindEntries(std::span<const runtime::NativeEntry> entries,
+                   std::span<const runtime::NativeReflectionEntry> reflection_entries,
                    std::span<const runtime::NativeTypedEntry> typed_entries);
+  void RequireReflectionReceiverLayout(std::size_t function);
 
  private:
   friend class NativeImageBuilder;

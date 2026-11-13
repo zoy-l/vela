@@ -23,6 +23,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
@@ -106,6 +107,21 @@ bool FunctionEmitter::CanDeferRoots() const {
   return true;
 }
 
+bool FunctionEmitter::CanDelayRootRegistration() const {
+  if (tier_ != NativeCodeTier::Optimized ||
+      (kind_ != NativeEntryKind::Initial && kind_ != NativeEntryKind::BoundedReflection) ||
+      !roots_.bounded_polls || !CanUseSynchronousStackFrame()) {
+    return false;
+  }
+  // 无循环帧在首次可观察边界统一挂链。循环仍在入口登记，保持其根链不变量。
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    if (ir::IsBackJump(source_.instructions[index], index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool FunctionEmitter::CanExecuteWithoutCollection(std::size_t index) const {
   const auto& instruction = source_.instructions[index];
   if (roots_.safepoints[index] != 0 || instruction.construction ||
@@ -159,10 +175,12 @@ void FunctionEmitter::EmitFrameEntry() {
   Builder failure(failed);
   auto* error = failure.CreatePHI(builder_.getInt8Ty(), 0);
   if (kind_ == NativeEntryKind::Leaf) {
-    failure.CreateStore(
+    auto* position = failure.CreateStore(
         failure.getInt64(runtime::EncodeNativeTracePosition(
             {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0})),
         body_->getArg(static_cast<unsigned>(body_->arg_size() - 1)));
+    position->setMetadata(llvm::LLVMContext::MD_tbaa,
+                          NativeMemoryTag(context, MemoryRegion::Values));
   }
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
@@ -209,19 +227,13 @@ void FunctionEmitter::EmitFrameEntry() {
       auto* head = builder_.CreateLoad(
           pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionStackRoots));
       MarkInvariant(*head);
-      stack_roots_head = head;
-      previous_stack_roots = LoadMemory(pointer, head, MemoryRegion::StackRoots);
-      // 同步帧和重载恢复严格按栈序退出，共用 Heap 的 LIFO 根链；异步帧仍单独登记。
-      // 根槽清零后统一挂链，避免每个 GC 边界重复检查登记状态。
-      static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
-      builder_.CreateMemSet(root_slots_, builder_.getInt8(0), roots_.count * sizeof(runtime::Value),
-                            llvm::Align(alignof(runtime::Value)));
-      builder_.CreateStore(root_slots_, ByteAddress(frame, offsetof(NativeStackRoots, values)));
-      builder_.CreateStore(builder_.getInt64(roots_.count),
-                           ByteAddress(frame, offsetof(NativeStackRoots, count)));
-      builder_.CreateStore(previous_stack_roots,
-                           ByteAddress(frame, offsetof(NativeStackRoots, previous)));
-      StoreMemory(frame, head, MemoryRegion::StackRoots);
+      stack_roots_head_ = head;
+      stack_roots_frame_ = frame;
+      delayed_root_registration_ = CanDelayRootRegistration();
+      if (!delayed_root_registration_) {
+        previous_stack_roots = LinkStackRoots();
+        stack_roots_head = head;
+      }
     } else {
       root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
       auto enter = module_.getOrInsertFunction(
@@ -262,28 +274,7 @@ void FunctionEmitter::EmitFrameEntry() {
   }
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
-    trace_frame_ = frame;
-    InitializeTraceFrame(frame);
-    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                         ByteAddress(frame, offsetof(NativeTraceFrame, position) +
-                                                offsetof(runtime::TracePosition, function)));
-    InitializeDebugValues();
-    Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
-    trace_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
-    builder_.CreateStore(builder_.getFalse(), trace_initialized_);
-    instruction_slot_ = ByteAddress(frame, offsetof(NativeTraceFrame, position) +
-                                               offsetof(runtime::TracePosition, instruction));
-    auto* restore = llvm::BasicBlock::Create(context, "frame.restore", body_);
-    auto* restored = llvm::BasicBlock::Create(context, "frame.restored", body_);
-    cleanup.CreateCondBr(cleanup.CreateLoad(cleanup.getInt1Ty(), trace_initialized_), restore,
-                         restored);
-    cleanup.SetInsertPoint(restore);
-    auto* previous = cleanup.CreateLoad(
-        pointer, cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), frame,
-                                            offsetof(NativeTraceFrame, previous)));
-    StoreExecutionState(cleanup, previous, depth);
-    cleanup.CreateBr(restored);
-    cleanup.SetInsertPoint(restored);
+    EmitTraceFrame(frame, cleanup, depth);
   }
   if (stack_roots_head != nullptr) {
     auto* restore_roots = cleanup.CreateStore(previous_stack_roots, stack_roots_head);
@@ -300,6 +291,56 @@ void FunctionEmitter::EmitFrameEntry() {
   cleanup.CreateRet(status_);
 }
 
+void FunctionEmitter::EmitTraceFrame(llvm::Value* frame, Builder& cleanup, llvm::Value* depth) {
+  using runtime::NativeTraceFrame;
+  trace_frame_ = frame;
+  if (!delayed_root_registration_) {
+    InitializeTraceFrame(frame);
+  }
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  trace_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
+  builder_.CreateStore(builder_.getFalse(), trace_initialized_);
+  instruction_slot_ = ByteAddress(
+      frame, offsetof(NativeTraceFrame, position) + offsetof(runtime::TracePosition, instruction));
+  auto& context = module_.getContext();
+  auto* restore = llvm::BasicBlock::Create(context, "frame.restore", body_);
+  auto* restored = llvm::BasicBlock::Create(context, "frame.restored", body_);
+  cleanup.CreateCondBr(cleanup.CreateLoad(cleanup.getInt1Ty(), trace_initialized_), restore,
+                       restored);
+  cleanup.SetInsertPoint(restore);
+  auto* previous = cleanup.CreateLoad(
+      cleanup.getPtrTy(),
+      cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), frame, offsetof(NativeTraceFrame, previous)));
+  StoreExecutionState(cleanup, previous, depth);
+  if (delayed_root_registration_) {
+    auto* previous_roots = cleanup.CreateLoad(
+        cleanup.getPtrTy(),
+        cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), stack_roots_frame_,
+                                   offsetof(runtime::NativeStackRoots, previous)));
+    cleanup.CreateStore(previous_roots, stack_roots_head_)
+        ->setMetadata(llvm::LLVMContext::MD_tbaa, MemoryTag(MemoryRegion::StackRoots));
+  }
+  cleanup.CreateBr(restored);
+  cleanup.SetInsertPoint(restored);
+}
+
+llvm::Value* FunctionEmitter::LinkStackRoots() {
+  using runtime::NativeStackRoots;
+  auto* frame = stack_roots_frame_;
+  auto* previous = LoadMemory(builder_.getPtrTy(), stack_roots_head_, MemoryRegion::StackRoots);
+  // 同步帧和重载恢复按栈序退出，共用 Heap 的 LIFO 根链。
+  // 首次挂链前清空全部槽，随后每个实际 GC 边界只保存其活动值。
+  static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
+  builder_.CreateMemSet(root_slots_, builder_.getInt8(0), roots_.count * sizeof(runtime::Value),
+                        llvm::Align(alignof(runtime::Value)));
+  builder_.CreateStore(root_slots_, ByteAddress(frame, offsetof(NativeStackRoots, values)));
+  builder_.CreateStore(builder_.getInt64(roots_.count),
+                       ByteAddress(frame, offsetof(NativeStackRoots, count)));
+  builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeStackRoots, previous)));
+  StoreMemory(frame, stack_roots_head_, MemoryRegion::StackRoots);
+  return previous;
+}
+
 void FunctionEmitter::InitializeTraceFrame(llvm::Value* frame) {
   using runtime::NativeTraceFrame;
   builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
@@ -308,6 +349,10 @@ void FunctionEmitter::InitializeTraceFrame(llvm::Value* frame) {
   builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
   builder_.CreateStore(builder_.getInt64(0),
                        ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
+  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                       ByteAddress(frame, offsetof(NativeTraceFrame, position) +
+                                              offsetof(runtime::TracePosition, function)));
+  InitializeDebugValues();
 }
 
 void FunctionEmitter::StoreExecutionState(Builder& builder,
@@ -342,7 +387,12 @@ void FunctionEmitter::PrepareTraceFrame() {
   auto* pointer = builder_.getPtrTy();
   auto* previous = LoadMemory(pointer, frame_address, MemoryRegion::Execution);
   auto* frame = trace_frame_;
-  builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
+  if (delayed_root_registration_) {
+    InitializeTraceFrame(frame);
+    LinkStackRoots();
+  }
+  StoreMemory(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)),
+              MemoryRegion::Execution);
   auto* next_depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(1));
   StoreExecutionState(builder_, frame, next_depth);
   builder_.CreateStore(builder_.getTrue(), trace_initialized_);
@@ -397,9 +447,11 @@ void FunctionEmitter::CacheFields() {
     return;
   }
   absl::flat_hash_map<ir::ClassId, llvm::Value*> classes;
-  auto layouts = module_.getOrInsertFunction(runtime::kNativeDirectFieldLayoutsSymbol,
-                                             builder_.getPtrTy(), builder_.getPtrTy());
-  auto* table = builder_.CreateCall(layouts, {body_->getArg(0)});
+  auto* program = LoadProgramData(builder_, body_->getArg(0));
+  auto* table = builder_.CreateLoad(
+      builder_.getPtrTy(),
+      ByteAddress(program, runtime::NativeMemoryLayout::kProgramDirectFieldLayouts));
+  MarkInvariant(*table);
   for (const auto& instruction : source_.instructions) {
     if ((instruction.opcode != Opcode::GetField && instruction.opcode != Opcode::SetField) ||
         !instruction.field_declaration) {

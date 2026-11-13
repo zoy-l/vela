@@ -371,6 +371,8 @@ source_set("native") {
     "native/map_analysis.h",
     "native/materialization_emitter.cc",
     "native/memory_emitter.cc",
+    "native/memory_regions.cc",
+    "native/memory_regions.h",
     "native/native_frame_plan.cc",
     "native/native_frame_plan.h",
     "native/native_image_data.cc",
@@ -384,6 +386,7 @@ source_set("native") {
     "native/recursive_inliner.cc",
     "native/recursive_inliner.h",
     "native/reference_emitter.cc",
+    "native/reflection_emitter.cc",
     "native/scalar_emitter.cc",
   ]
   public_deps = [
@@ -544,6 +547,8 @@ source_set("aot") {
     "aot/native_export_emitter.h",
     "aot/native_field_optimizer.cc",
     "aot/native_field_optimizer.h",
+    "aot/native_reflection_optimizer.cc",
+    "aot/native_reflection_optimizer.h",
     "aot/native_type_optimizer.cc",
     "aot/native_type_optimizer.h",
     "aot/reachability.cc",
@@ -578,6 +583,7 @@ executable("vela_aot_tests") {
   testonly = true
   sources = [
     "aot/native_compiler_unittest.cc",
+    "aot/native_reflection_unittest.cc",
     "aot/reachability_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/array_capacity_analysis_unittest.cc",
@@ -598,6 +604,7 @@ executable("vela_aot_tests") {
   ]
   deps = [
     ":aot",
+    ":jit",
     ":native_pass_test_support",
     ":preparation_test_support",
     ":project_configuration",
