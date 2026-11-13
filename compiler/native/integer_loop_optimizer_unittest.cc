@@ -33,6 +33,7 @@
 #include "base/declaration.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/test_support/native_pass_test_support.h"
+#include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -465,8 +466,8 @@ done:
     auto* header = arguments->getSinglePredecessor();
     auto* more = llvm::cast<llvm::ICmpInst>(symbols.lookup("more"));
     llvm::IRBuilder<> condition(more);
-    auto* bound_address =
-        condition.CreateConstGEP1_64(condition.getInt8Ty(), function.getArg(4), 40);
+    auto* bound_address = condition.CreateConstGEP1_64(
+        condition.getInt8Ty(), symbols.lookup("input"), runtime::NativeMemoryLayout::kObjectLength);
     auto* bound = condition.CreateLoad(condition.getInt32Ty(), bound_address);
     auto* tag = NativeMemoryTag(context, MemoryRegion::HeapHeader);
     bound->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
@@ -475,7 +476,7 @@ done:
     auto* invalid = llvm::BasicBlock::Create(context, "invalid", &function);
     header->getTerminator()->replaceSuccessorWith(arguments, bounds);
     llvm::IRBuilder<> checking(bounds);
-    auto* clear = checking.CreateStore(checking.getInt8(0), function.getArg(5));
+    auto* clear = checking.CreateStore(checking.getInt8(0), symbols.lookup("roots"));
     clear->setMetadata(llvm::LLVMContext::MD_tbaa, NativeMemoryTag(context, MemoryRegion::Roots));
     clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(context, {}));
     auto* reloaded = checking.CreateLoad(checking.getInt32Ty(), bound_address);
@@ -483,7 +484,8 @@ done:
     auto* valid = checking.CreateICmpSLT(&*header->phis().begin(),
                                          checking.CreateZExt(reloaded, checking.getInt64Ty()));
     checking.CreateCondBr(valid, arguments, invalid);
-    llvm::IRBuilder<>(invalid).CreateRet(condition.getInt64(-1));
+    llvm::IRBuilder<>(invalid).CreateRet(
+        condition.getInt64(std::numeric_limits<std::uint64_t>::max()));
   }
   if (path == GuardPath::Combined || path == GuardPath::Rejoined) {
     auto* available = llvm::cast<llvm::CondBrInst>(arguments->getTerminator());

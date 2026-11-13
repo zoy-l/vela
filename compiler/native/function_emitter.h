@@ -173,8 +173,8 @@ class FunctionEmitter final {
   llvm::Value* ReadArrayStorage(llvm::Value* array, ir::RegisterId reg, ArrayStorageField field);
   void SetPosition();
   void PrepareRuntimeCall();
-  enum class CallEntry : std::uint8_t { Body, Leaf, Slot };
-  CallEntry SelectCallEntry(std::size_t callee) const;
+  enum class CallEntry : std::uint8_t { Body, Borrowed, Leaf, Slot };
+  CallEntry SelectCallEntry(CallableTarget target, std::size_t instruction) const;
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
   void MarkClosedInvariantCall(llvm::CondBrInst& branch) const;
@@ -323,7 +323,7 @@ class FunctionEmitter final {
   void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
   std::optional<CallableTarget> CallTarget(std::size_t index) const;
-  bool IsLeafCall(std::optional<CallableTarget> target) const;
+  bool IsLeafCall(std::optional<CallableTarget> target, std::size_t instruction) const;
   void StoreCallResult(ir::RegisterId reg, const SourceType& type, llvm::Value* address);
   void EmitCall(const ir::Instruction& instruction, CallableTarget selected);
   void EmitLeafCall(const ir::Instruction& instruction,

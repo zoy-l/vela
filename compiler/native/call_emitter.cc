@@ -25,7 +25,13 @@
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 namespace vela::compiler::native {
-FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(std::size_t callee) const {
+FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(CallableTarget target,
+                                                            std::size_t instruction) const {
+  if (!escape_.borrowed_calls.empty() && escape_.borrowed_calls.at(instruction)) {
+    // borrowed 入口接收标量字段地址记录；普通叶入口要求完整对象，二者不能互换。
+    return CallEntry::Borrowed;
+  }
+  const auto callee = target.function;
   if (tier_ == NativeCodeTier::Optimized &&
       calls_.IsEntrySlotRequired({.caller = function_index_, .callee = callee})) {
     return CallEntry::Slot;
@@ -237,7 +243,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  const auto call_entry = SelectCallEntry(selected.function);
+  const auto call_entry = SelectCallEntry(selected, instruction_index_);
   const auto leaf_call = call_entry == CallEntry::Leaf;
   auto* result = leaf_call ? leaf_result_ : result_;
   arguments.back() = result;
@@ -258,7 +264,8 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   } else if (leaf_call) {
     EmitLeafCall(instruction, selected, arguments);
   } else {
-    status = builder_.CreateCall(borrowed ? target.borrowed : target.body, arguments);
+    status = builder_.CreateCall(call_entry == CallEntry::Borrowed ? target.borrowed : target.body,
+                                 arguments);
   }
   if (borrowed) {
     // 被调用方可能在抛错前修改引用字段；错误封套分配前刷新调用者根。

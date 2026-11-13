@@ -53,8 +53,9 @@
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
-bool FunctionEmitter::IsLeafCall(std::optional<CallableTarget> target) const {
-  return target && SelectCallEntry(target->function) == CallEntry::Leaf;
+bool FunctionEmitter::IsLeafCall(std::optional<CallableTarget> target,
+                                 std::size_t instruction) const {
+  return target && SelectCallEntry(*target, instruction) == CallEntry::Leaf;
 }
 
 bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
@@ -75,7 +76,7 @@ bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
          ir::IsBuiltinCall(instruction, Builtin::ArrayPush) ||
          (placement_ == NativeCodePlacement::Linked &&
           ir::IsBuiltinCall(instruction, Builtin::MutableStringAppendCodePoint)) ||
-         instruction.opcode == Opcode::GetGlobal || IsLeafCall(target) ||
+         instruction.opcode == Opcode::GetGlobal || IsLeafCall(target, index) ||
          (target && generated_[target->function].square_root);
 }
 
@@ -160,7 +161,7 @@ void FunctionEmitter::PrepareRuntimeCall() {
   if (leaf_entry_) {
     return;
   }
-  if (IsLeafCall(CallTarget(instruction_index_))) {
+  if (IsLeafCall(CallTarget(instruction_index_), instruction_index_)) {
     // 有界叶调用不轮询、不分配。失败状态返回调用者后才建立根和逻辑异常帧。
     return;
   }
@@ -566,7 +567,7 @@ const NativeFrameLayout& FunctionEmitter::PlanFrame() {
   NativeFrameRequirements requirements{.recovery = HasRecovery()};
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto* member = reflection_members_.empty() ? nullptr : reflection_members_[index];
-    if (IsLeafCall(CallTarget(index)) ||
+    if (IsLeafCall(CallTarget(index), index) ||
         (member != nullptr && member->kind == reflection::MemberKind::Method &&
          generated_[member->target].leaf != nullptr)) {
       requirements.leaf_calls = true;

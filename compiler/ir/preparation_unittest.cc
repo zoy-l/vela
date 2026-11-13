@@ -45,7 +45,7 @@ TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
       if (instruction.opcode != Opcode::BuiltinCall || selected == builtins.end()) {
         continue;
       }
-      const auto slot = selected - builtins.begin();
+      const auto slot = static_cast<std::size_t>(selected - builtins.begin());
       ++operations[slot];
       EXPECT_GE(instruction.lhs, function.parameter_count) << function.name;
     }

@@ -387,6 +387,8 @@ source_set("native") {
     "native/recursive_inliner.h",
     "native/reference_emitter.cc",
     "native/reflection_emitter.cc",
+    "native/repeated_field_optimizer.cc",
+    "native/repeated_field_optimizer.h",
     "native/scalar_emitter.cc",
   ]
   public_deps = [
@@ -545,8 +547,6 @@ source_set("aot") {
     "aot/native_compiler.h",
     "aot/native_export_emitter.cc",
     "aot/native_export_emitter.h",
-    "aot/native_field_optimizer.cc",
-    "aot/native_field_optimizer.h",
     "aot/native_reflection_optimizer.cc",
     "aot/native_reflection_optimizer.h",
     "aot/native_type_optimizer.cc",
@@ -583,8 +583,8 @@ executable("vela_aot_tests") {
   testonly = true
   sources = [
     "aot/native_compiler_unittest.cc",
-    "aot/native_reflection_unittest.cc",
     "aot/reachability_unittest.cc",
+    "aot/repeated_field_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/array_capacity_analysis_unittest.cc",
     "native/call_targets_unittest.cc",
@@ -601,10 +601,10 @@ executable("vela_aot_tests") {
     "native/native_roots_unittest.cc",
     "native/recursive_inliner_unittest.cc",
     "native/reflection_unittest.cc",
+    "native/repeated_field_optimizer_unittest.cc",
   ]
   deps = [
     ":aot",
-    ":jit",
     ":native_pass_test_support",
     ":preparation_test_support",
     ":project_configuration",
@@ -684,6 +684,7 @@ source_set("native_pass_test_support") {
     "test_support/native_pass_test_support.h",
   ]
   public_deps = [ "//third_party:llvm" ]
+  deps = [ "//third_party:gtest" ]
 }
 
 source_set("reflection_test_support") {

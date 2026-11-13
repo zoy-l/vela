@@ -113,6 +113,15 @@ callers sharing one callee. Source preparation, code generation and linking are 
 with `python -m tools.vl bench -- --benchmark_filter=^compile/native/`.
 These standalone compiler measurements have no language comparison report.
 
+[repeated_field_benchmark.cc](repeated_field_benchmark.cc) supplies
+`compile/aot/repeated_fields/*` in `vela_aot_benchmarks`. It measures Release AOT
+compilation from prepared Typed IR, including native preparation, generation,
+optimization and object emission. The `optimization_ns` counter isolates the
+compiler's optimization stage. Cases cover dynamic and over-limit trip counts,
+and one or eight foldable traversals. Source loading and frontend preparation
+are excluded. After building Release benchmarks, run
+`out/release/vela_aot_benchmarks --benchmark_filter=^compile/aot/repeated_fields/`.
+
 [standard_value_benchmark.cc](standard_value_benchmark.cc) supplies the shared
 native harness for string case conversion, numeric parsing, date/time and other
 standard APIs. Byte data, JSON/dynamic calls and regular expressions add workloads

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import unittest
 
+from tools.aot_reflection_fixture import HOST as OFFLINE_MEMBER_HOST, SOURCE as OFFLINE_MEMBER_SOURCE
 from tools.config import ROOT, executable_name
 from tools.test_support import (CommandTestCase, compile_native_host, create_native_package,
                                 native_command, native_test_libraries)
@@ -194,6 +195,28 @@ class ReflectionCommandTest(CommandTestCase):
                     self.assertIn("[  PASSED  ] 1 test.", native_command(self, [executable], cwd=self.directory).stdout)
                 finally:
                     self.source.write_bytes(original)
+
+    def test_offline_members_preserve_value_checks_and_single_execution_on_failure(self) -> None:
+        source = self.write("members.vela", OFFLINE_MEMBER_SOURCE)
+        suffix = ".obj" if sys.platform == "win32" else ".o"
+        artifact = self.directory / ("members" + suffix)
+        native_command(self, [self.native_compiler, "build", source, "--emit=obj",
+                              "--export=exercise", "--export=fields", "--export=fail",
+                              "--export=lookup", "--export=borrowed", "-o", artifact],
+                       env=self.native_environment, cwd=self.directory)
+        manifest = json.loads(Path(str(artifact) + ".aot.json").read_text(encoding="utf-8"))
+        host = '#include "' + artifact.name + '.h"\n' + OFFLINE_MEMBER_HOST.replace(
+            "REFLECTION_IMAGE", manifest["image"])
+        host_source = self.write("members_host.cc", host)
+        executable = self.directory / executable_name("members_host")
+        libraries = native_test_libraries(self.executable.parent)
+        includes = [ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
+                    ROOT / "third_party/googletest/googletest/include"]
+        compile_native_host(self, [host_source], executable, [artifact, *libraries],
+                            includes, cwd=self.directory)
+        source.unlink()
+        result = native_command(self, [executable], cwd=self.directory)
+        self.assertIn("[  PASSED  ] 1 test.", result.stdout)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "compiler/native/recursive_inliner.h"
+#include "compiler/native/repeated_field_optimizer.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
@@ -194,7 +195,10 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
   return machine;
 }
 
-void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
+void Optimize(llvm::Module& module,
+              llvm::TargetMachine& machine,
+              NativeProgramMode mode,
+              NativeCodePlacement placement) {
   machine.setOptLevel(llvm::CodeGenOptLevel::Aggressive);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
@@ -205,8 +209,12 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   tuning.SLPVectorization = true;
   llvm::PassBuilder passes(&machine, tuning);
   passes.registerPeepholeEPCallback(
-      [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+      [mode, placement](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         AddIntegerBitPasses(pipeline);
+        // 在通用循环展开前消费闭合字段事实，避免热路径被展开后失去重复遍历结构。
+        if (IsClosedLinkedProgram(mode, placement)) {
+          AddRepeatedFieldPasses(pipeline);
+        }
       });
   passes.registerCGSCCOptimizerLateEPCallback(
       [](llvm::CGSCCPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
@@ -917,7 +925,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
 }
 
 std::expected<void, std::string> Finalize(NativeModule& generated,
-                                          NativeOptimization optimization) {
+                                          NativeOptimization optimization,
+                                          NativeProgramMode mode,
+                                          NativeCodePlacement placement) {
   auto& module = *generated.module;
   std::string verification;
   llvm::raw_string_ostream verifier(verification);
@@ -929,7 +939,7 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
       InlineRecursion(*function);
     }
     generated.recursive_functions.clear();
-    Optimize(module, *generated.machine);
+    Optimize(module, *generated.machine, mode, placement);
   } else {
     // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的
     // 临时值全部留在物理栈上，绕过大帧的有界外部存储。

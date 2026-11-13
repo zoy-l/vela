@@ -1,40 +1,6 @@
-#include "compiler/aot/native_compiler.h"
+"""Offline reflection value, failure and trace contracts for a statically linked host."""
 
-#include <array>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <utility>
-
-#include <gtest/gtest.h>
-
-#include <llvm/ADT/StringRef.h>
-#include <llvm/ExecutionEngine/JITSymbol.h>
-#include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
-#include <llvm/ExecutionEngine/Orc/CoreContainers.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
-#include <llvm/Support/Error.h>
-#include <llvm/Support/MemoryBuffer.h>
-#include <llvm/TargetParser/Triple.h>
-
-#include "base/execution_status.h"
-#include "compiler/frontend/diagnostic.h"
-#include "compiler/jit/engine.h"
-#include "compiler/test_support/preparation_test_support.h"
-#include "runtime/heap/heap.h"
-#include "runtime/isolate/isolate.h"
-#include "runtime/native/native_api.h"
-#include "runtime/native/native_execution.h"
-#include "runtime/native/native_image.h"
-#include "runtime/native/native_instance.h"
-#include "runtime/value/value.h"
-
-namespace vela::compiler::aot {
-namespace {
-
-constexpr std::string_view kMutableArguments = R"(
+SOURCE = r'''
 [Reflect]
 class Counter {
   value: int = 0;
@@ -168,40 +134,40 @@ export func fields(): int {
   catch (error: Error) { if (error.code != 'InvalidCast') { return -16; } }
   return object.text == 'value2050' && object.number == 2.5 && object.nested.value == 29 ? 42 : -17;
 }
-)";
+export func borrowed(): int {
+  const object = Counter();
+  const retained = '${object.value}';
+  try { object.update(9223372036854775807); return -1; }
+  catch (error: Error) { if (error.code != 'IntegerOverflow') { return -2; } }
+  return object.calls == 1 && object.value == 9223372036854775807 && retained == '0' ? 42 : -3;
+}
+'''
+
+HOST = r'''
+#include <array>
+#include <string>
+
+#include <gtest/gtest.h>
+
+#include "base/execution_status.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/value/value.h"
+
+extern "C" const vela::runtime::NativeImage* REFLECTION_IMAGE() noexcept;
+
+namespace vela {
+namespace {
 
 TEST(NativeReflectionTest, OfflineMembersPreserveValueChecksAndSingleExecutionOnFailure) {
-  const auto prepared = ir::test::Prepare(kMutableArguments);
-  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-  const auto artifact =
-      Compile(prepared.program, {.exports = {"exercise", "fields", "fail", "lookup"}});
-  ASSERT_TRUE(artifact) << frontend::DiagnosticsText(artifact.error());
-  auto engine = jit::CreateEngine(llvm::Triple(artifact->target));
-  ASSERT_TRUE(static_cast<bool>(engine)) << llvm::toString(engine.takeError());
-  auto& loader = **engine;
-  llvm::orc::SymbolMap symbols;
-  symbols.try_emplace(loader.mangleAndIntern("vela_aot_v2_instantiate"),
-                      llvm::orc::ExecutorAddr::fromPtr(&vela_aot_v2_instantiate),
-                      llvm::JITSymbolFlags::Exported);
-  symbols.try_emplace(loader.mangleAndIntern("vela_aot_v2_invoke"),
-                      llvm::orc::ExecutorAddr::fromPtr(&vela_aot_v2_invoke),
-                      llvm::JITSymbolFlags::Exported);
-  auto definitions =
-      loader.getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(symbols)));
-  ASSERT_FALSE(static_cast<bool>(definitions)) << llvm::toString(std::move(definitions));
-  const auto& object = artifact->object;
-  const void* storage = object.data();
-  const auto bytes = llvm::StringRef(static_cast<const char*>(storage), object.size());
-  auto error = (*engine)->addObjectFile(llvm::MemoryBuffer::getMemBuffer(bytes, "", false));
-  ASSERT_FALSE(static_cast<bool>(error)) << llvm::toString(std::move(error));
-  auto symbol = (*engine)->lookup(artifact->image_symbol);
-  ASSERT_TRUE(static_cast<bool>(symbol)) << llvm::toString(symbol.takeError());
-  using ImageEntry = const runtime::NativeImage* (*)();
-  const auto* image = symbol->toPtr<ImageEntry>()();
+  const auto* image = REFLECTION_IMAGE();
   runtime::Isolate isolate(1);
   const auto instance = runtime::NativeInstance::Instantiate(isolate, *image);
   ASSERT_TRUE(instance) << instance.error().message;
-  for (const auto* name : std::array{"exercise", "fields", "lookup"}) {
+  for (const auto* name : std::array{"exercise", "fields", "lookup", "borrowed"}) {
     const auto function = (*instance)->FindFunction(name);
     ASSERT_TRUE(function) << name;
     const auto result = runtime::ExecuteNativeFunction(**instance, *function);
@@ -220,4 +186,5 @@ TEST(NativeReflectionTest, OfflineMembersPreserveValueChecksAndSingleExecutionOn
 }
 
 }  // namespace
-}  // namespace vela::compiler::aot
+}  // namespace vela
+'''

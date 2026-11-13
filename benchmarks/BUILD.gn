@@ -417,6 +417,7 @@ executable("vela_aot_benchmarks") {
     "native_class_benchmark.cc",
     "reload_benchmark.cc",
     "reload_scaling_benchmark.cc",
+    "repeated_field_benchmark.cc",
     algorithms_object,
     aot_object,
     host_interop_object,

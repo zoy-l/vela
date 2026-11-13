@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -39,5 +41,15 @@ llvm::MDNode* NativeMemoryTag(llvm::LLVMContext& context,
 DeclarationId ClosedFieldDeclaration(const ir::Program& program,
                                      std::string_view type,
                                      ir::FieldId slot);
+
+constexpr std::string_view MemoryRegionName(MemoryRegion region) {
+  constexpr std::array kNames{
+      "heap header",    "class layout",   "field cache",     "instance header",  "field states",
+      "managed values", "array elements", "global cache",    "shadow roots",     "GC state",
+      "field payloads", "field kinds",    "execution state", "stack root links", "reflection cache",
+  };
+  static_assert(kNames.size() == static_cast<std::size_t>(MemoryRegion::Count));
+  return kNames.at(static_cast<std::size_t>(region));
+}
 
 }  // namespace vela::compiler::native

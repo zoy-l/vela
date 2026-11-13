@@ -1,4 +1,4 @@
-#include "compiler/aot/native_field_optimizer.h"
+#include "compiler/native/repeated_field_optimizer.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,10 +13,9 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/AssumptionCache.h>
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Analysis.h>
 #include <llvm/IR/CFG.h>
@@ -28,47 +27,47 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Metadata.h>
-#include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
-#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/IndVarSimplify.h>
 #include <llvm/Transforms/Scalar/JumpThreading.h>
+#include <llvm/Transforms/Scalar/LICM.h>
+#include <llvm/Transforms/Scalar/LoopPassManager.h>
+#include <llvm/Transforms/Scalar/LoopRotation.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/LCSSA.h>
 #include <llvm/Transforms/Utils/LoopPeel.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
+#include "compiler/native/memory_regions.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 namespace {
 
 constexpr unsigned kMaximumRepeatedUpdates = 32;
 constexpr unsigned kSmallAnalysisSetCapacity = 32;
 
-bool HasStorageTag(const llvm::Instruction& instruction, llvm::StringRef name) {
+bool HasStorageTag(const llvm::Instruction& instruction, MemoryRegion region) {
   const auto* tag = instruction.getMetadata(llvm::LLVMContext::MD_tbaa);
-  if (tag == nullptr || tag->getNumOperands() == 0) {
+  if (tag == nullptr) {
     return false;
   }
-  const auto* type = llvm::dyn_cast<llvm::MDNode>(tag->getOperand(0));
-  // 物理字段槽继承 payload 域；消费别名事实时沿类型父链识别所属存储区域。
+  const llvm::StringRef name = MemoryRegionName(region);
+  const auto* type = llvm::cast<llvm::MDNode>(tag->getOperand(0));
+  // 字段声明的类型节点继承 payload 域；消费别名事实时沿类型父链识别所属存储区域。
   while (type != nullptr) {
-    const auto count = type->getNumOperands();
-    if (count == 0) {
-      return false;
-    }
-    const auto* text = llvm::dyn_cast<llvm::MDString>(type->getOperand(0));
-    if (text != nullptr && text->getString() == name) {
+    const auto* text = llvm::cast<llvm::MDString>(type->getOperand(0));
+    if (text->getString() == name) {
       return true;
     }
-    type = count > 1 ? llvm::dyn_cast<llvm::MDNode>(type->getOperand(1)) : nullptr;
+    type = type->getNumOperands() > 1 ? llvm::cast<llvm::MDNode>(type->getOperand(1)) : nullptr;
   }
   return false;
 }
@@ -91,7 +90,7 @@ struct FieldUpdate final {
 std::optional<FieldUpdate> MatchUpdate(llvm::StoreInst& store, const llvm::Loop& loop) {
   const auto& layout = store.getDataLayout();
   auto* add = llvm::dyn_cast<llvm::BinaryOperator>(store.getValueOperand());
-  if (!store.isSimple() || !HasStorageTag(store, "field payloads") || add == nullptr ||
+  if (!store.isSimple() || !HasStorageTag(store, MemoryRegion::FieldPayloads) || add == nullptr ||
       add->getOpcode() != llvm::Instruction::FAdd || !add->hasOneUse() ||
       add->getFastMathFlags().any()) {
     return std::nullopt;
@@ -102,7 +101,7 @@ std::optional<FieldUpdate> MatchUpdate(llvm::StoreInst& store, const llvm::Loop&
   if (object == nullptr || !loop.contains(object) || !object->isSimple() ||
       !object->getType()->isPointerTy() ||
       object->getMetadata(llvm::LLVMContext::MD_nonnull) == nullptr ||
-      !HasStorageTag(*object, "array elements") ||
+      !HasStorageTag(*object, MemoryRegion::Elements) ||
       std::cmp_less(offset, sizeof(runtime::HeapObject))) {
     return std::nullopt;
   }
@@ -111,7 +110,8 @@ std::optional<FieldUpdate> MatchUpdate(llvm::StoreInst& store, const llvm::Loop&
   if (current == nullptr || delta == nullptr || !current->isSimple() || !delta->isSimple() ||
       !current->hasOneUse() || !delta->hasOneUse() ||
       current->getPointerOperand() != store.getPointerOperand() ||
-      !HasStorageTag(*current, "field payloads") || !HasStorageTag(*delta, "field payloads")) {
+      !HasStorageTag(*current, MemoryRegion::FieldPayloads) ||
+      !HasStorageTag(*delta, MemoryRegion::FieldPayloads)) {
     return std::nullopt;
   }
   std::int64_t delta_offset = 0;
@@ -192,7 +192,7 @@ bool HasOnlyAdministrativeWrite(const llvm::StoreInst& store,
   if (!store.isSimple()) {
     return false;
   }
-  if (HasStorageTag(store, "shadow roots") && loop.isLoopInvariant(store.getValueOperand())) {
+  if (HasStorageTag(store, MemoryRegion::Roots) && loop.isLoopInvariant(store.getValueOperand())) {
     return true;
   }
   if (!first || !dominators.dominates(*first, store.getParent())) {
@@ -272,7 +272,8 @@ bool HasOnlyUpdateObservations(const llvm::Loop& loop, const std::vector<FieldUp
       if (instruction.getType()->isFPOrFPVectorTy() && !floating.contains(&instruction)) {
         return false;
       }
-      if (llvm::isa<llvm::LoadInst>(instruction) && HasStorageTag(instruction, "field payloads") &&
+      if (llvm::isa<llvm::LoadInst>(instruction) &&
+          HasStorageTag(instruction, MemoryRegion::FieldPayloads) &&
           !floating.contains(&instruction)) {
         return false;
       }
@@ -314,7 +315,9 @@ std::optional<std::vector<FieldUpdate>> AnalyzeRepeatedFields(
 bool IsUnusedCounter(const llvm::PHINode& index,
                      const llvm::Instruction& increment,
                      const llvm::Value& condition) {
-  return std::ranges::all_of(index.users(), [&](const auto* user) { return user == &increment; }) &&
+  return std::ranges::all_of(
+             index.users(),
+             [&](const auto* user) { return user == &increment || user == &condition; }) &&
          std::ranges::all_of(increment.users(), [&](const auto* user) {
            return user == &index || user == &condition;
          });
@@ -405,54 +408,101 @@ class RepeatedFieldPass final : public llvm::PassInfoMixin<RepeatedFieldPass> {
   FieldLoopPhase phase_;
 };
 
-}  // namespace
-
-void FoldRepeatedFieldUpdates(llvm::Module& module, llvm::TargetMachine& machine) {
-  llvm::LoopAnalysisManager loops;
-  llvm::FunctionAnalysisManager functions;
-  llvm::CGSCCAnalysisManager calls;
-  llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder passes(&machine);
-  passes.registerModuleAnalyses(modules);
-  passes.registerCGSCCAnalyses(calls);
-  passes.registerFunctionAnalyses(functions);
-  passes.registerLoopAnalyses(loops);
-  passes.crossRegisterProxies(loops, functions, calls, modules);
-  llvm::FunctionPassManager pipeline;
-  pipeline.addPass(llvm::LoopSimplifyPass());
-  pipeline.addPass(llvm::LCSSAPass());
-  pipeline.addPass(RepeatedFieldPass(FieldLoopPhase::PeelInitialization));
-  pipeline.addPass(llvm::InstCombinePass());
-  pipeline.addPass(llvm::JumpThreadingPass());
-  pipeline.addPass(llvm::SimplifyCFGPass());
-  pipeline.addPass(llvm::EarlyCSEPass());
-  pipeline.addPass(llvm::DCEPass());
-  pipeline.addPass(llvm::LoopSimplifyPass());
-  pipeline.addPass(llvm::LCSSAPass());
-  pipeline.addPass(RepeatedFieldPass(FieldLoopPhase::FoldUpdates));
-  pipeline.addPass(llvm::SimplifyCFGPass());
-  pipeline.addPass(llvm::DCEPass());
-  for (auto& function : module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    const auto& loop_info = functions.getResult<llvm::LoopAnalysis>(function);
-    auto& evolution = functions.getResult<llvm::ScalarEvolutionAnalysis>(function);
-    const auto& dominators = functions.getResult<llvm::DominatorTreeAnalysis>(function);
-    const auto candidates = loop_info.getLoopsInPreorder();
-    const auto eligible = std::ranges::any_of(candidates, [&](const auto* loop) {
-      if (loop->getSubLoops().empty() || loop->getLoopLatch() == nullptr ||
-          loop->getLoopPreheader() == nullptr) {
-        return false;
-      }
-      const auto count = evolution.getSmallConstantTripCount(loop, loop->getLoopLatch());
-      return count >= 2 && count <= kMaximumRepeatedUpdates &&
-             AnalyzeRepeatedFields(*loop, dominators, FirstIterationEdge(*loop)).has_value();
-    });
-    if (eligible) {
-      pipeline.run(function, functions);
-    }
+bool CanHaveRepeatedTripCount(const llvm::Loop& loop, llvm::ScalarEvolution& evolution) {
+  const auto* latch = loop.getLoopLatch();
+  const auto rotated = latch != nullptr && loop.isLoopExiting(latch);
+  const auto* exit = rotated ? latch : loop.getHeader();
+  if (!loop.isLoopExiting(exit)) {
+    return true;
   }
+  const auto* count = evolution.getExitCount(&loop, exit);
+  if (const auto* constant = llvm::dyn_cast<llvm::SCEVConstant>(count)) {
+    // 顶部退出的循环多执行一次头部检查；旋转后的回边次数则比实际遍历少一次。
+    const auto& backedges = constant->getAPInt();
+    return backedges.uge(rotated ? 1 : 2) &&
+           backedges.ule(rotated ? kMaximumRepeatedUpdates - 1 : kMaximumRepeatedUpdates);
+  }
+  if (llvm::isa<llvm::SCEVCouldNotCompute>(count)) {
+    return true;
+  }
+  // 指令产生的未知值可能在 CSE/旋转后变成常量；仅跳过已知依赖运行时参数的行程。
+  return llvm::SCEVExprContains(count, [](const llvm::SCEV* expression) {
+    const auto* unknown = llvm::dyn_cast<llvm::SCEVUnknown>(expression);
+    return unknown != nullptr && llvm::isa<llvm::Instruction>(unknown->getValue());
+  });
 }
 
-}  // namespace vela::compiler::aot
+bool HasRepeatedFields(llvm::Function& function, llvm::FunctionAnalysisManager& analyses) {
+  const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
+  for (const auto* loop : loops.getLoopsInPreorder()) {
+    if (loop->getSubLoops().empty()) {
+      continue;
+    }
+    const auto has_fields = std::ranges::any_of(loop->blocks(), [](const auto* block) {
+      return std::ranges::any_of(*block, [](const auto& instruction) {
+        const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+        return store != nullptr && store->getValueOperand()->getType()->isFPOrFPVectorTy() &&
+               HasStorageTag(*store, MemoryRegion::FieldPayloads);
+      });
+    });
+    if (has_fields && CanHaveRepeatedTripCount(
+                          *loop, analyses.getResult<llvm::ScalarEvolutionAnalysis>(function))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+class RepeatedFieldPipeline final : public llvm::PassInfoMixin<RepeatedFieldPipeline> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    if (!HasRepeatedFields(function, analyses)) {
+      return llvm::PreservedAnalyses::all();
+    }
+    llvm::FunctionPassManager preparation;
+    // 提前消除同一数组的重复长度读取，才能证明完整遍历期间不会在已更新前缀后失败。
+    preparation.addPass(llvm::EarlyCSEPass(true));
+    preparation.addPass(llvm::LoopSimplifyPass());
+    preparation.addPass(llvm::createFunctionToLoopPassAdaptor(llvm::LoopRotatePass()));
+    preparation.addPass(
+        llvm::createFunctionToLoopPassAdaptor(llvm::LICMPass(llvm::LICMOptions()), true));
+    preparation.addPass(llvm::createFunctionToLoopPassAdaptor(llvm::IndVarSimplifyPass()));
+    preparation.addPass(llvm::SimplifyCFGPass());
+    preparation.addPass(llvm::LoopSimplifyPass());
+    preparation.addPass(llvm::LCSSAPass());
+    auto preserved = preparation.run(function, analyses);
+
+    llvm::FunctionPassManager cleanup;
+    cleanup.addPass(llvm::InstCombinePass());
+    cleanup.addPass(llvm::JumpThreadingPass());
+    cleanup.addPass(llvm::SimplifyCFGPass());
+    cleanup.addPass(llvm::EarlyCSEPass());
+    cleanup.addPass(llvm::DCEPass());
+    cleanup.addPass(llvm::LoopSimplifyPass());
+    cleanup.addPass(llvm::LCSSAPass());
+    for (const auto phase : {FieldLoopPhase::PeelInitialization, FieldLoopPhase::FoldUpdates}) {
+      llvm::FunctionPassManager transform;
+      transform.addPass(RepeatedFieldPass(phase));
+      // 每次只改一个循环；pass manager 失效分析后重新匹配，覆盖同一函数中的多个候选。
+      bool changed = false;
+      while (!transform.run(function, analyses).areAllPreserved()) {
+        changed = true;
+        preserved = llvm::PreservedAnalyses::none();
+      }
+      if (changed) {
+        // 独立候选之间无需清理；剥离阶段结束后再化简 Ready PHI，建立折叠阶段的契约。
+        cleanup.run(function, analyses);
+      }
+    }
+    return preserved;
+  }
+};
+
+}  // namespace
+
+void AddRepeatedFieldPasses(llvm::FunctionPassManager& passes) {
+  passes.addPass(RepeatedFieldPipeline());
+}
+
+}  // namespace vela::compiler::native

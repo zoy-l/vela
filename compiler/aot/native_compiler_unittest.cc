@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -15,14 +14,11 @@
 
 #include <gtest/gtest.h>
 
-#include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
-#include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/InstIterator.h>
@@ -32,7 +28,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
-#include <llvm/Support/SourceMgr.h>
 
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
@@ -50,6 +45,7 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
+#include "compiler/test_support/native_pass_test_support.h"
 #include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/native/native_image.h"
@@ -59,6 +55,8 @@ namespace vela::compiler::aot {
 namespace {
 
 using ir::test::Prepare;
+using native::test::ParseModule;
+using native::test::WithFunctionLoops;
 
 TEST(NativeCompilerTest, BindsOnlyImmutableClosedReflectionDescriptorSources) {
   auto prepared = Prepare(R"(
@@ -217,28 +215,6 @@ export func read(): dynamic {
   EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_constant"), std::string::npos);
 }
 
-std::unique_ptr<llvm::Module> ParseModule(std::string_view text, llvm::LLVMContext& context) {
-  llvm::SMDiagnostic diagnostic;
-  auto module =
-      llvm::parseAssemblyString(llvm::StringRef(text.data(), text.size()), diagnostic, context);
-  if (module == nullptr) {
-    ADD_FAILURE() << diagnostic.getMessage().str();
-  }
-  return module;
-}
-
-template <typename Verify>
-void WithFunctionLoops(llvm::Module& module, Verify verify) {
-  for (auto& function : module) {
-    if (function.isDeclaration()) {
-      continue;
-    }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
-    verify(function, loops);
-  }
-}
-
 TEST(NativeCompilerTest, ReservesLeafResultsOnlyForCallsThatUseTheLeafEntry) {
   auto prepared = PrepareReloadable(R"(
 func step(value: int): int { return value + 1; }
@@ -287,6 +263,53 @@ export func repeated(value: int): int {
               expected)
         << name;
   }
+}
+
+TEST(NativeCompilerTest, BorrowedReceiversKeepTheirEntryWhenScalarFieldLeavesExist) {
+  const auto prepared = Prepare(R"(
+class Counter {
+  value: int;
+  next(): int { this.value++; return this.value; }
+}
+export func calculate(initial: int): int {
+  const counter = Counter(value: initial);
+  return counter.next() + counter.value;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& program = prepared.program;
+  const auto& functions = program.functions;
+  const auto caller = std::ranges::find(functions, "calculate", &ir::Function::name);
+  ASSERT_NE(caller, functions.end());
+  const auto method = std::ranges::find_if(caller->instructions, [&](const auto& instruction) {
+    return instruction.opcode == Opcode::Call &&
+           functions.at(instruction.index).return_type.kind == frontend::TypeDescriptor::Kind::Int;
+  });
+  ASSERT_NE(method, caller->instructions.end());
+  const auto generated = GenerateForTest(program, "borrowed_leaf", NativeCodePlacement::Linked,
+                                         NativeCodeTier::Baseline);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto ordinal = std::to_string(method->index);
+  const auto* borrowed = module.getFunction("borrowed_leaf_borrowed_" + ordinal);
+  const auto* leaf = module.getFunction("borrowed_leaf_" + ordinal + "_leaf");
+  ASSERT_NE(borrowed, nullptr);
+  ASSERT_NE(leaf, nullptr);
+  const auto* body =
+      module.getFunction("borrowed_leaf_body_" + std::to_string(caller - functions.begin()));
+  ASSERT_NE(body, nullptr);
+  const auto instructions = llvm::instructions(body);
+  EXPECT_TRUE(std::ranges::any_of(instructions, [&](const auto& instruction) {
+    const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+    return call != nullptr && call->getCalledFunction() == borrowed;
+  }));
+  EXPECT_FALSE(std::ranges::any_of(instructions, [&](const auto& instruction) {
+    const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+    return call != nullptr && call->getCalledFunction() == leaf;
+  }));
+  EXPECT_FALSE(std::ranges::any_of(instructions, [](const auto& instruction) {
+    return instruction.getName() == "leaf.result";
+  }));
 }
 
 TEST(NativeCompilerTest, ReservesDistinctLeafResultsForBoundReflectedCalls) {
@@ -980,54 +1003,6 @@ export func update(points: Particle[]): void {
   const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
   ASSERT_TRUE(result) << result.error().front().message;
   EXPECT_TRUE(result->llvm_ir.contains("fadd <2 x double>")) << result->llvm_ir;
-}
-
-TEST(NativeCompilerTest, FoldsRepeatedIndependentFieldTraversalsWithoutReassociatingAdds) {
-  for (const std::string_view source : {
-           R"(
-export class Point { x: double; dx: double; }
-export func update(points: Point[]): void {
-  for (let round = 0; round < 10; round++) {
-    for (const point in points) { point.x += point.dx; }
-  }
-}
-)",
-           R"(
-class Point { x: double; y: double; z: double; dx: double; dy: double; dz: double; }
-let points: Point[] = [];
-export func update(): void {
-  for (let round = 0; round < 10; round++) {
-    for (const point in points) {
-      point.x += point.dx; point.y += point.dy; point.z += point.dz;
-    }
-  }
-}
-)",
-       }) {
-    SCOPED_TRACE(source);
-    const auto prepared = Prepare(source);
-    ASSERT_TRUE(prepared.Succeeded());
-    const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
-    ASSERT_TRUE(result) << result.error().front().message;
-    llvm::LLVMContext context;
-    const auto module = ParseModule(result->llvm_ir, context);
-    ASSERT_NE(module, nullptr);
-    std::size_t additions = 0;
-    WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
-      for (const auto* loop : loops.getLoopsInPreorder()) {
-        EXPECT_TRUE(loop->getSubLoops().empty());
-        for (const auto* block : loop->blocks()) {
-          for (const auto& instruction : *block) {
-            if (instruction.getOpcode() == llvm::Instruction::FAdd) {
-              EXPECT_FALSE(instruction.getFastMathFlags().any());
-              ++additions;
-            }
-          }
-        }
-      }
-    });
-    EXPECT_GE(additions, 10U);
-  }
 }
 
 struct LoopHostCalls {
