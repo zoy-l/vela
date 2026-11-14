@@ -20,6 +20,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Analysis.h>
 #include <llvm/IR/Argument.h>
@@ -44,8 +45,11 @@
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/CorrelatedValuePropagation.h>
 #include <llvm/Transforms/Scalar/DCE.h>
+#include <llvm/Transforms/Scalar/DeadStoreElimination.h>
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
 #include <llvm/Transforms/Scalar/JumpThreading.h>
+#include <llvm/Transforms/Scalar/LICM.h>
+#include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SROA.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
@@ -53,6 +57,7 @@
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
+#include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "compiler/native/function_emitter.h"
@@ -253,8 +258,6 @@ std::optional<CountedLoop> MatchCountedLoop(
 
 // 纯计算内核最多延迟一个有界片段的停止请求。入口保留请求检查；包含宿主、分配、
 // 非纯脚本调用或调试逐行观测的循环仍执行原安全点。限制同时覆盖迭代数与代码体积。
-constexpr std::uint64_t kMaximumUnpolledIterations = 1024;
-constexpr std::uint64_t kMaximumUnpolledInstructions = 131072;
 
 struct BoundedPoll final {
   llvm::CondBrInst* branch;
@@ -631,7 +634,7 @@ void ErasePollCondition(llvm::Value* value) {
 }
 
 std::uint64_t PollBudget(std::uint64_t instructions) {
-  return std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
+  return std::min(kNativeMaximumUnpolledIterations, kNativeMaximumUnpolledInstructions / instructions);
 }
 
 llvm::Value* BoundedDistance(llvm::IRBuilder<>& builder,
@@ -658,7 +661,23 @@ llvm::Value* BoundedTripCount(llvm::Loop& loop,
     return guard.getTrue();
   }
   if (!counted) {
-    return nullptr;
+    // 循环旋转和首轮剥离会把比较化简为 next == bound。只使用 SCEV 已证明的
+    // 回边次数上界；算术失败可更早退出。比较 backedges < limit 避免加一回绕。
+    const auto* backedges = evolution.getSymbolicMaxBackedgeTakenCount(&loop);
+    if (const auto* maximum_backedges = llvm::dyn_cast<llvm::SCEVConstant>(backedges);
+        maximum_backedges != nullptr && maximum_backedges->getAPInt().getLimitedValue() >= limit) {
+      // 已知过大的上界不生成恒 false 副本，也不消费原轮询标记；后续范围收窄
+      // 或退出条件化简后仍可重新证明，避免无效的早期版本化封死真正热循环。
+      return nullptr;
+    }
+    llvm::SCEVExpander expander(evolution, "poll.trip");
+    if (llvm::isa<llvm::SCEVCouldNotCompute>(backedges) ||
+        !expander.isSafeToExpandAt(backedges, preheader->getTerminator())) {
+      return nullptr;
+    }
+    auto* count =
+        expander.expandCodeFor(backedges, backedges->getType(), preheader->getTerminator());
+    return guard.CreateICmpULT(count, llvm::ConstantInt::get(count->getType(), limit));
   }
   auto* start = counted->index->getIncomingValueForBlock(preheader);
   return BoundedDistance(guard, *counted, start, counted->bound, limit);
@@ -949,6 +968,32 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
       return llvm::PreservedAnalyses::none();
     }
     return llvm::PreservedAnalyses::all();
+  }
+};
+
+class LateBoundedPollPass : public llvm::PassInfoMixin<LateBoundedPollPass> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    auto preserved = BoundedPollPass::run(function, analyses);
+    if (preserved.areAllPreserved()) {
+      return preserved;
+    }
+    // 只对真正生成了有界片段的函数重做存储提升；其他函数沿用通用 O3 的结果。
+    analyses.invalidate(function, preserved);
+    llvm::FunctionPassManager cleanup;
+    cleanup.addPass(llvm::SimplifyCFGPass());
+    cleanup.addPass(llvm::LoopSimplifyPass());
+    cleanup.addPass(llvm::LCSSAPass());
+    cleanup.addPass(
+        llvm::createFunctionToLoopPassAdaptor(llvm::LICMPass(llvm::LICMOptions()), true));
+    cleanup.addPass(llvm::DSEPass());
+    cleanup.addPass(llvm::InstCombinePass());
+    cleanup.addPass(llvm::SimplifyCFGPass());
+    cleanup.addPass(llvm::EarlyCSEPass());
+    cleanup.addPass(llvm::DCEPass());
+    cleanup.run(function, analyses);
+    return llvm::PreservedAnalyses::none();
   }
 };
 
@@ -1535,7 +1580,7 @@ void EmitBoundedLeafGuard(const GeneratedFunction& function) {
   const auto nested = loops.getLoopsInPreorder();
   const auto instructions = static_cast<std::uint64_t>(body.getInstructionCount());
   if (nested.empty()) {
-    builder.CreateRet(builder.getInt1(instructions <= kMaximumUnpolledInstructions));
+    builder.CreateRet(builder.getInt1(instructions <= kNativeMaximumUnpolledInstructions));
     return;
   }
   if (nested.size() != 1) {
@@ -1595,6 +1640,13 @@ void AddBoundedPollPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::EarlyCSEPass());
   passes.addPass(llvm::DCEPass());
+}
+
+void AddLateBoundedPollPasses(llvm::FunctionPassManager& passes) {
+  passes.addPass(llvm::LoopSimplifyPass());
+  passes.addPass(llvm::LCSSAPass());
+  passes.addPass(LateBoundedPollPass());
+  passes.addPass(llvm::LCSSAPass());
 }
 
 void AddIntegerLoopPasses(llvm::FunctionPassManager& passes) {

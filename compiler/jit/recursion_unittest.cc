@@ -194,6 +194,41 @@ export func throughLoop(count: int): int {
   }
 }
 
+TEST_P(RecursiveCallTest, IntegerSortOrdersRetainComparatorDepthForNontrivialInputs) {
+  ASSERT_NO_FATAL_FAILURE(Load(R"(
+export func sorted(count: int): int {
+  const values = [2, 1].slice(0, count);
+  values.sort((a, b) => a < b ? -1 : (a > b ? 1 : 0));
+  return values.length == 2 ? values[0] + values[1] : values.length;
+}
+)"));
+  auto instance = BorrowInstance();
+  const auto sorted = instance.FindFunction("sorted");
+  ASSERT_TRUE(sorted);
+  for (const std::size_t remaining : {1U, 2U}) {
+    runtime::NativeExecution execution(instance);
+    std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - remaining);
+    for (auto& frame : outer) {
+      execution.MaterializeFrame(frame, *sorted);
+    }
+    for (const std::int64_t count : {0, 1, 2}) {
+      const std::array arguments{runtime::Value::Integer(count)};
+      const auto result = runtime::InvokeNativeFunction(execution, *sorted, arguments);
+      if (remaining == 1 && count == 2) {
+        ASSERT_FALSE(result);
+        EXPECT_EQ(result.error(), ExecutionStatus::StackOverflow);
+      } else {
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->AsInteger(), count == 2 ? 3 : count);
+      }
+      EXPECT_EQ(execution.current_frame(), &outer.back());
+    }
+    while (execution.current_frame() != nullptr) {
+      execution.Exit();
+    }
+  }
+}
+
 TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions) {
   ASSERT_NO_FATAL_FAILURE(Load("export func identity(value: int): int { return value; }"));
   auto instance = BorrowInstance();

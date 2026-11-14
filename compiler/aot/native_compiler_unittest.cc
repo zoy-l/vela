@@ -644,6 +644,49 @@ export func run(): int { return read([1, 2, 3], 2); }
       });
 }
 
+TEST(NativeCompilerTest, BorrowsTheEntryProgramOnceWithoutMarkingExecutionImmutable) {
+  const auto prepared = Prepare(R"(
+[Reflect]
+export class Counter { value: int = 0; }
+let count = 0;
+export func run(): int {
+  const selectedType = Reflect.findType('main.vela', 'Counter');
+  if (selectedType == null) { return -1; }
+  const field = selectedType.findField('value');
+  if (field == null) { return -1; }
+  count++;
+  return count;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& functions = prepared.program.functions;
+  const auto source = std::ranges::find(functions, "run", &ir::Function::name);
+  ASSERT_NE(source, functions.end());
+  const auto generated =
+      GenerateForTest(prepared.program, "program_borrow", NativeCodePlacement::Linked);
+  ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+  const auto& module = *generated->module;
+  const auto* body =
+      module.getFunction("program_borrow_body_" + std::to_string(source - functions.begin()));
+  ASSERT_NE(body, nullptr);
+  std::size_t instance_loads = 0;
+  for (const auto& instruction : llvm::instructions(body)) {
+    const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+    if (load == nullptr) {
+      continue;
+    }
+    std::int64_t offset = 0;
+    const auto* base = llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
+                                                              module.getDataLayout());
+    if (base == body->getArg(0) &&
+        std::cmp_equal(offset, runtime::NativeMemoryLayout::kExecutionInstance)) {
+      ++instance_loads;
+      EXPECT_EQ(load->getMetadata(llvm::LLVMContext::MD_invariant_load), nullptr);
+    }
+  }
+  EXPECT_EQ(instance_loads, 1U);
+}
+
 TEST(NativeCompilerTest, ProvenMutableGlobalAccessesDoNotAllocateReadinessSlots) {
   const auto prepared = Prepare(R"(
 let value = 0;
@@ -1242,6 +1285,23 @@ export func sum(values: double[]): double {
     }
   });
   EXPECT_GT(loop_blocks, 0U);
+}
+
+TEST(NativeCompilerTest, NumericParsingUsesTheSharedParserWithoutGenericBuiltinDispatch) {
+  const auto prepared = Prepare(R"(
+export func integer(text: string, radix: int?): int { return int.parse(text, radix: radix); }
+export func tryInteger(text: string): int? { return int.tryParse(text); }
+export func decimal(text: string): double { return double.parse(text); }
+export func tryDecimal(text: string): double? { return double.tryParse(text); }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result =
+      Compile(prepared.program,
+              {.exports = {"integer", "tryInteger", "decimal", "tryDecimal"}, .preserve_ir = true});
+  ASSERT_TRUE(result.has_value()) << frontend::DiagnosticsText(result.error());
+  const auto& text = result->llvm_ir;
+  EXPECT_EQ(text.find("@vela_native_v1_builtin"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_numeric_parse"), std::string::npos);
 }
 
 TEST(NativeCompilerTest, ReadsReadyGlobalsDirectlyAndInitializesOnlyOnTheOtherBranch) {

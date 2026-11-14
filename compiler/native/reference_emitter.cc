@@ -4,6 +4,7 @@
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
@@ -103,7 +104,7 @@ void FunctionEmitter::CacheConstants() {
       continue;
     }
     if (storage == nullptr) {
-      auto* state = LoadProgramData(builder_, body_->getArg(0));
+      auto* state = ProgramData();
       storage = builder_.CreateLoad(
           builder_.getPtrTy(), ByteAddress(state, runtime::NativeMemoryLayout::kProgramConstants));
       storage = builder_.CreateLoad(
@@ -371,89 +372,109 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     case Builtin::ReflectionInvoke:
       EmitReflection(instruction);
       return {};
-    default:
-      break;
-  }
-  if (placement_ == NativeCodePlacement::Linked) {
-    switch (builtin) {
-      case Builtin::MutableStringAppendCodePoint:
+    case Builtin::MutableStringAppendCodePoint:
+      if (placement_ == NativeCodePlacement::Linked) {
         EmitAppendCodePoint(instruction);
         return {};
-      case Builtin::StringCodePointAt:
+      }
+      break;
+    case Builtin::StringCodePointAt:
+      if (placement_ == NativeCodePlacement::Linked) {
         EmitStringCodePointAt(instruction);
         return {};
-      default:
-        break;
+      }
+      break;
+    case Builtin::ScalarToString: {
+      const auto& type = source_.value_types.at(instruction.lhs);
+      if (type.nullable ||
+          (type.kind != Kind::Int && type.kind != Kind::Double && type.kind != Kind::Bool)) {
+        return std::unexpected("native scalar formatting requires a non-null scalar operand");
+      }
+      auto format =
+          module_.getOrInsertFunction(runtime::kNativeScalarToStringSymbol, builder_.getPtrTy(),
+                                      builder_.getPtrTy(), builder_.getPtrTy());
+      auto* string =
+          builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
+      Check(builder_.CreateIsNotNull(string), ExecutionStatus::OutOfMemory);
+      Store(instruction.dst, string, {.kind = Kind::String, .name = frontend::kStringTypeName});
+      return {};
     }
-  }
-  if (builtin == Builtin::ScalarToString) {
-    const auto& type = source_.value_types.at(instruction.lhs);
-    if (type.nullable ||
-        (type.kind != Kind::Int && type.kind != Kind::Double && type.kind != Kind::Bool)) {
-      return std::unexpected("native scalar formatting requires a non-null scalar operand");
+    case Builtin::ScalarTextLength: {
+      auto length = module_.getOrInsertFunction(runtime::kNativeScalarTextLengthSymbol,
+                                                builder_.getInt64Ty(), builder_.getPtrTy());
+      Store(instruction.dst, builder_.CreateCall(length, {Pack(Encode(instruction.lhs), 0)}),
+            {.kind = Kind::Int, .name = frontend::kIntTypeName});
+      return {};
     }
-    auto format =
-        module_.getOrInsertFunction(runtime::kNativeScalarToStringSymbol, builder_.getPtrTy(),
-                                    builder_.getPtrTy(), builder_.getPtrTy());
-    auto* string =
-        builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
-    Check(builder_.CreateIsNotNull(string), ExecutionStatus::OutOfMemory);
-    Store(instruction.dst, string, {.kind = Kind::String, .name = frontend::kStringTypeName});
-    return {};
-  }
-  if (builtin == Builtin::ScalarTextLength) {
-    auto length = module_.getOrInsertFunction(runtime::kNativeScalarTextLengthSymbol,
-                                              builder_.getInt64Ty(), builder_.getPtrTy());
-    Store(instruction.dst, builder_.CreateCall(length, {Pack(Encode(instruction.lhs), 0)}),
-          {.kind = Kind::Int, .name = frontend::kIntTypeName});
-    return {};
-  }
-  if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
-    const auto& type = source_.value_types.at(instruction.lhs);
-    if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
-      return std::unexpected("native numeric conversion requires a non-null numeric operand");
+    case Builtin::NumericToInt:
+    case Builtin::NumericToDouble: {
+      const auto& type = source_.value_types.at(instruction.lhs);
+      if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
+        return std::unexpected("native numeric conversion requires a non-null numeric operand");
+      }
+      EmitNumericConversion(instruction, builtin);
+      return {};
     }
-    EmitNumericConversion(instruction, builtin);
-    return {};
-  }
-  if (builtin == Builtin::ArrayLength || builtin == Builtin::ArrayCapacity ||
-      builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayCheckMutation ||
-      builtin == Builtin::ArrayPush) {
-    EmitArrayBuiltin(instruction, builtin);
-    return {};
-  }
-  if (builtin == Builtin::StringLength || builtin == Builtin::StringByteLength) {
-    auto* string = Reference(instruction.lhs);
-    CheckReference(string);
-    const auto offset = builtin == Builtin::StringLength
-                            ? runtime::NativeMemoryLayout::kStringLength
-                            : runtime::NativeMemoryLayout::kObjectLength;
-    auto* length = builder_.CreateLoad(builder_.getInt32Ty(), ByteAddress(string, offset));
-    Store(instruction.dst, builder_.CreateZExt(length, builder_.getInt64Ty()),
-          {.kind = Kind::Int, .name = frontend::kIntTypeName});
-    return {};
-  }
-  if (builtin == Builtin::MapGet || builtin == Builtin::MapSet) {
-    EmitMapBuiltin(instruction, builtin);
-    return {};
-  }
-  if (builtin == Builtin::ArrayReserve) {
-    using runtime::NativeMemoryLayout;
-    auto* array = Reference(instruction.lhs);
-    CheckReference(array);
-    auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
-    auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
-    auto* requested = Payload(instruction.lhs + 1);
-    EmitRuntimeBuiltin(instruction);
-    // reserve 的成功契约保留长度并满足容量；将运行时保证交给 LLVM 消除后续扩容分支。
-    auto* after = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
-    auto* capacity =
-        LoadMemory(builder_.getInt32Ty(), ByteAddress(array, NativeMemoryLayout::kArrayCapacity),
-                   MemoryRegion::HeapHeader);
-    builder_.CreateAssumption(builder_.CreateICmpEQ(after, length));
-    builder_.CreateAssumption(
-        builder_.CreateICmpUGE(builder_.CreateZExt(capacity, builder_.getInt64Ty()), requested));
-    return {};
+    case Builtin::IntParse:
+    case Builtin::IntTryParse:
+    case Builtin::DoubleParse:
+    case Builtin::DoubleTryParse: {
+      auto* source = Reference(instruction.lhs);
+      CheckReference(source);
+      auto* radix = builtin == Builtin::IntParse || builtin == Builtin::IntTryParse
+                        ? Pack(Encode(instruction.lhs + 1), 0)
+                        : llvm::ConstantPointerNull::get(builder_.getPtrTy());
+      auto parse = module_.getOrInsertFunction(
+          runtime::kNativeNumericParseSymbol, builder_.getInt8Ty(), builder_.getInt32Ty(),
+          builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
+      CompleteCall(builder_.CreateCall(
+                       parse, {builder_.getInt32(instruction.index), source, radix, result_}),
+                   instruction.dst);
+      return {};
+    }
+    case Builtin::ArrayLength:
+    case Builtin::ArrayCapacity:
+    case Builtin::ArrayMutation:
+    case Builtin::ArrayCheckMutation:
+    case Builtin::ArrayPush:
+      EmitArrayBuiltin(instruction, builtin);
+      return {};
+    case Builtin::StringLength:
+    case Builtin::StringByteLength: {
+      auto* string = Reference(instruction.lhs);
+      CheckReference(string);
+      const auto offset = builtin == Builtin::StringLength
+                              ? runtime::NativeMemoryLayout::kStringLength
+                              : runtime::NativeMemoryLayout::kObjectLength;
+      auto* length = builder_.CreateLoad(builder_.getInt32Ty(), ByteAddress(string, offset));
+      Store(instruction.dst, builder_.CreateZExt(length, builder_.getInt64Ty()),
+            {.kind = Kind::Int, .name = frontend::kIntTypeName});
+      return {};
+    }
+    case Builtin::MapGet:
+    case Builtin::MapSet:
+      EmitMapBuiltin(instruction, builtin);
+      return {};
+    case Builtin::ArrayReserve: {
+      using runtime::NativeMemoryLayout;
+      auto* array = Reference(instruction.lhs);
+      CheckReference(array);
+      auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
+      auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
+      auto* requested = Payload(instruction.lhs + 1);
+      EmitRuntimeBuiltin(instruction);
+      // reserve 的成功契约保留长度并满足容量；将运行时保证交给 LLVM 消除后续扩容分支。
+      auto* after = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
+      auto* capacity =
+          LoadMemory(builder_.getInt32Ty(), ByteAddress(array, NativeMemoryLayout::kArrayCapacity),
+                     MemoryRegion::HeapHeader);
+      builder_.CreateAssumption(builder_.CreateICmpEQ(after, length));
+      builder_.CreateAssumption(
+          builder_.CreateICmpUGE(builder_.CreateZExt(capacity, builder_.getInt64Ty()), requested));
+      return {};
+    }
+    default:
+      break;
   }
   EmitRuntimeBuiltin(instruction);
   return {};

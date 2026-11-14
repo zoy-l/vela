@@ -26,6 +26,33 @@ TEST_P(DynamicArrayExecutionTest, RunsTypedGrowthAndMutationThroughNativeImagesA
   test::ExpectStableAnswer(**program);
 }
 
+TEST(DynamicArrayTest, IntegerOrdersPreserveAliasesBoundsAndComparatorFailures) {
+  test::ExpectRunAnswer(R"(
+func main(): int {
+  const values = [9223372036854775807, -1, 0, -9223372036854775808, 42, -1];
+  const alias = values;
+  const sorted = values.sort((a, b) => a < b ? -1 : (a > b ? 1 : 0));
+  if (sorted[0] != -9223372036854775808 || alias[0] != -9223372036854775808 ||
+      values.join() != '-9223372036854775808,-1,-1,0,42,9223372036854775807') { return 0; }
+  values.sort((a, b) => a > b ? -7 : (a < b ? 9 : 0));
+  if (alias.join() != '9223372036854775807,42,0,-1,-1,-9223372036854775808') { return 0; }
+  const empty: int[] = []; empty.sort((a, b) => a < b ? -1 : (a > b ? 1 : 0));
+  if (empty.length != 0) { return 0; }
+  const single = [42]; single.sort((a, b) => a > b ? -1 : (a < b ? 1 : 0));
+  if (single[0] != 42) { return 0; }
+  const unchanged = [9223372036854775807, -9223372036854775808];
+  try { unchanged.sort((a, b) => a - b); return 0; }
+  catch (error: Error) { if (error.code != 'IntegerOverflow') { return 0; } }
+  if (unchanged[0] != 9223372036854775807) { return 0; }
+  let calls = 0;
+  const counted = [2, 1];
+  counted.sort((a, b) => { calls++; return a < b ? -1 : (a > b ? 1 : 0); });
+  if (calls == 0 || counted[0] != 1) { return 0; }
+  return 42;
+}
+)");
+}
+
 INSTANTIATE_TEST_SUITE_P(ProductionPaths,
                          DynamicArrayExecutionTest,
                          testing::Values(

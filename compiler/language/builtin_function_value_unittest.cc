@@ -54,6 +54,20 @@ func main(): int {
   return caught == 3 ? int.parse('42') : 0;
 })",
                              R"(
+func integer(text: string, radix: int?): int { return int.parse(text, radix: radix); }
+func decimal(text: string): double { return double.parse(text); }
+func main(): int {
+  if (integer('2a', 16) != 42 || decimal(' \t+1.25e2\n') != 125.0 ||
+      int.tryParse('9223372036854775808') != null || double.tryParse('1e+') != null ||
+      double.tryParse('+0X1p2') != null || double.tryParse('-0x1.8p+2') != null) { return 0; }
+  let caught = 0;
+  try { decimal('0x1p2'); }
+  catch (error: Error) { if (error.code == 'DoubleParseError') { caught++; } }
+  try { integer('10', 37); }
+  catch (error: Error) { if (error.code == 'InvalidRadix') { caught++; } }
+  return caught == 2 ? 42 : 0;
+})",
+                             R"(
 func main(): int {
   const date = Date.parse('1969-12-31T23:59:59.999Z');
   const parts = Date.toUTC(date);

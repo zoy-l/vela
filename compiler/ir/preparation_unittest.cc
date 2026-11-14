@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -52,6 +53,75 @@ TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
   }
   for (const auto count : operations) {
     EXPECT_GT(count, 0U);
+  }
+}
+
+TEST(PreparationTest, SpecializesOnlyProvenClosedIntegerSortOrders) {
+  struct Case final {
+    std::string_view comparator;
+    std::optional<Builtin> builtin;
+  };
+  constexpr std::array kCases{
+      Case{
+          .comparator = "(a, b) => a < b ? -1 : (a > b ? 1 : 0)",
+          .builtin = Builtin::ArraySortIntAscending,
+      },
+      Case{
+          .comparator = "(a, b) => a > b ? -2 : (a < b ? 3 : 0)",
+          .builtin = Builtin::ArraySortIntDescending,
+      },
+      Case{
+          .comparator = "(a, b) => b > a ? -1 : (b < a ? 1 : 0)",
+          .builtin = Builtin::ArraySortIntAscending,
+      },
+      Case{.comparator = "(a, b) => a - b", .builtin = std::nullopt},
+      Case{.comparator = "(a, b) => a < b ? -1 : 1", .builtin = std::nullopt},
+      Case{.comparator = "(a, b) => a == 0 ? -1 : (a > b ? 1 : 0)", .builtin = std::nullopt},
+      Case{
+          .comparator = "(a, b) => { calls++; return a < b ? -1 : (a > b ? 1 : 0); }",
+          .builtin = std::nullopt,
+      },
+      Case{.comparator = "(a, b) => a < limit ? -1 : (a > b ? 1 : 0)", .builtin = std::nullopt},
+  };
+  for (const auto& entry : kCases) {
+    SCOPED_TRACE(entry.comparator);
+    const auto source =
+        "let calls = 0; const limit = 1; func run(values: int[]): int[] { return values.sort(" +
+        std::string(entry.comparator) + "); }";
+    const frontend::SourceInput input{
+        .path = "main.vela",
+        .text = source,
+    };
+    auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+    ASSERT_TRUE(parsed.diagnostics.empty());
+    const auto checked = frontend::TypeChecker().Check(parsed.program);
+    ASSERT_TRUE(checked.Succeeded()) << frontend::DiagnosticsText(checked.diagnostics);
+    for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+      frontend::DeclarationIds identities;
+      const auto prepared = PrepareProgram(parsed.program, checked.model,
+                                           {.declarations = &identities, .native_mode = mode});
+      ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+      const auto found = std::ranges::find(prepared.program.functions, "run", &Function::name);
+      ASSERT_NE(found, prepared.program.functions.end());
+      std::size_t specialized = 0;
+      std::size_t callbacks = 0;
+      for (const auto& instruction : found->instructions) {
+        callbacks += static_cast<std::size_t>(instruction.opcode == Opcode::CallIndirect);
+        if (instruction.opcode != Opcode::BuiltinCall) {
+          continue;
+        }
+        const auto builtin = static_cast<Builtin>(instruction.index);
+        if (builtin == Builtin::ArraySortIntAscending ||
+            builtin == Builtin::ArraySortIntDescending) {
+          ++specialized;
+          ASSERT_TRUE(entry.builtin);
+          EXPECT_EQ(builtin, *entry.builtin);
+        }
+      }
+      EXPECT_EQ(specialized, mode == NativeProgramMode::Closed && entry.builtin ? 1U : 0U);
+      // 特化也保留一次原比较器调用，覆盖非平凡输入的深度及控制请求边界。
+      EXPECT_GT(callbacks, 0U);
+    }
   }
 }
 

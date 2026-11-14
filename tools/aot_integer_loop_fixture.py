@@ -90,6 +90,21 @@ func arrayPrefix(count: int, initial: int, term: int): int {
   } catch (error: Error) { return sum; }
   return sum;
 }
+class CallbackCounter {
+  value: int = -1;
+  accept(value: int): int { this.value = value; return value; }
+}
+const callbackCounter = CallbackCounter();
+func callbackSum(count: int, initial: int): int {
+  const values: int[] = [];
+  for (let index = 0; index < count; index++) { values.push(index); }
+  callbackCounter.value = -1;
+  let sum = initial;
+  for (let index = 0; index < values.length; index++) {
+    sum += callbackCounter.accept(values[index]);
+  }
+  return sum;
+}
 export func calculate(operation: int, start: int, bound: int, initial: int, term: int): int {
   if (operation == 0) { return ascending(bound, initial); }
   if (operation == 1) { return descending(bound, initial); }
@@ -104,6 +119,8 @@ export func calculate(operation: int, start: int, bound: int, initial: int, term
   if (operation == 10) { prepareBounded(bound, term); return boundedSum(); }
   if (operation == 11) { return arrayPrefix(bound, initial, term); }
   if (operation == 12) { return effects; }
+  if (operation == 13) { return callbackSum(bound, initial); }
+  if (operation == 14) { return callbackCounter.value; }
   return 0;
 }
 """
@@ -248,6 +265,33 @@ TEST_F(NativeIntegerLoopGcTest, ClosedArrayRangesHoldAcrossCallsAliasesEmptyAndC
       EXPECT_EQ(execution.current_frame(), nullptr);
       EXPECT_FALSE(execution.HasException());
     }
+  }
+}
+
+TEST_F(NativeIntegerLoopGcTest, RotatedCallsKeepBudgetBoundariesAndTheOverflowingWrite) {
+  NativeExecution execution(*instance);
+  NativeValue result;
+  const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
+  for (const std::int64_t count : {0, 1, 2, 127, 128, 1023, 1024, 1025, 2049}) {
+    const std::array arguments{Integer(13), Integer(0), Integer(count), Integer(0), Integer(0)};
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), count * (count - 1) / 2);
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), count - 1);
+  }
+  const auto initial = std::numeric_limits<std::int64_t>::max() - 2;
+  for (const std::int64_t count : {3, 128, 1024, 1025}) {
+    const std::array arguments{Integer(13), Integer(0), Integer(count), Integer(initial), Integer(0)};
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::IntegerOverflow);
+    ASSERT_NO_FATAL_FAILURE(ExpectPendingException(isolate, execution, ExecutionStatus::IntegerOverflow,
+                                                  "integer overflow"));
+    const auto diagnostic = execution.ExceptionDiagnostic();
+    ASSERT_FALSE(diagnostic.stack_trace.empty());
+    EXPECT_EQ(diagnostic.stack_trace.front().function, "callbackSum");
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 2);
+    EXPECT_EQ(execution.current_frame(), nullptr);
+    EXPECT_FALSE(execution.HasException());
   }
 }
 

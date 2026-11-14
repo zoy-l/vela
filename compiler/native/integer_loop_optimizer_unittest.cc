@@ -24,6 +24,7 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/IR/ValueSymbolTable.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/Casting.h>
@@ -298,6 +299,133 @@ TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsO
 INSTANTIATE_TEST_SUITE_P(PollProofs,
                          BoundedPollOptimizerTest,
                          testing::Combine(testing::Bool(), testing::Bool(), testing::Bool()));
+
+class BoundedPollExitTest : public testing::TestWithParam<void (*)(llvm::FunctionPassManager&)> {};
+
+TEST_P(BoundedPollExitTest, VersionsPostTestCountsAndKeepsCheckedArithmeticAndRequestHandling) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+declare void @process()
+declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
+define i64 @sum(ptr %values, ptr %requests.address, i32 %count) {
+entry:
+  %bound = zext i32 %count to i64
+  %empty = icmp eq i32 %count, 0
+  br i1 %empty, label %empty.return, label %header
+empty.return:
+  ret i64 0
+header:
+  %index = phi i64 [ 0, %entry ], [ %next.index, %latch ]
+  %total = phi i64 [ 0, %entry ], [ %next.total, %latch ]
+  %requests = load atomic i8, ptr %requests.address monotonic, align 1, !vela.poll.ready.state !0
+  %pending = icmp ne i8 %requests, 0
+  br i1 %pending, label %process, label %calculate, !vela.poll.bounded !1
+process:
+  call void @process()
+  br label %calculate
+calculate:
+  %address = getelementptr i64, ptr %values, i64 %index
+  %value = load i64, ptr %address, align 8
+  %checked = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %total, i64 %value)
+  %overflow = extractvalue { i64, i1 } %checked, 1
+  br i1 %overflow, label %failed, label %latch
+latch:
+  %next.total = extractvalue { i64, i1 } %checked, 0
+  %next.index = add nuw nsw i64 %index, 1
+  %more = icmp ne i64 %next.index, %bound
+  br i1 %more, label %header, label %done
+failed:
+  ret i64 %index
+done:
+  ret i64 %next.total
+}
+!0 = !{i8 0}
+!1 = !{}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("sum");
+  test::RunFunctionPasses(function, GetParam());
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  std::size_t checked_updates = 0;
+  std::size_t request_handlers = 0;
+  const auto* handler = module->getFunction("process");
+  for (const auto& instruction : llvm::instructions(function)) {
+    const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+    const auto* target = call == nullptr ? nullptr : call->getCalledFunction();
+    if (target == handler) {
+      ++request_handlers;
+    }
+    if (const auto* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+        intrinsic != nullptr &&
+        intrinsic->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
+      ++checked_updates;
+    }
+  }
+  EXPECT_GT(request_handlers, 0U);
+  EXPECT_GT(checked_updates, 1U);
+  llvm::DominatorTree dominators(function);
+  const llvm::LoopInfo loops(dominators);
+  bool has_unpolled = false;
+  for (const auto* loop : loops.getLoopsInPreorder()) {
+    has_unpolled = has_unpolled || HasUnpolledArrayLoad(*loop);
+  }
+  EXPECT_TRUE(has_unpolled);
+}
+
+TEST_P(BoundedPollExitTest, KeepsTheMarkerWhenTheOnlyKnownMaximumExceedsTheBudget) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+declare void @process()
+define i64 @sum(ptr %values, ptr %requests.address, ptr %count.address) {
+entry:
+  br label %header
+header:
+  %index = phi i64 [ 0, %entry ], [ %next.index, %calculate ]
+  %total = phi i64 [ 0, %entry ], [ %next.total, %calculate ]
+  %raw.count = load i32, ptr %count.address
+  %count = zext i32 %raw.count to i64
+  %more = icmp ult i64 %index, %count
+  br i1 %more, label %poll, label %done
+poll:
+  %requests = load atomic i8, ptr %requests.address monotonic, align 1, !vela.poll.ready.state !0
+  %pending = icmp ne i8 %requests, 0
+  br i1 %pending, label %process, label %calculate, !vela.poll.bounded !1
+process:
+  call void @process()
+  br label %calculate
+calculate:
+  %address = getelementptr i64, ptr %values, i64 %index
+  %value = load i64, ptr %address, align 8
+  %next.total = xor i64 %total, %value
+  %next.index = add nuw nsw i64 %index, 1
+  br label %header
+done:
+  ret i64 %total
+}
+!0 = !{i8 0}
+!1 = !{}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("sum");
+  test::RunFunctionPasses(function, GetParam());
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  bool marked = false;
+  for (const auto& block : function) {
+    marked = marked || block.getTerminator()->getMetadata(kNativeBoundedPollMetadata) != nullptr;
+  }
+  EXPECT_TRUE(marked);
+  llvm::DominatorTree dominators(function);
+  const llvm::LoopInfo loops(dominators);
+  for (const auto* loop : loops.getLoopsInPreorder()) {
+    EXPECT_FALSE(HasUnpolledArrayLoad(*loop));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Phases,
+                         BoundedPollExitTest,
+                         testing::Values(AddBoundedPollPasses, AddLateBoundedPollPasses));
 
 class BoundedPollBudgetTest : public testing::TestWithParam<bool> {};
 

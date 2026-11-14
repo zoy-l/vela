@@ -38,6 +38,33 @@ namespace {
 
 using internal::NativeTypeOf;
 
+std::int64_t ScalarHost(bool selected, std::int64_t value, double fraction) noexcept {
+  return selected ? value + static_cast<std::int64_t>(fraction) : value;
+}
+
+std::int64_t ContextualHost(NativeContext& /*unused*/, std::int64_t value) noexcept {
+  return value;
+}
+
+std::int64_t BorrowedHost(std::string_view value) noexcept {
+  return static_cast<std::int64_t>(value.size());
+}
+
+TEST(NativeTypeTest, ContextlessEntryRetainsTheExactUnconvertedHostSignature) {
+  const auto binding = NativeFunction::Bind<ScalarHost>("scalar");
+  const auto& entry = binding.aot_entry();
+  EXPECT_EQ(entry.kind, NativeFunction::AotCallKind::Direct);
+  EXPECT_EQ(entry.unscoped_kind, NativeFunction::AotCallKind::Contextless);
+  const auto target = *static_cast<const decltype(&ScalarHost)*>(entry.unscoped_slot);
+  EXPECT_EQ(target, &ScalarHost);
+  EXPECT_EQ(target(true, 4, 3.0), 7);
+  EXPECT_EQ(target(false, 4, 3.0), 4);
+  const auto contextual = NativeFunction::Bind<ContextualHost>("contextual");
+  EXPECT_EQ(contextual.aot_entry().unscoped_kind, NativeFunction::AotCallKind::Direct);
+  const auto borrowed = NativeFunction::Bind<BorrowedHost>("borrowed");
+  EXPECT_EQ(borrowed.aot_entry().unscoped_kind, NativeFunction::AotCallKind::Direct);
+}
+
 TEST(NativeTypeTest, NestedContractsPreserveNullabilityNominalsAndCallablePayloads) {
   using FirstCallback = Function<Object<FirstNode>(bool)>;
   using SecondCallback = Function<Object<SecondNode>(bool)>;

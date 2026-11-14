@@ -233,6 +233,8 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::ArrayUnshift:
     case Builtin::ArraySplice:
     case Builtin::ArraySortDefault:
+    case Builtin::ArraySortIntAscending:
+    case Builtin::ArraySortIntDescending:
     case Builtin::ArrayClear:
     case Builtin::ArrayReserve:
     case Builtin::ArrayMutation:

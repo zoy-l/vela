@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -19,6 +20,7 @@
 #include "runtime/native/native_api.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_stack.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
@@ -35,6 +37,32 @@ NativeImage EmptyImage() {
 }
 
 }  // namespace
+
+TEST(NativeAbiTest, StackBoundsAreStableWithinEachThreadAndContainItsCurrentFrame) {
+  const auto main_bounds = CurrentNativeStackBounds();
+  ASSERT_TRUE(main_bounds);
+  const auto main_address = std::bit_cast<std::uintptr_t>(&main_bounds);
+  EXPECT_GE(main_address, main_bounds->lower);
+  EXPECT_LT(main_address, main_bounds->upper);
+  const auto repeated = CurrentNativeStackBounds();
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(repeated->lower, main_bounds->lower);
+  EXPECT_EQ(repeated->upper, main_bounds->upper);
+
+  const std::jthread worker([&] {
+    const auto bounds = CurrentNativeStackBounds();
+    ASSERT_TRUE(bounds);
+    const auto address = std::bit_cast<std::uintptr_t>(&bounds);
+    EXPECT_GE(address, bounds->lower);
+    EXPECT_LT(address, bounds->upper);
+    EXPECT_NE(bounds->lower, main_bounds->lower);
+    EXPECT_NE(bounds->upper, main_bounds->upper);
+    const auto next = CurrentNativeStackBounds();
+    ASSERT_TRUE(next);
+    EXPECT_EQ(next->lower, bounds->lower);
+    EXPECT_EQ(next->upper, bounds->upper);
+  });
+}
 
 TEST(NativeAbiTest, ValueCodecsPreservePayloadBitsAndClearReservedFields) {
   Isolate isolate;

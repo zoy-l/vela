@@ -157,6 +157,8 @@ TEST(NumericParseTest, DoublesRequireTheCompleteDecimalGrammar) {
       "1e",
       "1e+",
       "0x1p2",
+      "+0X1p2",
+      "-0x1.8p+2",
       "1,5",
       "inf",
       "nan",

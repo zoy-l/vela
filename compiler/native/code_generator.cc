@@ -50,7 +50,9 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/array_analysis.h"
+#include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/borrow_analysis.h"
+#include "compiler/native/call_loop_optimizer.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
@@ -185,6 +187,11 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
     constexpr unsigned kX64LoopAlignment = 64;
     options.LoopAlignment = kX64LoopAlignment;
   }
+  if (placement == NativeCodePlacement::Linked && triple.isOSDarwin() && triple.isAArch64()) {
+    // 部分展开的调用循环采用 16 字节对齐；仍使用通用指令集，不绑定宿主 CPU。
+    constexpr unsigned kDarwinArm64LoopAlignment = 16;
+    options.LoopAlignment = kDarwinArm64LoopAlignment;
+  }
   const auto cpu = TargetCpu(placement);
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
       triple, cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
@@ -244,12 +251,24 @@ void Optimize(llvm::Module& module,
   AddIntegerLoopPasses(integer_loops);
   AddInvariantCallPasses(integer_loops);
   AddBoundedPollPasses(integer_loops);
+  if (IsClosedLinkedProgram(mode, placement)) {
+    AddRecursiveLoopHints(integer_loops);
+  }
   llvm::ModulePassManager preparation;
   preparation.addPass(llvm::AlwaysInlinerPass());
   preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
   preparation.run(module, modules);
   auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
   pipeline.run(module, modules);
+  if (IsClosedLinkedProgram(mode, placement)) {
+    llvm::FunctionPassManager call_loops;
+    AddLateBoundedPollPasses(call_loops);
+    AddArrayReductionPasses(call_loops);
+    AddCallLoopPasses(call_loops);
+    llvm::ModulePassManager finishing;
+    finishing.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(call_loops)));
+    finishing.run(module, modules);
+  }
 }
 
 frontend::Diagnostics MakeDiagnostics(const ir::Program& program,

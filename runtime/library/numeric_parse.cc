@@ -64,37 +64,6 @@ std::expected<std::int64_t, ExecutionStatus> ParseInt(std::string_view source, V
   return negative ? -result : result;
 }
 
-bool IsDecimal(std::string_view text) {
-  if (!text.empty() && (text.front() == '+' || text.front() == '-')) {
-    text.remove_prefix(1);
-  }
-  const auto digits = [&text] {
-    const auto size = text.size();
-    while (!text.empty() && absl::ascii_isdigit(static_cast<std::uint8_t>(text.front()))) {
-      text.remove_prefix(1);
-    }
-    return size - text.size();
-  };
-  auto count = digits();
-  if (!text.empty() && text.front() == '.') {
-    text.remove_prefix(1);
-    count += digits();
-  }
-  if (count == 0) {
-    return false;
-  }
-  if (!text.empty() && (text.front() == 'e' || text.front() == 'E')) {
-    text.remove_prefix(1);
-    if (!text.empty() && (text.front() == '+' || text.front() == '-')) {
-      text.remove_prefix(1);
-    }
-    if (digits() == 0) {
-      return false;
-    }
-  }
-  return text.empty();
-}
-
 std::expected<double, ExecutionStatus> ParseDouble(std::string_view source) {
   const auto text = absl::StripAsciiWhitespace(source);
   auto payload = text;
@@ -110,8 +79,14 @@ std::expected<double, ExecutionStatus> ParseDouble(std::string_view source) {
     return negative ? -std::numeric_limits<double>::infinity()
                     : std::numeric_limits<double>::infinity();
   }
+  // SimpleAtod 已检查完整数字语法；此处排除它额外接受的十六进制和大小写非有限值，
+  // 避免在转换前重复扫描全部数字。符号已从 payload 剥离，连续符号也在此拒绝。
   double result = 0.0;
-  if (!IsDecimal(text) || !absl::SimpleAtod(text, &result)) {
+  if (payload.empty() ||
+      (!absl::ascii_isdigit(static_cast<std::uint8_t>(payload.front())) &&
+       payload.front() != '.') ||
+      payload.starts_with("0x") || payload.starts_with("0X") ||
+      !absl::SimpleAtod(text, &result)) {
     return std::unexpected(ExecutionStatus::DoubleParseError);
   }
   return result;

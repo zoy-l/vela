@@ -97,10 +97,9 @@ BoxNativeEnumResult(const NativeInstance& instance, std::uint32_t type, Value va
 // 小型适配层在调用点内联，消除中间 expected/Value 返回槽的封装与拷贝。
 [[nodiscard]] inline std::expected<Value, ExecutionStatus> InvokeNativeTarget(
     NativeExecution& execution,
-    std::uint32_t function,
+    const NativeFunctionDescription& target,
     std::span<const NativeValue> arguments) {
   const auto& instance = execution.instance();
-  const auto& target = instance.image().function(function);
   NativeValue output;
   const auto status = static_cast<ExecutionStatus>(
       target.entry(&execution, arguments.data(), arguments.size(), &output));
@@ -111,6 +110,13 @@ BoxNativeEnumResult(const NativeInstance& instance, std::uint32_t type, Value va
   return (target.flags & kNativeEnumResult) != 0
              ? internal::BoxNativeEnumResult(instance, target.result_type, value)
              : std::expected<Value, ExecutionStatus>(value);
+}
+
+[[nodiscard]] inline std::expected<Value, ExecutionStatus> InvokeNativeTarget(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const NativeValue> arguments) {
+  return InvokeNativeTarget(execution, execution.instance().image().function(function), arguments);
 }
 
 // indirect 参数区首槽预留给闭包环境或绑定接收者；显式实参从第二槽开始。

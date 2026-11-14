@@ -22,6 +22,7 @@ inline constexpr std::string_view kNativeAsyncCallSymbol = "vela_native_v1_async
 inline constexpr std::string_view kNativeAsyncErrorSymbol = "vela_native_v1_async_error";
 inline constexpr std::string_view kNativeAsyncReturnSymbol = "vela_native_v1_async_return";
 inline constexpr std::string_view kNativeBuiltinSymbol = "vela_native_v1_builtin";
+inline constexpr std::string_view kNativeNumericParseSymbol = "vela_native_v1_numeric_parse";
 inline constexpr std::string_view kNativeReflectionInvokeSymbol =
     "vela_native_v12_reflection_invoke";
 inline constexpr std::string_view kNativeCallIndirectSymbol = "vela_native_v1_call_indirect";

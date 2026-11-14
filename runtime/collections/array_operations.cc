@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -128,6 +129,21 @@ int CompareText(std::string_view first, std::string_view second) {
   return reversed ? -order : order;
 }
 
+std::expected<Value, ExecutionStatus> SortIntegers(Builtin builtin, HeapObject& array) {
+  const auto values = Heap::IntegerElements(array);
+  if (!values) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  // 此入口只接收已证明无副作用、无失败的整数全序比较器。相等的 int 没有独立身份，
+  // 原地重排与稳定排序等价，也无需比较器快照或临时托管数组。
+  if (builtin == Builtin::ArraySortIntAscending) {
+    std::ranges::sort(*values);
+  } else {
+    std::ranges::sort(*values, std::greater<>());
+  }
+  return Value::Object(&array);
+}
+
 std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& heap) {
   const auto* layout = Heap::ArrayTypeOf(array);
   if (layout == nullptr) {
@@ -223,6 +239,9 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
   switch (builtin) {
     case Builtin::ArraySortDefault:
       return SortByDefault(array, heap);
+    case Builtin::ArraySortIntAscending:
+    case Builtin::ArraySortIntDescending:
+      return SortIntegers(builtin, array);
     case Builtin::ArrayLength:
       return Heap::ArrayLength(array).transform(integer).transform_error(ArrayExecutionStatus);
     case Builtin::ArraySlice:

@@ -51,7 +51,7 @@ void FunctionEmitter::CacheGlobals() {
   }
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
-  auto* data = LoadProgramData(builder_, body_->getArg(0));
+  auto* data = ProgramData();
   // 当前函数版本的全局存储固定；闭包和宿主重入临时切换实例，返回前恢复。
   // reloadable 缓存的代数逐次检查；封闭程序中只读槽的值在确认初始化后复用。
   if (program_.native_mode == NativeProgramMode::Reloadable) {

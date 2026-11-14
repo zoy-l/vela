@@ -66,6 +66,66 @@ TEST(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEver
   }
 }
 
+TEST(ArraySortTest, IntegerOrdersPreserveFullDomainDuplicatesAndReceiverIdentity) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  constexpr std::array<std::int64_t, 8> kValues{
+      0,
+      std::numeric_limits<std::int64_t>::max(),
+      -1,
+      42,
+      std::numeric_limits<std::int64_t>::min(),
+      0,
+      -1,
+      42,
+  };
+  constexpr std::array<std::int64_t, 8> kSorted{
+      std::numeric_limits<std::int64_t>::min(), -1, -1, 0, 0, 42, 42,
+      std::numeric_limits<std::int64_t>::max(),
+  };
+  Value value = Value::Object(heap.AllocateArray(*layout, kValues.size()));
+  ASSERT_FALSE(value.IsNull());
+  const RootRange root(heap, &value, 1);
+  auto& array = *value.AsObject();
+  for (std::uint32_t index = 0; index < kValues.size(); ++index) {
+    ASSERT_TRUE(heap.SetElement(array, index, Value::Integer(kValues[index])));
+  }
+  for (const auto builtin : {Builtin::ArraySortIntAscending, Builtin::ArraySortIntDescending}) {
+    const auto sorted = ExecuteArrayBuiltin(builtin, std::span(&value, 1), heap);
+    ASSERT_TRUE(sorted);
+    EXPECT_EQ(sorted->AsObject(), &array);
+    for (std::uint32_t index = 0; index < kSorted.size(); ++index) {
+      const auto expected = builtin == Builtin::ArraySortIntAscending
+                                ? kSorted[index]
+                                : kSorted[kSorted.size() - index - 1];
+      EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), expected);
+    }
+  }
+}
+
+TEST(ArraySortTest, IntegerOrdersAcceptEmptyArraysAndRejectTaggedStorage) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  for (const auto nullable : {false, true}) {
+    const auto* layout =
+        isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = nullable}});
+    Value value = Value::Object(heap.AllocateArray(*layout, 0));
+    ASSERT_FALSE(value.IsNull());
+    const RootRange root(heap, &value, 1);
+    for (const auto builtin : {Builtin::ArraySortIntAscending, Builtin::ArraySortIntDescending}) {
+      const auto sorted = ExecuteArrayBuiltin(builtin, std::span(&value, 1), heap);
+      if (nullable) {
+        ASSERT_FALSE(sorted);
+        EXPECT_EQ(sorted.error(), ExecutionStatus::TypeError);
+      } else {
+        ASSERT_TRUE(sorted);
+        EXPECT_EQ(sorted->AsObject(), value.AsObject());
+      }
+    }
+  }
+}
+
 TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {
   Isolate isolate;
   auto& heap = isolate.heap();

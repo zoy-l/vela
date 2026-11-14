@@ -179,6 +179,7 @@ class FunctionEmitter final {
   void PrepareCallCheckpoint();
   void MarkClosedInvariantCall(llvm::CondBrInst& branch) const;
   llvm::Value* ControlState();
+  llvm::Value* ProgramData();
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
   void EmitHostBoundary(HostBorrow change);
@@ -190,6 +191,10 @@ class FunctionEmitter final {
   llvm::Value* EmitDirectHostCall(const ir::Function& callee,
                                   llvm::Value* entries,
                                   std::span<llvm::Value* const> arguments);
+  llvm::Value* EmitHostFunctionCall(const SourceType& result_type,
+                                    llvm::Value* target,
+                                    std::span<llvm::Value* const> arguments);
+  void ReleaseHostHandles(llvm::Value* context);
   void InitializeNativeStringView(llvm::Value* string, llvm::Value* storage);
   llvm::Value* EmitNativeStringArgument(llvm::Value* string,
                                         std::size_t parameter,
@@ -414,6 +419,7 @@ class FunctionEmitter final {
   llvm::Value* stack_roots_frame_ = nullptr;
   llvm::Value* stack_roots_head_ = nullptr;
   llvm::Value* control_state_ = nullptr;
+  llvm::Value* program_data_ = nullptr;
   llvm::Value* boundary_ready_ = nullptr;
   llvm::Value* frame_storage_ = nullptr;
   llvm::Value* construction_depth_ = nullptr;

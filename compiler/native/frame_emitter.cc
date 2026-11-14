@@ -447,7 +447,7 @@ void FunctionEmitter::CacheFields() {
     return;
   }
   absl::flat_hash_map<ir::ClassId, llvm::Value*> classes;
-  auto* program = LoadProgramData(builder_, body_->getArg(0));
+  auto* program = ProgramData();
   auto* table = builder_.CreateLoad(
       builder_.getPtrTy(),
       ByteAddress(program, runtime::NativeMemoryLayout::kProgramDirectFieldLayouts));

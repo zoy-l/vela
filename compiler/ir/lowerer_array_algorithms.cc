@@ -5,14 +5,18 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "base/builtin.h"
+#include "base/native_program_mode.h"
 #include "base/source_location.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
@@ -20,8 +24,111 @@
 namespace vela::ir {
 namespace {
 
-// AOT sort/100000 的 8、16、32 元素分段实测中，32 元素减少归并及比较回调开销最多。
+// 通用排序的 8、16、32 元素分段实测中，32 元素减少归并及比较回调开销最多。
 constexpr std::int64_t kInsertionSortRun = 32;
+
+std::optional<bool> IntegerOrderCondition(const frontend::Expression& expression,
+                                          std::span<const frontend::Parameter> parameters,
+                                          int order) {
+  using frontend::Expression;
+  using frontend::TokenKind;
+  if (expression.kind != Expression::Kind::Binary ||
+      expression.left->kind != Expression::Kind::Name ||
+      expression.right->kind != Expression::Kind::Name) {
+    return std::nullopt;
+  }
+  const auto parameter_index = [&](const std::string& name) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (parameters[index].name == name) {
+        return index;
+      }
+    }
+    return std::nullopt;
+  };
+  const auto left = parameter_index(expression.left->text);
+  const auto right = parameter_index(expression.right->text);
+  if (!left || !right) {
+    return std::nullopt;
+  }
+  const auto directed_order = *left == 0 ? order : -order;
+  const auto comparison = *left == *right ? 0 : directed_order;
+  switch (expression.operation) {
+    case TokenKind::Less:
+      return comparison < 0;
+    case TokenKind::LessEqual:
+      return comparison <= 0;
+    case TokenKind::Greater:
+      return comparison > 0;
+    case TokenKind::GreaterEqual:
+      return comparison >= 0;
+    case TokenKind::EqualEqual:
+      return comparison == 0;
+    case TokenKind::BangEqual:
+      return comparison != 0;
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<std::int64_t> IntegerOrderResult(const frontend::Expression& expression,
+                                               std::span<const frontend::Parameter> parameters,
+                                               int order) {
+  using frontend::Expression;
+  if (expression.kind == Expression::Kind::IntegerLiteral) {
+    return expression.IntegerValue();
+  }
+  if (expression.kind == Expression::Kind::Unary &&
+      expression.operation == frontend::TokenKind::Minus &&
+      expression.operand->kind == Expression::Kind::IntegerLiteral) {
+    const auto value = expression.operand->IntegerValue();
+    if (value && *value != std::numeric_limits<std::int64_t>::min()) {
+      return -*value;
+    }
+  }
+  if (expression.kind == Expression::Kind::Conditional) {
+    const auto condition = IntegerOrderCondition(*expression.operand, parameters, order);
+    if (condition) {
+      return IntegerOrderResult(*(*condition ? expression.left : expression.right), parameters,
+                                order);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Builtin> IntegerSortBuiltin(const frontend::Expression& expression,
+                                          const frontend::FunctionDescriptor& signature) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  if (expression.kind != frontend::Expression::Kind::Lambda || signature.parameters.size() != 2 ||
+      signature.return_type.kind != Kind::Int ||
+      std::ranges::any_of(signature.parameters, [](const auto& parameter) {
+        return parameter.type.kind != Kind::Int || parameter.type.nullable;
+      })) {
+    return std::nullopt;
+  }
+  const auto& function = *expression.function;
+  const auto& body = *function.body;
+  if (body.kind != frontend::Statement::Kind::Block || body.statements.size() != 1 ||
+      body.statements.front()->kind != frontend::Statement::Kind::Return) {
+    return std::nullopt;
+  }
+  const auto& result = *body.statements.front()->expression;
+  const auto parameters = std::span(function.parameters);
+  // 只解释参数间比较、条件选择和整数常量；三个关系覆盖整个 int64 域，
+  // 并非以少量输入采样猜测比较器，也不会省略可观察调用或算术错误。
+  const auto less = IntegerOrderResult(result, parameters, -1);
+  const auto equal = IntegerOrderResult(result, parameters, 0);
+  const auto greater = IntegerOrderResult(result, parameters, 1);
+  if (!less || !equal || !greater || *equal != 0) {
+    return std::nullopt;
+  }
+  if (*less < 0 && *greater > 0) {
+    return Builtin::ArraySortIntAscending;
+  }
+  if (*less > 0 && *greater < 0) {
+    return Builtin::ArraySortIntDescending;
+  }
+  return std::nullopt;
+}
 
 }  // namespace
 
@@ -77,10 +184,12 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
   const auto& order = model_.argument_order.at(&expression);
   const frontend::FunctionDescriptor* signature = nullptr;
+  const frontend::Expression* callback_expression = nullptr;
   for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
     const auto value = LowerExpression(*expression.arguments.at(index).value);
     if (order.at(index) == 0) {
       signature = &model_.function_types.at(value.type.name);
+      callback_expression = expression.arguments[index].value.get();
     }
     Emit({
         .opcode = Opcode::Move,
@@ -93,6 +202,12 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
     const auto result = AllocateRegister(location);
     EmitBuiltinCall(Builtin::ArraySortDefault, result, base, location);
     return {.reg = result, .type = result_type};
+  }
+  const auto& element_type = model_.array_elements.at(receiver.type.name);
+  std::optional<Builtin> integer_sort;
+  if (algorithm == ArrayAlgorithm::Sort && native_mode_ == NativeProgramMode::Closed &&
+      element_type.kind == frontend::TypeDescriptor::Kind::Int && !element_type.nullable) {
+    integer_sort = IntegerSortBuiltin(*callback_expression, *signature);
   }
   using Comparison = ArrayAlgorithmRegisters::Comparison;
   auto comparison = Comparison::Integer;
@@ -109,6 +224,30 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
   const auto guard = AllocateRegisterWindow(2, location);
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = base, .location = location});
   EmitBuiltinCall(Builtin::ArrayMutation, guard + 1, base, location);
+  if (integer_sort) {
+    const auto one =
+        EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
+    const auto compares = EmitTemporary(
+        {.opcode = Opcode::GreaterInt, .lhs = length, .rhs = one, .location = location});
+    const auto trivial = current_function_->instructions.size();
+    Emit({.opcode = Opcode::JumpIfFalse, .lhs = compares, .location = location});
+    // 纯比较器仍占用一个逻辑调用层级；非平凡输入先沿原调用入口检查深度与请求。
+    // 之后无用户代码、分配或可失败算术，排序期间不再需要逐元素重复此检查。
+    const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
+    const auto first =
+        EmitTemporary({.opcode = Opcode::GetIndex, .lhs = base, .rhs = one, .location = location});
+    const auto previous =
+        EmitTemporary({.opcode = Opcode::GetIndex, .lhs = base, .rhs = zero, .location = location});
+    RecordValueType(first, element_type);
+    RecordValueType(previous, element_type);
+    const std::array values{first, previous};
+    const std::array types{element_type, element_type};
+    EmitArrayCallback(callback, values, *signature, types, guard, location);
+    BindJump(trivial);
+    const auto result = AllocateRegister(location);
+    EmitBuiltinCall(*integer_sort, result, base, location);
+    return {.reg = result, .type = result_type};
+  }
   return LowerArrayTraversal(
       {
           .array = base,
@@ -117,7 +256,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
           .guard = guard,
           .callback_arity = callback_arity,
           .comparison = comparison,
-          .element_type = model_.array_elements.at(receiver.type.name),
+          .element_type = element_type,
           .signature = signature,
       },
       algorithm, receiver.type, result_type, location);

@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
@@ -17,7 +18,12 @@
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_context.h"
 #include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::jit {
@@ -40,6 +46,74 @@ struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
   SourceSession source_{"main.vela"};
   runtime::Isolate isolate_{1};
 };
+
+void CollectCallbackInputs(runtime::NativeContext& context) noexcept {
+  context.isolate().heap().Collect();
+}
+
+TEST_P(JitCallableTest, HostCallbacksKeepExplicitAndImplicitInputsAcrossCollection) {
+  ASSERT_TRUE(
+      isolate_.RegisterNative(runtime::NativeFunction::Bind<CollectCallbackInputs>("collect")));
+  const auto published = Publish(R"(
+external func collect(): void;
+class Box {
+  value: int = 40;
+  add(value: int): int { collect(); return this.value + value; }
+}
+export func make(): Box { return Box(); }
+export func read(value: Box): int { collect(); return value.value + 2; }
+export func bound(): (int) => int { return Box().add; }
+export func parser(): (string, int?) => int { return int.parse; }
+export func text(): string { return 42.toString(); }
+)");
+  ASSERT_TRUE(published) << published.error();
+  auto& dispatch = isolate_.native_dispatch();
+  const auto make = dispatch.FindEntry("main.vela", "make");
+  const auto read = dispatch.FindEntry("main.vela", "read");
+  const auto bound = dispatch.FindEntry("main.vela", "bound");
+  const auto parser = dispatch.FindEntry("main.vela", "parser");
+  const auto text = dispatch.FindEntry("main.vela", "text");
+  ASSERT_TRUE(make);
+  ASSERT_TRUE(read);
+  ASSERT_TRUE(bound);
+  ASSERT_TRUE(parser);
+  ASSERT_TRUE(text);
+  const auto receiver = make->Invoke({});
+  ASSERT_TRUE(receiver);
+  const std::array explicit_arguments{*receiver};
+  const auto explicit_result = read->Invoke(explicit_arguments);
+  ASSERT_TRUE(explicit_result);
+  EXPECT_EQ(explicit_result->AsInteger(), 42);
+
+  const auto target = bound->Resolve();
+  ASSERT_TRUE(target);
+  auto instance = runtime::NativeInstance::Borrow(*target->state);
+  runtime::NativeExecution execution(instance);
+  const auto callback = bound->Invoke({});
+  ASSERT_TRUE(callback);
+  const std::array implicit_arguments{runtime::Value::Integer(2)};
+  const auto implicit_result =
+      runtime::InvokeNativeCallable(execution, *callback, implicit_arguments);
+  ASSERT_TRUE(implicit_result);
+  EXPECT_EQ(implicit_result->AsInteger(), 42);
+
+  const auto parse = parser->Invoke({});
+  ASSERT_TRUE(parse);
+  const auto parser_root = runtime::HostRoot::Create(isolate_, *parse);
+  ASSERT_TRUE(parser_root);
+  const auto source = text->Invoke({});
+  ASSERT_TRUE(source);
+  const std::array optional_arguments{*source};
+  const auto optional_result =
+      runtime::InvokeNativeCallable(execution, parser_root->value(), optional_arguments);
+  ASSERT_TRUE(optional_result);
+  EXPECT_EQ(optional_result->AsInteger(), 42);
+  const std::array invalid_arguments{runtime::Value::Boolean(true)};
+  const auto rejected =
+      runtime::InvokeNativeCallable(execution, parser_root->value(), invalid_arguments);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
+}
 
 std::string FactorySource(int result) {
   const auto value = std::to_string(result);

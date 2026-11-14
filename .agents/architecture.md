@@ -155,6 +155,10 @@ Closed synchronous AOT functions whose only successful observable operations are
 borrow `host_execution` for the whole function. Reentrant executions retain their own contexts,
 restore the outer execution, and preserve the caller's logical frames.
 
+Native callbacks root explicit arguments throughout conversion and execution. Only implicit
+arguments and omitted argument values need owned temporary storage; that storage and its root
+registration are created together when nonempty, before encoding or allocating further inputs.
+
 The execution registers its exception root when it publishes an exception envelope, and releases
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
 
@@ -179,6 +183,14 @@ logical depth and physical stack space. Exhausting the bound or encountering an 
 returns to the full entry to construct the original error and trace. Eligibility excludes state
 access, side effects and loops, so that this execution cannot repeat observable work. Managed
 recursive bodies use complete inlined frames and retain their root and error contracts.
+Closed linked AOT may unroll short recursive loops only with a proven constant iteration bound and
+an expanded instruction budget that includes bounded nested loops and their remainder copies.
+Nested scans retain LLVM's ordinary unrolling policy; unknown nested bounds prevent the enclosing
+forced expansion. Surviving calls retain separate frames. The transformation copies iterations
+without removing their checks or failure exits.
+After general optimization, innermost counted loops with an invariant indirect call target may
+partially unroll within a constant iteration bound and an instruction budget that includes remainder
+copies. Each call retains its argument, error, frame and observation contracts.
 
 Closed linked AOT may specialize direct-call bodies using integer ranges, array aliases and all
 element writes. Control-flow constraints and source-constant widening establish a fixed point across
@@ -189,6 +201,14 @@ Specialized bodies remain outside the NativeImage entry table. Trusted host call
 functions retain the generic body and its full type-domain checks. Range proofs preserve access and
 failure order, logical frames, roots and physical stack budgets; they do not enlarge parameter-array
 caches or apply to dynamic JIT code.
+
+Closed-program lowering may replace a pure non-null integer ordering lambda with a native integer
+array sort. The proof interprets only parameter comparisons, conditional selection and integer
+constants over all three ordering relations, covering the complete int64 domain. Nontrivial arrays
+retain an ordinary comparator entry to check logical call depth and control requests before sorting;
+empty and single-element arrays do not invoke the comparator. Equal integers have no distinct
+identity, so their in-place reordering preserves the stable-sort contract. Other comparators retain
+the snapshot, mutation-detection and failure behavior of the general sorting path.
 
 Reloadable optimized JIT may inline small pure scalar functions and readonly array kernels called
 inside loops. Scalar leaves are statically bounded; readonly kernels use the shared dynamic work
@@ -215,8 +235,11 @@ scalar methods may use the existing leaf entry after full positional argument va
 descriptors, unresolved inheritance queries and other value contracts retain general reflection.
 
 Counted loops may share request checks and stable reflection argument guards across bounded chunks.
-Both the iteration limit and successful-path instruction budget bound the observation delay. Guard
-loads must remain valid under every successful-path write; repeated writes of an already-checked
+Both the iteration limit and successful-path instruction budget bound the observation delay.
+Placement also accepts a proven symbolic maximum backedge count after loop rotation or peeling;
+an oversized constant maximum leaves its poll marker available for later range proofs. Closed
+linked AOT rechecks these opportunities after general optimization before sinking loop stores.
+Guard loads must remain valid under every successful-path write; repeated writes of an already-checked
 kind tag preserve that fact. Guard checks retain their short-circuit order, and a failed guard enters
 the ordinary current iteration before any chunk effects. Each chunk reloads mutable arguments;
 user calls, allocation and other unproven mutations retain per-iteration observation and validation.
@@ -249,6 +272,9 @@ the ordinary binding and execution path before any bounded-body effects occur.
 
 String constants are borrowed from the current execution instance's immutable constant pool.
 Publication retains old pools with their instances, and host reentry restores the caller's instance.
+Generated bodies borrow their entry program state once per invocation. Active calls retain that
+state; nested instance scopes restore the caller before returning, so repeated loads do not require
+an invariant-memory claim about the mutable execution instance field.
 Synchronous frames need no duplicate root for values derived solely from that pool and null through
 copies. Closed linked AOT with safepoint-only observation also applies this ownership proof to global
 slots proven readonly by the shared global analysis. Every derivation must reach a known instance

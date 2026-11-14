@@ -404,9 +404,12 @@ struct NativeAdapterBase {
        std::is_same_v<Result, std::int64_t> || std::is_same_v<Result, double>) &&
       !(NativeCodec<Args>::kNeedsScope || ...) &&
       !(std::is_same_v<typename NativeAbiCodec<Args>::Type, NativeValue> || ...);
-  // Windows x64 的 16 字节平凡聚合按引用传值。视图存储由 C++ 构造，生成代码
-  // 只复制其不透明字节，每次调用均提供独立副本，允许宿主修改自己的值参数。
-#if defined(_WIN32) && defined(_M_X64)
+  static constexpr bool kContextless =
+      kDirect && !kNeedsContext &&
+      (std::is_same_v<Args, typename NativeDirectArgument<Args>::Type> && ...);
+  // 视图由 C++ 构造。Windows x64 按引用传递独立副本，Darwin arm64 使用两个
+  // 整数寄存器；生成代码只传递不透明字节，不假定标准库成员的排列。
+#if (defined(_WIN32) && defined(_M_X64)) || (defined(__APPLE__) && defined(__aarch64__))
   static constexpr bool kNativeStringViews =
       kDirect && kNeedsContext && (std::is_same_v<Args, std::string_view> || ...) &&
       ((std::is_same_v<Args, std::string_view> ||
@@ -505,7 +508,7 @@ struct NativeAdapterBase {
   }
 
   static constexpr auto UnscopedEntry() noexcept {
-    if constexpr (kNativeStringViews ||
+    if constexpr (kContextless || kNativeStringViews ||
                   (kNeedsContext &&
                    (std::is_same_v<Args, typename NativeDirectArgument<Args>::Type> && ...))) {
       return Function;
@@ -534,7 +537,7 @@ class NativeFunction final {
   // 指向静态的精确函数指针槽；只擦除槽的对象类型，不转换函数指针类型。
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
-  enum class AotCallKind : std::uint8_t { Checked, Direct, NativeStringViews };
+  enum class AotCallKind : std::uint8_t { Checked, Direct, NativeStringViews, Contextless };
   enum class Intrinsic : std::uint8_t { None, SquareRoot };
   struct AotEntry final {
     AotEntrySlot slot = nullptr;
@@ -551,12 +554,17 @@ class NativeFunction final {
         // 直接入口统一携带上下文；适配器在编译期决定 C++ 函数是否消费它。
         static constexpr auto kTarget = &Adapter::DirectCall;
         static constexpr auto kUnscopedTarget = Adapter::UnscopedEntry();
+        auto unscoped_kind = AotCallKind::Direct;
+        if constexpr (Adapter::kContextless) {
+          unscoped_kind = AotCallKind::Contextless;
+        } else if constexpr (Adapter::kNativeStringViews) {
+          unscoped_kind = AotCallKind::NativeStringViews;
+        }
         return AotEntry{
             .slot = static_cast<AotEntrySlot>(&kTarget),
             .unscoped_slot = static_cast<AotEntrySlot>(&kUnscopedTarget),
             .kind = AotCallKind::Direct,
-            .unscoped_kind =
-                Adapter::kNativeStringViews ? AotCallKind::NativeStringViews : AotCallKind::Direct,
+            .unscoped_kind = unscoped_kind,
         };
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;

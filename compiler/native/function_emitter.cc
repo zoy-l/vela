@@ -4,6 +4,7 @@
 #include "base/reflection.h"
 #include "base/reflection_operation.h"
 #include "compiler/native/array_analysis.h"
+#include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
@@ -213,6 +214,16 @@ llvm::Value* FunctionEmitter::ControlState() {
     control_state_ = state;
   }
   return control_state_;
+}
+
+llvm::Value* FunctionEmitter::ProgramData() {
+  if (program_data_ == nullptr) {
+    Builder entry(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+    // 函数入口已绑定所属实例；闭包调用和宿主重入在返回前恢复同一实例。
+    // 活动调用保活其程序状态，故本次调用可复用入口借用而不假定执行字段永不写入。
+    program_data_ = LoadProgramData(entry, body_->getArg(0));
+  }
+  return program_data_;
 }
 
 llvm::Value* FunctionEmitter::LoadSafepointRequests() {
@@ -750,6 +761,10 @@ void FunctionEmitter::InitializeRecords() {
 
 std::expected<void, std::string> FunctionEmitter::Emit() {
   auto& context = module_.getContext();
+  if (IsClosedLinkedProgram(program_.native_mode, placement_) && roots_.bounded_polls &&
+      ir::CanAnalyzeSynchronousFunction(source_)) {
+    body_->addFnAttr(kNativeArrayReductionCandidateAttribute);
+  }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
   builder_.SetInsertPoint(entry);
   if (kind_ == NativeEntryKind::Resume) {

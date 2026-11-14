@@ -13,8 +13,10 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/ModRef.h>
+#include <llvm/TargetParser/Triple.h>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
@@ -36,6 +38,22 @@ namespace {
 bool HasDirectHostResult(const SourceType& type) {
   return !type.nullable && (type.kind == Kind::Void || type.kind == Kind::Bool ||
                             type.kind == Kind::Int || type.kind == Kind::Double);
+}
+
+bool HasRegisterStringViewAbi(const llvm::Module& module) {
+  const auto& target = module.getTargetTriple();
+  return target.isOSDarwin() && target.isAArch64();
+}
+
+llvm::Type* NativeStringViewType(llvm::Module& module) {
+  auto& context = module.getContext();
+  if (HasRegisterStringViewAbi(module)) {
+    constexpr auto kWords = runtime::NativeMemoryLayout::kBorrowedStringViewBytes /
+                            sizeof(std::uint64_t);
+    return llvm::ArrayType::get(llvm::Type::getInt64Ty(context), kWords);
+  }
+  return llvm::FixedVectorType::get(llvm::Type::getInt8Ty(context),
+                                    runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
 }
 
 bool IsHostParameter(const layout::Program& layouts,
@@ -200,8 +218,7 @@ void FunctionEmitter::CacheNativeStringViews() {
   if (native_view_constants_.empty()) {
     return;
   }
-  auto* opaque = llvm::FixedVectorType::get(builder_.getInt8Ty(),
-                                            runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
+  auto* opaque = NativeStringViewType(module_);
   for (const auto constant : native_view_constants_) {
     auto* storage = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
     InitializeNativeStringView(constants_.at(constant), storage);
@@ -225,6 +242,9 @@ llvm::Value* FunctionEmitter::EmitNativeStringArgument(llvm::Value* string,
     if (constant) {
       if (const auto found = constant_string_views_.find(*constant);
           found != constant_string_views_.end()) {
+        if (HasRegisterStringViewAbi(module_)) {
+          return found->second;
+        }
         auto* copy = AllocateAuxiliary(runtime::NativeMemoryLayout::kBorrowedStringViewBytes);
         builder_.CreateStore(found->second, copy);
         view = copy;
@@ -241,6 +261,9 @@ llvm::Value* FunctionEmitter::EmitNativeStringArgument(llvm::Value* string,
     InitializeNativeStringView(string, view);
     builder_.CreateBr(ready);
     builder_.SetInsertPoint(ready);
+  }
+  if (HasRegisterStringViewAbi(module_)) {
+    return builder_.CreateLoad(NativeStringViewType(module_), view);
   }
   return builder_.CreateSelect(native, view, string);
 }
@@ -283,17 +306,62 @@ std::size_t FunctionEmitter::PlanStringViewStorage() {
   return (views + native_view_constants_.size()) * NativeMemoryLayout::kBorrowedStringViewBytes;
 }
 
+llvm::Value* FunctionEmitter::EmitHostFunctionCall(const SourceType& result_type,
+                                                   llvm::Value* target,
+                                                   std::span<llvm::Value* const> arguments) {
+  auto& context = module_.getContext();
+  auto* output_type = result_type.kind == Kind::Void ? builder_.getVoidTy()
+                                                      : ValueType(context, result_type);
+  std::vector<llvm::Type*> types;
+  types.reserve(arguments.size());
+  for (auto* value : arguments) {
+    types.push_back(value->getType());
+  }
+  auto* signature = llvm::FunctionType::get(output_type, types, false);
+  auto* call = builder_.CreateCall(signature, target, arguments);
+  // 直接 ABI 与 C++ bool 使用相同的 i1 / zeroext 约定。
+  if (result_type.kind == Kind::Bool) {
+    call->addRetAttr(llvm::Attribute::ZExt);
+  }
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    if (arguments[index]->getType()->isIntegerTy(1)) {
+      call->addParamAttr(static_cast<unsigned>(index), llvm::Attribute::ZExt);
+    }
+  }
+  return call;
+}
+
+void FunctionEmitter::ReleaseHostHandles(llvm::Value* native_context) {
+  auto& context = module_.getContext();
+  auto* handles = builder_.CreateLoad(
+      builder_.getPtrTy(),
+      ByteAddress(native_context, runtime::NativeMemoryLayout::kContextHandles));
+  auto* release = llvm::BasicBlock::Create(context, "host.handles.release", body_);
+  auto* released = llvm::BasicBlock::Create(context, "host.handles.released", body_);
+  builder_.CreateCondBr(builder_.CreateIsNotNull(handles), release, released,
+                        llvm::MDBuilder(context).createUnlikelyBranchWeights());
+  builder_.SetInsertPoint(release);
+  auto cleanup = module_.getOrInsertFunction(runtime::kNativeReleaseHostHandlesSymbol,
+                                             builder_.getVoidTy(), builder_.getPtrTy());
+  builder_.CreateCall(cleanup, {native_context});
+  builder_.CreateBr(released);
+  builder_.SetInsertPoint(released);
+}
+
 llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
                                                  llvm::Value* entries,
                                                  std::span<llvm::Value* const> arguments) {
+  using AotCallKind = runtime::NativeFunction::AotCallKind;
   auto& context = module_.getContext();
   const auto& return_type = callee.return_type;
-  const auto return_kind = return_type.kind;
-  auto* result_type = builder_.getVoidTy();
-  if (return_kind != Kind::Void) {
-    result_type = ValueType(context, return_type);
-  }
   auto* target = builder_.CreateExtractValue(entries, 0);
+  auto* kind = builder_.CreateExtractValue(entries, 1);
+  const auto callee_parameters = std::span(callee.value_types).first(callee.parameter_count);
+  const auto has_strings = std::ranges::any_of(
+      callee_parameters, [](const auto& type) { return type.kind == Kind::String; });
+  const auto register_views = has_strings && HasRegisterStringViewAbi(module_);
+  auto* native_context =
+      ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionContext);
   const auto& native_signature = callee.signature;
   if (!native_signature) {
     std::unreachable();
@@ -304,48 +372,60 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     const auto& type = callee.value_types[index];
     if (IsHostParameter(program_.layouts, call_signature, type, index)) {
       parameters[index] = EmitHostPointer(parameters[index], type);
-    } else if (placement_ == NativeCodePlacement::Linked && type.kind == Kind::String) {
-      parameters[index] = EmitNativeStringArgument(parameters[index], index,
-                                                   builder_.CreateExtractValue(entries, 1));
+    } else if (placement_ == NativeCodePlacement::Linked && type.kind == Kind::String &&
+               !register_views) {
+      parameters[index] = EmitNativeStringArgument(parameters[index], index, kind);
     }
   }
-  parameters.insert(parameters.begin(),
-                    ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionContext));
-  std::vector<llvm::Type*> types;
-  types.reserve(parameters.size());
-  for (auto* value : parameters) {
-    types.push_back(value->getType());
-  }
-  auto* signature = llvm::FunctionType::get(result_type, types, false);
   EmitHostBoundary(HostBorrow::Enter);
-  auto* result = builder_.CreateCall(signature, target, parameters);
-  // 直接 ABI 与 C++ bool 使用相同的 i1 / zeroext 约定，避免字节 codec 阻断尾调用。
-  if (return_kind == Kind::Bool) {
-    result->addRetAttr(llvm::Attribute::ZExt);
-  }
-  for (std::size_t index = 1; index < parameters.size(); ++index) {
-    if (parameters[index]->getType()->isIntegerTy(1)) {
-      result->addParamAttr(static_cast<unsigned>(index), llvm::Attribute::ZExt);
+  llvm::Value* specialized_result = nullptr;
+  llvm::BasicBlock* specialized_tail = nullptr;
+  llvm::BasicBlock* done = nullptr;
+  if (placement_ == NativeCodePlacement::Linked && (!has_strings || register_views)) {
+    auto* specialized = llvm::BasicBlock::Create(context, "host.specialized", body_);
+    auto* contextual = llvm::BasicBlock::Create(context, "host.contextual", body_);
+    done = llvm::BasicBlock::Create(context, "host.done", body_);
+    const auto specialized_kind = register_views ? AotCallKind::NativeStringViews
+                                                  : AotCallKind::Contextless;
+    builder_.CreateCondBr(
+        builder_.CreateICmpEQ(kind, builder_.getInt8(static_cast<std::uint8_t>(specialized_kind))),
+        specialized, contextual);
+    builder_.SetInsertPoint(specialized);
+    auto specialized_parameters = parameters;
+    if (register_views) {
+      for (std::size_t index = 0; index < parameters.size(); ++index) {
+        if (callee_parameters[index].kind == Kind::String) {
+          specialized_parameters[index] = EmitNativeStringArgument(arguments[index], index, kind);
+        }
+      }
+      specialized_parameters.insert(specialized_parameters.begin(), native_context);
     }
+    specialized_result = EmitHostFunctionCall(return_type, target, specialized_parameters);
+    if (register_views) {
+      ReleaseHostHandles(native_context);
+    }
+    specialized_tail = builder_.GetInsertBlock();
+    builder_.CreateBr(done);
+    builder_.SetInsertPoint(contextual);
   }
+  parameters.insert(parameters.begin(), native_context);
+  auto* result = EmitHostFunctionCall(return_type, target, parameters);
   if (placement_ == NativeCodePlacement::Linked) {
-    auto* native_context = parameters.front();
-    auto* handles = builder_.CreateLoad(
-        builder_.getPtrTy(),
-        ByteAddress(native_context, runtime::NativeMemoryLayout::kContextHandles));
-    auto* release = llvm::BasicBlock::Create(context, "host.handles.release", body_);
-    auto* released = llvm::BasicBlock::Create(context, "host.handles.released", body_);
-    builder_.CreateCondBr(builder_.CreateIsNotNull(handles), release, released,
-                          llvm::MDBuilder(context).createUnlikelyBranchWeights());
-    builder_.SetInsertPoint(release);
-    auto cleanup = module_.getOrInsertFunction(runtime::kNativeReleaseHostHandlesSymbol,
-                                               builder_.getVoidTy(), builder_.getPtrTy());
-    builder_.CreateCall(cleanup, {native_context});
-    builder_.CreateBr(released);
-    builder_.SetInsertPoint(released);
+    ReleaseHostHandles(native_context);
+  }
+  if (done != nullptr) {
+    auto* contextual = builder_.GetInsertBlock();
+    builder_.CreateBr(done);
+    builder_.SetInsertPoint(done);
+    if (return_type.kind != Kind::Void) {
+      auto* merged = builder_.CreatePHI(result->getType(), 2);
+      merged->addIncoming(result, contextual);
+      merged->addIncoming(specialized_result, specialized_tail);
+      result = merged;
+    }
   }
   EmitHostBoundary(HostBorrow::Exit);
-  if (return_kind == Kind::Void) {
+  if (return_type.kind == Kind::Void) {
     return builder_.getFalse();
   }
   return result;

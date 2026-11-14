@@ -157,8 +157,12 @@ Future FailedCallback(Isolate& isolate,
 }
 
 std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstance& instance,
-                                                              const TypeConstraint& type,
+                                                              const NativeCallParameter& parameter,
                                                               Value value) {
+  auto type = instance.layouts().types.at(parameter.type);
+  if ((parameter.flags & kNativeOptionalParameter) != 0) {
+    type.nullable = true;
+  }
   if (!Heap::IsValueOfType(value, type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
@@ -173,8 +177,6 @@ std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstan
 std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
                                                      const NativeResolvedCallable& callback,
                                                      std::span<const Value> arguments) {
-  auto& heap = execution.isolate().heap();
-  const RootRange arguments_root(heap, arguments.data(), arguments.size(), std::nullopt);
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
@@ -188,15 +190,27 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   if (!typed && function.parameter_count != arguments.size() + hidden) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  constexpr std::size_t kInlineArguments = 8;
-  // 显式实参已保根；这里只保存隐式接收者和新分配的缺省值。
-  NativeBuffer<Value, kInlineArguments> storage(heap, function.parameter_count - arguments.size());
-  if (!storage.IsAllocated()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  if (function.parameter_count == 0) {
+    // 数量检查已排除实参和隐式接收者；没有需要编码、补缺省或保根的输入。
+    return InvokeNativeTarget(execution, function, {});
   }
-  const auto values = storage.values();
-  std::uninitialized_value_construct_n(values.data(), values.size());
-  const RootRange roots(heap, values.data(), values.size(), std::nullopt);
+  auto& heap = execution.isolate().heap();
+  const RootRange arguments_root(heap, arguments.data(), arguments.size(), std::nullopt);
+  constexpr std::size_t kInlineArguments = 8;
+  // 显式实参已保根；没有隐式实参或缺省值时不构造额外存储和空根区间。
+  const auto owned_count = function.parameter_count - arguments.size();
+  std::optional<NativeBuffer<Value, kInlineArguments>> storage;
+  std::span<Value> values;
+  RootRange roots(std::nullopt);
+  if (owned_count != 0) {
+    storage.emplace(heap, owned_count);
+    if (!storage->IsAllocated()) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    values = storage->values();
+    std::uninitialized_value_construct_n(values.data(), values.size());
+    roots.Attach(heap, values.data(), values.size());
+  }
   if (target.implicit) {
     values.front() = *target.implicit;
   }
@@ -212,11 +226,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     auto value = arguments[index];
     if (typed) {
       const auto parameter = parameters[index + hidden - function.hidden_parameters];
-      auto type = types.at(parameter.type);
-      if ((parameter.flags & kNativeOptionalParameter) != 0) {
-        type.nullable = true;
-      }
-      const auto converted = ConvertCallbackArgument(instance, type, value);
+      const auto converted = ConvertCallbackArgument(instance, parameter, value);
       if (!converted) {
         return std::unexpected(converted.error());
       }
@@ -238,7 +248,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     }
     encoded[index] = EncodeNativeValue(value);
   }
-  return InvokeNativeTarget(execution, target.function, encoded);
+  return InvokeNativeTarget(execution, function, encoded);
 }
 
 Future InvokeFutureCallback(const NativeCallDomain& domain,

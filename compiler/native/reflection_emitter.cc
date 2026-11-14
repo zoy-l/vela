@@ -135,7 +135,7 @@ void FunctionEmitter::EmitReflectedLookup(const ir::Instruction& instruction,
   auto* inspect = llvm::BasicBlock::Create(context, "lookup.epoch", body_);
   auto* matched = llvm::BasicBlock::Create(context, "lookup.matched", body_);
   auto* done = llvm::BasicBlock::Create(context, "lookup.done", body_);
-  auto* program = LoadProgramData(builder_, body_->getArg(0));
+  auto* program = ProgramData();
   llvm::Value* cache = nullptr;
   if (type_lookup) {
     cache = ByteAddress(program, NativeMemoryLayout::kProgramReflectionTypeCache);
@@ -396,9 +396,8 @@ void FunctionEmitter::EmitReflectedCall(const ir::Instruction& instruction,
     auto* program =
         LoadMemory(builder_.getPtrTy(), ByteAddress(cache, offsetof(ReflectedCallCache, program)),
                    MemoryRegion::ReflectionCache);
-    auto* matches = builder_.CreateAnd(
-        IsReflectionEpochCurrent(*epoch, observed),
-        builder_.CreateICmpEQ(LoadProgramData(builder_, body_->getArg(0)), program));
+    auto* matches = builder_.CreateAnd(IsReflectionEpochCurrent(*epoch, observed),
+                                       builder_.CreateICmpEQ(ProgramData(), program));
     builder_.CreateCondBr(matches, signature, slow);
   }
   builder_.SetInsertPoint(signature);
