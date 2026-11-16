@@ -23,7 +23,7 @@ struct NativeRetainedFunction final {
 };
 
 // C++ 版本引用保根其程序状态并登记具体函数；程序快照自身不使所有函数成为存留依赖。
-// AOT 状态沿用原对象图所有权，避免全局 Future 与挂起激活形成永久根环。
+// 显式宿主句柄同样保根封闭程序；内部 AOT 激活仍沿用对象图所有权，避免永久根环。
 class NativeFunctionRoot final {
  public:
   NativeFunctionRoot(HeapObject& state,

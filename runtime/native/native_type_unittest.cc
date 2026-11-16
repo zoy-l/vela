@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <expected>
 #include <string_view>
 #include <tuple>
 
@@ -48,6 +49,19 @@ std::int64_t ContextualHost(NativeContext& /*unused*/, std::int64_t value) noexc
 
 std::int64_t BorrowedHost(std::string_view value) noexcept {
   return static_cast<std::int64_t>(value.size());
+}
+
+std::expected<std::int64_t, vela::Error> CheckedHost(std::int64_t value) noexcept {
+  return value;
+}
+
+TEST(NativeTypeTest, CheckedEntryPublishesTheSameCompleteContractForBothPlacements) {
+  const auto binding = NativeFunction::Bind<CheckedHost>("checked");
+  const auto& entry = binding.aot_entry();
+  EXPECT_EQ(entry.kind, NativeFunction::AotCallKind::Checked);
+  EXPECT_EQ(entry.unscoped_kind, NativeFunction::AotCallKind::Checked);
+  ASSERT_NE(entry.slot, nullptr);
+  EXPECT_EQ(entry.unscoped_slot, entry.slot);
 }
 
 TEST(NativeTypeTest, ContextlessEntryRetainsTheExactUnconvertedHostSignature) {

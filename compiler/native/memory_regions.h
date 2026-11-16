@@ -11,6 +11,7 @@
 namespace llvm {
 class LLVMContext;
 class MDNode;
+class Instruction;
 }  // namespace llvm
 
 namespace vela::compiler::native {
@@ -38,6 +39,7 @@ enum class MemoryRegion : std::uint8_t {
 llvm::MDNode* NativeMemoryTag(llvm::LLVMContext& context,
                               MemoryRegion region,
                               DeclarationId field = {});
+[[nodiscard]] bool HasStorageTag(const llvm::Instruction& instruction, MemoryRegion region);
 DeclarationId ClosedFieldDeclaration(const ir::Program& program,
                                      std::string_view type,
                                      ir::FieldId slot);

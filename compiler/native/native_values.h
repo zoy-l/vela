@@ -49,6 +49,13 @@ struct LeafEntryLayout final {
   unsigned budget;
 };
 
+struct HostEntryLayout final {
+  explicit constexpr HostEntryLayout(std::size_t parameters)
+      : depth(static_cast<unsigned>(parameters + 1)), return_position(depth + 1) {}
+  unsigned depth;
+  unsigned return_position;
+};
+
 // 只追踪单定义和 Move 链；返回的字符串常量由实例保根，不依赖函数栈根槽。
 std::vector<std::optional<std::uint32_t>> FindStringConstants(
     const ir::Function& function,
@@ -70,7 +77,6 @@ llvm::Constant* EmitConstantTable(llvm::Module& module,
                                   llvm::ArrayRef<llvm::Constant*> values,
                                   const std::string& name);
 llvm::Value* LoadImport(Builder& builder,
-                        llvm::Module& module,
                         llvm::Value* execution,
                         std::uint32_t function,
                         NativeCodePlacement placement);

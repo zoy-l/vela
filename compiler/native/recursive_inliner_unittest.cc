@@ -68,7 +68,7 @@ std::size_t RecursiveCallCount(const llvm::Function& function) {
   return calls;
 }
 
-TEST(RecursiveInlinerTest, ExpandsThreeLayersAndPreservesFunctionIdentityAndLinkage) {
+TEST(RecursiveInlinerTest, ExpandsFiveLayersAndPreservesFunctionIdentityAndLinkage) {
   llvm::LLVMContext context;
   llvm::Module module("recursive", context);
   auto& function = RecursiveFunction(module, 0);
@@ -77,7 +77,7 @@ TEST(RecursiveInlinerTest, ExpandsThreeLayersAndPreservesFunctionIdentityAndLink
   EXPECT_FALSE(llvm::verifyModule(module));
   EXPECT_EQ(module.getFunction("recursive"), identity);
   EXPECT_EQ(function.getLinkage(), llvm::GlobalValue::InternalLinkage);
-  EXPECT_EQ(RecursiveCallCount(function), 16U);
+  EXPECT_EQ(RecursiveCallCount(function), 64U);
   EXPECT_LE(function.getInstructionCount(), kMaximumRecursiveInlineInstructions);
   EXPECT_EQ(module.size(), 1U);
 }

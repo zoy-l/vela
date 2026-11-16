@@ -484,6 +484,7 @@ export func state(): int { return receiver.value * 10 + defaults; }
   const auto initial = session().Invoke("main.vela", "read", cold);
   ASSERT_TRUE(initial);
   EXPECT_EQ(initial->AsInteger(), 1);
+  ASSERT_EQ(session().isolate().native_control().state().initializations, 0U);
   result = Update(prefix + R"(
   added: int = next();
   read(includeAdded: bool): int {
@@ -495,6 +496,7 @@ export func state(): int { return receiver.value * 10 + defaults; }
   const auto warm = session().Invoke("main.vela", "read", cold);
   ASSERT_TRUE(warm);
   EXPECT_EQ(warm->AsInteger(), 2);
+  ASSERT_EQ(session().isolate().native_control().state().initializations, 0U);
   const auto pending = session().Invoke("main.vela", "state");
   ASSERT_TRUE(pending);
   EXPECT_EQ(pending->AsInteger(), 20);
@@ -502,6 +504,7 @@ export func state(): int { return receiver.value * 10 + defaults; }
   const auto initialized = session().Invoke("main.vela", "read", hot);
   ASSERT_TRUE(initialized);
   EXPECT_EQ(initialized->AsInteger(), 10);
+  EXPECT_EQ(session().isolate().native_control().state().initializations, 0U);
   const auto state = session().Invoke("main.vela", "state");
   ASSERT_TRUE(state);
   EXPECT_EQ(state->AsInteger(), 31);

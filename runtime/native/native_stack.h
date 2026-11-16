@@ -18,4 +18,16 @@ struct NativeStackBounds final {
 
 [[nodiscard]] std::expected<NativeStackBounds, ExecutionStatus> CurrentNativeStackBounds() noexcept;
 
+[[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus>
+CurrentNativeStackLimit() noexcept {
+  const auto bounds = CurrentNativeStackBounds();
+  if (!bounds) {
+    return std::unexpected(bounds.error());
+  }
+  if (bounds->upper - bounds->lower <= kNativeStackReserveBytes) {
+    return std::unexpected(ExecutionStatus::StackOverflow);
+  }
+  return bounds->lower + kNativeStackReserveBytes;
+}
+
 }  // namespace vela::runtime

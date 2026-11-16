@@ -288,6 +288,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           pointer_,
           pointer_,
           pointer_,
+          pointer_,
           word_,
           word_,
           word_,
@@ -304,6 +305,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeFunctionDescription, entry),
           offsetof(NativeFunctionDescription, reflection_entry),
           offsetof(NativeFunctionDescription, typed_entry),
+          offsetof(NativeFunctionDescription, host_entry_selector),
           offsetof(NativeFunctionDescription, parameter_count),
           offsetof(NativeFunctionDescription, result_type),
           offsetof(NativeFunctionDescription, hidden_parameters),
@@ -653,6 +655,9 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
                                               entry,
                                               entries.reflection[index],
                                               llvm::Constant::getNullValue(pointer_),
+                                              entries.host.empty() || entries.host[index] == nullptr
+                                                  ? llvm::Constant::getNullValue(pointer_)
+                                                  : entries.host[index],
                                               Word(function.parameter_count),
                                               Word(function.result_type),
                                               Word(function.hidden_parameters),

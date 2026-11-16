@@ -88,21 +88,70 @@ TEST(NativeInstanceTest, BindsImportsBeforePublishingAnyLayoutsOrConstants) {
   image.types = Table(types);
   image.classes = Table(classes);
   image.functions = Table(functions);
+  const auto initial_heap_bytes = isolate.heap().allocated_bytes();
   const auto missing = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(missing.has_value());
   EXPECT_EQ(missing.error().status, NativeInstantiationStatus::MissingImport);
   EXPECT_EQ(isolate.layout_counts(), initial);
+  EXPECT_EQ(isolate.heap().allocated_bytes(), initial_heap_bytes);
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<&BooleanHost>("host.read")).has_value());
   const auto mismatched = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(mismatched.has_value());
   EXPECT_EQ(mismatched.error().status, NativeInstantiationStatus::ImportSignatureMismatch);
   EXPECT_EQ(isolate.layout_counts(), initial);
+  EXPECT_EQ(isolate.heap().allocated_bytes(), initial_heap_bytes);
   Isolate correct;
   ASSERT_TRUE(correct.RegisterNative(NativeFunction::Bind<&IntegerHost>("host.read")).has_value());
   const auto bound = NativeInstance::Instantiate(correct, image);
   ASSERT_TRUE(bound.has_value());
   EXPECT_EQ(&(*bound)->isolate(), &correct);
   EXPECT_EQ((*bound)->layouts().classes.size(), 1U);
+}
+
+TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedStorage) {
+  Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<IntegerHost>("host.first")));
+  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<IntegerHost>("host.second")));
+  const auto first = isolate.FindNative("host.first");
+  const auto second = isolate.FindNative("host.second");
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  const std::array types{
+      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer)}};
+  const std::array parameters{NativeCallParameter{.name = Text("value"), .type = 0}};
+  std::array<NativeFunctionDescription, 4> functions;
+  functions[0].name = Text("plainFirst");
+  functions[1].name = Text("first");
+  functions[1].native_symbol = Text("host.first");
+  functions[1].parameters = Table(parameters);
+  functions[1].parameter_count = 1;
+  functions[1].result_type = 0;
+  functions[1].flags = kNativeTypedFunction;
+  functions[2].name = Text("plainSecond");
+  functions[3] = functions[1];
+  functions[3].name = Text("second");
+  functions[3].native_symbol = Text("host.second");
+  auto image = Image();
+  image.types = Table(types);
+  image.functions = Table(functions);
+  auto& heap = isolate.heap();
+  const auto initial_bytes = heap.allocated_bytes();
+  auto created = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(created);
+  auto instance = std::move(*created);
+  const auto* imports = instance->program().imports;
+  ASSERT_NE(imports, nullptr);
+  EXPECT_EQ(imports[0], nullptr);
+  EXPECT_EQ(imports[1], &first->aot_entry());
+  EXPECT_EQ(imports[2], nullptr);
+  EXPECT_EQ(imports[3], &second->aot_entry());
+  heap.Collect();
+  EXPECT_EQ(instance->program().imports, imports);
+  EXPECT_EQ(imports[1], &first->aot_entry());
+  EXPECT_EQ(imports[3], &second->aot_entry());
+  instance.reset();
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), initial_bytes);
 }
 
 TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {

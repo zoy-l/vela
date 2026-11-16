@@ -190,37 +190,34 @@ llvm::StructType* NativeImportType(llvm::LLVMContext& context) {
 }
 
 llvm::Value* LoadImport(Builder& builder,
-                        llvm::Module& module,
                         llvm::Value* execution,
                         std::uint32_t function,
                         NativeCodePlacement placement) {
   using runtime::NativeFunction;
-  auto lookup = module.getOrInsertFunction(runtime::kNativeImportSymbol, builder.getPtrTy(),
-                                           builder.getPtrTy(), builder.getInt32Ty());
-  auto* entry = builder.CreateCall(lookup, {execution, builder.getInt32(function)});
+  auto* data = LoadProgramData(builder, execution);
+  auto* imports = builder.CreateLoad(
+      builder.getPtrTy(), builder.CreateConstGEP1_64(builder.getInt8Ty(), data,
+                                                     runtime::NativeMemoryLayout::kProgramImports));
+  MarkInvariant(*imports);
+  auto* entry = builder.CreateLoad(
+      builder.getPtrTy(), builder.CreateConstGEP1_64(builder.getPtrTy(), imports, function));
+  MarkInvariant(*entry);
   auto address = [&](std::size_t offset) {
     return builder.CreateConstGEP1_64(builder.getInt8Ty(), entry, offset);
   };
-  auto* slot =
-      builder.CreateLoad(builder.getPtrTy(), address(offsetof(NativeFunction::AotEntry, slot)));
-  llvm::Value* kind =
-      builder.CreateLoad(builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, kind)));
+  const auto slot_offset = placement == NativeCodePlacement::Linked
+                               ? offsetof(NativeFunction::AotEntry, unscoped_slot)
+                               : offsetof(NativeFunction::AotEntry, slot);
+  const auto kind_offset = placement == NativeCodePlacement::Linked
+                               ? offsetof(NativeFunction::AotEntry, unscoped_kind)
+                               : offsetof(NativeFunction::AotEntry, kind);
+  auto* slot = builder.CreateLoad(builder.getPtrTy(), address(slot_offset));
+  auto* kind = builder.CreateLoad(builder.getInt8Ty(), address(kind_offset));
   auto* intrinsic = builder.CreateLoad(builder.getInt8Ty(),
                                        address(offsetof(NativeFunction::AotEntry, intrinsic)));
-  llvm::Value* selected_slot = slot;
-  if (placement == NativeCodePlacement::Linked) {
-    auto* unscoped = builder.CreateLoad(builder.getPtrTy(),
-                                        address(offsetof(NativeFunction::AotEntry, unscoped_slot)));
-    auto* unscoped_kind = builder.CreateLoad(
-        builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, unscoped_kind)));
-    auto* direct = builder.CreateICmpEQ(
-        kind, builder.getInt8(static_cast<std::uint8_t>(NativeFunction::AotCallKind::Direct)));
-    selected_slot = builder.CreateSelect(direct, unscoped, slot);
-    kind = builder.CreateSelect(direct, unscoped_kind, kind);
-  }
   // 槽类型只在此擦除，循环内只传实际入口和由 C++ 签名确定的调用约定。
-  auto* target = builder.CreateLoad(builder.getPtrTy(), selected_slot);
-  llvm::Value* result = llvm::PoisonValue::get(NativeImportType(module.getContext()));
+  auto* target = builder.CreateLoad(builder.getPtrTy(), slot);
+  llvm::Value* result = llvm::PoisonValue::get(NativeImportType(builder.getContext()));
   result = builder.CreateInsertValue(result, target, 0);
   result = builder.CreateInsertValue(result, kind, 1);
   return builder.CreateInsertValue(result, intrinsic, 2);
@@ -637,8 +634,8 @@ void EmitWrapper(llvm::Module& module,
                  NativeEntryContract contract) {
   const auto& source = program.functions[function_index];
   const auto external = contract == NativeEntryContract::External;
-  const auto bounded = !external && function.bounded_reflection_body != nullptr;
-  auto* body = bounded ? function.bounded_reflection_body : function.body;
+  const auto bounded = !external && function.scalar_field_body != nullptr;
+  auto* body = bounded ? function.scalar_field_body : function.body;
   auto* entry = external ? function.entry : function.reflection_entry;
   auto& context = module.getContext();
   Builder builder(llvm::BasicBlock::Create(context, "entry", entry));
@@ -676,7 +673,7 @@ void EmitWrapper(llvm::Module& module,
   Builder allocation(&entry->getEntryBlock(), entry->getEntryBlock().begin());
   auto* result = allocation.CreateAlloca(result_type);
   if (!source.native_symbol.empty()) {
-    arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index, placement));
+    arguments.push_back(LoadImport(builder, entry->getArg(0), function_index, placement));
   }
   arguments.push_back(result);
   llvm::Value* status = nullptr;

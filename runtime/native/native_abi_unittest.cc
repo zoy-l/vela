@@ -18,6 +18,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_api.h"
+#include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_stack.h"
@@ -203,6 +204,76 @@ TEST(NativeAbiTest, NativeStackRootsKeepNestedFramesAndReleasePoppedValues) {
   EXPECT_EQ(*head, nullptr);
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);
+}
+
+TEST(NativeAbiTest, ArrayEntryArgumentsPublishNestedReferencesDuringMarkAndSweep) {
+  for (const auto phase : {GcPhase::Idle, GcPhase::Mark, GcPhase::Sweep}) {
+    Isolate isolate;
+    auto& heap = isolate.heap();
+    const auto image = EmptyImage();
+    const auto instance = NativeInstance::Instantiate(isolate, image);
+    ASSERT_TRUE(instance);
+    heap.Collect();
+    const auto baseline = heap.object_count();
+    const auto* integers = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+    const auto* nested = isolate.CreateArrayLayout(
+        {.element = {
+             .kind = ValueKind::Object, .object_kind = ObjectKind::Array, .array = integers}});
+    Value input = Value::Object(heap.AllocateArray(*nested, 1));
+    ASSERT_NE(input.AsObject(), nullptr);
+    RootRange setup(heap, &input, 1, std::nullopt);
+    auto* child = heap.AllocateArray(*integers, 1);
+    ASSERT_NE(child, nullptr);
+    ASSERT_TRUE(heap.SetElement(*child, 0, Value::Integer(42)));
+    ASSERT_TRUE(heap.SetElement(*input.AsObject(), 0, Value::Object(child)));
+    setup.Detach();
+    // 首个 sweep 步骤只退休最后分配的哨兵，实参图在发布根之前仍存活且未被标记。
+    ASSERT_NE(heap.AllocateValueSlots(0), nullptr);
+    if (phase != GcPhase::Idle) {
+      heap.StartCollection();
+      while (phase == GcPhase::Sweep && heap.phase() == GcPhase::Mark) {
+        heap.Step(1);
+      }
+    }
+    ASSERT_EQ(heap.phase(), phase);
+    auto** head = heap.native_stack_roots_head();
+    NativeStackRoots parent{.previous = *head};
+    *head = &parent;
+    const auto pop = [head](NativeStackRoots* frame) { *head = frame->previous; };
+    const std::unique_ptr<NativeStackRoots, decltype(pop)> parent_registration(&parent, pop);
+    const NativeFunctionDescription function{
+        .name = {},
+        .native_symbol = {},
+        .parameters = {},
+        .locations = {},
+        .entry = [](NativeExecution* current, const NativeValue* arguments,
+                    std::uint64_t /*unused*/, NativeValue* output) noexcept -> std::uint8_t {
+          auto& current_heap = current->isolate().heap();
+          current_heap.FinishCollection();
+          current_heap.Collect();
+          const auto outer = DecodeNativeValue(*arguments);
+          const auto inner = Heap::GetElement(*outer.AsObject(), 0);
+          if (!inner) {
+            return ToNativeStatus(ExecutionStatus::NativeFailure);
+          }
+          const auto value = Heap::GetElement(*inner->AsObject(), 0);
+          if (!value) {
+            return ToNativeStatus(ExecutionStatus::NativeFailure);
+          }
+          *output = EncodeNativeValue(*value);
+          return ToNativeStatus(ExecutionStatus::Returned);
+        },
+        .parameter_count = 1,
+        .identity = {},
+    };
+    const std::array arguments{input};
+    const auto result = InvokeNativeArrayEntry(**instance, function, *nested, arguments, nullptr);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsInteger(), 42);
+    EXPECT_EQ(*head, &parent);
+    heap.Collect();
+    EXPECT_EQ(heap.object_count(), baseline);
+  }
 }
 
 TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {

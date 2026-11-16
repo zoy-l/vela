@@ -39,6 +39,8 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, capacity);
   static constexpr auto kArrayMutation =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
+  static constexpr auto kArrayIntegerRange =
+      sizeof(HeapObject) + offsetof(internal::ArrayStorage, integer_range);
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
   static constexpr auto kExecutionBaseDepth = offsetof(NativeExecution, base_frame_count_);
@@ -46,6 +48,13 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
+  static constexpr auto kHostProgram = offsetof(NativeHostContext, program);
+  static constexpr auto kHostControl = offsetof(NativeHostContext, control);
+  static constexpr auto kHostDepth = offsetof(NativeHostContext, depth);
+  static constexpr auto kHostStackLimit = offsetof(NativeHostContext, stack_limit);
+  static constexpr auto kHostStackStatus = offsetof(NativeHostContext, stack_status);
+  static constexpr auto kHostTraceCount = offsetof(NativeHostContext, trace_count);
+  static constexpr auto kHostTrace = offsetof(NativeHostContext, trace);
   static constexpr auto kContextHandles = offsetof(NativeContext, handles_);
   static constexpr auto kBorrowedStringViewBytes = sizeof(std::string_view);
   static constexpr auto kMutableStringData =
@@ -62,6 +71,8 @@ struct NativeMemoryLayout final {
       offsetof(NativeExecution, exception_allocation_failed_);
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
   static constexpr auto kProgramImage = offsetof(NativeProgramState, image);
+  static constexpr auto kProgramImports = offsetof(NativeProgramState, imports);
+  static constexpr auto kProgramHostTarget = offsetof(NativeProgramState, host_target);
   static constexpr auto kProgramReflectionTypeCache =
       offsetof(NativeProgramState, reflection_type_cache);
   static constexpr auto kProgramDirectFieldLayouts =
@@ -92,6 +103,7 @@ static_assert(std::is_standard_layout_v<NativeFrameAccess>);
 static_assert(std::is_standard_layout_v<NativeTraceFrame>);
 static_assert(std::is_standard_layout_v<NativeStackRoots>);
 static_assert(std::is_standard_layout_v<NativeExecution>);
+static_assert(std::is_standard_layout_v<NativeHostContext>);
 static_assert(std::is_standard_layout_v<NativeInstance>);
 static_assert(std::is_standard_layout_v<NativeProgramState>);
 static_assert(NativeMemoryLayout::kValuePayload == offsetof(NativeValue, payload));

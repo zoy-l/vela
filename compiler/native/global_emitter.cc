@@ -18,6 +18,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_memory_layout.h"
@@ -66,6 +67,9 @@ void FunctionEmitter::CacheGlobals() {
       pointer, ByteAddress(global_owner_, NativeMemoryLayout::kObjectNativePayload));
   global_states_ =
       builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    return;
+  }
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   const auto readonly_slots = std::span(global_access_.readonly_slots);
   const auto has_readonly_slots = !readonly_slots.empty();
@@ -186,10 +190,13 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
     auto helper = module_.getOrInsertFunction(runtime::kNativeLoadGlobalSymbol,
                                               builder_.getInt8Ty(), builder_.getPtrTy(),
                                               builder_.getInt32Ty(), builder_.getPtrTy());
-    CompleteCall(builder_.CreateCall(
-                     helper, {body_->getArg(0), builder_.getInt32(instruction.index), result_}),
-                 instruction.dst);
+    auto* status = builder_.CreateCall(
+        helper, {body_->getArg(0), builder_.getInt32(instruction.index), result_});
+    status->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
+    CompleteCall(status, instruction.dst);
     PollAfterRuntimeCall();
+    resolve->getTerminator()->setMetadata(kNativeGuardFailureMetadata,
+                                          llvm::MDNode::get(context, {}));
   } else {
     // 赋值不执行初始化器，也不增加安全点；缓存失效时只解析当前版本槽并完成写入。
     auto helper = module_.getOrInsertFunction(runtime::kNativeStoreGlobalSymbol,
@@ -212,6 +219,9 @@ void FunctionEmitter::MarkGlobalInitialized(std::uint32_t slot) {
 }
 
 bool FunctionEmitter::IsGlobalInitialized(std::size_t index) const {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    return true;
+  }
   const auto& initialized = global_access_.initialized_accesses;
   return !initialized.empty() && initialized[function_index_][origins_[index]] != 0;
 }

@@ -210,14 +210,17 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
       continue;
     }
     auto repeated = RepeatedCallees(functions[index], plan.direct_calls[index]);
-    std::erase_if(repeated,
-                  [&](std::size_t callee) { return leaf_kind(callee) == LeafKind::None; });
+    std::erase_if(repeated, [&](std::size_t callee) {
+      return leaf_kind(callee) == LeafKind::None &&
+             !CanUseScalarFieldBody(functions[callee], program.native_mode, debugging);
+    });
     for (const auto callee : callees) {
       const auto external = is_external(callee);
       const auto& target = functions[callee];
       const auto constructor_leaf =
           external && target.is_generated_constructor && leaf_kind(callee) != LeafKind::None;
-      // 循环内的小型纯计算需要内联；其函数体依赖使调用者随编辑失效并重新编译。
+      // 循环内的小型纯计算和接收者标量字段方法需要内联；完整函数体保留布局守卫、
+      // 安全点和错误前缀，其函数体依赖使调用者随编辑失效并重新编译。
       // 空生成构造仍保留栈预算和可观察入口；其他冷调用使用槽，限制重载扇出。
       if (external && !constructor_leaf && !std::ranges::binary_search(repeated, callee)) {
         plan.slot_calls[index].push_back(callee);

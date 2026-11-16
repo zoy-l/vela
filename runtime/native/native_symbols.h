@@ -37,7 +37,6 @@ inline constexpr std::string_view kNativeUnrootedFailureSymbol = "vela_native_v1
 inline constexpr std::string_view kNativeFrameReleaseSymbol = "vela_native_v1_frame_release";
 inline constexpr std::string_view kNativeFrameStorageSymbol = "vela_native_v1_frame_storage";
 inline constexpr std::string_view kNativeHasExceptionSymbol = "vela_native_v1_has_exception";
-inline constexpr std::string_view kNativeImportSymbol = "vela_native_v1_import";
 inline constexpr std::string_view kNativeInterpolateSymbol = "vela_native_v1_interpolate";
 inline constexpr std::string_view kNativeNewCollectionSymbol = "vela_native_v1_new_collection";
 inline constexpr std::string_view kNativeNewFutureSymbol = "vela_native_v1_new_future";

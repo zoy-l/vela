@@ -1,7 +1,55 @@
-"""Field loop folding preserves aliases and observable overflow prefixes."""
+"""Field loop transformations preserve aliases and exact arithmetic failure prefixes."""
 
 SOURCE = """
 class Box { value: int; }
+export class FloatBox { x: double; y: double; }
+export func floatPrepare(aliased: bool): FloatBox[] {
+  const first = FloatBox(x: 1.0, y: 2.0);
+  const second = aliased ? first : FloatBox(x: 3.0, y: 4.0);
+  return [first, second, FloatBox(x: 5.0, y: 6.0),
+          FloatBox(x: 7.0, y: 8.0), FloatBox(x: 9.0, y: 10.0)];
+}
+export func floatUpdate(values: FloatBox[], bound: int, initial: double): double {
+  if (values.length != 5) { return -99.0; }
+  let divisor = initial;
+  let total = 0.0;
+  for (let round = 0; round < bound; round++) {
+    for (let index = 0; index < 4; index++) {
+      const first = values[index];
+      const second = values[index + 1];
+      first.x += 1.0;
+      second.x += first.x;
+      first.y += second.x * 0.25;
+      second.y += first.y;
+      total += 1.0 / divisor;
+      first.x += 3.0;
+      second.x += 4.0;
+      divisor -= 0.25;
+    }
+  }
+  return total;
+}
+export func floatRootUpdate(values: FloatBox[], bound: int, initial: double): double {
+  if (values.length != 5) { return -99.0; }
+  let divisor = initial;
+  let total = 0.0;
+  for (let round = 0; round < bound; round++) {
+    for (let index = 0; index < 4; index++) {
+      const first = values[index];
+      const second = values[index + 1];
+      first.x += 1.0;
+      second.x += first.x;
+      first.y += second.x * 0.25;
+      second.y += first.y;
+      total += 1.0 / divisor;
+      total += Math.sqrt(first.x * first.x + second.y * second.y);
+      first.x += 3.0;
+      second.x += 4.0;
+      divisor -= 0.25;
+    }
+  }
+  return total;
+}
 func increase(box: Box, bound: int): void {
   for (let index = 0; index < bound; index++) { box.value += 1; }
 }
@@ -46,6 +94,7 @@ export func calculate(operation: int, initial: int, bound: int): int {
 """
 
 HOST_TESTS = r'''
+#include <cmath>
 extern "C" const NativeImage* FIELD_LOOP_IMAGE() noexcept;
 
 TEST(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinally) {
@@ -72,5 +121,107 @@ TEST(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinall
     EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
+}
+
+void ExpectFloatingFieldPrefixes(std::string_view function_name) {
+  Isolate isolate(1);
+  const auto instance = NativeInstance::Instantiate(isolate, *FIELD_LOOP_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  const auto prepare = instance.value()->FindFunction("floatPrepare");
+  const auto update = instance.value()->FindFunction(function_name);
+  ASSERT_TRUE(prepare);
+  ASSERT_TRUE(update);
+  const auto& image = instance.value()->image();
+  const auto infinity = std::numeric_limits<double>::infinity();
+  const auto nan = std::numeric_limits<double>::quiet_NaN();
+  const auto signaling_nan = std::numeric_limits<double>::signaling_NaN();
+  const auto subnormal = std::numeric_limits<double>::denorm_min();
+  for (const auto aliased : {false, true}) {
+    for (const std::int64_t bound : {-1, 0, 1, 2, 3, 17, 128, 1025}) {
+      for (const auto initial : {0.0, -0.0, 0.25, 0.5, 1.0, 1.25, 2.5, -3.0,
+                                 2048.0, subnormal, -subnormal, 1e150, -1e150,
+                                 infinity, -infinity, nan, signaling_nan}) {
+        SCOPED_TRACE(aliased);
+        SCOPED_TRACE(bound);
+        SCOPED_TRACE(initial);
+        const std::array arguments{NativeValue{.payload = aliased ? 1U : 0U,
+                                               .kind = NativeValueKind::Boolean}};
+        NativeValue result;
+        ASSERT_EQ(Execute(image.function(*prepare).entry, execution, arguments, result),
+                  ExecutionStatus::Returned);
+        Value values = DecodeNativeValue(result);
+        ASSERT_TRUE(values.IsObject());
+        const RootRange root(isolate.heap(), &values, 1);
+        std::array<std::array<double, 2>, 5> expected{{
+            {1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}, {7.0, 8.0}, {9.0, 10.0},
+        }};
+        const auto last = Heap::GetElement(*values.AsObject(), 4);
+        ASSERT_TRUE(last.has_value());
+        ASSERT_TRUE(isolate.heap().SetField(*last->AsObject(), 1, Value::Double(initial)));
+        expected[4][1] = initial;
+        const auto slot = [aliased](std::size_t index) {
+          return aliased && index == 1 ? std::size_t{0} : index;
+        };
+        auto divisor = initial;
+        auto total = 0.0;
+        auto status = ExecutionStatus::Returned;
+        for (std::int64_t round = 0; round < bound && status == ExecutionStatus::Returned; ++round) {
+          for (std::size_t index = 0; index < 4; ++index) {
+            auto& first = expected[slot(index)];
+            auto& second = expected[slot(index + 1)];
+            first[0] += 1.0;
+            second[0] += first[0];
+            first[1] += second[0] * 0.25;
+            second[1] += first[1];
+            if (divisor == 0.0) {
+              status = ExecutionStatus::DivisionByZero;
+              break;
+            }
+            total += 1.0 / divisor;
+            if (function_name == "floatRootUpdate") {
+              total += std::sqrt(first[0] * first[0] + second[1] * second[1]);
+            }
+            first[0] += 3.0;
+            second[0] += 4.0;
+            divisor -= 0.25;
+          }
+        }
+        const std::array input{EncodeNativeValue(values), Integer(bound), Double(initial)};
+        ASSERT_EQ(Execute(image.function(*update).entry, execution, input, result), status);
+        if (status == ExecutionStatus::Returned) {
+          const auto actual = std::bit_cast<double>(result.payload);
+          if (std::isnan(total)) EXPECT_TRUE(std::isnan(actual));
+          else EXPECT_EQ(std::bit_cast<std::uint64_t>(actual), std::bit_cast<std::uint64_t>(total));
+          EXPECT_FALSE(execution.HasException());
+        } else {
+          ASSERT_NO_FATAL_FAILURE(ExpectPendingException(isolate, execution, status, "division by zero"));
+          const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+          ASSERT_FALSE(trace.empty());
+          EXPECT_EQ(trace.front().function, function_name);
+        }
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+          const auto item = Heap::GetElement(*values.AsObject(), static_cast<std::int64_t>(index));
+          ASSERT_TRUE(item.has_value());
+          for (std::uint32_t field = 0; field < 2; ++field) {
+            const auto actual = Heap::GetField(*item->AsObject(), field);
+            ASSERT_TRUE(actual.has_value());
+            ASSERT_TRUE(actual->IsDouble());
+            EXPECT_EQ(std::bit_cast<std::uint64_t>(actual->AsDouble()),
+                      std::bit_cast<std::uint64_t>(expected[slot(index)][field]));
+          }
+        }
+        EXPECT_EQ(execution.current_frame(), nullptr);
+      }
+    }
+  }
+}
+
+TEST(NativeFieldLoopTest, FloatingPrefixesPreserveAliasesAndEveryFailurePositionUnderGc) {
+  ASSERT_NO_FATAL_FAILURE(ExpectFloatingFieldPrefixes("floatUpdate"));
+}
+
+TEST(NativeFieldLoopTest, FloatingRootPrefixesPreserveBitsAndFailuresUnderGc) {
+  ASSERT_NO_FATAL_FAILURE(ExpectFloatingFieldPrefixes("floatRootUpdate"));
 }
 '''

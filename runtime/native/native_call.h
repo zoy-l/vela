@@ -21,6 +21,29 @@ namespace vela::runtime {
 struct BoundArguments;
 enum class NativeArgumentPresence : std::uint8_t { Absent, Included };
 
+// 同步借用捕获方；失败必须在本次独立执行仍持有异常根时完成所有权转移。
+struct NativeFailureObserver final {
+  void* context;
+  void (*capture)(void*, NativeExecution&, ExecutionStatus);
+};
+
+// 已证明有界且无 GC 的成功调用只持有小型上下文；普通执行和错误资源由冷路径拥有。
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeArrayEntry(
+    NativeInstance& instance,
+    const NativeFunctionDescription& function,
+    const ArrayLayout& array,
+    std::span<const Value> input,
+    NativeHostEntry selected_host,
+    const NativeExecution* parent = nullptr,
+    const NativeFailureObserver* failure = nullptr);
+
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
+    NativeInstance& instance,
+    std::uint32_t function,
+    std::span<const Value> input,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure);
+
 // 源实参与隐式接收者由调用方保根；适配器拥有缺省/rest 值、根槽和 ABI 缓冲，直到调用返回。
 [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(
     NativeExecution& execution,

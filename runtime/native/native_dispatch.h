@@ -28,6 +28,7 @@ class Isolate;
 class NativeMetadataTracer;
 class NativeMaterialization;
 class NativeDispatch;
+struct NativeFailureObserver;
 struct NativeDispatchSnapshot;
 
 struct NativeResolvedDeclaration final {
@@ -105,13 +106,20 @@ class NativeVersionEntry final {
   [[nodiscard]] NativeResolvedDeclaration Resolve() const noexcept;
   [[nodiscard]] FunctionIdentity identity() const noexcept;
   [[nodiscard]] std::expected<Value, ExecutionStatus> Invoke(
-      std::span<const Value> arguments) const;
+      std::span<const Value> arguments,
+      const NativeExecution* parent = nullptr,
+      const NativeFailureObserver* failure = nullptr) const;
 
  private:
   friend class NativeNamedEntry;
+  friend class HostEntry;
+  [[nodiscard]] NativeInstance& BoundInstance() const noexcept;
   struct Storage final {
     Storage(Value source, std::uint32_t target);
+    mutable NativeInstance instance;
     NativeFunctionRoot version;
+    const ArrayLayout* array_parameter = nullptr;
+    NativeHostEntry array_host_entry = nullptr;
   };
   explicit NativeVersionEntry(std::shared_ptr<const Storage> storage);
   std::shared_ptr<const Storage> storage_;

@@ -39,7 +39,7 @@ TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndR
                                                .field_declarations = {{1}, {2}, {3}, {4}},
                                            });
   const NativeImage image;
-  auto state = std::make_unique<NativeProgramState>();
+  auto state = std::make_unique<NativeProgramState>(NativeHostTarget::Generic);
   state->isolate = &isolate;
   state->image = &image;
   state->layouts.classes.push_back(layout);

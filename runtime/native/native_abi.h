@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -28,8 +29,9 @@ struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
 struct CodeIdentity;
+struct NativeProgramState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 24;
+inline constexpr std::uint32_t kNativeAbiVersion = 28;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr unsigned kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
@@ -59,6 +61,34 @@ struct TracePosition final {
       .instruction = static_cast<std::uint32_t>(position),
   };
 }
+
+inline constexpr std::size_t kNativeHostTraceCapacity = 8;
+inline constexpr std::uint8_t kNativeHostEnter = 253;
+inline constexpr std::uint8_t kNativeHostObserve = 254;
+inline constexpr std::uint8_t kNativeHostMiss = 255;
+
+// 有界入口独占本次上下文；它不是 NativeExecution，也不能传给普通运行时入口。
+// 只登记失败链或返回位置；未使用的追踪数组槽不初始化。
+struct NativeHostContext final {
+  NativeHostContext(NativeProgramState& source,
+                    const NativeControlState& control_state,
+                    std::uint64_t parent_depth,
+                    std::uintptr_t limit,
+                    ExecutionStatus status) noexcept
+      : program(&source),
+        control(&control_state),
+        depth(parent_depth),
+        stack_limit(limit),
+        stack_status(status),
+        trace_count(0) {}
+  NativeProgramState* program;
+  const NativeControlState* control;
+  std::uint64_t depth;
+  std::uintptr_t stack_limit;
+  ExecutionStatus stack_status;
+  std::uint32_t trace_count;
+  std::array<std::uint64_t, kNativeHostTraceCapacity> trace;
+};
 
 inline constexpr std::size_t kNativeValueBytes = 16;
 
@@ -181,6 +211,7 @@ class NativeExecution final {
   [[nodiscard]] NativeContext& context() noexcept { return context_; }
   [[nodiscard]] std::uintptr_t stack_limit() const noexcept { return stack_limit_; }
   [[nodiscard]] const NativeTraceFrame* current_frame() const noexcept { return current_frame_; }
+  [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
   [[nodiscard]] std::uint32_t* current_instruction() noexcept {
     return &current_frame_->position.instruction;
   }

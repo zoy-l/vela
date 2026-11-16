@@ -562,6 +562,32 @@ TEST_P(JitDebuggerTest, GuardedReadonlyCallsRecoverAcrossPublicationWithLiveArra
   ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
 }
 
+TEST_P(JitDebuggerTest, RepeatedScalarFieldMethodsUsePublishedBodiesWithoutReplayingWrites) {
+  const std::string common =
+      "let calls = 0; func checkpoint(): void {} "
+      "export func count(): int { return calls; } ";
+  const std::string caller =
+      "const object = Counter(); export func caller(): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { sum += object.step(i); calls++; "
+      "if (i == 1) { checkpoint(); } } return sum; }";
+  Load(common +
+       "class Counter { value: int = 0; "
+       "step(value: int): int { this.value = value; return this.value + 1; } } " +
+       caller);
+  constexpr std::int64_t kPublishedResult = 12;
+  constexpr std::int64_t kCurrentResult = 14;
+  PublishDuringCaller(
+      common +
+          "class Counter { value: int = 0; "
+          "step(value: int): int { this.value = value; return this.value + 2; } } " +
+          caller,
+      kPublishedResult);
+  const auto calls = session_->Invoke("main.vela", "count");
+  ASSERT_TRUE(calls);
+  EXPECT_EQ(calls->AsInteger(), 4);
+  ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
+}
+
 TEST_P(JitDebuggerTest, MapLiteralDeoptimizationKeepsTheMapAndPendingKeyWithoutReplay) {
   const std::string common =
       "let calls = 0; func checkpoint(): void {} "

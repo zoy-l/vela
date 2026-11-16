@@ -54,7 +54,9 @@ llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth, std::uint64_t r
   using runtime::NativeMemoryLayout;
   auto* word = builder_.getInt64Ty();
   auto* stack_limit = builder_.CreateLoad(
-      word, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionStackLimit));
+      word, ByteAddress(body_->getArg(0), kind_ == NativeEntryKind::HostLeaf
+                                              ? NativeMemoryLayout::kHostStackLimit
+                                              : NativeMemoryLayout::kExecutionStackLimit));
   MarkInvariant(*stack_limit);
   auto* stack_position = builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress,
                                                   {builder_.getPtrTy()}, {builder_.getInt32(0)});
@@ -66,6 +68,9 @@ llvm::Value* FunctionEmitter::HasStackBudget(llvm::Value* depth, std::uint64_t r
 }
 
 bool FunctionEmitter::CanUseLeafEntry() const {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    return CanUseSynchronousStackFrame();
+  }
   if (!CanUseSynchronousStackFrame() ||
       (program_.native_mode == NativeProgramMode::Reloadable && kind_ != NativeEntryKind::Leaf) ||
       !IsScalar(source_.return_type)) {
@@ -109,7 +114,7 @@ bool FunctionEmitter::CanDeferRoots() const {
 
 bool FunctionEmitter::CanDelayRootRegistration() const {
   if (tier_ != NativeCodeTier::Optimized ||
-      (kind_ != NativeEntryKind::Initial && kind_ != NativeEntryKind::BoundedReflection) ||
+      (kind_ != NativeEntryKind::Initial && kind_ != NativeEntryKind::ScalarField) ||
       !roots_.bounded_polls || !CanUseSynchronousStackFrame()) {
     return false;
   }
@@ -174,6 +179,18 @@ void FunctionEmitter::EmitFrameEntry() {
   auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
   Builder failure(failed);
   auto* error = failure.CreatePHI(builder_.getInt8Ty(), 0);
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    auto* base = failure.CreateLoad(
+        failure.getInt64Ty(),
+        failure.CreateConstGEP1_64(failure.getInt8Ty(), execution, NativeMemoryLayout::kHostDepth));
+    auto* depth = body_->getArg(HostEntryLayout(source_.parameter_count).depth);
+    auto* count = failure.CreateSelect(failure.CreateICmpEQ(depth, base), failure.getInt32(0),
+                                       failure.getInt32(1));
+    RecordHostFailure(
+        failure, count,
+        runtime::EncodeNativeTracePosition(
+            {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0}));
+  }
   if (kind_ == NativeEntryKind::Leaf) {
     auto* position = failure.CreateStore(
         failure.getInt64(runtime::EncodeNativeTracePosition(
@@ -185,7 +202,7 @@ void FunctionEmitter::EmitFrameEntry() {
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
   llvm::Value* depth = nullptr;
-  if (kind_ == NativeEntryKind::Leaf) {
+  if (kind_ == NativeEntryKind::Leaf || kind_ == NativeEntryKind::HostLeaf) {
     depth = body_->getArg(LeafEntryLayout(source_.parameter_count).depth);
   } else {
     depth = LoadMemory(word, ByteAddress(execution, NativeMemoryLayout::kExecutionDepth),
@@ -271,6 +288,7 @@ void FunctionEmitter::EmitFrameEntry() {
   status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
   if (construction_depth_ != nullptr) {
     ExitInitializations(cleanup, cleanup.CreateLoad(cleanup.getInt32Ty(), construction_depth_));
+    cleanup.CreateStore(cleanup.getInt32(0), construction_depth_);
   }
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
@@ -343,15 +361,19 @@ llvm::Value* FunctionEmitter::LinkStackRoots() {
 
 void FunctionEmitter::InitializeTraceFrame(llvm::Value* frame) {
   using runtime::NativeTraceFrame;
-  builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
+  StoreMemory(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)),
+              MemoryRegion::Execution);
   auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
-  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
-  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
-  builder_.CreateStore(builder_.getInt64(0),
-                       ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
-  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                       ByteAddress(frame, offsetof(NativeTraceFrame, position) +
-                                              offsetof(runtime::TracePosition, function)));
+  StoreMemory(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)),
+              MemoryRegion::Execution);
+  StoreMemory(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)),
+              MemoryRegion::Execution);
+  StoreMemory(builder_.getInt64(0), ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)),
+              MemoryRegion::Execution);
+  StoreMemory(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+              ByteAddress(frame, offsetof(NativeTraceFrame, position) +
+                                     offsetof(runtime::TracePosition, function)),
+              MemoryRegion::Execution);
   InitializeDebugValues();
 }
 
@@ -372,6 +394,9 @@ void FunctionEmitter::StoreExecutionState(Builder& builder,
 }
 
 void FunctionEmitter::PrepareTraceFrame() {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    return;
+  }
   using runtime::NativeMemoryLayout;
   using runtime::NativeTraceFrame;
   auto& context = module_.getContext();
@@ -413,7 +438,7 @@ void FunctionEmitter::CacheImports() {
     }
     // 绑定随实例创建后不可变；闭包临时切换实例会在返回时恢复，作用域内可复用。
     imports_.emplace(target->function,
-                     LoadImport(builder_, module_, body_->getArg(0), target->function, placement_));
+                     LoadImport(builder_, body_->getArg(0), target->function, placement_));
     inline_import = inline_import || CanInlineImportCall(callee);
   }
   if (inline_import) {

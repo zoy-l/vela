@@ -2,10 +2,12 @@
 #include <expected>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include "benchmark/benchmark.h"
 
+#include "base/native_program_mode.h"
 #include "benchmarks/native_call/entries.h"
 #include "benchmarks/native_call_kernels.h"
 #include "compiler/frontend/diagnostic.h"
@@ -26,7 +28,7 @@ using native_call::Workload;
 
 enum class CallPath : std::uint8_t { Direct, Indirect };
 enum class ScriptPath : std::uint8_t { Native, Control };
-enum class Execution : std::uint8_t { Jit, Aot };
+enum class Execution : std::uint8_t { JitBaseline, JitOptimized, Aot };
 
 constexpr double kArithmeticSeriesDivisor = 2.0;
 
@@ -131,13 +133,16 @@ void Script(benchmark::State& state, native_call::Case problem, ScriptPath path)
   const auto count = state.range(0);
   std::expected<std::unique_ptr<runtime::NativeInstance>, runtime::NativeInstantiationError>
       created;
-  if constexpr (Mode == Execution::Jit) {
+  if constexpr (Mode != Execution::Aot) {
     auto compiler = compiler::jit::Compiler::Create();
     if (!compiler) {
       state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
       return;
     }
-    const auto compiled = compiler::jit::CompileFile(**compiler, native_call::kSource);
+    compiler::jit::SourceOptions options;
+    options.compilation.tier =
+        Mode == Execution::JitOptimized ? NativeCodeTier::Optimized : NativeCodeTier::Baseline;
+    const auto compiled = compiler::jit::CompileFile(**compiler, native_call::kSource, options);
     if (!compiled.Succeeded()) {
       state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
       return;
@@ -185,6 +190,21 @@ void Script(benchmark::State& state, native_call::Case problem, ScriptPath path)
   ReportCalls(state, count);
 }
 
+template <Workload Case, Execution Mode>
+void RegisterScript(const native_call::Case& problem, std::string_view backend) {
+  const auto prefix = "native/" + std::string(backend);
+  const auto suffix = std::string(problem.name);
+  const auto count = problem.count;
+  benchmark::RegisterBenchmark(prefix + "/" + suffix, Script<Case, Mode>, problem,
+                               ScriptPath::Native)
+      ->Arg(count)
+      ->UseRealTime();
+  benchmark::RegisterBenchmark(prefix + "_control/" + suffix, Script<Case, Mode>, problem,
+                               ScriptPath::Control)
+      ->Arg(count)
+      ->UseRealTime();
+}
+
 template <Workload Case>
 void Register(const native_call::Case& problem) {
   const auto suffix = std::string(problem.name);
@@ -195,22 +215,9 @@ void Register(const native_call::Case& problem) {
   benchmark::RegisterBenchmark("native/cpp_indirect/" + suffix, Cpp<Case, CallPath::Indirect>)
       ->Arg(count)
       ->UseRealTime();
-  benchmark::RegisterBenchmark("native/jit/" + suffix, Script<Case, Execution::Jit>, problem,
-                               ScriptPath::Native)
-      ->Arg(count)
-      ->UseRealTime();
-  benchmark::RegisterBenchmark("native/jit_control/" + suffix, Script<Case, Execution::Jit>,
-                               problem, ScriptPath::Control)
-      ->Arg(count)
-      ->UseRealTime();
-  benchmark::RegisterBenchmark("native/aot/" + suffix, Script<Case, Execution::Aot>, problem,
-                               ScriptPath::Native)
-      ->Arg(count)
-      ->UseRealTime();
-  benchmark::RegisterBenchmark("native/aot_control/" + suffix, Script<Case, Execution::Aot>,
-                               problem, ScriptPath::Control)
-      ->Arg(count)
-      ->UseRealTime();
+  RegisterScript<Case, Execution::JitBaseline>(problem, "baseline");
+  RegisterScript<Case, Execution::JitOptimized>(problem, "optimized");
+  RegisterScript<Case, Execution::Aot>(problem, "aot");
 }
 
 int RegisterNativeCalls() {

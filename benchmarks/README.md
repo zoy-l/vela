@@ -299,12 +299,15 @@ All modes check results and the intended allocation/materialization evidence.
 ## Native host-call boundaries
 
 `--native-compare` uses `vela_aot_benchmarks` to measure direct C++, opaque C++
-function pointers, `native/jit/*` and `native/aot/*` host calls, and the corresponding
-`native/jit_control/*` and `native/aot_control/*` script loop controls.
+function pointers, `native/baseline/*`, `native/optimized/*` and `native/aot/*`
+host calls, and the corresponding `native/baseline_control/*`,
+`native/optimized_control/*` and `native/aot_control/*` script loop controls.
 Cases cover empty, integer, double and borrowed-string signatures at two batch sizes.
-JIT and AOT compile the same generated source and use the same complete runtime
-entry. The host kernels are shared and compilation/registration/warm-up are excluded.
-Every selected signature/batch pair requires all six backends in the report.
+Both JIT tiers explicitly select Baseline or Optimized in closed-program mode;
+both use Release/O3. JIT and AOT compile the same generated source and use the same
+complete runtime entry. The host kernels are shared and compilation/registration/warm-up
+are excluded. Every selected signature/batch pair requires all eight backends in the
+report: 64 cases cover the four signatures and two batch sizes.
 
 Per-call time divides complete batch time by its call count.
 “Native minus control” subtracts independent medians, not paired samples; generated

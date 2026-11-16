@@ -142,8 +142,13 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
                         execution.FailureDiagnostic(status));
   }
 
+  void Start(std::uint32_t instruction, Value source, std::span<const NativeValue> saved) {
+    // 结果只需发布一次激活所有权；每次重新挂起的写屏障由 ObserveResult 负责。
+    result().KeepAlive(std::shared_ptr<std::vector<Value>>(shared_from_this(), &values_));
+    Suspend(instruction, source, saved);
+  }
+
   void Suspend(std::uint32_t instruction, Value source, std::span<const NativeValue> saved) {
-    auto future = RootFutureValue(*isolate_, source);
     point_.instruction = instruction;
     version_.SetSuspended(instruction);
     const auto destination = Saved();
@@ -154,10 +159,14 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
     // 别名共享持有激活及其固定 vector，排队的 RootRange 始终指向同一存储。
     // 激活只保存 Future 的托管指针，不能反向持有强 Future 句柄形成 C++ 所有权环。
     std::shared_ptr<std::vector<Value>> references(shared_from_this(), &values_);
-    result().KeepAlive(references);
     // references 已覆盖回调执行期，回调借用激活，无需重复持有同一个控制块。
-    future.ObserveResult([this](const FutureResult& completion) { Resume(completion); },
-                         std::move(references));
+    auto resume = [this](const FutureResult& completion) { Resume(completion); };
+    if (const auto* future = AsFuture(source); future != nullptr) {
+      // 当前激活和排队监听器覆盖源对象的借用期，无需额外创建宿主根句柄。
+      future->ObserveResult(resume, std::move(references));
+    } else {
+      RootFutureValue(*isolate_, source).ObserveResult(resume, std::move(references));
+    }
   }
 
   void ReleaseSaved() {
@@ -250,7 +259,7 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
   const RootRange root(isolate.heap(), &output, 1, std::nullopt);
   auto suspended = std::make_shared<NativeSuspendedFrame>(
       isolate, point, capacity, execution.instance().state().front(), function, output);
-  suspended->Suspend(point.instruction, source, saved);
+  suspended->Start(point.instruction, source, saved);
   return output;
 }
 

@@ -16,6 +16,7 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
+#include "compiler/native/target_version_emitter.h"
 
 namespace llvm {
 class LLVMContext;
@@ -70,6 +71,7 @@ struct NativeModule final {
   std::vector<llvm::Function*> reflection_functions;
   std::vector<llvm::Function*> typed_functions;
   std::vector<llvm::Function*> recursive_functions;
+  std::vector<NativeTargetGroup> target_functions;
   std::vector<NativeFunctionMetrics> function_metrics;
   std::vector<std::vector<std::string>> function_symbols;
   std::vector<std::vector<std::size_t>> body_dependencies;

@@ -39,7 +39,8 @@ struct NativeRetainedFunction;
 struct LayoutCounts;
 struct ReflectionHandle;
 
-// 编译器生成的同步栈帧严格后进先出；槽在发布前清空，不持有独立外部资源。
+// 同步原生根严格后进先出；生成帧的槽在发布前清空，宿主实参保留新根写屏障。
+// 根链不持有独立外部资源。
 struct NativeStackRoots final {
   const Value* values = nullptr;
   std::size_t count = 0;

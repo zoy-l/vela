@@ -23,6 +23,8 @@ from tools.aot_callback_fixture import HOST_TESTS as CALLBACK_TESTS, SOURCE as C
 from tools.aot_class_fixture import HOST_TESTS as CLASS_TESTS, SOURCE as CLASS_SOURCE
 from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
 from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
+from tools.aot_host_entry_fixture import (HOST_TESTS as HOST_ENTRY_TESTS, SOURCE as HOST_ENTRY_SOURCE,
+                                         EXPORTS as HOST_ENTRY_EXPORTS)
 from tools.aot_repeated_field_fixture import (HOST_TESTS as REPEATED_FIELD_TESTS,
                                             SOURCE as REPEATED_FIELD_SOURCE)
 from tools.aot_binding_fixture import HOST_TESTS as BINDING_TESTS, SOURCE as BINDING_SOURCE
@@ -851,6 +853,9 @@ class NativeObjectTest(CommandTestCase):
             "async_entry": ["readTrace"],
             "class_entry": ["createGraph", "createLink", "borrowedRecursion"],
             "global_leaf_entry": ["repair"],
+            "integer_loop_entry": ["assignArray", "callArray", "writeArray", "appendArray", "rootedArray"],
+            "field_loop_entry": ["floatPrepare", "floatUpdate", "floatRootUpdate"],
+            "host_entry": HOST_ENTRY_EXPORTS[1:],
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
                       *["--export=" + value for value in exports], "-o", object_file])
@@ -877,6 +882,21 @@ class NativeObjectTest(CommandTestCase):
         self.assertTrue(Path(str(object_file) + ".h").is_file())
         entry.unlink()
         return object_file, manifest
+
+    def test_bounded_host_entries_preserve_complete_invocation_contracts(self) -> None:
+        object_file, manifest = self.emit("host_entry", HOST_ENTRY_SOURCE)
+        host = HOST_ENTRY_TESTS.replace("HOST_IMAGE", manifest["image"])
+        source = self.directory / "host_entries.cc"
+        source.write_text('#include "' + object_file.name + '.h"\n' + host,
+                          encoding="utf-8", newline="\n")
+        executable = self.directory / executable_name("host_entries")
+        runtime, *gtest = native_test_libraries(self.output)
+        includes = [ROOT, ROOT / "include", ROOT / "third_party/googletest/googletest/include",
+                    ROOT / "third_party/abseil-cpp"]
+        compile_native_host(self, [source], executable, [object_file, runtime, *gtest],
+                            includes, cwd=self.directory)
+        executed = self.command([executable]).stdout
+        self.assertIn("[==========] 15 tests from 1 test suite ran.", executed)
 
     def test_statically_linked_optimized_native_contracts_without_vm(self) -> None:
         fixtures = {
@@ -1387,7 +1407,7 @@ export async func calculate(): Future<int> {
         compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
                             cwd=self.directory)
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 80 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 85 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

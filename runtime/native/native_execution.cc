@@ -42,9 +42,9 @@ ExecutionResult Complete(NativeExecution& execution, std::expected<Value, Execut
 
 }  // namespace
 
-ExecutionResult ExecuteNativeFunction(NativeInstance& instance,
-                                      std::uint32_t function,
-                                      std::span<const Value> arguments) {
+[[clang::always_inline]] ExecutionResult ExecuteNativeFunction(NativeInstance& instance,
+                                                               std::uint32_t function,
+                                                               std::span<const Value> arguments) {
   NativeExecution execution(instance);
   return Complete(execution, InvokeNativeFunction(execution, function, arguments));
 }

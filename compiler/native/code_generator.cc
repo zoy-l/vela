@@ -56,8 +56,10 @@
 #include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/field_loop_optimizer.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/host_entry_emitter.h"
 #include "compiler/native/integer_bit_optimizer.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/invariant_call_optimizer.h"
@@ -68,6 +70,7 @@
 #include "compiler/native/native_values.h"
 #include "compiler/native/recursive_inliner.h"
 #include "compiler/native/repeated_field_optimizer.h"
+#include "compiler/native/target_version_emitter.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
@@ -242,6 +245,14 @@ void Optimize(llvm::Module& module,
         AddIntegerLoopPasses(pipeline);
         AddInvariantCallPasses(pipeline);
       });
+  passes.registerVectorizerStartEPCallback(
+      [mode, placement](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        AddLateBoundedPollPasses(pipeline);
+        AddArrayReductionPasses(pipeline);
+        if (IsClosedLinkedProgram(mode, placement)) {
+          AddFieldLoopPasses(pipeline);
+        }
+      });
   passes.registerModuleAnalyses(modules);
   passes.registerCGSCCAnalyses(calls);
   passes.registerFunctionAnalyses(functions);
@@ -260,11 +271,14 @@ void Optimize(llvm::Module& module,
   preparation.run(module, modules);
   auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
   pipeline.run(module, modules);
-  if (IsClosedLinkedProgram(mode, placement)) {
+  {
     llvm::FunctionPassManager call_loops;
     AddLateBoundedPollPasses(call_loops);
     AddArrayReductionPasses(call_loops);
-    AddCallLoopPasses(call_loops);
+    if (IsClosedLinkedProgram(mode, placement)) {
+      AddCallLoopPasses(call_loops);
+      AddLateFieldGuardPasses(call_loops);
+    }
     llvm::ModulePassManager finishing;
     finishing.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(call_loops)));
     finishing.run(module, modules);
@@ -361,7 +375,11 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
       continue;
     }
     // 类型化内部调用的结果独占调用者暂存槽，不与执行状态或托管实参重叠。
-    entry->addParamAttr(static_cast<unsigned>(entry->arg_size() - 1), llvm::Attribute::NoAlias);
+    const auto result = static_cast<unsigned>(entry->arg_size() - 1);
+    entry->addParamAttr(result, llvm::Attribute::NoAlias);
+    // 结果地址只在本次同步 ABI 调用内借用，不能发布到程序全局或托管对象中。
+    entry->addParamAttr(result, llvm::Attribute::getWithCaptureInfo(entry->getContext(),
+                                                                    llvm::CaptureInfo::none()));
     for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
       const auto& type = source.value_types.at(parameter);
       if (IsReferenceKind(type.kind) && !type.nullable) {
@@ -538,9 +556,9 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     }
     if (program.native_mode == NativeProgramMode::Reloadable && tier == NativeCodeTier::Optimized &&
         CanUseScalarFieldBody(function, program.native_mode, debugging)) {
-      current.bounded_reflection_body = llvm::Function::Create(
-          *body_type, llvm::GlobalValue::InternalLinkage, prefix + "_reflection_body", module);
-      current.bounded_reflection_body->addFnAttr(llvm::Attribute::AlwaysInline);
+      current.scalar_field_body = llvm::Function::Create(
+          *body_type, llvm::GlobalValue::InternalLinkage, prefix + "_scalar_field_body", module);
+      current.scalar_field_body->addFnAttr(llvm::Attribute::AlwaysInline);
     }
     if (const auto& borrow = borrows[index]) {
       baseline.borrowed = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
@@ -549,7 +567,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       current.borrowed = baseline.borrowed;
     }
     const std::array typed_entries{
-        body, current.body, current.leaf, baseline.borrowed, current.bounded_reflection_body,
+        body, current.body, current.leaf, baseline.borrowed, current.scalar_field_body,
     };
     SetTypedArguments(typed_entries, function);
     generated.push_back(baseline);
@@ -627,10 +645,15 @@ std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
       baseline.resume_recovery,
       baseline.borrowed,
       optimized.body,
-      optimized.bounded_reflection_body,
+      optimized.scalar_field_body,
       optimized.resume,
       optimized.leaf,
       optimized.leaf_guard,
+      optimized.host_leaf,
+      optimized.host_guard,
+      optimized.host_entry,
+      optimized.host_wide_entry,
+      optimized.host_entry_selector,
       specialized == nullptr ? nullptr : specialized->body,
       specialized == nullptr ? nullptr : specialized->leaf,
       specialized == nullptr ? nullptr : specialized->leaf_guard,
@@ -789,7 +812,7 @@ void RequireReflectionReceiverLayouts(const ir::Program& program,
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
     // 复用函数没有本次 LLVM 声明，仍需从其规范 IR 恢复入口契约。
-    if (function.bounded_reflection_body != nullptr ||
+    if (function.scalar_field_body != nullptr ||
         (function.body == nullptr &&
          CanUseScalarFieldBody(program.functions[index], program.native_mode, debugging))) {
       image.RequireReflectionReceiverLayout(index);
@@ -876,16 +899,24 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   // 在逃逸改写前分析一次规范程序，同一调用域的所有入口共享不可变事实。
   const auto array_access = AnalyzeArrayAccess(program, array_mode);
   const auto& closed_access = array_access.closed;
+  HostEntryPlan host_plan{.needed = {}, .globals = {}};
+  if (IsClosedLinkedProgram(program.native_mode, placement) &&
+      debugging == NativeDebugging::Safepoints) {
+    host_plan =
+        DeclareHostEntries(module, program, declarations->baseline, declarations->optimized);
+  }
   DeclareRangeSpecializations(module, program, closed_access, *declarations);
   const auto& generated = declarations->baseline;
   const auto& optimized = declarations->optimized;
   std::vector<llvm::Function*> entries;
   std::vector<llvm::Function*> reflection_entries;
+  std::vector<llvm::Function*> host_entries;
   entries.reserve(generated.size());
   reflection_entries.reserve(generated.size());
   for (const auto& function : generated) {
     entries.push_back(function.entry);
     reflection_entries.push_back(function.reflection_entry);
+    host_entries.push_back(function.host_entry_selector);
   }
   auto description = DescribeNativeImage(program);
   RequireReflectionReceiverLayouts(program, optimized, debugging, tier, *description);
@@ -896,9 +927,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     output.image_data = std::move(description);
     BindDynamicEntries(output, entries, optimized);
   } else {
-    const auto emitted =
-        EmitNativeImage(module, *description->image(),
-                        {.external = entries, .reflection = reflection_entries}, module_name);
+    const auto emitted = EmitNativeImage(
+        module, *description->image(),
+        {.external = entries, .reflection = reflection_entries, .host = host_entries}, module_name);
     if (!emitted) {
       return diagnostic(emitted.error());
     }
@@ -933,11 +964,30 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     PlanRecursiveExpansion(output, program, index, *emitted, *declarations, placement, tier);
   }
   output.function_metrics = std::move(metrics);
+  if (!host_plan.needed.empty()) {
+    FinalizeHostEntries(module, program, host_plan, declarations->optimized);
+    output.function_symbols.clear();
+    for (std::size_t index = 0; index < program.functions.size(); ++index) {
+      output.function_symbols.push_back(FunctionSymbols(
+          generated[index], optimized[index],
+          declarations->specialized.empty() ? nullptr : &declarations->specialized[index]));
+    }
+  }
+  if (IsClosedLinkedProgram(program.native_mode, placement) &&
+      module.getTargetTriple().getArch() == llvm::Triple::x86_64 &&
+      debugging == NativeDebugging::Safepoints) {
+    output.target_functions =
+        PlanTargetVersions(program, calls, generated, optimized, declarations->specialized);
+  }
   for (auto& function : module) {
     if (!function.isDeclaration()) {
       // 标准 LLVM 目标属性同时参与机器码生成和对象缓存身份，避免跨 CPU 误用产物。
-      function.addFnAttr("target-cpu", output.machine->getTargetCPU());
-      function.addFnAttr("target-features", output.machine->getTargetFeatureString());
+      if (!function.hasFnAttribute("target-cpu")) {
+        function.addFnAttr("target-cpu", output.machine->getTargetCPU());
+      }
+      if (!function.hasFnAttribute("target-features")) {
+        function.addFnAttr("target-features", output.machine->getTargetFeatureString());
+      }
     }
   }
   return output;
@@ -958,8 +1008,11 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
       InlineRecursion(*function);
     }
     generated.recursive_functions.clear();
+    EmitTargetVersions(module, generated.target_functions, generated.function_symbols);
+    generated.target_functions.clear();
     Optimize(module, *generated.machine, mode, placement);
   } else {
+    generated.target_functions.clear();
     // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的
     // 临时值全部留在物理栈上，绕过大帧的有界外部存储。
     for (auto& function : module) {

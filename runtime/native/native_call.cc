@@ -2,6 +2,7 @@
 #include <optional>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "base/callable.h"
+#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
 #include "runtime/async/future_composition.h"
@@ -20,10 +22,12 @@
 #include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
+#include "runtime/native/native_stack.h"
 #include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -31,6 +35,26 @@
 
 namespace vela::runtime {
 namespace {
+
+// 同步实参覆盖整次调用，严格按栈序退出；与生成帧共用根链，并保留新根发布屏障。
+class NativeArgumentRoots final {
+ public:
+  NativeArgumentRoots(Heap& heap, std::span<const Value> values) noexcept
+      : head_(heap.native_stack_roots_head()),
+        frame_{.values = values.data(), .count = values.size(), .previous = *head_} {
+    *head_ = &frame_;
+    heap.WriteRootBarrier(values);
+  }
+  ~NativeArgumentRoots() { *head_ = frame_.previous; }
+  NativeArgumentRoots(const NativeArgumentRoots&) = delete;
+  NativeArgumentRoots& operator=(const NativeArgumentRoots&) = delete;
+  NativeArgumentRoots(NativeArgumentRoots&&) = delete;
+  NativeArgumentRoots& operator=(NativeArgumentRoots&&) = delete;
+
+ private:
+  NativeStackRoots** head_;
+  NativeStackRoots frame_;
+};
 
 template <class Arguments>
 std::expected<Value, ExecutionStatus> InvokeBoundTarget(NativeExecution& execution,
@@ -159,14 +183,28 @@ Future FailedCallback(Isolate& isolate,
 std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstance& instance,
                                                               const NativeCallParameter& parameter,
                                                               Value value) {
-  auto type = instance.layouts().types.at(parameter.type);
-  if ((parameter.flags & kNativeOptionalParameter) != 0) {
+  const auto& declared = instance.layouts().types.at(parameter.type);
+  const auto optional = (parameter.flags & kNativeOptionalParameter) != 0;
+  if (const auto* array = declared.array; array != nullptr) {
+    // 实例化后的数组约束只持有规范元素布局，没有 nominal、enum 或 callable 转换。
+    if (value.IsNull() && (declared.nullable || optional)) {
+      return value;
+    }
+    const auto* object = value.IsObject() ? value.AsObject() : nullptr;
+    if (object == nullptr || Heap::ArrayTypeOf(*object) != array) {
+      return std::unexpected(ExecutionStatus::InvalidCast);
+    }
+    return value;
+  }
+  auto type = declared;
+  if (optional) {
     type.nullable = true;
   }
   if (!Heap::IsValueOfType(value, type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
-  if (Heap::TypeOf(value).callable) {
+  const auto* layout = value.IsObject() ? Heap::ClassOf(*value.AsObject()) : nullptr;
+  if (layout != nullptr && layout->callable() != nullptr) {
     if (const auto checked = ResolveNativeCallable(instance, value); !checked) {
       return std::unexpected(checked.error());
     }
@@ -195,7 +233,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     return InvokeNativeTarget(execution, function, {});
   }
   auto& heap = execution.isolate().heap();
-  const RootRange arguments_root(heap, arguments.data(), arguments.size(), std::nullopt);
+  const NativeArgumentRoots arguments_root(heap, arguments);
   constexpr std::size_t kInlineArguments = 8;
   // 显式实参已保根；没有隐式实参或缺省值时不构造额外存储和空根区间。
   const auto owned_count = function.parameter_count - arguments.size();
@@ -383,9 +421,10 @@ std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
   };
 }
 
-std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& execution,
-                                                        std::uint32_t function,
-                                                        std::span<const Value> input) {
+[[clang::always_inline]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const Value> input) {
   auto& instance = execution.instance();
   const auto functions = instance.image().functions.values();
   if (function >= functions.size()) {
@@ -400,9 +439,142 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
   return InvokeCallback(execution, {.target = {.function = function}, .function = &target}, input);
 }
 
-std::expected<Value, ExecutionStatus> InvokeNativeFunction(NativeExecution& execution,
-                                                           std::uint32_t function,
-                                                           std::span<const Value> arguments) {
+namespace {
+
+ExecutionStatus MaterializeHostContext(NativeExecution& execution,
+                                       NativeHostContext& context,
+                                       std::uint8_t status) {
+  if (status == kNativeHostEnter && context.depth >= kMaxCallFrames) {
+    return ExecutionStatus::StackOverflow;
+  }
+  if (context.trace_count == 0) {
+    return static_cast<ExecutionStatus>(status);
+  }
+  std::array<NativeTraceFrame, kNativeHostTraceCapacity> frames;
+  for (std::uint32_t index = 0; index < context.trace_count; ++index) {
+    const auto position = DecodeNativeTracePosition(context.trace[context.trace_count - index - 1]);
+    auto& frame = frames[index];
+    execution.MaterializeFrame(frame, position.function);
+    frame.position.instruction = position.instruction;
+  }
+  const auto observe = status == kNativeHostObserve || status == kNativeHostEnter;
+  auto result = observe ? static_cast<ExecutionStatus>(vela_native_v3_safepoint(&execution))
+                        : static_cast<ExecutionStatus>(status);
+  if (!observe || result != ExecutionStatus::Returned) {
+    result = execution.HandleFailure(result);
+  }
+  for (std::uint32_t index = 0; index < context.trace_count; ++index) {
+    execution.Exit();
+  }
+  return result;
+}
+
+std::expected<Value, ExecutionStatus> CompleteInvocation(
+    NativeExecution& execution,
+    std::expected<Value, ExecutionStatus> result,
+    const NativeFailureObserver* failure) {
+  if (!result && failure != nullptr) {
+    failure->capture(failure->context, execution, result.error());
+  }
+  return result;
+}
+
+[[clang::noinline]] std::expected<Value, ExecutionStatus> RejectArrayEntry(
+    NativeInstance& instance,
+    std::span<const Value> input,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure,
+    ExecutionStatus status) {
+  if (failure == nullptr) {
+    return std::unexpected(status);
+  }
+  const NativeArgumentRoots roots(instance.isolate().heap(), input);
+  NativeExecution execution(instance, parent);
+  return CompleteInvocation(execution, std::unexpected(status), failure);
+}
+
+// 真正执行资源只存在于此冷路径；观察完成后的输出直接返回，不能重放已完成的字段写入。
+[[clang::noinline]] std::expected<Value, ExecutionStatus> ExecuteArrayEntry(
+    NativeInstance& instance,
+    const NativeFunctionDescription& function,
+    std::span<const Value> input,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure,
+    NativeHostContext* context,
+    std::uint8_t status,
+    const NativeValue* output) {
+  const NativeArgumentRoots roots(instance.isolate().heap(), input);
+  NativeExecution execution(instance, parent);
+  if (context != nullptr) {
+    const auto completed = MaterializeHostContext(execution, *context, status);
+    if (completed != ExecutionStatus::Returned) {
+      return CompleteInvocation(execution, std::unexpected(completed), failure);
+    }
+    if (status != kNativeHostEnter) {
+      return DecodeNativeValue(*output);
+    }
+  }
+  const std::array arguments{EncodeNativeValue(input.front())};
+  return CompleteInvocation(execution, InvokeNativeTarget(execution, function, arguments), failure);
+}
+
+}  // namespace
+
+[[clang::noinline]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
+    NativeInstance& instance,
+    std::uint32_t function,
+    std::span<const Value> input,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure) {
+  NativeExecution execution(instance, parent);
+  return CompleteInvocation(execution, InvokeNativeEntry(execution, function, input), failure);
+}
+
+[[clang::always_inline]] std::expected<Value, ExecutionStatus> InvokeNativeArrayEntry(
+    NativeInstance& instance,
+    const NativeFunctionDescription& function,
+    const ArrayLayout& array,
+    std::span<const Value> input,
+    NativeHostEntry selected_host,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure) {
+  if (input.size() != 1) {
+    return RejectArrayEntry(instance, input, parent, failure, ExecutionStatus::InvalidEntry);
+  }
+  auto& isolate = instance.isolate();
+  auto& heap = isolate.heap();
+  const auto host = !instance.image().IsReloadable() && !heap.IsCollecting() &&
+                            (function.flags & kNativeEnumResult) == 0
+                        ? selected_host
+                        : nullptr;
+  const auto value = input.front();
+  auto* object = value.IsObject() ? value.AsObject() : nullptr;
+  if (object == nullptr || Heap::ArrayTypeOf(*object) != &array) {
+    return RejectArrayEntry(instance, input, parent, failure, ExecutionStatus::InvalidCast);
+  }
+  if (host != nullptr) {
+    const auto limit = CurrentNativeStackLimit();
+    NativeHostContext context(instance.program(), isolate.native_control().state(),
+                              parent == nullptr ? 0 : parent->frame_count(), limit.value_or(0),
+                              limit ? ExecutionStatus::Returned : limit.error());
+    NativeValue output;
+    const auto status = host(&context, object, &output);
+    if (status == ToNativeStatus(ExecutionStatus::Returned)) {
+      return DecodeNativeValue(output);
+    }
+    if (status != kNativeHostMiss) {
+      return ExecuteArrayEntry(instance, function, input, parent, failure, &context, status,
+                               &output);
+    }
+  }
+  return ExecuteArrayEntry(instance, function, input, parent, failure, nullptr, kNativeHostMiss,
+                           nullptr);
+}
+
+[[clang::always_inline]] std::expected<Value, ExecutionStatus> InvokeNativeFunction(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const Value> arguments) {
   const auto functions = execution.instance().image().functions.values();
   if (function >= functions.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);

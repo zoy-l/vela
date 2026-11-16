@@ -47,7 +47,7 @@ struct NativeProgramState final {
   static constexpr std::size_t kGlobals = 1;
   static constexpr std::size_t kStateSlots = 2;
 
-  NativeProgramState();
+  explicit NativeProgramState(NativeHostTarget target);
   ~NativeProgramState();
   NativeProgramState(const NativeProgramState&) = delete;
   NativeProgramState& operator=(const NativeProgramState&) = delete;
@@ -70,7 +70,9 @@ struct NativeProgramState final {
   absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;
   const CodeIdentity* code_identity = nullptr;
   std::vector<CallSignature> signatures;
-  std::vector<std::shared_ptr<const NativeFunction>> imports;
+  // 固定索引表直接借用已验证描述符；稀疏所有者保活绑定，两者随本状态一同释放。
+  const NativeFunction::AotEntry** imports = nullptr;
+  std::vector<std::shared_ptr<const NativeFunction>> import_owners;
   NativeFunctionRoot* function_roots = nullptr;
   std::vector<std::vector<NativeFieldCache>> field_caches;
   // 仅在稳定槽序与源描述完全一致时允许常量偏移访问；槽序演化的版本继续按声明解析。
@@ -86,6 +88,7 @@ struct NativeProgramState final {
   std::vector<std::unique_ptr<CodeIdentity>> owned_code_identities;
   // 清扫阶段先销毁对象载荷，再统一销毁版本元数据，避免死亡对象仍借用扫描描述。
   NativeProgramState* retired_next = nullptr;
+  const NativeHostTarget host_target;
 };
 
 // 槽由当前分派快照保活；读写者先验证 epoch，才能解引用 state/value/owner。

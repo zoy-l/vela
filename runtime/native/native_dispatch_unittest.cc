@@ -172,6 +172,34 @@ std::expected<NativePublicationTimings, NativePublicationError> PublishVersion(
   return dispatch.Publish(std::move(*prepared));
 }
 
+TEST(NativeDispatchTest, ClosedCapturedEntryOwnsItsProgramAndBlocksStopUntilReleased) {
+  Isolate isolate(1);
+  auto owner = std::make_shared<VersionedImage>(1, OldAnswer);
+  owner->image.native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  const std::weak_ptr<VersionedImage> lifetime = owner;
+  auto created = NativeInstance::Instantiate(isolate, Image(owner));
+  ASSERT_TRUE(created);
+  auto bound = NativeVersionEntry::Bind(**created, 0);
+  ASSERT_TRUE(bound);
+  std::optional<NativeVersionEntry> captured = std::move(*bound);
+  bound = std::unexpected(ExecutionStatus::InvalidEntry);
+  created->reset();
+  owner.reset();
+  isolate.heap().Collect();
+  ASSERT_FALSE(lifetime.expired());
+  const auto result = captured->Invoke({});
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->AsInteger(), kOldValue);
+  const auto refused = isolate.TryStop();
+  ASSERT_FALSE(refused);
+  ASSERT_EQ(refused.error().size(), 1U);
+  EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::NativeHandle);
+  captured.reset();
+  isolate.heap().Collect();
+  EXPECT_TRUE(lifetime.expired());
+  EXPECT_TRUE(isolate.TryStop());
+}
+
 TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsItsOriginalCode) {
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();

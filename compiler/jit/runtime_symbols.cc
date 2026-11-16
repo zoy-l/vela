@@ -68,7 +68,6 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeStoreFieldSymbol, &runtime::vela_native_v3_store_field);
   bind(runtime::kNativeStoreMaterializedFieldSymbol,
        &runtime::vela_native_v7_store_materialized_field);
-  bind(runtime::kNativeImportSymbol, &runtime::vela_native_v1_import);
   bind(runtime::kNativeTypeTestSymbol, &runtime::vela_native_v1_type_test);
   bind(runtime::kNativeInitializeGlobalSymbol, &runtime::vela_native_v2_initialize_global);
   bind(runtime::kNativeNewObjectSymbol, &runtime::vela_native_v10_new_object);

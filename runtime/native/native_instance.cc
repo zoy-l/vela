@@ -32,6 +32,7 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_global_internal.h"
+#include "runtime/native/native_host_target.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/native_build_identity.h"
@@ -378,7 +379,7 @@ NativeInstance::NativeInstance(NativeProgramState& data,
                                std::optional<ExternalResourceKind> root_owner)
     : data_(&data), anchor_(anchor), anchor_root_(data.isolate->heap(), &anchor_, 1, root_owner) {}
 
-NativeInstance NativeInstance::Borrow(HeapObject& state) {
+[[clang::always_inline]] NativeInstance NativeInstance::Borrow(HeapObject& state) {
   return {Heap::NativeProgram(state), Value::Object(&state), std::nullopt};
 }
 
@@ -414,7 +415,19 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
   }
   const auto functions = data_->image->functions.values();
   data_->signatures.reserve(functions.size());
-  data_->imports.resize(functions.size());
+  if (functions.size() >
+      std::numeric_limits<std::size_t>::max() / sizeof(const NativeFunction::AotEntry*)) {
+    return OutOfMemory("out of memory creating native import bindings");
+  }
+  if (!functions.empty()) {
+    data_->imports =
+        static_cast<const NativeFunction::AotEntry**>(data_->isolate->heap().AllocateNative(
+            functions.size() * sizeof(const NativeFunction::AotEntry*)));
+    if (data_->imports == nullptr) {
+      return OutOfMemory("out of memory creating native import bindings");
+    }
+    std::uninitialized_value_construct_n(data_->imports, functions.size());
+  }
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
     data_->signatures.push_back(DescribeCall(function));
@@ -436,7 +449,8 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
                      std::string(symbol) + "'",
       });
     }
-    data_->imports[index] = std::move(binding);
+    data_->imports[index] = &binding->aot_entry();
+    data_->import_owners.push_back(std::move(binding));
   }
   return {};
 }
@@ -545,7 +559,8 @@ NativeInstance::Instantiate(Isolate& isolate,
   if (const auto validated = ValidateImage(image, identities); !validated) {
     return std::unexpected(validated.error());
   }
-  std::unique_ptr<NativeProgramState> data(new (std::nothrow) NativeProgramState);
+  std::unique_ptr<NativeProgramState> data(new (std::nothrow)
+                                               NativeProgramState(CurrentNativeHostTarget()));
   if (data == nullptr) {
     return OutOfMemory("out of memory creating native program state");
   }

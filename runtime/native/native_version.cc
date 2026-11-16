@@ -19,9 +19,11 @@ NativeFunctionRoot::NativeFunctionRoot(HeapObject& state,
                                        std::optional<std::uint32_t> instruction) noexcept
     : state_(Value::Object(&state)), function_(function), instruction_(instruction), root_(owner) {
   auto& program = Heap::NativeProgram(state);
+  if (owner || program.dispatch != nullptr) {
+    root_.Attach(program.isolate->heap(), &state_, 1);
+  }
   if (program.dispatch != nullptr) {
     retained_ = &program;
-    root_.Attach(program.isolate->heap(), &state_, 1);
     RegisterDependency();
   }
 }

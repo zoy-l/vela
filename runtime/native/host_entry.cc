@@ -148,18 +148,35 @@ Result<void> HostEntry::Invoke(HandleScope& scope,
   if (!checked) {
     return checked;
   }
+  const auto* captured = std::get_if<NativeVersionEntry>(&target_);
+  const auto invoke = [&](NativeInstance& instance) -> Result<void> {
+    auto* parent = owner.native_control().state().host_execution;
+    if (!CanReenterNativeProgram(parent, instance.code_identity())) {
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
+    }
+    Result<void> captured_error;
+    const NativeFailureObserver failure{
+        .context = &captured_error,
+        .capture =
+            [](void* context, NativeExecution& execution, ExecutionStatus status) {
+              *static_cast<Result<void>*>(context) =
+                  std::unexpected(vela::internal::CaptureHostError(execution, status));
+            },
+    };
+    const auto result = captured != nullptr ? captured->Invoke(arguments, parent, &failure)
+                                            : InvokeNativeEntry(instance, target->function,
+                                                                arguments, parent, &failure);
+    if (!result) {
+      return captured_error;
+    }
+    vela::internal::StoreHostResult(owner.heap(), output, *result);
+    return {};
+  };
+  if (captured != nullptr) {
+    return invoke(captured->BoundInstance());
+  }
   auto instance = NativeInstance::Borrow(*target->state);
-  auto* parent = owner.native_control().state().host_execution;
-  if (!CanReenterNativeProgram(parent, instance.code_identity())) {
-    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
-  }
-  NativeExecution execution(instance, parent);
-  const auto result = InvokeNativeEntry(execution, target->function, arguments);
-  if (!result) {
-    return std::unexpected(vela::internal::CaptureHostError(execution, result.error()));
-  }
-  vela::internal::StoreHostResult(owner.heap(), output, *result);
-  return {};
+  return invoke(instance);
 }
 
 }  // namespace vela::runtime

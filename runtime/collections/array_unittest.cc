@@ -9,6 +9,7 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "runtime/collections/array_operations.h"
+#include "runtime/heap/array_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
@@ -16,6 +17,109 @@
 
 namespace vela::runtime {
 namespace {
+
+TEST(IntegerArrayRangeTest, MutationsAndFailedWritesOnlyWeakenTheRange) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  Value value = Value::Object(heap.AllocateArray(*layout, 2));
+  ASSERT_NE(value.AsObject(), nullptr);
+  const RootRange root(heap, &value, 1);
+  auto& array = *value.AsObject();
+  auto& range = internal::ArrayBuffer(array).integer_range;
+  EXPECT_EQ(range, internal::IntegerArrayRange::Nonnegative31);
+  ASSERT_TRUE(heap.ReserveArray(array, 128));
+  ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(42)));
+  ASSERT_TRUE(heap.PushArray(array, Value::Integer(std::numeric_limits<std::int32_t>::max())));
+  ASSERT_TRUE(heap.ReverseArray(array));
+  ASSERT_TRUE(heap.PopArray(array));
+  ASSERT_TRUE(heap.ShiftArray(array));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Nonnegative31);
+  EXPECT_FALSE(heap.SetElement(array, 99, Value::Integer(-1)));
+  EXPECT_FALSE(heap.SetElement(array, 0, Value::Null()));
+  ASSERT_TRUE(heap.FillArray(array, Value::Integer(-1), 0, 0));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Nonnegative31);
+  ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(-1)));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Unknown);
+  ASSERT_TRUE(heap.ClearArray(array));
+  ASSERT_TRUE(heap.PushArray(array, Value::Integer(1)));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Unknown);
+  Value filled = Value::Object(heap.AllocateArray(*layout, 2));
+  ASSERT_NE(filled.AsObject(), nullptr);
+  const RootRange filled_root(heap, &filled, 1);
+  ASSERT_TRUE(heap.FillArray(*filled.AsObject(),
+                             Value::Integer(std::numeric_limits<std::int64_t>::max()), 0, 2));
+  EXPECT_EQ(internal::ArrayBuffer(*filled.AsObject()).integer_range,
+            internal::IntegerArrayRange::Unknown);
+  Value appended = Value::Object(heap.AllocateArray(*layout, 0));
+  ASSERT_NE(appended.AsObject(), nullptr);
+  const RootRange appended_root(heap, &appended, 1);
+  ASSERT_TRUE(heap.PushArray(
+      *appended.AsObject(),
+      Value::Integer(static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max()) + 1)));
+  EXPECT_EQ(internal::ArrayBuffer(*appended.AsObject()).integer_range,
+            internal::IntegerArrayRange::Unknown);
+}
+
+TEST(IntegerArrayRangeTest, MutableViewsCannotBeRecertifiedByNarrowWrites) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  Value value = Value::Object(heap.AllocateArray(*layout, 2));
+  ASSERT_NE(value.AsObject(), nullptr);
+  const RootRange root(heap, &value, 1);
+  auto& array = *value.AsObject();
+  const auto elements = Heap::IntegerElements(array);
+  ASSERT_TRUE(elements);
+  ASSERT_TRUE(heap.FillArray(array, Value::Integer(1), 0, 2));
+  ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(42)));
+  EXPECT_EQ(internal::ArrayBuffer(array).integer_range, internal::IntegerArrayRange::Unknown);
+  elements->back() = std::numeric_limits<std::int64_t>::max();
+  EXPECT_EQ(Heap::GetElement(array, 1)->AsInteger(), std::numeric_limits<std::int64_t>::max());
+  const auto* nullable =
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = true}});
+  auto* tagged = heap.AllocateArray(*nullable, 1);
+  ASSERT_NE(tagged, nullptr);
+  EXPECT_EQ(internal::ArrayBuffer(*tagged).integer_range, internal::IntegerArrayRange::Unknown);
+}
+
+TEST(IntegerArrayRangeTest, SlicesAndSplicesPropagateOnlyExistingProofs) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  std::array<Value, 5> values;
+  const RootRange roots(heap, values.data(), values.size());
+  values[0] = Value::Object(heap.AllocateArray(*layout, 2));
+  ASSERT_NE(values[0].AsObject(), nullptr);
+  auto& source = *values[0].AsObject();
+  ASSERT_TRUE(heap.FillArray(source, Value::Integer(42), 0, 2));
+  const auto copied = heap.SliceArray(source, 0, 2);
+  ASSERT_TRUE(copied);
+  values[1] = Value::Object(*copied);
+  values[2] = Value::Object(heap.AllocateArray(*layout, 0));
+  ASSERT_NE(values[2].AsObject(), nullptr);
+  auto& target = *values[2].AsObject();
+  ASSERT_TRUE(heap.ReplaceArrayRange(target, 0, 0, source));
+  EXPECT_EQ(internal::ArrayBuffer(target).integer_range,
+            internal::IntegerArrayRange::Nonnegative31);
+  const auto elements = Heap::IntegerElements(source);
+  ASSERT_TRUE(elements);
+  elements->front() = std::numeric_limits<std::int64_t>::max();
+  ASSERT_TRUE(heap.ReplaceArrayRange(target, 0, 2, source));
+  EXPECT_EQ(internal::ArrayBuffer(target).integer_range, internal::IntegerArrayRange::Unknown);
+  const auto uncertain = heap.SliceArray(source, 1, 2);
+  ASSERT_TRUE(uncertain);
+  values[3] = Value::Object(*uncertain);
+  EXPECT_EQ(internal::ArrayBuffer(**uncertain).integer_range, internal::IntegerArrayRange::Unknown);
+  values[4] = Value::Object(heap.AllocateArray(*layout, 0));
+  ASSERT_NE(values[4].AsObject(), nullptr);
+  ASSERT_TRUE(Heap::IntegerElements(*values[4].AsObject()));
+  auto& independent = *values[1].AsObject();
+  ASSERT_TRUE(heap.ReplaceArrayRange(independent, 0, 0, *values[4].AsObject()));
+  EXPECT_EQ(internal::ArrayBuffer(independent).integer_range,
+            internal::IntegerArrayRange::Nonnegative31);
+  EXPECT_EQ(Heap::GetElement(independent, 0)->AsInteger(), 42);
+}
 
 TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
   Isolate isolate;

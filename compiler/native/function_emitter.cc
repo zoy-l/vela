@@ -89,8 +89,8 @@ void FunctionEmitter::CacheRuntimeCalls() {
     // 不为不存在的运行时调用保存根和 AwaitingResult 检查点。
     const auto synchronous_return = instruction.opcode == Opcode::Return && !source_.is_async;
     runtime_calls_[index] = static_cast<std::uint8_t>(
-        !synchronous_return && ir::AnalyzeEffects(instruction).MayCollectOnSuccess() &&
-        !HasInlineRuntimePath(index));
+        kind_ != NativeEntryKind::HostLeaf && !synchronous_return &&
+        ir::AnalyzeEffects(instruction).MayCollectOnSuccess() && !HasInlineRuntimePath(index));
   }
 }
 
@@ -191,9 +191,10 @@ void FunctionEmitter::PrepareCallCheckpoint() {
   }
   StoreDebugValues();
   if (checkpoint_ != nullptr) {
-    builder_.CreateStore(
+    StoreMemory(
         builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeCheckpointPhase::AwaitingResult)),
-        ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, phase)));
+        ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, phase)),
+        MemoryRegion::Execution);
   }
 }
 
@@ -207,8 +208,10 @@ std::uint64_t FunctionEmitter::TracePosition() const {
 llvm::Value* FunctionEmitter::ControlState() {
   if (control_state_ == nullptr) {
     Builder entry(&body_->getEntryBlock(), body_->getEntryBlock().begin());
-    auto* address = entry.CreateConstGEP1_64(entry.getInt8Ty(), body_->getArg(0),
-                                             runtime::NativeMemoryLayout::kExecutionControlState);
+    auto* address = entry.CreateConstGEP1_64(
+        entry.getInt8Ty(), body_->getArg(0),
+        kind_ == NativeEntryKind::HostLeaf ? runtime::NativeMemoryLayout::kHostControl
+                                           : runtime::NativeMemoryLayout::kExecutionControlState);
     auto* state = entry.CreateLoad(entry.getPtrTy(), address);
     MarkInvariant(*state);
     control_state_ = state;
@@ -221,7 +224,12 @@ llvm::Value* FunctionEmitter::ProgramData() {
     Builder entry(&body_->getEntryBlock(), body_->getEntryBlock().begin());
     // 函数入口已绑定所属实例；闭包调用和宿主重入在返回前恢复同一实例。
     // 活动调用保活其程序状态，故本次调用可复用入口借用而不假定执行字段永不写入。
-    program_data_ = LoadProgramData(entry, body_->getArg(0));
+    program_data_ =
+        kind_ == NativeEntryKind::HostLeaf
+            ? entry.CreateLoad(entry.getPtrTy(),
+                               entry.CreateConstGEP1_64(entry.getInt8Ty(), body_->getArg(0),
+                                                        runtime::NativeMemoryLayout::kHostProgram))
+            : LoadProgramData(entry, body_->getArg(0));
   }
   return program_data_;
 }
@@ -248,28 +256,11 @@ llvm::Value* FunctionEmitter::Poll() {
   llvm::Value* required = builder_.CreateICmpNE(requests, builder_.getInt8(0));
   if (checkpoint_ != nullptr) {
     // 被调用方可能已消耗发布请求并使当前帧失效；返回后仍须在下一安全点恢复。
-    // 尚未链接的检查点不可能失效，也不读取其未初始化的 tier。
-    auto* inspect = llvm::BasicBlock::Create(context, "safepoint.tier", body_);
-    auto* checked = llvm::BasicBlock::Create(context, "safepoint.checked", body_);
-    auto* unpublished = builder_.GetInsertBlock();
-    builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), checkpoint_initialized_),
-                          inspect, checked);
-    builder_.SetInsertPoint(inspect);
-    auto* tier = builder_.CreateLoad(
-        builder_.getInt8Ty(), ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
-    tier->setMetadata(
-        kNativePollReadyStateMetadata,
-        llvm::MDNode::get(context, llvm::ConstantAsMetadata::get(builder_.getInt8(
-                                       static_cast<std::uint8_t>(NativeCodeTier::Optimized)))));
-    auto* invalidated = builder_.CreateOr(
+    // 未发布检查点的 tier 已在帧入口初始化，发布后则保留安全点写入的失效状态。
+    auto* tier = LoadCheckpointTier();
+    required = builder_.CreateOr(
         required, builder_.CreateICmpEQ(
                       tier, builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Baseline))));
-    builder_.CreateBr(checked);
-    builder_.SetInsertPoint(checked);
-    auto* needs_poll = builder_.CreatePHI(builder_.getInt1Ty(), 2);
-    needs_poll->addIncoming(required, unpublished);
-    needs_poll->addIncoming(invalidated, inspect);
-    required = needs_poll;
   }
   auto* process = llvm::BasicBlock::Create(context, "safepoint.process", body_);
   auto* ready = llvm::BasicBlock::Create(context, "safepoint.ready", body_);
@@ -343,6 +334,11 @@ llvm::Value* FunctionEmitter::EmitLeafFailure(LeafFailure failure) {
 }
 
 void FunctionEmitter::Fail(llvm::Value* status) {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    RecordHostFailure(builder_, builder_.getInt32(1), TracePosition());
+    Finish(status);
+    return;
+  }
   ReleaseBorrowedHostFrame();
   AbortConstructions();
   if (kind_ == NativeEntryKind::Leaf) {
@@ -562,6 +558,9 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
                                source_.value_types.at(instruction.dst), source_.return_type);
         StoreMemory(result, Output(), MemoryRegion::Values);
       }
+      if (kind_ == NativeEntryKind::HostLeaf) {
+        StoreHostReturnPosition();
+      }
       Finish(Status(builder_, ExecutionStatus::Returned));
       break;
     }
@@ -578,7 +577,9 @@ const NativeFrameLayout& FunctionEmitter::PlanFrame() {
   NativeFrameRequirements requirements{.recovery = HasRecovery()};
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto* member = reflection_members_.empty() ? nullptr : reflection_members_[index];
-    if (IsLeafCall(CallTarget(index), index) ||
+    const auto target = CallTarget(index);
+    if (IsLeafCall(target, index) ||
+        (target && SelectCallEntry(*target, index) == CallEntry::ScalarField) ||
         (member != nullptr && member->kind == reflection::MemberKind::Method &&
          generated_[member->target].leaf != nullptr)) {
       requirements.leaf_calls = true;
@@ -622,11 +623,20 @@ void FunctionEmitter::PrepareFrame() {
   // 放到后继块，否则前置范围分析看到的仍是内存寄存器文件。
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   slots_.resize(source_.register_count);
-  if (std::ranges::any_of(source_.instructions, [](const auto& instruction) {
-        return instruction.construction.has_value();
-      })) {
-    construction_depth_ = allocation.CreateAlloca(builder_.getInt32Ty());
-    builder_.CreateStore(builder_.getInt32(0), construction_depth_);
+  const auto has_construction = [](const auto& instructions) {
+    return std::ranges::any_of(
+        instructions, [](const auto& instruction) { return instruction.construction.has_value(); });
+  };
+  if (has_construction(source_.instructions) ||
+      (HasRecovery() && has_construction(program_.functions[function_index_].instructions))) {
+    if (IsRecovering()) {
+      construction_depth_ = builder_.CreateLoad(
+          builder_.getPtrTy(),
+          ByteAddress(body_->getArg(1), offsetof(runtime::NativeCheckpoint, construction_depth)));
+    } else {
+      construction_depth_ = allocation.CreateAlloca(builder_.getInt32Ty());
+      builder_.CreateStore(builder_.getInt32(0), construction_depth_);
+    }
   }
   const auto& frame = PlanFrame();
   frame_type_ = frame.type;
@@ -699,7 +709,8 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   builder_.SetInsertPoint(blocks_.at(index));
   const auto safepoint = IsBoundaryPollRequired(index);
   boundary_ready_ = nullptr;
-  if (safepoint && kind_ != NativeEntryKind::Leaf && kind_ != NativeEntryKind::BoundedReflection) {
+  if (safepoint && kind_ != NativeEntryKind::Leaf && kind_ != NativeEntryKind::HostLeaf &&
+      kind_ != NativeEntryKind::ScalarField) {
     boundary_ready_ = Poll();
   }
   if (runtime_calls_[index] != 0) {
@@ -723,8 +734,9 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
 }
 
 void FunctionEmitter::BindArguments() {
-  if (kind_ == NativeEntryKind::Initial || kind_ == NativeEntryKind::BoundedReflection ||
-      kind_ == NativeEntryKind::Borrowed || kind_ == NativeEntryKind::Leaf) {
+  if (kind_ == NativeEntryKind::Initial || kind_ == NativeEntryKind::ScalarField ||
+      kind_ == NativeEntryKind::Borrowed || kind_ == NativeEntryKind::Leaf ||
+      kind_ == NativeEntryKind::HostLeaf) {
     for (std::size_t index = 0; index < source_.parameter_count; ++index) {
       auto* value =
           kind_ == NativeEntryKind::Borrowed && index == 0
@@ -761,8 +773,7 @@ void FunctionEmitter::InitializeRecords() {
 
 std::expected<void, std::string> FunctionEmitter::Emit() {
   auto& context = module_.getContext();
-  if (IsClosedLinkedProgram(program_.native_mode, placement_) && roots_.bounded_polls &&
-      ir::CanAnalyzeSynchronousFunction(source_)) {
+  if (roots_.bounded_polls && ir::CanAnalyzeSynchronousFunction(source_)) {
     body_->addFnAttr(kNativeArrayReductionCandidateAttribute);
   }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
@@ -1040,13 +1051,13 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = initial.frame_bytes()};
   AccumulateMetrics(metrics, escape, roots);
-  if (tier == NativeCodeTier::Optimized && function.bounded_reflection_body != nullptr) {
-    FunctionEmitter reflected(module, program, calls, image, function_index, escape, generated,
-                              roots, facts, NativeEntryKind::BoundedReflection, tier);
-    if (const auto emitted = reflected.Emit(); !emitted) {
+  if (tier == NativeCodeTier::Optimized && function.scalar_field_body != nullptr) {
+    FunctionEmitter scalar_field(module, program, calls, image, function_index, escape, generated,
+                                 roots, facts, NativeEntryKind::ScalarField, tier);
+    if (const auto emitted = scalar_field.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
-    metrics.frame_bytes = std::max(metrics.frame_bytes, reflected.frame_bytes());
+    metrics.frame_bytes = std::max(metrics.frame_bytes, scalar_field.frame_bytes());
   }
   if (function.leaf != nullptr) {
     FunctionEmitter leaf(module, program, calls, image, function_index, escape, generated, roots,
@@ -1056,6 +1067,16 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     }
     if (function.leaf_guard != nullptr) {
       EmitBoundedLeafGuard(function);
+    }
+  }
+  if (function.host_leaf != nullptr && function.host_leaf->empty()) {
+    FunctionEmitter host(module, program, calls, image, function_index, escape, generated, roots,
+                         facts, NativeEntryKind::HostLeaf, tier);
+    if (host.PlanFrame().bytes <= kMaximumNativeStackBytes) {
+      if (const auto emitted = host.Emit(); !emitted) {
+        return std::unexpected(emitted.error());
+      }
+      metrics.frame_bytes = std::max(metrics.frame_bytes, host.frame_bytes());
     }
   }
   if (function.resume != nullptr) {

@@ -543,7 +543,7 @@ class NativeFunction final {
     AotEntrySlot slot = nullptr;
     AotEntrySlot unscoped_slot = nullptr;
     AotCallKind kind = AotCallKind::Checked;
-    AotCallKind unscoped_kind = AotCallKind::Direct;
+    AotCallKind unscoped_kind = AotCallKind::Checked;
     Intrinsic intrinsic = Intrinsic::None;
   };
   template <auto Function>
@@ -568,7 +568,9 @@ class NativeFunction final {
         };
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;
-        return AotEntry{.slot = static_cast<AotEntrySlot>(&kTarget)};
+        // 受查入口由适配器管理作用域，两个放置模式都发布完整的相同调用契约。
+        const auto slot = static_cast<AotEntrySlot>(&kTarget);
+        return AotEntry{.slot = slot, .unscoped_slot = slot};
       }
     }();
     return NativeFunction(std::move(name), Adapter::Parameters(),
@@ -600,8 +602,6 @@ class NativeFunction final {
   const NativeClassMember* member_ = nullptr;
 };
 
-extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
-                                                                 std::uint32_t function) noexcept;
 extern "C" void vela_native_v1_release_host_handles(NativeContext* context) noexcept;
 extern "C" void vela_native_v1_borrow_string_view(StringObject* string,
                                                   std::string_view* output) noexcept;

@@ -95,6 +95,27 @@ class CallbackCounter {
   accept(value: int): int { this.value = value; return value; }
 }
 const callbackCounter = CallbackCounter();
+export func assignArray(values: int[], initial: int): int {
+  let sum = initial;
+  for (let index = 0; index < values.length; index++) {
+    callbackCounter.value = values[index];
+    sum += callbackCounter.value;
+  }
+  return sum;
+}
+export func callArray(values: int[], initial: int): int {
+  let sum = initial;
+  for (let index = 0; index < values.length; index++) {
+    sum += callbackCounter.accept(values[index]);
+  }
+  return sum;
+}
+export func writeArray(values: int[], value: int): void { values[0] = value; }
+export func appendArray(values: int[], value: int): void { values.push(value); }
+export func rootedArray(values: int[]): int {
+  const text = values[0].toString();
+  return values[0] + values[1] + text.length - 2;
+}
 func callbackSum(count: int, initial: int): int {
   const values: int[] = [];
   for (let index = 0; index < count; index++) { values.push(index); }
@@ -293,6 +314,174 @@ TEST_F(NativeIntegerLoopGcTest, RotatedCallsKeepBudgetBoundariesAndTheOverflowin
     EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
+}
+
+TEST_F(NativeIntegerLoopGcTest, ParameterArrayTrialsPreserveEmptySignedAndOverflowingWrites) {
+  NativeExecution execution(*instance);
+  for (const auto name : {"assignArray", "callArray"}) {
+    SCOPED_TRACE(name);
+    const auto function = instance->FindFunction(name);
+    ASSERT_TRUE(function);
+    const auto& description = instance->image().function(*function);
+    const auto parameters = description.parameters.values();
+    ASSERT_EQ(parameters.size(), 2U);
+    const auto* layout = instance->layouts().types[parameters.front().type].array;
+    ASSERT_NE(layout, nullptr);
+    auto& heap = isolate.heap();
+    const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
+    NativeValue previous_result;
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, previous_result), ExecutionStatus::Returned);
+    auto previous = std::bit_cast<std::int64_t>(previous_result.payload);
+    const auto check = [&](std::span<const std::int64_t> values, std::int64_t initial) {
+      auto* array = heap.AllocateArray(*layout, values.size());
+      ASSERT_NE(array, nullptr);
+      Value retained = Value::Object(array);
+      const RootRange root(heap, &retained, 1);
+      auto expected = initial;
+      auto assigned = previous;
+      auto status = ExecutionStatus::Returned;
+      for (std::size_t index = 0; index < values.size(); ++index) {
+        ASSERT_TRUE(heap.SetElement(*array, static_cast<std::uint32_t>(index),
+                                    Value::Integer(values[index])));
+      }
+      for (const auto value : values) {
+        assigned = value;
+        if (__builtin_add_overflow(expected, value, &expected)) {
+          status = ExecutionStatus::IntegerOverflow;
+          break;
+        }
+      }
+      const std::array arguments{EncodeNativeValue(retained), Integer(initial)};
+      NativeValue result;
+      ASSERT_EQ(Execute(description.entry, execution, arguments, result), status);
+      if (status == ExecutionStatus::Returned) {
+        EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected);
+        EXPECT_FALSE(execution.HasException());
+      } else {
+        ASSERT_TRUE(execution.HasException());
+        const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+        ASSERT_FALSE(trace.empty());
+        EXPECT_EQ(trace.front().function, name);
+      }
+      ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
+      EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), assigned);
+      EXPECT_EQ(execution.current_frame(), nullptr);
+      EXPECT_FALSE(execution.HasException());
+      previous = assigned;
+    };
+    std::array<std::int64_t, 2049> values{};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+      values[index] = static_cast<std::int64_t>(index & 1023);
+    }
+    for (const std::size_t count : {0, 1, 2, 7, 8, 9, 127, 128, 129, 1023, 1024, 1025, 2049}) {
+      SCOPED_TRACE(count);
+      ASSERT_NO_FATAL_FAILURE(check(std::span(values).first(count), 0));
+    }
+    const auto maximum = std::numeric_limits<std::int64_t>::max();
+    const auto minimum = std::numeric_limits<std::int64_t>::min();
+    const std::array<std::array<std::int64_t, 3>, 4> endpoints{{
+        {-1, 3, -2}, {maximum, -maximum, 7}, {1, maximum, 7}, {minimum, -1, 7},
+    }};
+    for (const auto initial : std::array<std::int64_t, 3>{0, -7, maximum - 2}) {
+      for (const auto& items : endpoints) {
+        SCOPED_TRACE(::testing::PrintToString(items));
+        SCOPED_TRACE(initial);
+        ASSERT_NO_FATAL_FAILURE(check(items, initial));
+      }
+    }
+  }
+}
+
+TEST_F(NativeIntegerLoopGcTest, ParameterArrayRangesInvalidateAtEveryMutableBoundary) {
+  const auto selected = instance->FindFunction("assignArray");
+  ASSERT_TRUE(selected);
+  const auto& description = instance->image().function(*selected);
+  const auto* layout = instance->layouts().types[description.parameters.values().front().type].array;
+  ASSERT_NE(layout, nullptr);
+  auto& heap = isolate.heap();
+  constexpr std::size_t kCount = 128;
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  const auto expect_overflow = [&](Value input, std::int64_t initial, std::string_view name) {
+    const auto function = instance->FindFunction(name);
+    ASSERT_TRUE(function);
+    NativeExecution execution(*instance);
+    const std::array arguments{EncodeNativeValue(input), Integer(initial)};
+    NativeValue result;
+    ASSERT_EQ(Execute(instance->image().function(*function).entry, execution, arguments, result),
+              ExecutionStatus::IntegerOverflow);
+    ASSERT_TRUE(execution.HasException());
+    const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+    ASSERT_FALSE(trace.empty());
+    EXPECT_EQ(trace.front().function, name);
+    const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), maximum);
+    EXPECT_EQ(execution.current_frame(), nullptr);
+  };
+  for (const auto name : {"writeArray", "appendArray"}) {
+    SCOPED_TRACE(name);
+    Value input = Value::Object(heap.AllocateArray(*layout, kCount));
+    ASSERT_NE(input.AsObject(), nullptr);
+    const RootRange root(heap, &input, 1);
+    ASSERT_TRUE(heap.ReserveArray(*input.AsObject(), kCount * 2));
+    const auto function = instance->FindFunction(name);
+    ASSERT_TRUE(function);
+    {
+      NativeExecution execution(*instance);
+      const std::array arguments{EncodeNativeValue(input), Integer(maximum)};
+      NativeValue result;
+      ASSERT_EQ(Execute(instance->image().function(*function).entry, execution, arguments, result),
+                ExecutionStatus::Returned);
+    }
+    for (const auto reader : {"assignArray", "callArray"}) {
+      ASSERT_NO_FATAL_FAILURE(expect_overflow(input, 1, reader));
+    }
+  }
+  Value input = Value::Object(heap.AllocateArray(*layout, kCount));
+  ASSERT_NE(input.AsObject(), nullptr);
+  const RootRange root(heap, &input, 1);
+  const auto elements = Heap::IntegerElements(*input.AsObject());
+  ASSERT_TRUE(elements);
+  ASSERT_TRUE(heap.FillArray(*input.AsObject(), Value::Integer(0), 0, kCount));
+  elements->front() = 1;
+  elements->back() = maximum;
+  for (const auto name : {"assignArray", "callArray"}) {
+    ASSERT_NO_FATAL_FAILURE(expect_overflow(input, 0, name));
+  }
+}
+
+TEST_F(NativeIntegerLoopGcTest, PublicCapturedArrayEntryPreservesScopesErrorsAndOwnership) {
+  using ArrayEntry = vela::Entry<std::int64_t(vela::Array<std::int64_t>)>;
+  const auto bound = ArrayEntry::Bind(*instance, "rootedArray");
+  ASSERT_TRUE(bound);
+  const auto captured = bound->Capture();
+  ASSERT_TRUE(captured);
+  instance.reset();
+  isolate.heap().Collect();
+  vela::HandleScope scope(isolate);
+  const auto input = vela::CreateArray<std::int64_t>(scope);
+  ASSERT_TRUE(input);
+  ASSERT_TRUE(input->Push(scope, 40));
+  ASSERT_TRUE(input->Push(scope, 2));
+  for (int index = 0; index < 3; ++index) {
+    isolate.heap().Collect();
+    const auto result = captured->Call(scope, *input);
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_EQ(*result, 42);
+    EXPECT_EQ(isolate.native_control().state().host_execution, nullptr);
+  }
+  const auto empty = vela::CreateArray<std::int64_t>(scope);
+  ASSERT_TRUE(empty);
+  const auto rejected = captured->Call(scope, *empty);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().status, ExecutionStatus::IndexOutOfBounds);
+  ASSERT_FALSE(rejected.error().stack_trace.empty());
+  EXPECT_EQ(rejected.error().stack_trace.front().function, "rootedArray");
+  Isolate foreign;
+  vela::HandleScope other(foreign);
+  const auto wrong_scope = captured->Call(other, *input);
+  ASSERT_FALSE(wrong_scope);
+  EXPECT_EQ(wrong_scope.error().status, ExecutionStatus::InvalidIsolate);
 }
 
 TEST_F(NativeIntegerLoopGcTest, UnknownGlobalWritesKeepOverflowAndBoundsFailurePrefixes) {

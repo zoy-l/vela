@@ -75,11 +75,6 @@ std::expected<Value, ExecutionStatus> internal::CompleteNativeResult(NativeExecu
   return *result;
 }
 
-extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
-                                                                 std::uint32_t function) noexcept {
-  return &execution->instance().import_entry(function);
-}
-
 extern "C" void vela_native_v1_release_host_handles(NativeContext* context) noexcept {
   context->ReleaseHandles();
 }

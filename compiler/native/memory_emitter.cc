@@ -31,8 +31,10 @@
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
+#include "runtime/heap/array_storage.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
@@ -498,7 +500,7 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   }
   const auto& direct = field_layouts_.at(*declaration);
   bool guarded_receiver = false;
-  if (kind_ == NativeEntryKind::BoundedReflection) {
+  if (kind_ == NativeEntryKind::ScalarField) {
     if (!source_.signature) {
       std::unreachable();
     }
@@ -511,8 +513,8 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
         field_targets_.at(*declaration).owner == program_.layouts.types[receiver].index;
   }
   if (guarded_receiver) {
-    // 此入口仅由 CacheCall 在规范接收者布局下发布；调用点以唯一 layout id 守卫。
-    // 包装器统一验证全部字段就绪；有界片段没有发布、分配或其他用户调用。
+    // 直接调用与反射缓存分别守卫规范接收者布局，并验证全部字段就绪。
+    // 该共享片段没有发布、分配或其他用户调用，保留原算术失败和字段写入前缀。
     auto* storage = LoadMemory(builder_.getPtrTy(),
                                ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
                                MemoryRegion::HeapHeader);
@@ -532,8 +534,14 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   auto* storage =
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
                  MemoryRegion::HeapHeader);
-  auto* ready = EmitFieldReadiness(storage, instruction, builder_.getInt32(direct.slot),
-                                   direct.count, recover);
+  // 优化片段只借用完整就绪的字段块；惰性字段与布局失配统一由规范基线操作处理。
+  // 成功片段不再混入状态初始化写入，布局、存储和就绪守卫可按有界预算复用。
+  auto* unready =
+      LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, unready)),
+                 MemoryRegion::InstanceHeader);
+  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, recover,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(recover);
   // 不执行当前读写；保存规范输入后由基线处理布局变化、惰性初始化和精确异常。
   // 冷路径直接退出当前机器帧，成功路径间不再汇合可能修改堆存储的运行时调用。
@@ -541,6 +549,8 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   StoreRoots(instruction_index_);
   StoreCheckpoint();
   Recover();
+  recover->getTerminator()->setMetadata(kNativeGuardFailureMetadata,
+                                        llvm::MDNode::get(context, {}));
   builder_.SetInsertPoint(ready);
   const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
   EmitFieldAccess(instruction, object, address);
@@ -695,8 +705,23 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
   } else {
     auto value = LoadStoredValue(instruction.rhs);
     WriteElement(address, element, value);
+    InvalidateArrayIntegerRange(array, array_reg, element);
     EmitWriteBarrier(array, value);
   }
+}
+
+void FunctionEmitter::InvalidateArrayIntegerRange(llvm::Value* array,
+                                                  ir::RegisterId reg,
+                                                  const layout::Type& element) {
+  if (element.kind != layout::Type::Kind::Integer || element.nullable ||
+      (reg < array_access_.element_bits.size() &&
+       array_access_.element_bits[reg] <= runtime::internal::kNonnegative31Mask)) {
+    return;
+  }
+  StoreMemory(
+      builder_.getInt32(static_cast<std::uint32_t>(runtime::internal::IntegerArrayRange::Unknown)),
+      ByteAddress(array, runtime::NativeMemoryLayout::kArrayIntegerRange),
+      MemoryRegion::HeapHeader);
 }
 
 void FunctionEmitter::WriteElement(llvm::Value* address,
@@ -772,6 +797,7 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
       storage, data, builder_.CreateZExt(length, builder_.getInt64Ty()), "array.element");
   auto value = LoadStoredValue(reg);
   WriteElement(address, element, value);
+  InvalidateArrayIntegerRange(array, instruction.lhs, element);
   auto* next_length = builder_.CreateNUWAdd(length, builder_.getInt32(1));
   StoreMemory(next_length, length_address, MemoryRegion::HeapHeader);
   auto* mutation_address = ByteAddress(array, NativeMemoryLayout::kArrayMutation);

@@ -38,7 +38,7 @@ REPORT_MODES = {
         "Compare Vela, C++, LuaJIT and LuaJIT interpreter"),
     "native_compare": ReportMode(
         "native_comparison.json", "^native/", native_call_report, "vela_aot_benchmarks",
-        "Compare JIT/AOT native calls with direct and indirect C++ calls"),
+        "Compare baseline/optimized JIT and AOT native calls with direct and indirect C++ calls"),
     "native_class_compare": ReportMode(
         "native_class_comparison.json", "^native_class/", native_class_comparison_report,
         "vela_aot_benchmarks",

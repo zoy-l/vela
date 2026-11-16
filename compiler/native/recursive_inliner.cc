@@ -147,7 +147,7 @@ class RecursiveLoopHintsPass : public llvm::PassInfoMixin<RecursiveLoopHintsPass
 }  // namespace
 
 void InlineRecursion(llvm::Function& function) {
-  constexpr std::size_t kMaximumDepth = 3;
+  constexpr std::size_t kMaximumDepth = 5;
   llvm::DominatorTree dominators(function);
   PromoteLocalAllocations(function, dominators);
   const auto original_calls = RecursiveCalls(function, function);

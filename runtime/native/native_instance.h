@@ -85,9 +85,6 @@ class NativeInstance final {
   [[nodiscard]] const CallSignature& call_signature(std::size_t function) const noexcept {
     return data_->signatures[function];
   }
-  [[nodiscard]] const NativeFunction::AotEntry& import_entry(std::size_t function) const noexcept {
-    return data_->imports[function]->aot_entry();
-  }
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
   [[nodiscard]] std::expected<Value, ExecutionStatus> InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index);

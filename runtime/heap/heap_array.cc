@@ -26,6 +26,15 @@ std::span<std::byte> ElementBytes(HeapObject& array,
   return internal::ArrayBytes(array, layout).first(layout.element_size() * length);
 }
 
+void UpdateIntegerRange(HeapObject& array, Value value) noexcept {
+  auto& range = internal::ArrayBuffer(array).integer_range;
+  if (range != internal::IntegerArrayRange::Unknown &&
+      (!value.IsInteger() ||
+       static_cast<std::uint64_t>(value.AsInteger()) > internal::kNonnegative31Mask)) {
+    range = internal::IntegerArrayRange::Unknown;
+  }
+}
+
 }  // namespace
 
 std::expected<const ArrayLayout*, ArrayAccessError> Heap::ElementLayout(
@@ -90,6 +99,10 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   auto& buffer = *std::construct_at(&internal::ArrayBuffer(*object));
   buffer.capacity = inline_capacity == 0 ? object->length : inline_capacity;
   buffer.data = inline_capacity == 0 ? memory : internal::InlineArrayData(buffer);
+  if (contents.empty() && layout.element.kind == ValueKind::Integer &&
+      !layout.HasTaggedElements()) {
+    buffer.integer_range = internal::IntegerArrayRange::Nonnegative31;
+  }
   const auto storage = ElementBytes(*object, layout, length);
   if (contents.empty()) {
     VisitElementStorage(layout, storage, [](auto elements) {
@@ -131,6 +144,7 @@ std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
       array.array_layout()->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
+  internal::ArrayBuffer(array).integer_range = internal::IntegerArrayRange::Unknown;
   return ElementSlots<std::int64_t>(ElementBytes(array, *array.array_layout(), array.length));
 }
 
@@ -156,6 +170,7 @@ std::expected<void, ArrayAccessError> Heap::SetElement(HeapObject& array,
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
   StoreElementStorage(layout, internal::ArrayBytes(array, layout), index, value);
+  UpdateIntegerRange(array, value);
   if (value.IsReference()) {
     WriteBarrier(array, value);
   }
@@ -229,6 +244,7 @@ std::expected<std::uint32_t, ArrayAccessError> Heap::PushArray(HeapObject& array
     return std::unexpected(grown.error());
   }
   StoreElementStorage(layout, internal::ArrayBytes(array, layout), array.length, value);
+  UpdateIntegerRange(array, value);
   ++array.length;
   ++internal::ArrayBuffer(array).mutation;
   if (value.IsReference()) {
@@ -294,6 +310,9 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
     const auto input = ElementBytes(items, layout, inserted);
     std::memcpy(storage.subspan(static_cast<std::size_t>(start) * element_size).data(),
                 input.data(), input.size());
+    if (internal::ArrayBuffer(items).integer_range == internal::IntegerArrayRange::Unknown) {
+      internal::ArrayBuffer(array).integer_range = internal::IntegerArrayRange::Unknown;
+    }
   }
   array.length = next_length;
   ++internal::ArrayBuffer(array).mutation;
@@ -389,6 +408,7 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
   if (copy == nullptr) {
     return std::unexpected(ArrayAccessError::OutOfMemory);
   }
+  internal::ArrayBuffer(*copy).integer_range = internal::ArrayBuffer(array).integer_range;
   return copy;
 }
 
@@ -411,6 +431,9 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
   VisitElementStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
     std::ranges::fill(elements, ElementValue<T>(value));
   });
+  if (start != end) {
+    UpdateIntegerRange(array, value);
+  }
   WriteBarrier(array, value);
   return {};
 }

@@ -127,6 +127,14 @@ using NativeReflectionEntry = std::uint8_t (*)(NativeExecution*,
 // 仅保存 typed ABI 地址，生成代码按静态签名调用；C++ 不通过擦除后的类型调用。
 using NativeTypedEntry = void (*)() noexcept;
 
+// 只由已验证数量与规范数组布局的绑定调用。Miss/Enter 尚无副作用；
+// Observe 已完成计算，必须处理返回边界而不能重放函数。
+using NativeHostEntry = std::uint8_t (*)(NativeHostContext*, HeapObject*, NativeValue*) noexcept;
+
+enum class NativeHostTarget : std::uint32_t { Generic, X86_64V4 };
+// 在绑定时选择一次；CPU 与操作系统均支持该目标后，才可传入对应枚举。
+using NativeHostEntrySelector = NativeHostEntry (*)(NativeHostTarget) noexcept;
+
 struct NativeConstructionDescription final {
   DeclarationId type;
   NativeTable<DeclarationId> supplied;
@@ -167,6 +175,7 @@ struct NativeFunctionDescription final {
   NativeReflectionEntry reflection_entry = nullptr;
   // 可重载 JIT 在发布前绑定；仅优化层的当前版本跨分量调用读取此槽。
   NativeTypedEntry typed_entry = nullptr;
+  NativeHostEntrySelector host_entry_selector = nullptr;
   std::uint32_t parameter_count = 0;
   std::uint32_t result_type = kNoNativeIndex;
   std::uint32_t hidden_parameters = 0;

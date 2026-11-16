@@ -3,10 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <utility>
 
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -14,8 +14,10 @@
 #include <llvm/IR/Analysis.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
@@ -24,6 +26,7 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/DCE.h>
+#include <llvm/Transforms/Scalar/EarlyCSE.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/LCSSA.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
@@ -32,12 +35,12 @@
 
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
+#include "runtime/heap/array_storage.h"
 #include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
 namespace {
 
-constexpr std::uint64_t kSmallIntegerMask = std::numeric_limits<std::int32_t>::max();
 constexpr std::uint64_t kTrialInstructions = 16;
 constexpr std::uint32_t kTrialInterleaveCount = 4;
 
@@ -51,11 +54,15 @@ struct ArrayReduction final {
   llvm::ExtractValueInst* overflow = nullptr;
   llvm::GetElementPtrInst* address = nullptr;
   llvm::LoadInst* element = nullptr;
+  llvm::Value* array = nullptr;
   llvm::Value* bound = nullptr;
+  llvm::LoadInst* length = nullptr;
   llvm::BasicBlock* normal_exit = nullptr;
-  llvm::SmallVector<llvm::StoreInst*, 4> clears;
+  llvm::SmallVector<llvm::StoreInst*, 4> stores;
   std::uint64_t limit = 0;
 };
+
+using ArrayLengths = llvm::DenseMap<llvm::Value*, llvm::SmallVector<llvm::LoadInst*, 2>>;
 
 std::optional<ArrayReduction> MatchReductionPhis(ArrayReduction reduction) {
   auto& loop = *reduction.loop;
@@ -70,10 +77,7 @@ std::optional<ArrayReduction> MatchReductionPhis(ArrayReduction reduction) {
         increment != nullptr && increment->getOpcode() == llvm::Instruction::Add &&
         increment->hasNoSignedWrap() && increment->getOperand(0) == &phi) {
       const auto* step = llvm::dyn_cast<llvm::ConstantInt>(increment->getOperand(1));
-      const auto* start = llvm::dyn_cast<llvm::ConstantInt>(
-          phi.getIncomingValueForBlock(loop.getLoopPreheader()));
-      if (step == nullptr || !step->isOne() || start == nullptr ||
-          start->getValue().ugt(std::numeric_limits<std::uint32_t>::max())) {
+      if (step == nullptr || !step->isOne()) {
         return std::nullopt;
       }
       reduction.index = &phi;
@@ -102,7 +106,8 @@ std::optional<ArrayReduction> MatchReductionExits(ArrayReduction reduction) {
   auto& loop = *reduction.loop;
   auto* latch = loop.getLoopLatch();
   auto* branch = llvm::dyn_cast<llvm::CondBrInst>(latch->getTerminator());
-  auto* comparison = branch == nullptr ? nullptr : llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
+  auto* comparison =
+      branch == nullptr ? nullptr : llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
   if (comparison == nullptr || !comparison->isEquality()) {
     return std::nullopt;
   }
@@ -129,8 +134,8 @@ std::optional<ArrayReduction> MatchReductionExits(ArrayReduction reduction) {
       continue;
     }
     auto* extract = llvm::dyn_cast<llvm::ExtractValueInst>(user);
-    if (extract == nullptr || extract->getNumIndices() != 1 ||
-        extract->getIndices().front() != 1 || reduction.overflow != nullptr) {
+    if (extract == nullptr || extract->getNumIndices() != 1 || extract->getIndices().front() != 1 ||
+        reduction.overflow != nullptr) {
       return std::nullopt;
     }
     reduction.overflow = extract;
@@ -144,7 +149,9 @@ std::optional<ArrayReduction> MatchReductionExits(ArrayReduction reduction) {
   return reduction;
 }
 
-std::optional<ArrayReduction> MatchNativeArrayStorage(ArrayReduction reduction) {
+std::optional<ArrayReduction> MatchNativeArrayStorage(ArrayReduction reduction,
+                                                      const ArrayLengths& lengths,
+                                                      llvm::DominatorTree& dominators) {
   auto& loop = *reduction.loop;
   auto* left = reduction.update->getArgOperand(0);
   auto* term = reduction.update->getArgOperand(1);
@@ -159,45 +166,59 @@ std::optional<ArrayReduction> MatchNativeArrayStorage(ArrayReduction reduction) 
     return std::nullopt;
   }
   auto* address = llvm::dyn_cast<llvm::GetElementPtrInst>(element->getPointerOperand());
-  auto* bound = llvm::dyn_cast<llvm::ZExtInst>(reduction.bound);
   if (address == nullptr || address->getNumIndices() != 1 ||
-      address->getOperand(1) != reduction.index || bound == nullptr ||
-      !bound->getSrcTy()->isIntegerTy(32)) {
+      address->getOperand(1) != reduction.index) {
     return std::nullopt;
   }
   const auto& layout = element->getModule()->getDataLayout();
   const auto stride = layout.getTypeAllocSize(address->getSourceElementType());
   auto* data = llvm::dyn_cast<llvm::LoadInst>(address->getPointerOperand());
-  auto* length = llvm::dyn_cast<llvm::LoadInst>(bound->getOperand(0));
   if (stride.isScalable() || stride.getFixedValue() != sizeof(std::int64_t) || data == nullptr ||
-      length == nullptr || !data->isSimple() || !length->isSimple() ||
-      !loop.isLoopInvariant(data) || !loop.isLoopInvariant(length)) {
+      !data->isSimple() || !loop.isLoopInvariant(data)) {
     return std::nullopt;
   }
   std::int64_t data_offset = 0;
-  std::int64_t length_offset = 0;
-  auto* data_owner = llvm::GetPointerBaseWithConstantOffset(data->getPointerOperand(), data_offset,
-                                                          layout);
-  auto* length_owner = llvm::GetPointerBaseWithConstantOffset(length->getPointerOperand(),
-                                                            length_offset, layout);
+  auto* data_owner =
+      llvm::GetPointerBaseWithConstantOffset(data->getPointerOperand(), data_offset, layout);
   using runtime::NativeMemoryLayout;
   // Elements 的未标记 int64 读取及同一数组的 data/uint32 length 共同证明完整读取范围；
   // 不能仅凭当前单次读取的越界检查推断其余投机读取也有效。
-  if (data_owner != length_owner || data_offset != NativeMemoryLayout::kArrayData ||
-      length_offset != NativeMemoryLayout::kObjectLength) {
+  if (data_offset != NativeMemoryLayout::kArrayData) {
+    return std::nullopt;
+  }
+  const auto found = lengths.find(data_owner);
+  if (found == lengths.end()) {
+    return std::nullopt;
+  }
+  for (auto* length : found->second) {
+    if (loop.isLoopInvariant(length) &&
+        dominators.dominates(length, loop.getLoopPreheader()->getTerminator())) {
+      reduction.length = length;
+      break;
+    }
+  }
+  if (reduction.length == nullptr) {
     return std::nullopt;
   }
   reduction.element = element;
   reduction.address = address;
+  reduction.array = data_owner;
   return reduction;
 }
 
 std::optional<ArrayReduction> MatchPureReductionBody(ArrayReduction reduction) {
   auto& loop = *reduction.loop;
   llvm::SmallPtrSet<const llvm::Value*, 16> allowed{
-      reduction.index, reduction.total, reduction.increment, reduction.update, reduction.sum,
-      reduction.overflow, reduction.address, reduction.element,
-      loop.getHeader()->getTerminator(), loop.getLoopLatch()->getTerminator(),
+      reduction.index,
+      reduction.total,
+      reduction.increment,
+      reduction.update,
+      reduction.sum,
+      reduction.overflow,
+      reduction.address,
+      reduction.element,
+      loop.getHeader()->getTerminator(),
+      loop.getLoopLatch()->getTerminator(),
       llvm::cast<llvm::CondBrInst>(loop.getLoopLatch()->getTerminator())->getCondition(),
   };
   std::uint64_t instructions = kTrialInstructions;
@@ -207,16 +228,31 @@ std::optional<ArrayReduction> MatchPureReductionBody(ArrayReduction reduction) {
       if (allowed.contains(&instruction)) {
         continue;
       }
-      auto* clear = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-      const auto* zero = clear == nullptr ? nullptr : llvm::dyn_cast<llvm::Constant>(clear->getValueOperand());
-      if (clear == nullptr || !clear->isSimple() || zero == nullptr || !zero->isNullValue() ||
-          clear->getMetadata(kNativeRootClearMetadata) == nullptr ||
-          !loop.isLoopInvariant(clear->getPointerOperand()) ||
-          clear->getMetadata(llvm::LLVMContext::MD_tbaa) !=
-              NativeMemoryTag(clear->getContext(), MemoryRegion::Roots)) {
+      if (const auto* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+          intrinsic != nullptr &&
+          intrinsic->getIntrinsicID() == llvm::Intrinsic::experimental_noalias_scope_decl) {
+        continue;
+      }
+      auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+      if (store == nullptr || !store->isSimple() ||
+          !loop.isLoopInvariant(store->getPointerOperand())) {
         return std::nullopt;
       }
-      reduction.clears.push_back(clear);
+      const auto* constant = llvm::dyn_cast<llvm::Constant>(store->getValueOperand());
+      const auto clear = constant != nullptr && constant->isNullValue() &&
+                         store->getMetadata(kNativeRootClearMetadata) != nullptr &&
+                         HasStorageTag(*store, MemoryRegion::Roots);
+      const auto field = store->getValueOperand() == reduction.element &&
+                         HasStorageTag(*store, MemoryRegion::FieldPayloads);
+      const auto kind = constant != nullptr && HasStorageTag(*store, MemoryRegion::FieldKinds);
+      // 无调用、无轮询片段中的不变根和执行描述只需在成功提交时写一次。
+      // 验证失败仍执行原循环，保留错误之前的字段、根和检查点前缀。
+      const auto state = loop.isLoopInvariant(store->getValueOperand()) &&
+                         (HasStorageTag(*store, MemoryRegion::Execution) ||
+                          HasStorageTag(*store, MemoryRegion::Roots));
+      if (!clear && !field && !kind && !state)
+        return std::nullopt;
+      reduction.stores.push_back(store);
     }
   }
   const auto mapped = [&](const llvm::Value* value) {
@@ -229,101 +265,163 @@ std::optional<ArrayReduction> MatchPureReductionBody(ArrayReduction reduction) {
     return std::nullopt;
   }
   reduction.limit = std::min(kNativeMaximumUnpolledIterations / 2,
-                              kNativeMaximumUnpolledInstructions / (2 * instructions));
+                             kNativeMaximumUnpolledInstructions / (2 * instructions));
   if (reduction.limit == 0) {
     return std::nullopt;
   }
   return reduction;
 }
 
-std::optional<ArrayReduction> MatchReduction(llvm::Loop& loop) {
+std::optional<ArrayReduction> MatchReduction(llvm::Loop& loop,
+                                             const ArrayLengths& lengths,
+                                             llvm::DominatorTree& dominators) {
   if (loop.getBlocks().size() != 2 || !loop.getSubLoops().empty() ||
-      loop.getLoopPreheader() == nullptr || loop.getLoopLatch() == nullptr) {
+      loop.getLoopPreheader() == nullptr || loop.getLoopLatch() == nullptr ||
+      llvm::findOptionMDForLoop(&loop, kNativeArrayReductionFallbackMetadata) != nullptr) {
     return std::nullopt;
   }
-  auto reduction = MatchReductionPhis({.loop = &loop, .clears = {}});
-  if (!reduction) return std::nullopt;
+  auto reduction = MatchReductionPhis({.loop = &loop, .stores = {}});
+  if (!reduction)
+    return std::nullopt;
   reduction = MatchReductionExits(std::move(*reduction));
-  if (!reduction) return std::nullopt;
-  reduction = MatchNativeArrayStorage(std::move(*reduction));
-  if (!reduction) return std::nullopt;
+  if (!reduction)
+    return std::nullopt;
+  reduction = MatchNativeArrayStorage(std::move(*reduction), lengths, dominators);
+  if (!reduction)
+    return std::nullopt;
   return MatchPureReductionBody(std::move(*reduction));
 }
 
-void EmitTrial(const ArrayReduction& reduction) {
+enum class ReductionRange : std::uint8_t { Scan, Certified };
+
+llvm::BasicBlock* EmitTrial(const ArrayReduction& reduction,
+                            llvm::BasicBlock* incoming,
+                            ReductionRange range) {
   auto& loop = *reduction.loop;
   auto* header = loop.getHeader();
-  auto* preheader = loop.getLoopPreheader();
-  auto* old_entry = preheader->getTerminator();
   auto* function = header->getParent();
   auto& context = function->getContext();
-  auto* trial = llvm::BasicBlock::Create(context, "array.sum.trial", function, header);
-  auto* validate = llvm::BasicBlock::Create(context, "array.sum.validate", function, header);
+  const auto certified = range == ReductionRange::Certified;
+  auto* trial = llvm::BasicBlock::Create(
+      context, certified ? "array.sum.certified" : "array.sum.trial", function, header);
+  auto* validate = certified
+                       ? nullptr
+                       : llvm::BasicBlock::Create(context, "array.sum.validate", function, header);
   auto* commit = llvm::BasicBlock::Create(context, "array.sum.commit", function, header);
+  auto* preheader = loop.getLoopPreheader();
   auto* start = reduction.index->getIncomingValueForBlock(preheader);
   auto* initial = reduction.total->getIncomingValueForBlock(preheader);
-  llvm::IRBuilder<> guard(old_entry);
-  auto* distance = guard.CreateSub(reduction.bound, start);
-  auto* nonempty = guard.CreateICmpNE(distance, guard.getInt64(0));
-  auto* bounded = guard.CreateICmpULE(distance, guard.getInt64(reduction.limit));
-  guard.CreateCondBr(guard.CreateAnd(nonempty, bounded), trial, header);
-  old_entry->eraseFromParent();
 
   llvm::IRBuilder<> body(trial);
   auto* index = body.CreatePHI(body.getInt64Ty(), 2, "array.sum.index");
   auto* total = body.CreatePHI(body.getInt64Ty(), 2, "array.sum.total");
-  auto* bits = body.CreatePHI(body.getInt64Ty(), 2, "array.sum.bits");
-  index->addIncoming(start, preheader);
-  total->addIncoming(initial, preheader);
-  bits->addIncoming(initial, preheader);
+  auto* bits = certified ? nullptr : body.CreatePHI(body.getInt64Ty(), 2, "array.sum.bits");
+  index->addIncoming(start, incoming);
+  total->addIncoming(initial, incoming);
+  if (bits != nullptr) {
+    bits->addIncoming(initial, incoming);
+  }
   auto* address = body.CreateGEP(reduction.address->getSourceElementType(),
-                                  reduction.address->getPointerOperand(), index);
+                                 reduction.address->getPointerOperand(), index);
   auto* value = body.CreateAlignedLoad(body.getInt64Ty(), address, reduction.element->getAlign());
   value->setMetadata(llvm::LLVMContext::MD_tbaa,
                      reduction.element->getMetadata(llvm::LLVMContext::MD_tbaa));
   // 未验证时使用模加法；即使值超出窄域，丢弃的投机结果也不能产生 poison。
   auto* sum = body.CreateAdd(total, value);
-  auto* combined = body.CreateOr(bits, value);
+  llvm::Value* combined = nullptr;
+  if (bits != nullptr) {
+    combined = body.CreateOr(bits, value);
+  }
   auto* next = body.CreateNUWAdd(index, body.getInt64(1));
-  auto* continued = body.CreateCondBr(body.CreateICmpNE(next, reduction.bound), trial, validate);
+  auto* continued = body.CreateCondBr(body.CreateICmpNE(next, reduction.bound), trial,
+                                      certified ? commit : validate);
   index->addIncoming(next, trial);
   total->addIncoming(sum, trial);
-  bits->addIncoming(combined, trial);
+  if (bits != nullptr) {
+    bits->addIncoming(combined, trial);
+  }
   llvm::Metadata* properties[] = {
       nullptr,
       llvm::MDNode::get(context, {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
-                                 llvm::ConstantAsMetadata::get(body.getTrue())}),
-      llvm::MDNode::get(context, {llvm::MDString::get(context, "llvm.loop.interleave.count"),
-                                 llvm::ConstantAsMetadata::get(body.getInt32(kTrialInterleaveCount))}),
+                                  llvm::ConstantAsMetadata::get(body.getTrue())}),
+      llvm::MDNode::get(context,
+                        {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                         llvm::ConstantAsMetadata::get(body.getInt32(kTrialInterleaveCount))}),
   };
   auto* metadata = llvm::MDNode::getDistinct(context, properties);
   metadata->replaceOperandWith(0, metadata);
   continued->setMetadata(llvm::LLVMContext::MD_loop, metadata);
 
-  llvm::IRBuilder<> checking(validate);
-  checking.CreateCondBr(checking.CreateICmpULE(combined, checking.getInt64(kSmallIntegerMask)),
-                          commit, header);
-  reduction.index->addIncoming(start, validate);
-  reduction.total->addIncoming(initial, validate);
+  if (validate != nullptr) {
+    llvm::IRBuilder<> checking(validate);
+    checking.CreateCondBr(
+        checking.CreateICmpULE(combined, checking.getInt64(runtime::internal::kNonnegative31Mask)),
+        commit, header);
+    reduction.index->addIncoming(start, validate);
+    reduction.total->addIncoming(initial, validate);
+  }
   llvm::IRBuilder<> committed(commit);
   // 总项数不超过 uint32 length 加一个初值；31 位非负项的全部 int64 前缀均安全。
-  // 只在验证成功后合并无观察期间的根清空，原错误路径保持每次写入与清空的顺序。
-  for (auto* clear : reduction.clears) {
-    auto* copied = committed.CreateAlignedStore(clear->getValueOperand(), clear->getPointerOperand(),
-                                                 clear->getAlign());
-    copied->setMetadata(kNativeRootClearMetadata, clear->getMetadata(kNativeRootClearMetadata));
-    copied->setMetadata(llvm::LLVMContext::MD_tbaa, clear->getMetadata(llvm::LLVMContext::MD_tbaa));
+  // 只在全部前缀求和均安全后提交最终字段值和根清空；原错误路径保留逐项写入顺序。
+  for (auto* store : reduction.stores) {
+    auto* stored = store->getValueOperand() == reduction.element ? value : store->getValueOperand();
+    auto* copied =
+        committed.CreateAlignedStore(stored, store->getPointerOperand(), store->getAlign());
+    copied->setMetadata(kNativeRootClearMetadata, store->getMetadata(kNativeRootClearMetadata));
+    copied->setMetadata(llvm::LLVMContext::MD_tbaa, store->getMetadata(llvm::LLVMContext::MD_tbaa));
   }
   for (auto& phi : reduction.normal_exit->phis()) {
-    auto* incoming = phi.getIncomingValueForBlock(loop.getLoopLatch());
-    if (incoming == reduction.index) incoming = index;
-    else if (incoming == reduction.total) incoming = total;
-    else if (incoming == reduction.increment) incoming = next;
-    else if (incoming == reduction.sum) incoming = sum;
-    else if (incoming == reduction.element) incoming = value;
-    phi.addIncoming(incoming, commit);
+    auto* value_on_exit = phi.getIncomingValueForBlock(loop.getLoopLatch());
+    if (value_on_exit == reduction.index)
+      value_on_exit = index;
+    else if (value_on_exit == reduction.total)
+      value_on_exit = total;
+    else if (value_on_exit == reduction.increment)
+      value_on_exit = next;
+    else if (value_on_exit == reduction.sum)
+      value_on_exit = sum;
+    else if (value_on_exit == reduction.element)
+      value_on_exit = value;
+    phi.addIncoming(value_on_exit, commit);
   }
   committed.CreateBr(reduction.normal_exit);
+  return trial;
+}
+
+void EmitTrials(const ArrayReduction& reduction) {
+  auto& loop = *reduction.loop;
+  auto* header = loop.getHeader();
+  auto* preheader = loop.getLoopPreheader();
+  auto* old_entry = preheader->getTerminator();
+  auto* function = header->getParent();
+  auto* dispatch =
+      llvm::BasicBlock::Create(function->getContext(), "array.sum.range", function, header);
+  auto* start = reduction.index->getIncomingValueForBlock(preheader);
+  auto* initial = reduction.total->getIncomingValueForBlock(preheader);
+  // 在修改循环入口前完成两个克隆；匹配结果及原 PHI 的前驱仍然有效。
+  auto* certified = EmitTrial(reduction, dispatch, ReductionRange::Certified);
+  auto* scanned = EmitTrial(reduction, dispatch, ReductionRange::Scan);
+  llvm::IRBuilder<> guard(old_entry);
+  auto* distance = guard.CreateSub(reduction.bound, start);
+  auto* nonempty = guard.CreateICmpULT(start, reduction.bound);
+  auto* within_array =
+      guard.CreateICmpULE(reduction.bound, guard.CreateZExt(reduction.length, guard.getInt64Ty()));
+  auto* bounded = guard.CreateICmpULE(distance, guard.getInt64(reduction.limit));
+  guard.CreateCondBr(guard.CreateAnd(guard.CreateAnd(nonempty, within_array), bounded), dispatch,
+                     header);
+  old_entry->eraseFromParent();
+  llvm::IRBuilder<> select(dispatch);
+  auto* range_address = select.CreateConstGEP1_64(select.getInt8Ty(), reduction.array,
+                                                  runtime::NativeMemoryLayout::kArrayIntegerRange);
+  auto* range = select.CreateLoad(select.getInt32Ty(), range_address);
+  range->setMetadata(llvm::LLVMContext::MD_tbaa,
+                     NativeMemoryTag(function->getContext(), MemoryRegion::HeapHeader));
+  auto* narrow = select.CreateICmpEQ(
+      range, select.getInt32(
+                 static_cast<std::uint32_t>(runtime::internal::IntegerArrayRange::Nonnegative31)));
+  auto* safe_initial =
+      select.CreateICmpULE(initial, select.getInt64(runtime::internal::kNonnegative31Mask));
+  select.CreateCondBr(select.CreateAnd(narrow, safe_initial), certified, scanned);
 }
 
 class ArrayReductionPass : public llvm::PassInfoMixin<ArrayReductionPass> {
@@ -334,22 +432,45 @@ class ArrayReductionPass : public llvm::PassInfoMixin<ArrayReductionPass> {
       return llvm::PreservedAnalyses::all();
     }
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
+    auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
+    ArrayLengths lengths;
+    for (auto& instruction : llvm::instructions(function)) {
+      auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+      if (load == nullptr || !load->isSimple() || !load->getType()->isIntegerTy(32) ||
+          !HasStorageTag(*load, MemoryRegion::HeapHeader)) {
+        continue;
+      }
+      std::int64_t offset = 0;
+      auto* owner = llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
+                                                           function.getParent()->getDataLayout());
+      if (offset == runtime::NativeMemoryLayout::kObjectLength) {
+        lengths[owner].push_back(load);
+      }
+    }
     llvm::SmallVector<ArrayReduction, 4> reductions;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      if (auto reduction = MatchReduction(*loop)) {
+      if (auto reduction = MatchReduction(*loop, lengths, dominators)) {
         reductions.push_back(std::move(*reduction));
       }
     }
     for (const auto& reduction : reductions) {
-      EmitTrial(reduction);
+      EmitTrials(reduction);
+      // 失败后的原循环已消费一次试算预算；后续流水线不得再向其叠加试算，
+      // 否则未知范围会在一次安全点间隔内重复扫描并突破最大免轮询工作量。
+      llvm::addStringMetadataToLoop(reduction.loop, kNativeArrayReductionFallbackMetadata.data(),
+                                    1);
     }
-    if (reductions.empty()) return llvm::PreservedAnalyses::all();
+    if (reductions.empty())
+      return llvm::PreservedAnalyses::all();
     analyses.invalidate(function, llvm::PreservedAnalyses::none());
     llvm::FunctionPassManager cleanup;
+    cleanup.addPass(llvm::EarlyCSEPass(true));
+    cleanup.addPass(llvm::SimplifyCFGPass());
     cleanup.addPass(llvm::LoopSimplifyPass());
     cleanup.addPass(llvm::LCSSAPass());
-    auto options = llvm::LoopVectorizeOptions().setVectorizeOnlyWhenForced(true)
-                       .setInterleaveOnlyWhenForced(true);
+    auto options =
+        llvm::LoopVectorizeOptions().setVectorizeOnlyWhenForced(true).setInterleaveOnlyWhenForced(
+            true);
     cleanup.addPass(llvm::LoopVectorizePass(options));
     cleanup.addPass(llvm::InstCombinePass());
     cleanup.addPass(llvm::SimplifyCFGPass());

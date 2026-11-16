@@ -14,6 +14,7 @@
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Value.h>
 
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_deoptimization.h"
@@ -26,8 +27,8 @@ llvm::Function* FunctionEmitter::SelectBody(const GeneratedFunction& function,
   switch (kind) {
     case NativeEntryKind::Initial:
       return function.body;
-    case NativeEntryKind::BoundedReflection:
-      return function.bounded_reflection_body;
+    case NativeEntryKind::ScalarField:
+      return function.scalar_field_body;
     case NativeEntryKind::Resume:
       return function.resume;
     case NativeEntryKind::RecoverInitial:
@@ -38,6 +39,8 @@ llvm::Function* FunctionEmitter::SelectBody(const GeneratedFunction& function,
       return function.borrowed;
     case NativeEntryKind::Leaf:
       return function.leaf;
+    case NativeEntryKind::HostLeaf:
+      return function.host_leaf;
   }
   std::unreachable();
 }
@@ -100,22 +103,32 @@ void FunctionEmitter::InitializeCheckpoint() {
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   checkpoint_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
   builder_.CreateStore(builder_.getFalse(), checkpoint_initialized_);
+  // 这里只初始化本次调用独占的检查点；恢复入口借用原帧，不会绑定 checkpoint_。
+  // tier 从帧入口起有效，使有界轮询可提前读取；首次发布之后绝不重置失效状态。
+  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
+                       ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
 }
 
 void FunctionEmitter::StoreRecoveryDescription() {
   using runtime::NativeCheckpoint;
-  builder_.CreateStore(checkpoint_values_,
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, values)));
+  StoreMemory(checkpoint_values_, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, values)),
+              MemoryRegion::Execution);
   auto* roots =
       roots_.count == 0 ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
-  builder_.CreateStore(roots, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, roots)));
-  builder_.CreateStore(recovery_storage_,
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, storage)));
+  StoreMemory(roots, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, roots)),
+              MemoryRegion::Execution);
+  StoreMemory(recovery_storage_, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, storage)),
+              MemoryRegion::Execution);
   llvm::Value* resume =
       IsResuming() ? ResumeState() : llvm::ConstantPointerNull::get(builder_.getPtrTy());
-  builder_.CreateStore(resume, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, resume)));
-  builder_.CreateStore(checkpoint_layout_,
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, layout)));
+  StoreMemory(resume, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, resume)),
+              MemoryRegion::Execution);
+  StoreMemory(checkpoint_layout_, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, layout)),
+              MemoryRegion::Execution);
+  StoreMemory(construction_depth_ == nullptr ? llvm::ConstantPointerNull::get(builder_.getPtrTy())
+                                             : construction_depth_,
+              ByteAddress(checkpoint_, offsetof(NativeCheckpoint, construction_depth)),
+              MemoryRegion::Execution);
 }
 
 void FunctionEmitter::PrepareCheckpoint() {
@@ -129,11 +142,10 @@ void FunctionEmitter::PrepareCheckpoint() {
   // 已初始化的数据，不能覆盖被嵌套调用或发布请求修改的 tier。
   using runtime::NativeCheckpoint;
   using runtime::NativeVirtualState;
-  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, tier)));
   auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
-  builder_.CreateStore(virtual_state_ == nullptr ? null_pointer : virtual_state_,
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, materialization)));
+  StoreMemory(virtual_state_ == nullptr ? null_pointer : virtual_state_,
+              ByteAddress(checkpoint_, offsetof(NativeCheckpoint, materialization)),
+              MemoryRegion::Execution);
   if (virtual_state_ != nullptr) {
     // 被调用方安全点会物化本帧的虚拟对象，因此恢复描述须在首次链接时就完整。
     StoreRecoveryDescription();
@@ -158,8 +170,9 @@ void FunctionEmitter::PrepareCheckpoint() {
       }
     }
   }
-  builder_.CreateStore(checkpoint_,
-                       ByteAddress(trace_frame_, offsetof(runtime::NativeTraceFrame, checkpoint)));
+  StoreMemory(checkpoint_,
+              ByteAddress(trace_frame_, offsetof(runtime::NativeTraceFrame, checkpoint)),
+              MemoryRegion::Execution);
   builder_.CreateStore(builder_.getTrue(), checkpoint_initialized_);
   builder_.CreateBr(ready);
   builder_.SetInsertPoint(ready);
@@ -198,15 +211,25 @@ void FunctionEmitter::StoreCheckpoint() {
     builder_.CreateStore(VirtualGraph(origin),
                          ByteAddress(virtual_state_, offsetof(runtime::NativeVirtualState, graph)));
   }
-  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(origin)),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, instruction)));
-  builder_.CreateStore(builder_.getInt8(0),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, phase)));
+  StoreMemory(builder_.getInt32(static_cast<std::uint32_t>(origin)),
+              ByteAddress(checkpoint_, offsetof(NativeCheckpoint, instruction)),
+              MemoryRegion::Execution);
+  StoreMemory(builder_.getInt8(0), ByteAddress(checkpoint_, offsetof(NativeCheckpoint, phase)),
+              MemoryRegion::Execution);
+}
+
+llvm::Value* FunctionEmitter::LoadCheckpointTier() {
+  auto* tier = builder_.CreateLoad(
+      builder_.getInt8Ty(), ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
+  tier->setMetadata(kNativePollReadyStateMetadata,
+                    llvm::MDNode::get(module_.getContext(),
+                                      llvm::ConstantAsMetadata::get(builder_.getInt8(
+                                          static_cast<std::uint8_t>(NativeCodeTier::Optimized)))));
+  return tier;
 }
 
 void FunctionEmitter::RecoverIfInvalidated() {
-  auto* tier = builder_.CreateLoad(
-      builder_.getInt8Ty(), ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
+  auto* tier = LoadCheckpointTier();
   auto* recover = llvm::BasicBlock::Create(module_.getContext(), "deoptimize", body_);
   auto* current = llvm::BasicBlock::Create(module_.getContext(), "current", body_);
   builder_.CreateCondBr(
@@ -223,7 +246,9 @@ void FunctionEmitter::Recover() {
       module_.getOrInsertFunction(runtime::kNativeRecoverSymbol, builder_.getInt8Ty(),
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
   auto* output = IsResuming() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : Output();
-  Finish(builder_.CreateCall(helper, {body_->getArg(0), checkpoint_, output}));
+  auto* status = builder_.CreateCall(helper, {body_->getArg(0), checkpoint_, output});
+  status->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(module_.getContext(), {}));
+  Finish(status);
 }
 
 void FunctionEmitter::EmitRecoveryDispatch() {

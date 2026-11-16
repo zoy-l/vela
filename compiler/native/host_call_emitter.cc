@@ -48,8 +48,8 @@ bool HasRegisterStringViewAbi(const llvm::Module& module) {
 llvm::Type* NativeStringViewType(llvm::Module& module) {
   auto& context = module.getContext();
   if (HasRegisterStringViewAbi(module)) {
-    constexpr auto kWords = runtime::NativeMemoryLayout::kBorrowedStringViewBytes /
-                            sizeof(std::uint64_t);
+    constexpr auto kWords =
+        runtime::NativeMemoryLayout::kBorrowedStringViewBytes / sizeof(std::uint64_t);
     return llvm::ArrayType::get(llvm::Type::getInt64Ty(context), kWords);
   }
   return llvm::FixedVectorType::get(llvm::Type::getInt8Ty(context),
@@ -100,6 +100,9 @@ void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
 }
 
 void FunctionEmitter::BorrowHostExecution() {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    return;
+  }
   if (!IsClosedLinkedProgram(program_.native_mode, placement_) ||
       !ir::CanAnalyzeSynchronousFunction(source_) || !IsScalar(source_.return_type) ||
       import_frame_ == nullptr || !roots_.bounded_polls) {
@@ -310,8 +313,8 @@ llvm::Value* FunctionEmitter::EmitHostFunctionCall(const SourceType& result_type
                                                    llvm::Value* target,
                                                    std::span<llvm::Value* const> arguments) {
   auto& context = module_.getContext();
-  auto* output_type = result_type.kind == Kind::Void ? builder_.getVoidTy()
-                                                      : ValueType(context, result_type);
+  auto* output_type =
+      result_type.kind == Kind::Void ? builder_.getVoidTy() : ValueType(context, result_type);
   std::vector<llvm::Type*> types;
   types.reserve(arguments.size());
   for (auto* value : arguments) {
@@ -385,8 +388,8 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     auto* specialized = llvm::BasicBlock::Create(context, "host.specialized", body_);
     auto* contextual = llvm::BasicBlock::Create(context, "host.contextual", body_);
     done = llvm::BasicBlock::Create(context, "host.done", body_);
-    const auto specialized_kind = register_views ? AotCallKind::NativeStringViews
-                                                  : AotCallKind::Contextless;
+    const auto specialized_kind =
+        register_views ? AotCallKind::NativeStringViews : AotCallKind::Contextless;
     builder_.CreateCondBr(
         builder_.CreateICmpEQ(kind, builder_.getInt8(static_cast<std::uint8_t>(specialized_kind))),
         specialized, contextual);

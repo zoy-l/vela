@@ -198,6 +198,8 @@ source_set("runtime") {
     "native/native_function.h",
     "native/native_global_internal.h",
     "native/native_host_context.cc",
+    "native/native_host_target.cc",
+    "native/native_host_target.h",
     "native/native_host_type.h",
     "native/native_image.h",
     "native/native_import.cc",

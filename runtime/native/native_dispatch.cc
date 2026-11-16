@@ -301,7 +301,27 @@ NativePreparedPublication& NativePreparedPublication::operator=(
     NativePreparedPublication&&) noexcept = default;
 
 NativeVersionEntry::Storage::Storage(Value source, std::uint32_t target)
-    : version(*source.AsObject(), target, ExternalResourceKind::NativeHandle) {}
+    : instance(NativeInstance::Borrow(*source.AsObject())),
+      version(*source.AsObject(), target, ExternalResourceKind::NativeHandle) {
+  const auto& function = instance.image().function(target);
+  const auto parameters = function.parameters.values();
+  if ((function.flags & (kNativeExportedFunction | kNativeTypedFunction)) !=
+          (kNativeExportedFunction | kNativeTypedFunction) ||
+      function.hidden_parameters != 0 || function.parameter_count != 1 || parameters.size() != 1) {
+    return;
+  }
+  const auto& parameter = parameters.front();
+  if (parameter.flags != 0) {
+    return;
+  }
+  const auto& type = instance.layouts().types[parameter.type];
+  if (!type.nullable) {
+    array_parameter = type.array;
+  }
+  if (array_parameter != nullptr && function.host_entry_selector != nullptr) {
+    array_host_entry = function.host_entry_selector(instance.program().host_target);
+  }
+}
 NativeVersionEntry::NativeVersionEntry(std::shared_ptr<const Storage> storage)
     : storage_(std::move(storage)) {}
 
@@ -327,12 +347,21 @@ FunctionIdentity NativeVersionEntry::identity() const noexcept {
   return state.image->function(version.function()).identity;
 }
 
-std::expected<Value, ExecutionStatus> NativeVersionEntry::Invoke(
-    std::span<const Value> arguments) const {
+[[clang::always_inline]] std::expected<Value, ExecutionStatus> NativeVersionEntry::Invoke(
+    std::span<const Value> arguments,
+    const NativeExecution* parent,
+    const NativeFailureObserver* failure) const {
   const auto& version = storage_->version;
-  auto instance = NativeInstance::Borrow(*version.state().AsObject());
-  NativeExecution execution(instance);
-  return InvokeNativeEntry(execution, version.function(), arguments);
+  auto& instance = storage_->instance;
+  if (const auto* array = storage_->array_parameter; array != nullptr) {
+    return InvokeNativeArrayEntry(instance, instance.image().function(version.function()), *array,
+                                  arguments, storage_->array_host_entry, parent, failure);
+  }
+  return InvokeNativeEntry(instance, version.function(), arguments, parent, failure);
+}
+
+[[clang::always_inline]] NativeInstance& NativeVersionEntry::BoundInstance() const noexcept {
+  return storage_->instance;
 }
 
 NativeNamedEntry::Storage::Storage(NativeDispatch& source, DeclarationId target)

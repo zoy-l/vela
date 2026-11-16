@@ -48,7 +48,7 @@ struct GeneratedFunction final {
   llvm::Function* body = nullptr;
   llvm::Function* entry = nullptr;
   llvm::Function* reflection_entry = nullptr;
-  llvm::Function* bounded_reflection_body = nullptr;
+  llvm::Function* scalar_field_body = nullptr;
   llvm::Function* resume = nullptr;
   llvm::Function* baseline_body = nullptr;
   llvm::Function* baseline_resume = nullptr;
@@ -57,6 +57,11 @@ struct GeneratedFunction final {
   llvm::Function* borrowed = nullptr;
   llvm::Function* leaf = nullptr;
   llvm::Function* leaf_guard = nullptr;
+  llvm::Function* host_leaf = nullptr;
+  llvm::Function* host_guard = nullptr;
+  llvm::Function* host_entry = nullptr;
+  llvm::Function* host_wide_entry = nullptr;
+  llvm::Function* host_entry_selector = nullptr;
   bool budgeted_recursion = false;
   bool square_root = false;
   [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
@@ -66,12 +71,13 @@ struct GeneratedFunction final {
 
 enum class NativeEntryKind : std::uint8_t {
   Initial,
-  BoundedReflection,
+  ScalarField,
   Resume,
   RecoverInitial,
   RecoverResume,
   Borrowed,
   Leaf,
+  HostLeaf,
 };
 
 // 同一分流的 initial、resume、leaf 和恢复入口共享不可变分析结果。
@@ -152,6 +158,9 @@ class FunctionEmitter final {
   llvm::Value* EmitLeafFailure(LeafFailure failure);
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
+  void RecordHostFailure(Builder& builder, llvm::Value* count, std::uint64_t position);
+  void EmitHostLeafCall(const ir::Instruction& instruction, CallableTarget selected);
+  void StoreHostReturnPosition();
   void PrepareTraceFrame();
   void InitializeTraceFrame(llvm::Value* frame);
   void PrepareInlineRuntimeCall();
@@ -173,8 +182,9 @@ class FunctionEmitter final {
   llvm::Value* ReadArrayStorage(llvm::Value* array, ir::RegisterId reg, ArrayStorageField field);
   void SetPosition();
   void PrepareRuntimeCall();
-  enum class CallEntry : std::uint8_t { Body, Borrowed, Leaf, Slot };
+  enum class CallEntry : std::uint8_t { Body, Borrowed, Leaf, ScalarField, Slot };
   CallEntry SelectCallEntry(CallableTarget target, std::size_t instruction) const;
+  llvm::Value* EmitScalarFieldCall(CallableTarget target, std::span<llvm::Value* const> arguments);
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
   void MarkClosedInvariantCall(llvm::CondBrInst& branch) const;
@@ -214,6 +224,7 @@ class FunctionEmitter final {
   [[nodiscard]] bool IsResuming() const noexcept;
   llvm::Value* ResumeState();
   void InitializeCheckpoint();
+  llvm::Value* LoadCheckpointTier();
   void PrepareCheckpoint();
   void StoreRecoveryDescription();
   bool HasRecovery() const;
@@ -287,6 +298,9 @@ class FunctionEmitter final {
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
   void WriteElement(llvm::Value* address, const layout::Type& element, StoredValue& stored);
+  void InvalidateArrayIntegerRange(llvm::Value* array,
+                                   ir::RegisterId reg,
+                                   const layout::Type& element);
   void EmitIndex(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitStringCodePointAt(const ir::Instruction& instruction);

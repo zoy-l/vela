@@ -4,6 +4,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -113,6 +114,169 @@ export func text(): string { return 42.toString(); }
       runtime::InvokeNativeCallable(execution, parser_root->value(), invalid_arguments);
   ASSERT_FALSE(rejected);
   EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
+}
+
+TEST_P(JitCallableTest, ArrayCallbackArgumentsKeepCanonicalLayoutsAndNullability) {
+  ASSERT_TRUE(
+      isolate_.RegisterNative(runtime::NativeFunction::Bind<CollectCallbackInputs>("collect")));
+  const auto published = Publish(R"(
+external func collect(): void;
+export func integers(): int[] { return [40, 2]; }
+export func decimals(): double[] { return [40.0, 2.0]; }
+export func empty(): int[] { return []; }
+export func required(values: int[]): int {
+  collect();
+  return values.length == 0 ? 42 : values[0] + values[1];
+}
+export func nullable(values: int[]?): int {
+  collect();
+  return values == null || values.length == 0 ? 42 : values[0] + values[1];
+}
+)");
+  ASSERT_TRUE(published) << published.error();
+  auto& dispatch = isolate_.native_dispatch();
+  const auto integers = dispatch.FindEntry("main.vela", "integers");
+  const auto decimals = dispatch.FindEntry("main.vela", "decimals");
+  const auto empty = dispatch.FindEntry("main.vela", "empty");
+  const auto required = dispatch.FindEntry("main.vela", "required");
+  const auto nullable = dispatch.FindEntry("main.vela", "nullable");
+  ASSERT_TRUE(integers);
+  ASSERT_TRUE(decimals);
+  ASSERT_TRUE(empty);
+  ASSERT_TRUE(required);
+  ASSERT_TRUE(nullable);
+  std::vector<runtime::HostRoot> arrays;
+  for (const auto* factory : {&*integers, &*empty, &*decimals}) {
+    const auto created = factory->Invoke({});
+    ASSERT_TRUE(created);
+    auto rooted = runtime::HostRoot::Create(isolate_, *created);
+    ASSERT_TRUE(rooted);
+    arrays.push_back(std::move(*rooted));
+  }
+  for (const auto* entry : {&*required, &*nullable}) {
+    for (std::size_t index = 0; index < 2; ++index) {
+      const std::array arguments{arrays[index].value()};
+      const auto result = entry->Invoke(arguments);
+      ASSERT_TRUE(result);
+      EXPECT_EQ(result->AsInteger(), 42);
+    }
+  }
+  const std::array null{runtime::Value::Null()};
+  const auto nullable_result = nullable->Invoke(null);
+  ASSERT_TRUE(nullable_result);
+  EXPECT_EQ(nullable_result->AsInteger(), 42);
+
+  runtime::Isolate other(1);
+  const auto* layout = other.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
+  auto* foreign = other.heap().AllocateArray(*layout, 2);
+  ASSERT_NE(foreign, nullptr);
+  const auto foreign_root = runtime::HostRoot::Create(other, runtime::Value::Object(foreign));
+  ASSERT_TRUE(foreign_root);
+  const std::array invalid{runtime::Value::Null(), runtime::Value::Integer(42),
+                           runtime::Value::Object(nullptr), arrays.back().value(),
+                           foreign_root->value()};
+  for (const auto value : invalid) {
+    const std::array arguments{value};
+    const auto rejected = required->Invoke(arguments);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
+  }
+}
+
+TEST_P(JitCallableTest, CapturedArrayEntriesKeepBindingsRootsAndValidationAcrossPublication) {
+  ASSERT_TRUE(
+      isolate_.RegisterNative(runtime::NativeFunction::Bind<CollectCallbackInputs>("collect")));
+  const auto first = R"(
+external func collect(): void;
+export func input(): int[] { return [40, 2]; }
+export func empty(): int[] { return []; }
+export func decimals(): double[] { return [40.0, 2.0]; }
+export func required(values: int[]): int {
+  collect();
+  return values.length == 0 ? 42 : values[0] + values[1];
+}
+export func nullable(values: int[]?): int { collect(); return values == null ? 42 : values[0]; }
+)";
+  ASSERT_TRUE(Publish(first));
+  auto& dispatch = isolate_.native_dispatch();
+  const auto named = dispatch.FindEntry("main.vela", "required");
+  const auto nullable_named = dispatch.FindEntry("main.vela", "nullable");
+  ASSERT_TRUE(named);
+  ASSERT_TRUE(nullable_named);
+  const auto captured = named->Capture();
+  const auto nullable = nullable_named->Capture();
+  ASSERT_TRUE(captured);
+  ASSERT_TRUE(nullable);
+  const auto check_input = [&](std::string_view factory_name) {
+    const auto factory = dispatch.FindEntry("main.vela", factory_name);
+    ASSERT_TRUE(factory);
+    const auto input = factory->Invoke({});
+    ASSERT_TRUE(input);
+    // 仅调用实参保存该数组，callee 的 collect 验证适配器在进入代码前已保根。
+    const std::array arguments{*input};
+    const auto result = captured->Invoke(arguments);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsInteger(), 42);
+    const std::array extra{*input, *input};
+    const auto rejected = captured->Invoke(extra);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidEntry);
+  };
+  ASSERT_NO_FATAL_FAILURE(check_input("input"));
+  ASSERT_NO_FATAL_FAILURE(check_input("empty"));
+  const auto missing = captured->Invoke({});
+  ASSERT_FALSE(missing);
+  EXPECT_EQ(missing.error(), ExecutionStatus::InvalidEntry);
+  const std::array null{runtime::Value::Null()};
+  const auto optional_result = nullable->Invoke(null);
+  ASSERT_TRUE(optional_result);
+  EXPECT_EQ(optional_result->AsInteger(), 42);
+  for (const auto value :
+       {runtime::Value::Null(), runtime::Value::Integer(42), runtime::Value::Object(nullptr)}) {
+    const std::array arguments{value};
+    const auto rejected = captured->Invoke(arguments);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
+  }
+  const auto decimals = dispatch.FindEntry("main.vela", "decimals");
+  ASSERT_TRUE(decimals);
+  const auto wrong_array = decimals->Invoke({});
+  ASSERT_TRUE(wrong_array);
+  const std::array wrong{*wrong_array};
+  const auto rejected = captured->Invoke(wrong);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
+  runtime::Isolate foreign;
+  const auto* foreign_layout =
+      foreign.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
+  auto* foreign_array = foreign.heap().AllocateArray(*foreign_layout, 0);
+  ASSERT_NE(foreign_array, nullptr);
+  const auto foreign_root =
+      runtime::HostRoot::Create(foreign, runtime::Value::Object(foreign_array));
+  ASSERT_TRUE(foreign_root);
+  const std::array foreign_arguments{foreign_root->value()};
+  const auto foreign_result = captured->Invoke(foreign_arguments);
+  ASSERT_FALSE(foreign_result);
+  EXPECT_EQ(foreign_result.error(), ExecutionStatus::InvalidCast);
+  ASSERT_TRUE(Publish(R"(
+external func collect(): void;
+export func another(): int { return 7; }
+export func nullable(values: int[]?): int { return 7; }
+export func input(): int[] { return [40, 2]; }
+export func empty(): int[] { return []; }
+export func decimals(): double[] { return [40.0, 2.0]; }
+export func required(values: int[]): int { collect(); return values.length + 41; }
+)"));
+  isolate_.heap().Collect();
+  ASSERT_NO_FATAL_FAILURE(check_input("input"));
+  const auto factory = dispatch.FindEntry("main.vela", "input");
+  ASSERT_TRUE(factory);
+  const auto current_input = factory->Invoke({});
+  ASSERT_TRUE(current_input);
+  const std::array arguments{*current_input};
+  const auto current = named->Invoke(arguments);
+  ASSERT_TRUE(current);
+  EXPECT_EQ(current->AsInteger(), 43);
 }
 
 std::string FactorySource(int result) {

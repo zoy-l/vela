@@ -21,7 +21,9 @@
 #include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
+#include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_image.h"
+#include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 namespace vela::compiler::native {
@@ -41,7 +43,77 @@ FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(CallableTarget targe
       (program_.native_mode == NativeProgramMode::Closed || tier_ == NativeCodeTier::Optimized)) {
     return CallEntry::Leaf;
   }
+  if (HasRecovery() && generated_[callee].scalar_field_body != nullptr) {
+    return CallEntry::ScalarField;
+  }
   return CallEntry::Body;
+}
+
+llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
+                                                  std::span<llvm::Value* const> arguments) {
+  using runtime::NativeMemoryLayout;
+  auto& context = module_.getContext();
+  const auto& callee = program_.functions[selected.function];
+  const auto& target = generated_[selected.function];
+  auto* inspect = llvm::BasicBlock::Create(context, "call.field.inspect", body_);
+  auto* matched = llvm::BasicBlock::Create(context, "call.field.matched", body_);
+  auto* fast = llvm::BasicBlock::Create(context, "call.field.fast", body_);
+  auto* slow = llvm::BasicBlock::Create(context, "call.field.recover", body_);
+  auto* observable = llvm::BasicBlock::Create(context, "call.field.observable", body_);
+  auto* merge = llvm::BasicBlock::Create(context, "call.field.done", body_);
+  // 调用边界已保存根和恢复位置；请求观察仍进入完整被调帧，成功片段可按预算分块。
+  auto* poll = builder_.CreateCondBr(
+      builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0)), inspect, observable);
+  if (roots_.bounded_polls) {
+    poll->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
+  }
+  builder_.SetInsertPoint(inspect);
+  const auto receiver_type = *callee.signature->receiver;
+  const auto owner = program_.layouts.types[receiver_type].index;
+  auto* table = builder_.CreateLoad(
+      builder_.getPtrTy(),
+      ByteAddress(ProgramData(), NativeMemoryLayout::kProgramDirectFieldLayouts));
+  MarkInvariant(*table);
+  auto* expected = builder_.CreateLoad(
+      builder_.getPtrTy(), builder_.CreateConstGEP1_64(builder_.getPtrTy(), table, owner));
+  MarkInvariant(*expected);
+  auto* receiver = arguments[1];
+  auto* layout =
+      LoadMemory(builder_.getPtrTy(), ByteAddress(receiver, NativeMemoryLayout::kObjectLayout),
+                 MemoryRegion::HeapHeader);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(layout, expected), matched, slow);
+  builder_.SetInsertPoint(matched);
+  auto* storage = LoadMemory(builder_.getPtrTy(),
+                             ByteAddress(receiver, NativeMemoryLayout::kObjectNativePayload),
+                             MemoryRegion::HeapHeader);
+  auto* unready = LoadMemory(builder_.getInt32Ty(),
+                             ByteAddress(storage, offsetof(runtime::InstanceStorage, unready)),
+                             MemoryRegion::InstanceHeader);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), fast, slow);
+  builder_.SetInsertPoint(slow);
+  // 守卫失配发生在方法执行之前；恢复当前 Call 的 Instruction 状态，
+  // 由基线解析当前发布并建立可观察的被调帧，不能沿用 AwaitingResult 而跳过调用。
+  SetPosition();
+  StoreRoots(instruction_index_);
+  StoreCheckpoint();
+  Recover();
+  slow->getTerminator()->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
+  builder_.SetInsertPoint(fast);
+  auto* computed = builder_.CreateCall(target.scalar_field_body, arguments);
+  builder_.CreateBr(merge);
+  auto* fast_return = builder_.GetInsertBlock();
+  builder_.SetInsertPoint(observable);
+  // 观察路径保留完整被调帧，且不把完整状态机再次内联进无请求片段。
+  auto* called = builder_.CreateCall(target.body, arguments);
+  called->addFnAttr(llvm::Attribute::NoInline);
+  called->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
+  builder_.CreateBr(merge);
+  auto* observed_return = builder_.GetInsertBlock();
+  builder_.SetInsertPoint(merge);
+  auto* status = builder_.CreatePHI(builder_.getInt8Ty(), 2);
+  status->addIncoming(computed, fast_return);
+  status->addIncoming(called, observed_return);
+  return status;
 }
 
 void FunctionEmitter::MarkClosedInvariantCall(llvm::CondBrInst& branch) const {
@@ -201,6 +273,10 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
 }
 
 void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarget selected) {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    EmitHostLeafCall(instruction, selected);
+    return;
+  }
   const auto& callee = program_.functions.at(selected.function);
   const auto& target = generated_[selected.function];
   if (kind_ == NativeEntryKind::Leaf && target.budgeted_recursion &&
@@ -245,7 +321,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   auto arguments = CallArguments(instruction, selected, borrowed);
   const auto call_entry = SelectCallEntry(selected, instruction_index_);
   const auto leaf_call = call_entry == CallEntry::Leaf;
-  auto* result = leaf_call ? leaf_result_ : result_;
+  auto* result = leaf_call || call_entry == CallEntry::ScalarField ? leaf_result_ : result_;
   arguments.back() = result;
   auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
   llvm::Value* status = nullptr;
@@ -263,6 +339,8 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     status = builder_.CreateCall(target.body->getFunctionType(), entry, arguments);
   } else if (leaf_call) {
     EmitLeafCall(instruction, selected, arguments);
+  } else if (call_entry == CallEntry::ScalarField) {
+    status = EmitScalarFieldCall(selected, arguments);
   } else {
     status = builder_.CreateCall(call_entry == CallEntry::Borrowed ? target.borrowed : target.body,
                                  arguments);

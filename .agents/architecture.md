@@ -88,8 +88,10 @@ and complete field block before releasing the previous storage.
 
 `NativeFunction::Bind<Function>` derives the host signature and AOT calling convention from the
 C++ function. Native instantiation validates that signature against the external declaration before
-publishing the instance. The binding is immutable for the instance's lifetime; generated functions
-resolve each used import once per invocation, including resumed invocations.
+publishing the instance. Each program state owns a fixed function-indexed descriptor table and retains
+the imported bindings for its lifetime. The table uses Heap-accounted native storage and is released
+with the state. Bindings remain immutable; generated functions load each used descriptor once per
+invocation, including resumed invocations, without a runtime lookup call.
 Host functions may take `NativeContext&` as their first argument or omit it; scripts see the same
 external signature. Direct entries use one context-first ABI, and the generated C++ adapter decides
 at compile time whether the host function consumes that context.
@@ -101,6 +103,9 @@ Direct booleans follow the C++ `bool` ABI, including LLVM zero-extension attribu
 entries continue to encode booleans as bytes.
 Context-dependent managed decoding, `std::expected` results and managed return values use a checked
 entry that propagates errors and validates results, including complete Future payload contracts.
+Every binding publishes complete scoped and unscoped entry descriptions. Checked bindings use the
+same adapter for both; that adapter owns its handle scope. The native backend selects the description
+for its code placement without testing the binding kind again to choose an address slot.
 Both entries preserve logical frames, call-depth limits and GC roots during host execution.
 Dynamic callable boundaries validate their arguments before entering typed native code.
 
@@ -158,6 +163,52 @@ restore the outer execution, and preserve the caller's logical frames.
 Native callbacks root explicit arguments throughout conversion and execution. Only implicit
 arguments and omitted argument values need owned temporary storage; that storage and its root
 registration are created together when nonempty, before encoding or allocating further inputs.
+Synchronous explicit arguments share the Heap's LIFO native root chain. Publishing their populated
+span uses the existing root write barrier, including immediate tracing during mark and sweep; the
+previous head is restored after result conversion on every return path.
+
+Closed linked exports with one required non-null array may also publish a bounded host entry.
+Its acyclic call graph contains no allocation, imports, handlers, reference-graph writes or unknown
+runtime calls. The entry checks initialized globals and an input-derived instruction/iteration
+budget before effects; integer-array specialization also consumes the heap's conservative range
+certificate. Unsupported graphs and unprovable budgets publish no host entry. Active GC uses the
+ordinary execution path.
+
+Closed linked x86-64 images retain a portable host kernel and may publish an x86-64-v4 kernel
+with a 512-bit vector-width preference. An immutable selector chooses the kernel once when the
+entry is bound. Runtime detection requires the complete v2/v3/v4 CPU feature set and OS-enabled
+XMM, YMM, opmask and ZMM state. The portable kernel retains the generic offline target.
+Each kernel preserves the same work budget, error and observation contracts;
+an entry whose complete graph cannot be inlined is removed before publication.
+
+Release closed linked x86-64 code also versions ordinary synchronous functions without handlers
+when they return a non-null integer and read integer-array elements inside a loop, together with
+their synchronous handler-free callers. Other result types do not independently seed a wide family.
+Every version retains the complete `NativeExecution` ABI, roots, error positions, logical
+frames and existing safepoints. The one canonical entry selects a portable or x86-64-v4 function
+family from the program state's immutable target, detected during instantiation; calls within the
+wide family remain direct. Dynamic code, unoptimized code and functions selected only by floating
+array or field work retain their existing target. Target choice never changes the offline image's
+portable deployment requirement.
+
+This entry receives a distinct `NativeHostContext`, never a borrowed or simulated `NativeExecution`.
+Successful unobserved execution cannot collect; its unchanged input/global reference graphs retain
+all borrowed references. Ordinary execution, errors and control observations enter an out-of-line
+owner that publishes the complete input span and creates its own real execution. Successful
+unobserved calls reserve no execution-object storage or ordinary ABI argument buffer. Deferred
+source positions reconstruct the nested logical frames. A pending entry request is processed before ordinary
+execution; a request observed after completed effects is processed at the recorded return position
+without replay. Both captured runtime entries and public typed entries use this execution owner,
+including parent depth and physical stack limits. A synchronous failure observer transfers public
+errors into their rooted host representation before the owning execution is destroyed.
+
+Captured native entries retain one instance view for their version's lifetime. A binding with one
+required non-null array parameter prebinds its canonical layout and uses the shared fixed-argument
+adapter; other signatures retain the complete general argument binding. Runtime and public captured
+entries use this same adapter. Ordinary and observed invocations own their executions and preserve
+reentrant parent frames, stack bounds, argument roots, result conversion and error capture. Explicit
+host version handles root closed as well as reloadable programs and block stopping until released;
+internal closed async activations continue to rely on their managed object graph.
 
 The execution registers its exception root when it publishes an exception envelope, and releases
 that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
@@ -210,16 +261,31 @@ empty and single-element arrays do not invoke the comparator. Equal integers hav
 identity, so their in-place reordering preserves the stable-sort contract. Other comparators retain
 the snapshot, mutation-detection and failure behavior of the general sorting path.
 
-Reloadable optimized JIT may inline small pure scalar functions and readonly array kernels called
-inside loops. Scalar leaves are statically bounded; readonly kernels use the shared dynamic work
-guard and retain ordinary safepoints when that guard does not hold. Empty generated constructors
-also retain a direct leaf edge with their full stack and observation contracts.
+Reloadable optimized JIT may inline small pure scalar functions, readonly array kernels and bounded
+scalar receiver-field methods called inside loops. Scalar leaves are statically bounded; readonly
+kernels use the shared dynamic work guard and retain ordinary safepoints when that guard does not
+hold. Empty generated constructors also retain a direct leaf edge with their full stack and
+observation contracts.
 These direct edges retain body dependencies for code lifetime and invalidate their callers when a
 callee changes; other cross-component calls retain typed entry slots. Slot selection participates in
 the caller's code-reuse fingerprint. Leaf execution checks pending control requests and preserves
 stack budgets; requested observation enters the complete function, while arithmetic failure
 materializes its original source frame. Active callers retain baseline recovery and resume after
 completed calls without replaying their effects.
+
+Direct calls and reflection share the scalar receiver-field body. Both validate the canonical receiver
+layout and fully initialized field storage before effects. Direct-call guard failures restore the
+caller's Instruction checkpoint before invoking the method; the baseline then resolves the current
+publication and establishes the observable callee frame. Callers retain roots and recovery state for
+arithmetic failures inside the shared body. Recovery descriptors and trace-frame writes use the
+execution-memory alias region, distinct from script globals, field payloads and array elements.
+Global cache misses retain their original binding and initialization flow. Bounded chunks project
+non-header PHIs only when their successful predecessors provide one value, retaining every original
+slow path and rechecking the epoch and storage guards at each chunk boundary. Persistent observation
+uses the complete method body without forcing an otherwise valid caller out of its optimized tier.
+Checkpoints borrow the original frame's construction counter. Baseline recovery continues that same
+counter, and every exit drains and clears it once; recovery during field initialization must not
+underflow the Isolate's publication-blocking initialization count.
 
 Script reflection caches borrow code from one publication and validate its epoch, execution program
 and unique receiver layout id before calling a signature-specific entry. Caches retain neither the
@@ -292,6 +358,39 @@ original order. An AOT Map get/set pair may reuse its lookup only when the get d
 the map and key have unchanged single-definition origins, and every intervening path avoids state
 access, allocation and user calls. Existing untagged integer entries can then be written directly;
 insertions retain the normal allocation, GC, iteration-order and failure behavior.
+
+Untagged integer arrays carry a conservative storage fact when every element is a nonnegative
+31-bit integer. Zero-initialized arrays establish this fact; runtime writes can only weaken it,
+and slices and splices transfer only facts already held by their sources. Exposing a mutable
+`Heap::IntegerElements` view permanently makes that array's fact unknown, including after clearing
+or later narrow writes. Generated element writes and inline pushes invalidate the fact unless the
+complete alias group's static element proof already guarantees the same range. Bounded checked
+array reductions may use a certified range and narrow initial sum without rescanning element bits.
+Trials validate `0 <= start < bound <= length` against the same array's dominating length load,
+including variable-start chunks. A checked fallback is marked after one trial so later optimization
+passes cannot stack repeated scans within the same unpolled budget. Proven-safe trials commit
+the final field writes and invariant root or execution descriptors only after validation.
+Unknown ranges retain their full scan and checked failure path; all polling budgets, completed
+field-write prefixes and error positions remain intact.
+
+Closed linked AOT may stage scalar double field writes within an innermost loop that has one normal
+iteration path and no successful calls, collection or observation. Runtime disjointness guards cover
+every uncertain alias between written and readonly locations. A required first traversal executes
+with its original checks before its stable array-element pointers are reused. Field values are first
+read at their original guarded positions, carried in SSA within the iteration, and committed at the
+latch. Each early exit commits exactly the completed write prefix before entering the original error
+or recovery path; calculations and effects are never replayed. Kind and root writes are not staged,
+and their existing liveness and safety rules and all polling boundaries remain intact. Code-size
+budgets include peeling, cloning, alias checks and exit commits. Independent floating-point
+calculations may move earlier within the same iteration only when they have no memory effects,
+are safe to speculate, and their operands dominate the new position. Their operation dependencies,
+all guards and all field commits remain unchanged; the transformation does not permit reassociation.
+
+After SIMD packing, scalar nonzero comparisons in floating-field loops may test binary64 bits
+with the sign bit shifted out. Both signed zeros still fail the division guard; subnormal values,
+NaNs and infinities retain their existing behavior. This late lowering preserves every guard's
+control-flow position, field-write prefix and failure trace while keeping the earlier packing
+opportunities for square roots and divisions.
 
 Development-session entry lookup caches a borrowed target from the current publication and validates
 its revision before reuse. Publication and stopping clear that cache before old state can retire;

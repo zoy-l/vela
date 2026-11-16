@@ -23,11 +23,12 @@
 
 namespace vela::runtime {
 
-NativeProgramState::NativeProgramState() = default;
+NativeProgramState::NativeProgramState(NativeHostTarget target) : host_target(target) {}
 
 NativeProgramState::~NativeProgramState() {
   if (isolate != nullptr) {
     auto& heap = isolate->heap();
+    heap.FreeNative(imports);
     heap.FreeNative(global_states);
     heap.FreeNative(global_caches);
     heap.FreeNative(static_cast<void*>(direct_field_layouts));
