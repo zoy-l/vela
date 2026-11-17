@@ -647,25 +647,25 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
       locations.push_back(Record(
           location_, {Word(location.line), Word(location.column), Word(location.source_id)}));
     }
-    constants.push_back(Record(function_, {
-                                              Text(function.name.text()),
-                                              Text(function.native_symbol.text()),
-                                              CallParameters(function.parameters.values()),
-                                              Table(location_, locations),
-                                              entry,
-                                              entries.reflection[index],
-                                              llvm::Constant::getNullValue(pointer_),
-                                              entries.host.empty() || entries.host[index] == nullptr
-                                                  ? llvm::Constant::getNullValue(pointer_)
-                                                  : entries.host[index],
-                                              Word(function.parameter_count),
-                                              Word(function.result_type),
-                                              Word(function.hidden_parameters),
-                                              Word(function.receiver_type),
-                                              Word(function.flags),
-                                              Identity(function.identity),
-                                              Dependencies(function.dependencies),
-                                          }));
+    constants.push_back(Record(
+        function_, {
+                       Text(function.name.text()),
+                       Text(function.native_symbol.text()),
+                       CallParameters(function.parameters.values()),
+                       Table(location_, locations),
+                       entry,
+                       entries.reflection[index],
+                       llvm::Constant::getNullValue(pointer_),
+                       entries.host[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
+                                                      : entries.host[index],
+                       Word(function.parameter_count),
+                       Word(function.result_type),
+                       Word(function.hidden_parameters),
+                       Word(function.receiver_type),
+                       Word(function.flags),
+                       Identity(function.identity),
+                       Dependencies(function.dependencies),
+                   }));
   }
   return Table(function_, constants);
 }

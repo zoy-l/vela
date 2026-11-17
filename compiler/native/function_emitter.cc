@@ -18,6 +18,7 @@
 #include "runtime/native/native_symbols.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -38,7 +39,6 @@
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Alignment.h>
-#include <llvm/Support/AtomicOrdering.h>
 
 #include "base/callable.h"
 #include "base/declaration.h"
@@ -56,7 +56,7 @@
 namespace vela::compiler::native {
 bool FunctionEmitter::IsLeafCall(std::optional<CallableTarget> target,
                                  std::size_t instruction) const {
-  return target && SelectCallEntry(*target, instruction) == CallEntry::Leaf;
+  return target && SelectCallEntry(*target, instruction).entry == CallEntry::Leaf;
 }
 
 bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
@@ -235,19 +235,7 @@ llvm::Value* FunctionEmitter::ProgramData() {
 }
 
 llvm::Value* FunctionEmitter::LoadSafepointRequests() {
-  auto* requests_address = builder_.CreateLoad(
-      builder_.getPtrTy(),
-      ByteAddress(ControlState(), offsetof(runtime::NativeControlState, requests)));
-  // 请求字属于 Isolate，地址在整个执行期间固定；请求值仍必须在每个安全点原子读取。
-  MarkInvariant(*requests_address);
-  auto* requests = builder_.CreateLoad(builder_.getInt8Ty(), requests_address);
-  requests->setMetadata(
-      kNativePollReadyStateMetadata,
-      llvm::MDNode::get(module_.getContext(), llvm::ConstantAsMetadata::get(builder_.getInt8(0))));
-  // 零值分支不读取跨线程发布的数据；慢路径 ProcessSafepoint 用 acquire 读取并消费请求。
-  // 探测本身只需原子性，不能让 acquire 阻断无请求执行片段内的字段和数组优化。
-  requests->setAtomic(llvm::AtomicOrdering::Monotonic);
-  return requests;
+  return LoadNativeRequests(builder_, ControlState());
 }
 
 llvm::Value* FunctionEmitter::Poll() {
@@ -578,8 +566,8 @@ const NativeFrameLayout& FunctionEmitter::PlanFrame() {
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto* member = reflection_members_.empty() ? nullptr : reflection_members_[index];
     const auto target = CallTarget(index);
-    if (IsLeafCall(target, index) ||
-        (target && SelectCallEntry(*target, index) == CallEntry::ScalarField) ||
+    const auto entry = target ? SelectCallEntry(*target, index).entry : CallEntry::Body;
+    if (entry == CallEntry::Leaf || entry == CallEntry::ScalarField ||
         (member != nullptr && member->kind == reflection::MemberKind::Method &&
          generated_[member->target].leaf != nullptr)) {
       requirements.leaf_calls = true;
@@ -1051,54 +1039,56 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = initial.frame_bytes()};
   AccumulateMetrics(metrics, escape, roots);
-  if (tier == NativeCodeTier::Optimized && function.scalar_field_body != nullptr) {
-    FunctionEmitter scalar_field(module, program, calls, image, function_index, escape, generated,
-                                 roots, facts, NativeEntryKind::ScalarField, tier);
-    if (const auto emitted = scalar_field.Emit(); !emitted) {
+  struct EntryBody final {
+    llvm::Function* function;
+    NativeEntryKind kind;
+    NativeCodeTier tier;
+  };
+  const auto baseline = tier == NativeCodeTier::Baseline;
+  const std::array entries{
+      EntryBody{
+          .function = baseline ? nullptr : function.scalar_field_body,
+          .kind = NativeEntryKind::ScalarField,
+          .tier = tier,
+      },
+      EntryBody{
+          .function = function.leaf,
+          .kind = NativeEntryKind::Leaf,
+          .tier = NativeCodeTier::Baseline,
+      },
+      EntryBody{.function = function.host_leaf, .kind = NativeEntryKind::HostLeaf, .tier = tier},
+      EntryBody{.function = function.resume, .kind = NativeEntryKind::Resume, .tier = tier},
+      EntryBody{
+          .function = baseline ? function.recovery : nullptr,
+          .kind = NativeEntryKind::RecoverInitial,
+          .tier = tier,
+      },
+      EntryBody{
+          .function = baseline && function.recovery != nullptr ? function.resume_recovery : nullptr,
+          .kind = NativeEntryKind::RecoverResume,
+          .tier = tier,
+      },
+  };
+  for (const auto& entry : entries) {
+    if (entry.function == nullptr ||
+        (entry.kind == NativeEntryKind::HostLeaf && !entry.function->empty())) {
+      continue;
+    }
+    FunctionEmitter emitter(module, program, calls, image, function_index, escape, generated, roots,
+                            facts, entry.kind, entry.tier);
+    if (entry.kind == NativeEntryKind::HostLeaf &&
+        emitter.PlanFrame().bytes > kMaximumNativeStackBytes) {
+      continue;
+    }
+    if (const auto emitted = emitter.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
-    metrics.frame_bytes = std::max(metrics.frame_bytes, scalar_field.frame_bytes());
-  }
-  if (function.leaf != nullptr) {
-    FunctionEmitter leaf(module, program, calls, image, function_index, escape, generated, roots,
-                         facts, NativeEntryKind::Leaf, NativeCodeTier::Baseline);
-    if (const auto emitted = leaf.Emit(); !emitted) {
-      return std::unexpected(emitted.error());
+    if (entry.kind == NativeEntryKind::ScalarField || entry.kind == NativeEntryKind::HostLeaf ||
+        entry.kind == NativeEntryKind::Resume) {
+      metrics.frame_bytes = std::max(metrics.frame_bytes, emitter.frame_bytes());
     }
-    if (function.leaf_guard != nullptr) {
+    if (entry.kind == NativeEntryKind::Leaf && function.leaf_guard != nullptr) {
       EmitBoundedLeafGuard(function);
-    }
-  }
-  if (function.host_leaf != nullptr && function.host_leaf->empty()) {
-    FunctionEmitter host(module, program, calls, image, function_index, escape, generated, roots,
-                         facts, NativeEntryKind::HostLeaf, tier);
-    if (host.PlanFrame().bytes <= kMaximumNativeStackBytes) {
-      if (const auto emitted = host.Emit(); !emitted) {
-        return std::unexpected(emitted.error());
-      }
-      metrics.frame_bytes = std::max(metrics.frame_bytes, host.frame_bytes());
-    }
-  }
-  if (function.resume != nullptr) {
-    FunctionEmitter resume(module, program, calls, image, function_index, escape, generated, roots,
-                           facts, NativeEntryKind::Resume, tier);
-    if (const auto emitted = resume.Emit(); !emitted) {
-      return std::unexpected(emitted.error());
-    }
-    metrics.frame_bytes = std::max(metrics.frame_bytes, resume.frame_bytes());
-  }
-  if (tier == NativeCodeTier::Baseline && function.recovery != nullptr) {
-    FunctionEmitter recovery(module, program, calls, image, function_index, escape, generated,
-                             roots, facts, NativeEntryKind::RecoverInitial, tier);
-    if (const auto emitted = recovery.Emit(); !emitted) {
-      return std::unexpected(emitted.error());
-    }
-    if (function.resume_recovery != nullptr) {
-      FunctionEmitter resume(module, program, calls, image, function_index, escape, generated,
-                             roots, facts, NativeEntryKind::RecoverResume, tier);
-      if (const auto emitted = resume.Emit(); !emitted) {
-        return std::unexpected(emitted.error());
-      }
     }
   }
   return metrics;

@@ -1,3 +1,4 @@
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 #include "base/callable.h"
 #include "base/declaration.h"
@@ -21,32 +23,33 @@
 #include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
-#include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 namespace vela::compiler::native {
-FunctionEmitter::CallEntry FunctionEmitter::SelectCallEntry(CallableTarget target,
-                                                            std::size_t instruction) const {
-  if (!escape_.borrowed_calls.empty() && escape_.borrowed_calls.at(instruction)) {
+FunctionEmitter::CallSelection FunctionEmitter::SelectCallEntry(CallableTarget target,
+                                                                std::size_t instruction) const {
+  const auto borrowed = escape_.borrowed_calls.empty() ? std::optional<std::size_t>{}
+                                                       : escape_.borrowed_calls.at(instruction);
+  if (borrowed) {
     // borrowed 入口接收标量字段地址记录；普通叶入口要求完整对象，二者不能互换。
-    return CallEntry::Borrowed;
+    return {CallEntry::Borrowed, borrowed};
   }
   const auto callee = target.function;
   if (tier_ == NativeCodeTier::Optimized &&
       calls_.IsEntrySlotRequired({.caller = function_index_, .callee = callee})) {
-    return CallEntry::Slot;
+    return {CallEntry::Slot, std::nullopt};
   }
   // 优化编译将 leaf 同时挂到基线声明；恢复体仍须按基线 tier 选择完整入口。
   if (generated_[callee].leaf != nullptr &&
       (program_.native_mode == NativeProgramMode::Closed || tier_ == NativeCodeTier::Optimized)) {
-    return CallEntry::Leaf;
+    return {CallEntry::Leaf, std::nullopt};
   }
   if (HasRecovery() && generated_[callee].scalar_field_body != nullptr) {
-    return CallEntry::ScalarField;
+    return {CallEntry::ScalarField, std::nullopt};
   }
-  return CallEntry::Body;
+  return {CallEntry::Body, std::nullopt};
 }
 
 llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
@@ -56,9 +59,6 @@ llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
   const auto& callee = program_.functions[selected.function];
   const auto& target = generated_[selected.function];
   auto* inspect = llvm::BasicBlock::Create(context, "call.field.inspect", body_);
-  auto* matched = llvm::BasicBlock::Create(context, "call.field.matched", body_);
-  auto* fast = llvm::BasicBlock::Create(context, "call.field.fast", body_);
-  auto* slow = llvm::BasicBlock::Create(context, "call.field.recover", body_);
   auto* observable = llvm::BasicBlock::Create(context, "call.field.observable", body_);
   auto* merge = llvm::BasicBlock::Create(context, "call.field.done", body_);
   // 调用边界已保存根和恢复位置；请求观察仍进入完整被调帧，成功片段可按预算分块。
@@ -68,7 +68,11 @@ llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
     poll->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(inspect);
-  const auto receiver_type = *callee.signature->receiver;
+  const auto& signature = callee.signature;
+  if (!signature || !signature->receiver) {
+    std::unreachable();
+  }
+  const auto receiver_type = *signature->receiver;
   const auto owner = program_.layouts.types[receiver_type].index;
   auto* table = builder_.CreateLoad(
       builder_.getPtrTy(),
@@ -77,28 +81,7 @@ llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
   auto* expected = builder_.CreateLoad(
       builder_.getPtrTy(), builder_.CreateConstGEP1_64(builder_.getPtrTy(), table, owner));
   MarkInvariant(*expected);
-  auto* receiver = arguments[1];
-  auto* layout =
-      LoadMemory(builder_.getPtrTy(), ByteAddress(receiver, NativeMemoryLayout::kObjectLayout),
-                 MemoryRegion::HeapHeader);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(layout, expected), matched, slow);
-  builder_.SetInsertPoint(matched);
-  auto* storage = LoadMemory(builder_.getPtrTy(),
-                             ByteAddress(receiver, NativeMemoryLayout::kObjectNativePayload),
-                             MemoryRegion::HeapHeader);
-  auto* unready = LoadMemory(builder_.getInt32Ty(),
-                             ByteAddress(storage, offsetof(runtime::InstanceStorage, unready)),
-                             MemoryRegion::InstanceHeader);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), fast, slow);
-  builder_.SetInsertPoint(slow);
-  // 守卫失配发生在方法执行之前；恢复当前 Call 的 Instruction 状态，
-  // 由基线解析当前发布并建立可观察的被调帧，不能沿用 AwaitingResult 而跳过调用。
-  SetPosition();
-  StoreRoots(instruction_index_);
-  StoreCheckpoint();
-  Recover();
-  slow->getTerminator()->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
-  builder_.SetInsertPoint(fast);
+  GuardReadyFields({.object = arguments[1], .expected = expected});
   auto* computed = builder_.CreateCall(target.scalar_field_body, arguments);
   builder_.CreateBr(merge);
   auto* fast_return = builder_.GetInsertBlock();
@@ -106,7 +89,7 @@ llvm::Value* FunctionEmitter::EmitScalarFieldCall(CallableTarget selected,
   // 观察路径保留完整被调帧，且不把完整状态机再次内联进无请求片段。
   auto* called = builder_.CreateCall(target.body, arguments);
   called->addFnAttr(llvm::Attribute::NoInline);
-  called->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
+  MarkGuardFailure(*called);
   builder_.CreateBr(merge);
   auto* observed_return = builder_.GetInsertBlock();
   builder_.SetInsertPoint(merge);
@@ -294,9 +277,6 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   // 即使被调用方使用延迟叶入口，调用者也必须占用深度预算并保留失败时的调用链。
   PrepareTraceFrame();
   auto* intrinsic_done = EmitSquareRootCall(instruction, selected.function);
-  const auto borrowed = escape_.borrowed_calls.empty()
-                            ? std::optional<std::size_t>{}
-                            : escape_.borrowed_calls.at(instruction_index_);
   if (tier_ == NativeCodeTier::Baseline && IsNamedBaselineCall(callee, program_.native_mode)) {
     for (std::size_t index = 0; index < callee.parameter_count; ++index) {
       const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
@@ -318,8 +298,9 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
                  instruction.dst);
     return;
   }
-  auto arguments = CallArguments(instruction, selected, borrowed);
-  const auto call_entry = SelectCallEntry(selected, instruction_index_);
+  const auto selection = SelectCallEntry(selected, instruction_index_);
+  auto arguments = CallArguments(instruction, selected, selection.borrowed);
+  const auto call_entry = selection.entry;
   const auto leaf_call = call_entry == CallEntry::Leaf;
   auto* result = leaf_call || call_entry == CallEntry::ScalarField ? leaf_result_ : result_;
   arguments.back() = result;
@@ -345,7 +326,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     status = builder_.CreateCall(call_entry == CallEntry::Borrowed ? target.borrowed : target.body,
                                  arguments);
   }
-  if (borrowed) {
+  if (selection.borrowed) {
     // 被调用方可能在抛错前修改引用字段；错误封套分配前刷新调用者根。
     StoreRoots(instruction_index_);
   }

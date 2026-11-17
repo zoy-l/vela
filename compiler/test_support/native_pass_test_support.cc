@@ -28,15 +28,20 @@ std::unique_ptr<llvm::Module> ParseModule(std::string_view text, llvm::LLVMConte
   return module;
 }
 
+void WithFunctionLoops(llvm::Function& function,
+                       llvm::function_ref<void(llvm::Function&, const llvm::LoopInfo&)> verify) {
+  llvm::DominatorTree dominators(function);
+  const llvm::LoopInfo loops(dominators);
+  verify(function, loops);
+}
+
 void WithFunctionLoops(llvm::Module& module,
                        llvm::function_ref<void(llvm::Function&, const llvm::LoopInfo&)> verify) {
   for (auto& function : module) {
     if (function.isDeclaration()) {
       continue;
     }
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
-    verify(function, loops);
+    WithFunctionLoops(function, verify);
   }
 }
 

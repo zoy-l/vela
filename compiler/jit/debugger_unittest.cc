@@ -121,6 +121,22 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
     EXPECT_EQ(session_->code_resources().images, 1U);
   }
 
+  void ExpectRepeatedCallPublication(const std::string& before,
+                                     const std::string& after,
+                                     const std::string& caller) {
+    const std::string common =
+        "let calls = 0; func checkpoint(): void {} "
+        "export func count(): int { return calls; } ";
+    ASSERT_NO_FATAL_FAILURE(Load(common + before + caller));
+    constexpr std::int64_t kPublishedResult = 12;
+    constexpr std::int64_t kCurrentResult = 14;
+    ASSERT_NO_FATAL_FAILURE(PublishDuringCaller(common + after + caller, kPublishedResult));
+    const auto calls = session_->Invoke("main.vela", "count");
+    ASSERT_TRUE(calls);
+    EXPECT_EQ(calls->AsInteger(), 4);
+    ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
+  }
+
   void ExpectRejected(const DevelopmentResult& result, DevelopmentStatus status) const {
     EXPECT_EQ(result.status, status) << result.message;
     EXPECT_EQ(session_->snapshot()->revision, 1U);
@@ -527,22 +543,13 @@ TEST_P(JitDebuggerTest, DeoptimizationDoesNotRepeatAnEnteredCallOrRunTheNewCalle
 }
 
 TEST_P(JitDebuggerTest, RepeatedPureCallsUseNewBodiesAfterActiveFramePublication) {
-  const std::string common =
-      "let calls = 0; func checkpoint(): void {} "
-      "export func count(): int { return calls; } ";
   const std::string caller =
       "export func caller(): int { let sum = 0; "
       "for (let i = 0; i < 4; i++) { "
       "sum += step(i); calls++; if (i == 1) { checkpoint(); } } return sum; }";
-  Load(common + "func step(value: int): int { return value + 1; } " + caller);
-  constexpr std::int64_t kPublishedResult = 12;
-  constexpr std::int64_t kCurrentResult = 14;
-  PublishDuringCaller(common + "func step(value: int): int { return value + 2; } " + caller,
-                      kPublishedResult);
-  const auto calls = session_->Invoke("main.vela", "count");
-  ASSERT_TRUE(calls);
-  EXPECT_EQ(calls->AsInteger(), 4);
-  ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
+  ASSERT_NO_FATAL_FAILURE(
+      ExpectRepeatedCallPublication("func step(value: int): int { return value + 1; } ",
+                                    "func step(value: int): int { return value + 2; } ", caller));
 }
 
 TEST_P(JitDebuggerTest, GuardedReadonlyCallsRecoverAcrossPublicationWithLiveArrayRoots) {
@@ -563,29 +570,16 @@ TEST_P(JitDebuggerTest, GuardedReadonlyCallsRecoverAcrossPublicationWithLiveArra
 }
 
 TEST_P(JitDebuggerTest, RepeatedScalarFieldMethodsUsePublishedBodiesWithoutReplayingWrites) {
-  const std::string common =
-      "let calls = 0; func checkpoint(): void {} "
-      "export func count(): int { return calls; } ";
   const std::string caller =
       "const object = Counter(); export func caller(): int { let sum = 0; "
       "for (let i = 0; i < 4; i++) { sum += object.step(i); calls++; "
       "if (i == 1) { checkpoint(); } } return sum; }";
-  Load(common +
-       "class Counter { value: int = 0; "
-       "step(value: int): int { this.value = value; return this.value + 1; } } " +
-       caller);
-  constexpr std::int64_t kPublishedResult = 12;
-  constexpr std::int64_t kCurrentResult = 14;
-  PublishDuringCaller(
-      common +
-          "class Counter { value: int = 0; "
-          "step(value: int): int { this.value = value; return this.value + 2; } } " +
-          caller,
-      kPublishedResult);
-  const auto calls = session_->Invoke("main.vela", "count");
-  ASSERT_TRUE(calls);
-  EXPECT_EQ(calls->AsInteger(), 4);
-  ExpectCurrentCallerAndTwoBatchResources(kCurrentResult);
+  ASSERT_NO_FATAL_FAILURE(ExpectRepeatedCallPublication(
+      "class Counter { value: int = 0; "
+      "step(value: int): int { this.value = value; return this.value + 1; } } ",
+      "class Counter { value: int = 0; "
+      "step(value: int): int { this.value = value; return this.value + 2; } } ",
+      caller));
 }
 
 TEST_P(JitDebuggerTest, MapLiteralDeoptimizationKeepsTheMapAndPendingKeyWithoutReplay) {

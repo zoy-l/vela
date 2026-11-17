@@ -9,6 +9,8 @@
 
 namespace vela::compiler::native {
 
+struct FunctionDeclarations;
+
 struct HostEntryPlan final {
   std::vector<std::uint8_t> needed;
   std::vector<std::vector<std::uint32_t>> globals;
@@ -16,8 +18,7 @@ struct HostEntryPlan final {
 
 [[nodiscard]] HostEntryPlan DeclareHostEntries(llvm::Module& module,
                                                const ir::Program& program,
-                                               std::span<GeneratedFunction> baseline,
-                                               std::span<GeneratedFunction> optimized);
+                                               FunctionDeclarations& declarations);
 void FinalizeHostEntries(llvm::Module& module,
                          const ir::Program& program,
                          const HostEntryPlan& plan,

@@ -179,6 +179,8 @@ void FunctionEmitter::EmitFrameEntry() {
   auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
   Builder failure(failed);
   auto* error = failure.CreatePHI(builder_.getInt8Ty(), 0);
+  const auto entry_position = runtime::EncodeNativeTracePosition(
+      {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0});
   if (kind_ == NativeEntryKind::HostLeaf) {
     auto* base = failure.CreateLoad(
         failure.getInt64Ty(),
@@ -186,23 +188,21 @@ void FunctionEmitter::EmitFrameEntry() {
     auto* depth = body_->getArg(HostEntryLayout(source_.parameter_count).depth);
     auto* count = failure.CreateSelect(failure.CreateICmpEQ(depth, base), failure.getInt32(0),
                                        failure.getInt32(1));
-    RecordHostFailure(
-        failure, count,
-        runtime::EncodeNativeTracePosition(
-            {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0}));
+    RecordHostFailure(failure, count, entry_position);
   }
   if (kind_ == NativeEntryKind::Leaf) {
-    auto* position = failure.CreateStore(
-        failure.getInt64(runtime::EncodeNativeTracePosition(
-            {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0})),
-        body_->getArg(static_cast<unsigned>(body_->arg_size() - 1)));
+    auto* position =
+        failure.CreateStore(failure.getInt64(entry_position),
+                            body_->getArg(static_cast<unsigned>(body_->arg_size() - 1)));
     position->setMetadata(llvm::LLVMContext::MD_tbaa,
                           NativeMemoryTag(context, MemoryRegion::Values));
   }
   failure.CreateRet(error);
   // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
   llvm::Value* depth = nullptr;
-  if (kind_ == NativeEntryKind::Leaf || kind_ == NativeEntryKind::HostLeaf) {
+  if (kind_ == NativeEntryKind::HostLeaf) {
+    depth = body_->getArg(HostEntryLayout(source_.parameter_count).depth);
+  } else if (kind_ == NativeEntryKind::Leaf) {
     depth = body_->getArg(LeafEntryLayout(source_.parameter_count).depth);
   } else {
     depth = LoadMemory(word, ByteAddress(execution, NativeMemoryLayout::kExecutionDepth),

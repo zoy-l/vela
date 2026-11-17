@@ -1,5 +1,30 @@
 """Field loop transformations preserve aliases and exact arithmetic failure prefixes."""
 
+from string import Template
+
+
+_FLOAT_UPDATE = Template("""export func $name(values: FloatBox[], bound: int, initial: double): double {
+  if (values.length != 5) { return -99.0; }
+  let divisor = initial;
+  let total = 0.0;
+  for (let round = 0; round < bound; round++) {
+    for (let index = 0; index < 4; index++) {
+      const first = values[index];
+      const second = values[index + 1];
+      first.x += 1.0;
+      second.x += first.x;
+      first.y += second.x * 0.25;
+      second.y += first.y;
+      total += 1.0 / divisor;
+$root_calculation      first.x += 3.0;
+      second.x += 4.0;
+      divisor -= 0.25;
+    }
+  }
+  return total;
+}
+""")
+
 SOURCE = """
 class Box { value: int; }
 export class FloatBox { x: double; y: double; }
@@ -9,47 +34,9 @@ export func floatPrepare(aliased: bool): FloatBox[] {
   return [first, second, FloatBox(x: 5.0, y: 6.0),
           FloatBox(x: 7.0, y: 8.0), FloatBox(x: 9.0, y: 10.0)];
 }
-export func floatUpdate(values: FloatBox[], bound: int, initial: double): double {
-  if (values.length != 5) { return -99.0; }
-  let divisor = initial;
-  let total = 0.0;
-  for (let round = 0; round < bound; round++) {
-    for (let index = 0; index < 4; index++) {
-      const first = values[index];
-      const second = values[index + 1];
-      first.x += 1.0;
-      second.x += first.x;
-      first.y += second.x * 0.25;
-      second.y += first.y;
-      total += 1.0 / divisor;
-      first.x += 3.0;
-      second.x += 4.0;
-      divisor -= 0.25;
-    }
-  }
-  return total;
-}
-export func floatRootUpdate(values: FloatBox[], bound: int, initial: double): double {
-  if (values.length != 5) { return -99.0; }
-  let divisor = initial;
-  let total = 0.0;
-  for (let round = 0; round < bound; round++) {
-    for (let index = 0; index < 4; index++) {
-      const first = values[index];
-      const second = values[index + 1];
-      first.x += 1.0;
-      second.x += first.x;
-      first.y += second.x * 0.25;
-      second.y += first.y;
-      total += 1.0 / divisor;
-      total += Math.sqrt(first.x * first.x + second.y * second.y);
-      first.x += 3.0;
-      second.x += 4.0;
-      divisor -= 0.25;
-    }
-  }
-  return total;
-}
+""" + _FLOAT_UPDATE.substitute(name="floatUpdate", root_calculation="") + _FLOAT_UPDATE.substitute(
+    name="floatRootUpdate",
+    root_calculation="      total += Math.sqrt(first.x * first.x + second.y * second.y);\n") + """\
 func increase(box: Box, bound: int): void {
   for (let index = 0; index < bound; index++) { box.value += 1; }
 }
@@ -97,11 +84,13 @@ HOST_TESTS = r'''
 #include <cmath>
 extern "C" const NativeImage* FIELD_LOOP_IMAGE() noexcept;
 
-TEST(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinally) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *FIELD_LOOP_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+class NativeFieldLoopTest : public NativeImageTest<FIELD_LOOP_IMAGE, 1> {
+ protected:
+  void ExpectFloatingFieldPrefixes(std::string_view function_name);
+};
+
+TEST_F(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinally) {
+  NativeExecution execution(*instance);
   const auto maximum = std::numeric_limits<std::int64_t>::max();
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const std::array<std::array<std::int64_t, 4>, 13> cases{{
@@ -123,16 +112,14 @@ TEST(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinall
   }
 }
 
-void ExpectFloatingFieldPrefixes(std::string_view function_name) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *FIELD_LOOP_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  const auto prepare = instance.value()->FindFunction("floatPrepare");
-  const auto update = instance.value()->FindFunction(function_name);
+void NativeFieldLoopTest::ExpectFloatingFieldPrefixes(std::string_view function_name) {
+  NativeExecution execution(*instance);
+  const auto prepare = instance->FindFunction("floatPrepare");
+  const auto update = instance->FindFunction(function_name);
   ASSERT_TRUE(prepare);
   ASSERT_TRUE(update);
-  const auto& image = instance.value()->image();
+  const auto prepare_entry = image->function(*prepare).entry;
+  const auto update_entry = image->function(*update).entry;
   const auto infinity = std::numeric_limits<double>::infinity();
   const auto nan = std::numeric_limits<double>::quiet_NaN();
   const auto signaling_nan = std::numeric_limits<double>::signaling_NaN();
@@ -148,7 +135,7 @@ void ExpectFloatingFieldPrefixes(std::string_view function_name) {
         const std::array arguments{NativeValue{.payload = aliased ? 1U : 0U,
                                                .kind = NativeValueKind::Boolean}};
         NativeValue result;
-        ASSERT_EQ(Execute(image.function(*prepare).entry, execution, arguments, result),
+        ASSERT_EQ(Execute(prepare_entry, execution, arguments, result),
                   ExecutionStatus::Returned);
         Value values = DecodeNativeValue(result);
         ASSERT_TRUE(values.IsObject());
@@ -188,7 +175,7 @@ void ExpectFloatingFieldPrefixes(std::string_view function_name) {
           }
         }
         const std::array input{EncodeNativeValue(values), Integer(bound), Double(initial)};
-        ASSERT_EQ(Execute(image.function(*update).entry, execution, input, result), status);
+        ASSERT_EQ(Execute(update_entry, execution, input, result), status);
         if (status == ExecutionStatus::Returned) {
           const auto actual = std::bit_cast<double>(result.payload);
           if (std::isnan(total)) EXPECT_TRUE(std::isnan(actual));
@@ -217,11 +204,11 @@ void ExpectFloatingFieldPrefixes(std::string_view function_name) {
   }
 }
 
-TEST(NativeFieldLoopTest, FloatingPrefixesPreserveAliasesAndEveryFailurePositionUnderGc) {
+TEST_F(NativeFieldLoopTest, FloatingPrefixesPreserveAliasesAndEveryFailurePositionUnderGc) {
   ASSERT_NO_FATAL_FAILURE(ExpectFloatingFieldPrefixes("floatUpdate"));
 }
 
-TEST(NativeFieldLoopTest, FloatingRootPrefixesPreserveBitsAndFailuresUnderGc) {
+TEST_F(NativeFieldLoopTest, FloatingRootPrefixesPreserveBitsAndFailuresUnderGc) {
   ASSERT_NO_FATAL_FAILURE(ExpectFloatingFieldPrefixes("floatRootUpdate"));
 }
 '''

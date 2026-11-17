@@ -19,10 +19,10 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Utils/Cloning.h>
-#include <llvm/Transforms/Utils/LoopUtils.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "compiler/native/local_ssa.h"
+#include "compiler/native/loop_hints.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -115,6 +115,7 @@ class RecursiveLoopHintsPass : public llvm::PassInfoMixin<RecursiveLoopHintsPass
     }
     auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
       if (!HasRecursiveCall(*loop, calls) ||
           std::ranges::any_of(loop->getSubLoops(),
@@ -138,9 +139,10 @@ class RecursiveLoopHintsPass : public llvm::PassInfoMixin<RecursiveLoopHintsPass
       // 内层保留 LLVM 自身的展开选择；预算已经乘入其副本，不能统一禁用而
       // 让短扫描在每个递归分支中重复支付计数和回跳成本。
       PreserveLoopCalls(*loop);
-      llvm::addStringMetadataToLoop(loop, "llvm.loop.unroll.count", iterations);
+      SetLoopUnrollCount(*loop, iterations, LoopUnrollHints::Retain);
+      changed = true;
     }
-    return llvm::PreservedAnalyses::all();
+    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
   }
 };
 

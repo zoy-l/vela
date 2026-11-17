@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -63,6 +64,30 @@ namespace {
 using ir::test::Prepare;
 using native::test::ParseModule;
 using native::test::WithFunctionLoops;
+
+constexpr unsigned kWideIntegerLanes = 512 / std::numeric_limits<std::uint64_t>::digits;
+
+bool HasVectorIntegerAddition(const llvm::Function& function,
+                              std::optional<unsigned> lanes = std::nullopt) {
+  return std::ranges::any_of(llvm::instructions(function), [&](const auto& instruction) {
+    const auto* type = instruction.getType();
+    if (instruction.getOpcode() != llvm::Instruction::Add || !type->isVectorTy() ||
+        !type->getScalarType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits)) {
+      return false;
+    }
+    if (!lanes) {
+      return true;
+    }
+    const auto* fixed = llvm::dyn_cast<llvm::FixedVectorType>(type);
+    return fixed != nullptr && fixed->getNumElements() == *lanes;
+  });
+}
+
+void ExpectWideProfile(const llvm::Function& function) {
+  EXPECT_EQ(function.getFnAttribute("target-cpu").getValueAsString(), "x86-64-v4");
+  EXPECT_TRUE(function.getFnAttribute("target-features").getValueAsString().empty());
+  EXPECT_EQ(function.getFnAttribute("prefer-vector-width").getValueAsString(), "512");
+}
 
 TEST(NativeCompilerTest, BindsOnlyImmutableClosedReflectionDescriptorSources) {
   auto prepared = Prepare(R"(
@@ -267,8 +292,9 @@ export async func resumed(count: int): Future<int> {
       EXPECT_EQ(initializations, 1U);
       checked = true;
     }
-    checked_functions += checked ? 1 : 0;
-    checked_resumptions += checked && function.getName().ends_with("_optimized_resume") ? 1 : 0;
+    checked_functions += static_cast<std::size_t>(checked);
+    checked_resumptions +=
+        static_cast<std::size_t>(checked && function.getName().ends_with("_optimized_resume"));
   }
   EXPECT_GE(checked_functions, 2U);
   EXPECT_GE(checked_resumptions, 1U);
@@ -454,7 +480,7 @@ export func calculate(values: int[]): int {
     ASSERT_NE(leaf, nullptr) << name;
     const auto depth_index = static_cast<unsigned>(source->parameter_count + 1);
     const auto* depth = leaf->getArg(depth_index);
-    EXPECT_TRUE(depth->getType()->isIntegerTy(64));
+    EXPECT_TRUE(depth->getType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits));
     EXPECT_FALSE(depth->use_empty());
     for (const auto& instruction : llvm::instructions(leaf)) {
       const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
@@ -1484,13 +1510,38 @@ export func sum(): int {
   ASSERT_NE(entry, result->exports.end());
   const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
   ASSERT_NE(function, nullptr);
-  const auto vector_sum =
-      std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
-        const auto* type = instruction.getType();
-        return instruction.getOpcode() == llvm::Instruction::Add && type->isVectorTy() &&
-               type->getScalarType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits);
-      });
-  EXPECT_TRUE(vector_sum) << result->llvm_ir;
+  EXPECT_TRUE(HasVectorIntegerAddition(*function)) << result->llvm_ir;
+}
+
+TEST(NativeCompilerTest, RetainsGenerationOptionsAndSkipsUnoptimizedTargetPlanning) {
+  const auto prepared = Prepare(R"(
+export func sum(values: int[]): int {
+  let total = 0;
+  for (let index = 0; index < values.length; index++) { total += values[index]; }
+  return total;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& program = prepared.program;
+  const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Baseline);
+  const auto fields = native::FindFieldTargets(program);
+  for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
+    auto generated =
+        native::Generate(program, calls, fields, "options", native::NativeDebugging::Safepoints,
+                         NativeCodeTier::Baseline, native::EscapeOptimization::Enabled,
+                         NativeCodePlacement::Linked, optimization);
+    ASSERT_TRUE(generated);
+    EXPECT_EQ(generated->mode, program.native_mode);
+    EXPECT_EQ(generated->placement, NativeCodePlacement::Linked);
+    EXPECT_EQ(generated->optimization, optimization);
+    const auto has_versions =
+        optimization == NativeOptimization::Release &&
+        generated->module->getTargetTriple().getArch() == llvm::Triple::x86_64;
+    EXPECT_EQ(!generated->target_functions.empty(), has_versions);
+    const auto finalized = native::Finalize(*generated);
+    ASSERT_TRUE(finalized) << finalized.error();
+    EXPECT_TRUE(generated->target_functions.empty());
+  }
 }
 
 TEST(NativeCompilerTest, SelectsIntegerArrayTargetVersionsWithoutChangingThePortableEntry) {
@@ -1523,9 +1574,11 @@ export func formattedCaller(values: int[]): string { return '${sum(values)}'; }
   for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
     const auto result =
         Compile(prepared.program,
-                {.optimization = optimization,
-                 .exports = {"integer", "decimal", "unrelated", "formatted", "formattedCaller"},
-                 .preserve_ir = true});
+                {
+                    .optimization = optimization,
+                    .exports = {"integer", "decimal", "unrelated", "formatted", "formattedCaller"},
+                    .preserve_ir = true,
+                });
     ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
     llvm::LLVMContext context;
     const auto module = ParseModule(result->llvm_ir, context);
@@ -1541,9 +1594,7 @@ export func formattedCaller(values: int[]): string { return '${sum(values)}'; }
       if (expected) {
         ASSERT_NE(wide, nullptr) << result->llvm_ir;
         EXPECT_EQ(entry->getFnAttribute("target-cpu").getValueAsString(), "generic");
-        EXPECT_EQ(wide->getFnAttribute("target-cpu").getValueAsString(), "x86-64-v4");
-        EXPECT_EQ(wide->getFnAttribute("prefer-vector-width").getValueAsString(), "512");
-        EXPECT_TRUE(wide->getFnAttribute("target-features").getValueAsString().empty());
+        ExpectWideProfile(*wide);
       } else {
         EXPECT_EQ(wide, nullptr);
       }
@@ -1552,8 +1603,10 @@ export func formattedCaller(values: int[]): string { return '${sum(values)}'; }
 }
 
 TEST(NativeCompilerTest, VectorizesCheckedParameterArraySumsBeforePartialUnrolling) {
-  for (const auto expression : {"counter.value = values[index]; total += counter.value;",
-                                "total += counter.accept(values[index]);"}) {
+  for (const auto* const expression : {
+           "counter.value = values[index]; total += counter.value;",
+           "total += counter.accept(values[index]);",
+       }) {
     SCOPED_TRACE(expression);
     const auto prepared = Prepare(std::string(R"(
 class Counter {
@@ -1579,24 +1632,20 @@ export func sum(values: int[]): int {
     ASSERT_NE(entry, result->exports.end());
     const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
     ASSERT_NE(function, nullptr);
-    const auto vector_sum =
-        std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
-          const auto* type = instruction.getType();
-          return instruction.getOpcode() == llvm::Instruction::Add && type->isVectorTy() &&
-                 type->getScalarType()->isIntegerTy(64);
-        });
-    EXPECT_TRUE(vector_sum) << result->llvm_ir;
+    EXPECT_TRUE(HasVectorIntegerAddition(*function)) << result->llvm_ir;
     EXPECT_NE(result->llvm_ir.find("@llvm.sadd.with.overflow"), std::string::npos);
-    const auto reads_range = std::ranges::any_of(llvm::instructions(function), [&](const auto& op) {
-      const auto* load = llvm::dyn_cast<llvm::LoadInst>(&op);
-      if (load == nullptr || !load->getType()->isIntegerTy(32)) {
-        return false;
-      }
-      std::int64_t offset = 0;
-      llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
-                                             module->getDataLayout());
-      return offset == runtime::NativeMemoryLayout::kArrayIntegerRange;
-    });
+    const auto reads_range =
+        std::ranges::any_of(llvm::instructions(function), [&](const auto& instruction) {
+          const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+          if (load == nullptr ||
+              !load->getType()->isIntegerTy(runtime::NativeMemoryLayout::kArrayIntegerRangeBits)) {
+            return false;
+          }
+          std::int64_t offset = 0;
+          llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
+                                                 module->getDataLayout());
+          return std::cmp_equal(offset, runtime::NativeMemoryLayout::kArrayIntegerRange);
+        });
     EXPECT_TRUE(reads_range) << result->llvm_ir;
   }
 }
@@ -1629,25 +1678,20 @@ export func sum(values: int[]): int {
   ASSERT_NE(generic, nullptr);
   EXPECT_EQ(generic->getFnAttribute("target-cpu").getValueAsString(), "generic");
   EXPECT_TRUE(generic->getFnAttribute("target-features").getValueAsString().empty());
-  EXPECT_NE(module->getFunction(name + "_select"), nullptr);
-  if (!result->target.starts_with("x86_64-")) {
+  const auto* selector = module->getFunction(name + "_select");
+  ASSERT_NE(selector, nullptr);
+  EXPECT_TRUE(
+      selector->getArg(0)->getType()->isIntegerTy(runtime::NativeMemoryLayout::kHostTargetBits));
+  EXPECT_TRUE(selector->hasParamAttribute(0, llvm::Attribute::ZExt));
+  if (module->getTargetTriple().getArch() != llvm::Triple::x86_64) {
     EXPECT_EQ(module->getFunction(name + "_v4"), nullptr);
     return;
   }
   const auto* wide = module->getFunction(name + "_v4");
   ASSERT_NE(wide, nullptr);
-  EXPECT_EQ(wide->getFnAttribute("target-cpu").getValueAsString(), "x86-64-v4");
-  EXPECT_TRUE(wide->getFnAttribute("target-features").getValueAsString().empty());
-  EXPECT_EQ(wide->getFnAttribute("prefer-vector-width").getValueAsString(), "512");
-  const auto has_wide_sum = [](const llvm::Function& function) {
-    return std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
-      const auto* type = llvm::dyn_cast<llvm::FixedVectorType>(instruction.getType());
-      return instruction.getOpcode() == llvm::Instruction::Add && type != nullptr &&
-             type->getNumElements() == 8 && type->getElementType()->isIntegerTy(64);
-    });
-  };
-  EXPECT_TRUE(has_wide_sum(*wide)) << result->llvm_ir;
-  EXPECT_FALSE(has_wide_sum(*generic)) << result->llvm_ir;
+  ExpectWideProfile(*wide);
+  EXPECT_TRUE(HasVectorIntegerAddition(*wide, kWideIntegerLanes)) << result->llvm_ir;
+  EXPECT_FALSE(HasVectorIntegerAddition(*generic, kWideIntegerLanes)) << result->llvm_ir;
 }
 
 TEST(NativeCompilerTest, InvalidatesIntegerArrayRangesAtDirectWritesAndInlinePushes) {
@@ -1671,20 +1715,23 @@ export func append(values: int[], value: int): void { values.push(value); }
       function = module->getFunction("vela_aot_entry_" + ordinal);
     }
     ASSERT_NE(function, nullptr);
-    const auto invalidates = std::ranges::any_of(llvm::instructions(function), [&](const auto& op) {
-      const auto* store = llvm::dyn_cast<llvm::StoreInst>(&op);
-      const auto* value =
-          store == nullptr ? nullptr : llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand());
-      if (value == nullptr || !value->isZero() || !value->getType()->isIntegerTy(32) ||
-          store->getMetadata(llvm::LLVMContext::MD_tbaa) !=
-              native::NativeMemoryTag(context, native::MemoryRegion::HeapHeader)) {
-        return false;
-      }
-      std::int64_t offset = 0;
-      llvm::GetPointerBaseWithConstantOffset(store->getPointerOperand(), offset,
-                                             module->getDataLayout());
-      return offset == runtime::NativeMemoryLayout::kArrayIntegerRange;
-    });
+    const auto invalidates =
+        std::ranges::any_of(llvm::instructions(function), [&](const auto& instruction) {
+          const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+          const auto* value = store == nullptr
+                                  ? nullptr
+                                  : llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand());
+          if (value == nullptr || !value->isZero() ||
+              !value->getType()->isIntegerTy(runtime::NativeMemoryLayout::kArrayIntegerRangeBits) ||
+              store->getMetadata(llvm::LLVMContext::MD_tbaa) !=
+                  native::NativeMemoryTag(context, native::MemoryRegion::HeapHeader)) {
+            return false;
+          }
+          std::int64_t offset = 0;
+          llvm::GetPointerBaseWithConstantOffset(store->getPointerOperand(), offset,
+                                                 module->getDataLayout());
+          return std::cmp_equal(offset, runtime::NativeMemoryLayout::kArrayIntegerRange);
+        });
     EXPECT_TRUE(invalidates) << result->llvm_ir;
   }
 }
@@ -1759,13 +1806,15 @@ export func update(scale: double): double {
   const auto has_bit_guard = std::ranges::any_of(*module, [](const auto& function) {
     return std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
       const auto* compare = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
-      if (compare == nullptr || compare->getPredicate() != llvm::CmpInst::ICMP_NE)
+      if (compare == nullptr || compare->getPredicate() != llvm::CmpInst::ICMP_NE) {
         return false;
+      }
       const auto* shifted = llvm::dyn_cast<llvm::BinaryOperator>(compare->getOperand(0));
       const auto* zero = llvm::dyn_cast<llvm::ConstantInt>(compare->getOperand(1));
       if (shifted == nullptr || shifted->getOpcode() != llvm::Instruction::Shl || zero == nullptr ||
-          !zero->isZero())
+          !zero->isZero()) {
         return false;
+      }
       const auto* bits = llvm::dyn_cast<llvm::BitCastInst>(shifted->getOperand(0));
       const auto* amount = llvm::dyn_cast<llvm::ConstantInt>(shifted->getOperand(1));
       return bits != nullptr && bits->getSrcTy()->isDoubleTy() && amount != nullptr &&

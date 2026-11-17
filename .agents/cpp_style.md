@@ -107,6 +107,8 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Preserve externally fixed native ABI and LLVM override signatures. Keep parameter roles explicit
   in generated C entries and ORC callbacks; use strong types in internal interfaces.
 - Centralize protocol keys shared between modules as `inline constexpr std::string_view` constants.
+  Use `inline constexpr const char*` initialized from a string literal for LLVM loop metadata
+  names consumed by its C-string interface, which requires a terminating NUL.
   Do not scatter hard-coded copies.
 - Use structured path interfaces such as `std::filesystem::path`; do not concatenate separators
   manually.

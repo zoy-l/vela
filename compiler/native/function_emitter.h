@@ -183,8 +183,15 @@ class FunctionEmitter final {
   void SetPosition();
   void PrepareRuntimeCall();
   enum class CallEntry : std::uint8_t { Body, Borrowed, Leaf, ScalarField, Slot };
-  CallEntry SelectCallEntry(CallableTarget target, std::size_t instruction) const;
-  llvm::Value* EmitScalarFieldCall(CallableTarget target, std::span<llvm::Value* const> arguments);
+  struct CallSelection final {
+    CallSelection(CallEntry selected, std::optional<std::size_t> record)
+        : entry(selected), borrowed(record) {}
+    CallEntry entry;
+    std::optional<std::size_t> borrowed;
+  };
+  CallSelection SelectCallEntry(CallableTarget target, std::size_t instruction) const;
+  llvm::Value* EmitScalarFieldCall(CallableTarget selected,
+                                   std::span<llvm::Value* const> arguments);
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
   void MarkClosedInvariantCall(llvm::CondBrInst& branch) const;
@@ -209,6 +216,9 @@ class FunctionEmitter final {
   llvm::Value* EmitNativeStringArgument(llvm::Value* string,
                                         std::size_t parameter,
                                         llvm::Value* kind);
+  void ConvertNativeStringArguments(const ir::Function& callee,
+                                    std::vector<llvm::Value*>& parameters,
+                                    llvm::Value* kind);
   bool CanInlineImportCall(const ir::Function& callee) const;
   llvm::BasicBlock* EmitInlineImportCall(const ir::Instruction& instruction,
                                          CallableTarget selected,
@@ -234,6 +244,7 @@ class FunctionEmitter final {
   std::vector<std::uint8_t> debug_live_;
   llvm::Constant* VirtualGraph(std::size_t instruction);
   void Recover();
+  void RecoverGuardFailure();
   void RecoverIfInvalidated();
   void EmitRecoveryDispatch();
   void GuardResume();
@@ -251,6 +262,11 @@ class FunctionEmitter final {
   void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
+  struct ReceiverLayout final {
+    llvm::Value* object;
+    llvm::Value* expected;
+  };
+  llvm::Value* GuardReadyFields(ReceiverLayout receiver);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
   struct StoredValueAddress final {
     llvm::Value* payload;

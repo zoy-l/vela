@@ -17,6 +17,7 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "runtime/collections/index_range.h"
+#include "runtime/heap/array_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
 #include "runtime/value/value.h"
@@ -130,16 +131,18 @@ int CompareText(std::string_view first, std::string_view second) {
 }
 
 std::expected<Value, ExecutionStatus> SortIntegers(Builtin builtin, HeapObject& array) {
-  const auto values = Heap::IntegerElements(array);
-  if (!values) {
+  const auto borrowed = internal::BorrowIntegerElements(array);
+  if (!borrowed) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
+  // 内部借用不逸出，排序只置换已有值；保留窄域事实，也不能重建已被宿主视图撤销的事实。
+  const auto values = *borrowed;
   // 此入口只接收已证明无副作用、无失败的整数全序比较器。相等的 int 没有独立身份，
   // 原地重排与稳定排序等价，也无需比较器快照或临时托管数组。
   if (builtin == Builtin::ArraySortIntAscending) {
-    std::ranges::sort(*values);
+    std::ranges::sort(values);
   } else {
-    std::ranges::sort(*values, std::greater<>());
+    std::ranges::sort(values, std::greater<>());
   }
   return Value::Object(&array);
 }

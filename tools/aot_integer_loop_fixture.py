@@ -151,9 +151,26 @@ extern "C" const NativeImage* INTEGER_LOOP_IMAGE() noexcept;
 using NativeIntegerLoopTest = NativeImageTest<INTEGER_LOOP_IMAGE>;
 using NativeIntegerLoopGcTest = NativeImageTest<INTEGER_LOOP_IMAGE, 1>;
 
+const std::array kObserveAssignedField{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
+
 std::array<NativeValue, 5> IntegerLoopArguments(std::span<const std::int64_t> values) {
   return {Integer(values[0]), Integer(values[1]), Integer(values[2]),
           Integer(values[3]), Integer(values[4])};
+}
+
+void ExpectArrayOverflowTrace(NativeExecution& execution, std::string_view name) {
+  ASSERT_TRUE(execution.HasException());
+  const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+  ASSERT_FALSE(trace.empty());
+  EXPECT_EQ(trace.front().function, name);
+}
+
+void ExpectAssignedField(NativeExecution& execution, std::int64_t expected) {
+  NativeValue result;
+  ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, kObserveAssignedField, result), ExecutionStatus::Returned);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected);
+  EXPECT_EQ(execution.current_frame(), nullptr);
+  EXPECT_FALSE(execution.HasException());
 }
 
 void ExpectIntegerLoopCases(NativeExecution& execution,
@@ -292,13 +309,11 @@ TEST_F(NativeIntegerLoopGcTest, ClosedArrayRangesHoldAcrossCallsAliasesEmptyAndC
 TEST_F(NativeIntegerLoopGcTest, RotatedCallsKeepBudgetBoundariesAndTheOverflowingWrite) {
   NativeExecution execution(*instance);
   NativeValue result;
-  const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
   for (const std::int64_t count : {0, 1, 2, 127, 128, 1023, 1024, 1025, 2049}) {
     const std::array arguments{Integer(13), Integer(0), Integer(count), Integer(0), Integer(0)};
     ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), count * (count - 1) / 2);
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), count - 1);
+    ASSERT_NO_FATAL_FAILURE(ExpectAssignedField(execution, count - 1));
   }
   const auto initial = std::numeric_limits<std::int64_t>::max() - 2;
   for (const std::int64_t count : {3, 128, 1024, 1025}) {
@@ -309,10 +324,7 @@ TEST_F(NativeIntegerLoopGcTest, RotatedCallsKeepBudgetBoundariesAndTheOverflowin
     const auto diagnostic = execution.ExceptionDiagnostic();
     ASSERT_FALSE(diagnostic.stack_trace.empty());
     EXPECT_EQ(diagnostic.stack_trace.front().function, "callbackSum");
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 2);
-    EXPECT_EQ(execution.current_frame(), nullptr);
-    EXPECT_FALSE(execution.HasException());
+    ASSERT_NO_FATAL_FAILURE(ExpectAssignedField(execution, 2));
   }
 }
 
@@ -328,9 +340,8 @@ TEST_F(NativeIntegerLoopGcTest, ParameterArrayTrialsPreserveEmptySignedAndOverfl
     const auto* layout = instance->layouts().types[parameters.front().type].array;
     ASSERT_NE(layout, nullptr);
     auto& heap = isolate.heap();
-    const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
     NativeValue previous_result;
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, previous_result), ExecutionStatus::Returned);
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, kObserveAssignedField, previous_result), ExecutionStatus::Returned);
     auto previous = std::bit_cast<std::int64_t>(previous_result.payload);
     const auto check = [&](std::span<const std::int64_t> values, std::int64_t initial) {
       auto* array = heap.AllocateArray(*layout, values.size());
@@ -358,15 +369,9 @@ TEST_F(NativeIntegerLoopGcTest, ParameterArrayTrialsPreserveEmptySignedAndOverfl
         EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected);
         EXPECT_FALSE(execution.HasException());
       } else {
-        ASSERT_TRUE(execution.HasException());
-        const auto& trace = execution.ExceptionDiagnostic().stack_trace;
-        ASSERT_FALSE(trace.empty());
-        EXPECT_EQ(trace.front().function, name);
+        ASSERT_NO_FATAL_FAILURE(ExpectArrayOverflowTrace(execution, name));
       }
-      ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
-      EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), assigned);
-      EXPECT_EQ(execution.current_frame(), nullptr);
-      EXPECT_FALSE(execution.HasException());
+      ASSERT_NO_FATAL_FAILURE(ExpectAssignedField(execution, assigned));
       previous = assigned;
     };
     std::array<std::int64_t, 2049> values{};
@@ -409,14 +414,8 @@ TEST_F(NativeIntegerLoopGcTest, ParameterArrayRangesInvalidateAtEveryMutableBoun
     NativeValue result;
     ASSERT_EQ(Execute(instance->image().function(*function).entry, execution, arguments, result),
               ExecutionStatus::IntegerOverflow);
-    ASSERT_TRUE(execution.HasException());
-    const auto& trace = execution.ExceptionDiagnostic().stack_trace;
-    ASSERT_FALSE(trace.empty());
-    EXPECT_EQ(trace.front().function, name);
-    const std::array observed{Integer(14), Integer(0), Integer(0), Integer(0), Integer(0)};
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, observed, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), maximum);
-    EXPECT_EQ(execution.current_frame(), nullptr);
+    ASSERT_NO_FATAL_FAILURE(ExpectArrayOverflowTrace(execution, name));
+    ASSERT_NO_FATAL_FAILURE(ExpectAssignedField(execution, maximum));
   };
   for (const auto name : {"writeArray", "appendArray"}) {
     SCOPED_TRACE(name);

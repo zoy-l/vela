@@ -404,9 +404,9 @@ struct NativeAdapterBase {
        std::is_same_v<Result, std::int64_t> || std::is_same_v<Result, double>) &&
       !(NativeCodec<Args>::kNeedsScope || ...) &&
       !(std::is_same_v<typename NativeAbiCodec<Args>::Type, NativeValue> || ...);
-  static constexpr bool kContextless =
-      kDirect && !kNeedsContext &&
+  static constexpr bool kAllDirectArguments =
       (std::is_same_v<Args, typename NativeDirectArgument<Args>::Type> && ...);
+  static constexpr bool kContextless = kDirect && !kNeedsContext && kAllDirectArguments;
   // 视图由 C++ 构造。Windows x64 按引用传递独立副本，Darwin arm64 使用两个
   // 整数寄存器；生成代码只传递不透明字节，不假定标准库成员的排列。
 #if (defined(_WIN32) && defined(_M_X64)) || (defined(__APPLE__) && defined(__aarch64__))
@@ -508,9 +508,7 @@ struct NativeAdapterBase {
   }
 
   static constexpr auto UnscopedEntry() noexcept {
-    if constexpr (kContextless || kNativeStringViews ||
-                  (kNeedsContext &&
-                   (std::is_same_v<Args, typename NativeDirectArgument<Args>::Type> && ...))) {
+    if constexpr (kContextless || kNativeStringViews || (kNeedsContext && kAllDirectArguments)) {
       return Function;
     } else {
       return &UnscopedDirectCall;
@@ -569,7 +567,7 @@ class NativeFunction final {
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;
         // 受查入口由适配器管理作用域，两个放置模式都发布完整的相同调用契约。
-        const auto slot = static_cast<AotEntrySlot>(&kTarget);
+        const auto* const slot = static_cast<AotEntrySlot>(&kTarget);
         return AotEntry{.slot = slot, .unscoped_slot = slot};
       }
     }();

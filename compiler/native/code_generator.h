@@ -56,12 +56,17 @@ struct CpuProfile final {
 
 // context 最后释放；AOT 目标文件与 ORC 交付共用同一份完整 LLVM 语义 lowering。
 struct NativeModule final {
-  NativeModule();
+  NativeModule(NativeProgramMode mode,
+               NativeCodePlacement placement,
+               NativeOptimization optimization);
   ~NativeModule();
   NativeModule(NativeModule&&) noexcept;
   NativeModule& operator=(NativeModule&&) = delete;
   NativeModule(const NativeModule&) = delete;
   NativeModule& operator=(const NativeModule&) = delete;
+  NativeProgramMode mode;
+  NativeCodePlacement placement;
+  NativeOptimization optimization;
   std::unique_ptr<llvm::LLVMContext> context;
   std::unique_ptr<llvm::TargetMachine> machine;
   std::unique_ptr<llvm::Module> module;
@@ -86,13 +91,11 @@ struct NativeModule final {
     NativeCodeTier tier = NativeCodeTier::Baseline,
     EscapeOptimization escape = EscapeOptimization::Enabled,
     NativeCodePlacement placement = NativeCodePlacement::Linked,
+    NativeOptimization optimization = NativeOptimization::Release,
     std::span<const std::uint8_t> reused = {});
 
 // 调用者可在优化前添加 AOT 的公开包装和 main；JIT 直接交付映像入口。
-[[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated,
-                                                        NativeOptimization optimization,
-                                                        NativeProgramMode mode,
-                                                        NativeCodePlacement placement);
+[[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated);
 [[nodiscard]] std::expected<std::unique_ptr<llvm::MemoryBuffer>, std::string> EmitObject(
     NativeModule& generated);
 

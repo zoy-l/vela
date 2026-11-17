@@ -193,8 +193,7 @@ void FunctionEmitter::EmitReflectedLookup(const ir::Instruction& instruction,
   builder_.CreateBr(done);
   builder_.SetInsertPoint(slow);
   auto* status = CallRuntimeBuiltin(instruction);
-  llvm::cast<llvm::Instruction>(status)->setMetadata(kNativeGuardFailureMetadata,
-                                                     llvm::MDNode::get(context, {}));
+  MarkGuardFailure(*llvm::cast<llvm::Instruction>(status));
   CompleteCall(status, instruction.dst);
   builder_.CreateBr(done);
   builder_.SetInsertPoint(done);
@@ -202,7 +201,6 @@ void FunctionEmitter::EmitReflectedLookup(const ir::Instruction& instruction,
 
 void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
                                          reflection::Operation operation) {
-  using runtime::NativeMemoryLayout;
   using runtime::ReflectedFieldCache;
   const auto* member =
       reflection_members_.empty() ? nullptr : reflection_members_[instruction_index_];
@@ -263,12 +261,8 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
   auto* inline_storage = ByteAddress(receiver, sizeof(runtime::HeapObject));
   builder_.CreateBr(access);
   builder_.SetInsertPoint(reloadable);
-  auto* storage = LoadMemory(builder_.getPtrTy(),
-                             ByteAddress(receiver, NativeMemoryLayout::kObjectNativePayload),
-                             MemoryRegion::HeapHeader);
-  auto* unready = LoadMemory(builder_.getInt32Ty(),
-                             ByteAddress(storage, offsetof(runtime::InstanceStorage, unready)),
-                             MemoryRegion::InstanceHeader);
+  auto* storage = LoadInstanceStorage(builder_, receiver);
+  auto* unready = LoadInstanceUnready(builder_, storage);
   // 需要初始化时沿用当前发布的初始化器和 FieldState 契约。
   builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, slow);
   builder_.SetInsertPoint(ready);
@@ -467,8 +461,7 @@ void FunctionEmitter::EmitReflectedCall(const ir::Instruction& instruction,
   }
   auto* status = CallRuntimeBuiltin(instruction);
   if (leaf) {
-    llvm::cast<llvm::Instruction>(status)->setMetadata(kNativeGuardFailureMetadata,
-                                                       llvm::MDNode::get(context, {}));
+    MarkGuardFailure(*llvm::cast<llvm::Instruction>(status));
   }
   CompleteCall(status, instruction.dst);
   builder_.CreateBr(done);

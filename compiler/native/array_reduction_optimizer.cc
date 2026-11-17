@@ -1,8 +1,10 @@
 #include "compiler/native/array_reduction_optimizer.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -18,9 +20,11 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/Support/Casting.h>
@@ -35,6 +39,7 @@
 
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
+#include "compiler/native/native_values.h"
 #include "runtime/heap/array_storage.h"
 #include "runtime/native/native_memory_layout.h"
 
@@ -43,6 +48,15 @@ namespace {
 
 constexpr std::uint64_t kTrialInstructions = 16;
 constexpr std::uint32_t kTrialInterleaveCount = 4;
+constexpr unsigned kInlineReductionValues = 16;
+
+struct ReductionState final {
+  llvm::Value* index = nullptr;
+  llvm::Value* total = nullptr;
+  llvm::Value* increment = nullptr;
+  llvm::Value* sum = nullptr;
+  llvm::Value* element = nullptr;
+};
 
 struct ArrayReduction final {
   llvm::Loop* loop = nullptr;
@@ -60,6 +74,17 @@ struct ArrayReduction final {
   llvm::BasicBlock* normal_exit = nullptr;
   llvm::SmallVector<llvm::StoreInst*, 4> stores;
   std::uint64_t limit = 0;
+
+  [[nodiscard]] std::array<std::pair<llvm::Value*, llvm::Value*>, 5> ExitMapping(
+      const ReductionState& replacement = {}) const {
+    return std::to_array<std::pair<llvm::Value*, llvm::Value*>>({
+        {index, replacement.index},
+        {total, replacement.total},
+        {increment, replacement.increment},
+        {sum, replacement.sum},
+        {element, replacement.element},
+    });
+  }
 };
 
 using ArrayLengths = llvm::DenseMap<llvm::Value*, llvm::SmallVector<llvm::LoadInst*, 2>>;
@@ -69,7 +94,8 @@ std::optional<ArrayReduction> MatchReductionPhis(ArrayReduction reduction) {
   std::size_t count = 0;
   for (auto& phi : loop.getHeader()->phis()) {
     ++count;
-    if (!phi.getType()->isIntegerTy(64) || phi.getNumIncomingValues() != 2) {
+    if (!phi.getType()->isIntegerTy(std::numeric_limits<std::uint64_t>::digits) ||
+        phi.getNumIncomingValues() != 2) {
       return std::nullopt;
     }
     auto* incoming = phi.getIncomingValueForBlock(loop.getLoopLatch());
@@ -183,7 +209,7 @@ std::optional<ArrayReduction> MatchNativeArrayStorage(ArrayReduction reduction,
   using runtime::NativeMemoryLayout;
   // Elements 的未标记 int64 读取及同一数组的 data/uint32 length 共同证明完整读取范围；
   // 不能仅凭当前单次读取的越界检查推断其余投机读取也有效。
-  if (data_offset != NativeMemoryLayout::kArrayData) {
+  if (std::cmp_not_equal(data_offset, NativeMemoryLayout::kArrayData)) {
     return std::nullopt;
   }
   const auto found = lengths.find(data_owner);
@@ -206,21 +232,40 @@ std::optional<ArrayReduction> MatchNativeArrayStorage(ArrayReduction reduction,
   return reduction;
 }
 
+bool CanCommitReductionStore(const llvm::StoreInst* store, const ArrayReduction& reduction) {
+  const auto& loop = *reduction.loop;
+  if (store == nullptr || !store->isSimple() || !loop.isLoopInvariant(store->getPointerOperand())) {
+    return false;
+  }
+  const auto* constant = llvm::dyn_cast<llvm::Constant>(store->getValueOperand());
+  const auto clear = constant != nullptr && constant->isNullValue() &&
+                     store->getMetadata(kNativeRootClearMetadata) != nullptr &&
+                     HasStorageTag(*store, MemoryRegion::Roots);
+  const auto field = store->getValueOperand() == reduction.element &&
+                     HasStorageTag(*store, MemoryRegion::FieldPayloads);
+  const auto kind = constant != nullptr && HasStorageTag(*store, MemoryRegion::FieldKinds);
+  // 整数归约提交原来的末项及其 kind；与浮点字段暂存不同，不限制为 Double 标签。
+  // 无调用和轮询的成功片段只提交一次不变描述；失败路径保留原写入前缀。
+  const auto state = loop.isLoopInvariant(store->getValueOperand()) &&
+                     (HasStorageTag(*store, MemoryRegion::Execution) ||
+                      HasStorageTag(*store, MemoryRegion::Roots));
+  return clear || field || kind || state;
+}
+
 std::optional<ArrayReduction> MatchPureReductionBody(ArrayReduction reduction) {
   auto& loop = *reduction.loop;
-  llvm::SmallPtrSet<const llvm::Value*, 16> allowed{
-      reduction.index,
-      reduction.total,
-      reduction.increment,
+  llvm::SmallPtrSet<const llvm::Value*, kInlineReductionValues> allowed{
       reduction.update,
-      reduction.sum,
       reduction.overflow,
       reduction.address,
-      reduction.element,
       loop.getHeader()->getTerminator(),
       loop.getLoopLatch()->getTerminator(),
       llvm::cast<llvm::CondBrInst>(loop.getLoopLatch()->getTerminator())->getCondition(),
   };
+  const auto exit_values = reduction.ExitMapping();
+  for (const auto& value : exit_values) {
+    allowed.insert(value.first);
+  }
   std::uint64_t instructions = kTrialInstructions;
   for (auto* block : loop.blocks()) {
     instructions += block->size();
@@ -234,38 +279,24 @@ std::optional<ArrayReduction> MatchPureReductionBody(ArrayReduction reduction) {
         continue;
       }
       auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-      if (store == nullptr || !store->isSimple() ||
-          !loop.isLoopInvariant(store->getPointerOperand())) {
+      if (!CanCommitReductionStore(store, reduction)) {
         return std::nullopt;
       }
-      const auto* constant = llvm::dyn_cast<llvm::Constant>(store->getValueOperand());
-      const auto clear = constant != nullptr && constant->isNullValue() &&
-                         store->getMetadata(kNativeRootClearMetadata) != nullptr &&
-                         HasStorageTag(*store, MemoryRegion::Roots);
-      const auto field = store->getValueOperand() == reduction.element &&
-                         HasStorageTag(*store, MemoryRegion::FieldPayloads);
-      const auto kind = constant != nullptr && HasStorageTag(*store, MemoryRegion::FieldKinds);
-      // 无调用、无轮询片段中的不变根和执行描述只需在成功提交时写一次。
-      // 验证失败仍执行原循环，保留错误之前的字段、根和检查点前缀。
-      const auto state = loop.isLoopInvariant(store->getValueOperand()) &&
-                         (HasStorageTag(*store, MemoryRegion::Execution) ||
-                          HasStorageTag(*store, MemoryRegion::Roots));
-      if (!clear && !field && !kind && !state)
-        return std::nullopt;
       reduction.stores.push_back(store);
     }
   }
   const auto mapped = [&](const llvm::Value* value) {
-    return loop.isLoopInvariant(value) || value == reduction.index || value == reduction.total ||
-           value == reduction.increment || value == reduction.sum || value == reduction.element;
+    return loop.isLoopInvariant(value) || std::ranges::any_of(exit_values, [&](const auto& entry) {
+             return entry.first == value;
+           });
   };
   if (!std::ranges::all_of(reduction.normal_exit->phis(), [&](const auto& phi) {
         return mapped(phi.getIncomingValueForBlock(loop.getLoopLatch()));
       })) {
     return std::nullopt;
   }
-  reduction.limit = std::min(kNativeMaximumUnpolledIterations / 2,
-                             kNativeMaximumUnpolledInstructions / (2 * instructions));
+  // 最坏路径先扫描再归约，两次遍历共同消费同一个免轮询预算。
+  reduction.limit = NativePollBudget(instructions) / 2;
   if (reduction.limit == 0) {
     return std::nullopt;
   }
@@ -281,14 +312,17 @@ std::optional<ArrayReduction> MatchReduction(llvm::Loop& loop,
     return std::nullopt;
   }
   auto reduction = MatchReductionPhis({.loop = &loop, .stores = {}});
-  if (!reduction)
+  if (!reduction) {
     return std::nullopt;
+  }
   reduction = MatchReductionExits(std::move(*reduction));
-  if (!reduction)
+  if (!reduction) {
     return std::nullopt;
+  }
   reduction = MatchNativeArrayStorage(std::move(*reduction), lengths, dominators);
-  if (!reduction)
+  if (!reduction) {
     return std::nullopt;
+  }
   return MatchPureReductionBody(std::move(*reduction));
 }
 
@@ -340,13 +374,18 @@ llvm::BasicBlock* EmitTrial(const ArrayReduction& reduction,
   if (bits != nullptr) {
     bits->addIncoming(combined, trial);
   }
-  llvm::Metadata* properties[] = {
+  std::array<llvm::Metadata*, 3> properties{
       nullptr,
-      llvm::MDNode::get(context, {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
-                                  llvm::ConstantAsMetadata::get(body.getTrue())}),
       llvm::MDNode::get(context,
-                        {llvm::MDString::get(context, "llvm.loop.interleave.count"),
-                         llvm::ConstantAsMetadata::get(body.getInt32(kTrialInterleaveCount))}),
+                        {
+                            llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
+                            llvm::ConstantAsMetadata::get(body.getTrue()),
+                        }),
+      llvm::MDNode::get(context,
+                        {
+                            llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                            llvm::ConstantAsMetadata::get(body.getInt32(kTrialInterleaveCount)),
+                        }),
   };
   auto* metadata = llvm::MDNode::getDistinct(context, properties);
   metadata->replaceOperandWith(0, metadata);
@@ -370,18 +409,20 @@ llvm::BasicBlock* EmitTrial(const ArrayReduction& reduction,
     copied->setMetadata(kNativeRootClearMetadata, store->getMetadata(kNativeRootClearMetadata));
     copied->setMetadata(llvm::LLVMContext::MD_tbaa, store->getMetadata(llvm::LLVMContext::MD_tbaa));
   }
+  const auto mapped = reduction.ExitMapping({
+      .index = index,
+      .total = total,
+      .increment = next,
+      .sum = sum,
+      .element = value,
+  });
   for (auto& phi : reduction.normal_exit->phis()) {
     auto* value_on_exit = phi.getIncomingValueForBlock(loop.getLoopLatch());
-    if (value_on_exit == reduction.index)
-      value_on_exit = index;
-    else if (value_on_exit == reduction.total)
-      value_on_exit = total;
-    else if (value_on_exit == reduction.increment)
-      value_on_exit = next;
-    else if (value_on_exit == reduction.sum)
-      value_on_exit = sum;
-    else if (value_on_exit == reduction.element)
-      value_on_exit = value;
+    if (const auto found = std::ranges::find_if(
+            mapped, [&](const auto& entry) { return entry.first == value_on_exit; });
+        found != mapped.end()) {
+      value_on_exit = found->second;
+    }
     phi.addIncoming(value_on_exit, commit);
   }
   committed.CreateBr(reduction.normal_exit);
@@ -411,14 +452,7 @@ void EmitTrials(const ArrayReduction& reduction) {
                      header);
   old_entry->eraseFromParent();
   llvm::IRBuilder<> select(dispatch);
-  auto* range_address = select.CreateConstGEP1_64(select.getInt8Ty(), reduction.array,
-                                                  runtime::NativeMemoryLayout::kArrayIntegerRange);
-  auto* range = select.CreateLoad(select.getInt32Ty(), range_address);
-  range->setMetadata(llvm::LLVMContext::MD_tbaa,
-                     NativeMemoryTag(function->getContext(), MemoryRegion::HeapHeader));
-  auto* narrow = select.CreateICmpEQ(
-      range, select.getInt32(
-                 static_cast<std::uint32_t>(runtime::internal::IntegerArrayRange::Nonnegative31)));
+  auto* narrow = HasNonnegative31ArrayRange(select, reduction.array);
   auto* safe_initial =
       select.CreateICmpULE(initial, select.getInt64(runtime::internal::kNonnegative31Mask));
   select.CreateCondBr(select.CreateAnd(narrow, safe_initial), certified, scanned);
@@ -436,14 +470,15 @@ class ArrayReductionPass : public llvm::PassInfoMixin<ArrayReductionPass> {
     ArrayLengths lengths;
     for (auto& instruction : llvm::instructions(function)) {
       auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
-      if (load == nullptr || !load->isSimple() || !load->getType()->isIntegerTy(32) ||
+      if (load == nullptr || !load->isSimple() ||
+          !load->getType()->isIntegerTy(std::numeric_limits<std::uint32_t>::digits) ||
           !HasStorageTag(*load, MemoryRegion::HeapHeader)) {
         continue;
       }
       std::int64_t offset = 0;
       auto* owner = llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
                                                            function.getParent()->getDataLayout());
-      if (offset == runtime::NativeMemoryLayout::kObjectLength) {
+      if (std::cmp_equal(offset, runtime::NativeMemoryLayout::kObjectLength)) {
         lengths[owner].push_back(load);
       }
     }
@@ -457,11 +492,11 @@ class ArrayReductionPass : public llvm::PassInfoMixin<ArrayReductionPass> {
       EmitTrials(reduction);
       // 失败后的原循环已消费一次试算预算；后续流水线不得再向其叠加试算，
       // 否则未知范围会在一次安全点间隔内重复扫描并突破最大免轮询工作量。
-      llvm::addStringMetadataToLoop(reduction.loop, kNativeArrayReductionFallbackMetadata.data(),
-                                    1);
+      llvm::addStringMetadataToLoop(reduction.loop, kNativeArrayReductionFallbackMetadata, 1);
     }
-    if (reductions.empty())
+    if (reductions.empty()) {
       return llvm::PreservedAnalyses::all();
+    }
     analyses.invalidate(function, llvm::PreservedAnalyses::none());
     llvm::FunctionPassManager cleanup;
     cleanup.addPass(llvm::EarlyCSEPass(true));

@@ -9,8 +9,8 @@ import sys
 import unittest
 
 from tools.aot_reflection_fixture import HOST as OFFLINE_MEMBER_HOST, SOURCE as OFFLINE_MEMBER_SOURCE
-from tools.config import ROOT, executable_name
-from tools.test_support import (CommandTestCase, compile_native_host, create_native_package,
+from tools.config import executable_name
+from tools.test_support import (CommandTestCase, NATIVE_TEST_INCLUDES, compile_native_host, create_native_package,
                                 native_command, native_test_libraries)
 
 
@@ -166,57 +166,54 @@ class ReflectionCommandTest(CommandTestCase):
         self.assertEqual(result.stdout, "42\n")
 
     def test_object_and_static_library_expose_both_bindings(self) -> None:
-        output = self.executable.parent
-        libraries = native_test_libraries(output)
-        includes = [ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
-                    ROOT / "third_party/googletest/googletest/include"]
         for emission in ("obj", "staticlib"):
             with self.subTest(emission=emission):
-                suffix = (".obj" if sys.platform == "win32" else ".o") if emission == "obj" else ".lib" if sys.platform == "win32" else ".a"
-                artifact = self.directory / ("reflection_" + emission + suffix)
-                native_command(self, [self.native_compiler, "build", self.source,
-                                      "--emit=" + emission, "--export=calculate", "-o", artifact],
-                               env=self.native_environment, cwd=self.directory)
-                manifest = json.loads(Path(str(artifact) + ".aot.json").read_text(encoding="utf-8"))
-                support = manifest["target_support"]
-                self.assertNotIn("link_arguments", support)
-                if emission == "staticlib":
-                    self.assertTrue(support["archive_arguments"])
-                else:
-                    self.assertNotIn("archive_arguments", support)
-                host_source = self.write("host.cc", HOST.replace("IMAGE", manifest["image"])
-                                         .replace("MODULE", json.dumps(self.source.as_posix())))
-                executable = self.directory / executable_name("host_" + emission)
-                compile_native_host(self, [host_source], executable, [artifact, *libraries],
-                                    includes, cwd=self.directory)
-                original = self.source.read_bytes()
-                self.source.unlink()
-                try:
-                    self.assertIn("[  PASSED  ] 1 test.", native_command(self, [executable], cwd=self.directory).stdout)
-                finally:
-                    self.source.write_bytes(original)
+                artifact, manifest = self._build_artifact(
+                    self.source, "reflection_" + emission, emission, ["calculate"])
+                host = HOST.replace("IMAGE", manifest["image"]).replace(
+                    "MODULE", json.dumps(self.source.as_posix()))
+                self._run_artifact_host(self.source, artifact, host)
 
     def test_offline_members_preserve_value_checks_and_single_execution_on_failure(self) -> None:
         source = self.write("members.vela", OFFLINE_MEMBER_SOURCE)
-        suffix = ".obj" if sys.platform == "win32" else ".o"
-        artifact = self.directory / ("members" + suffix)
-        native_command(self, [self.native_compiler, "build", source, "--emit=obj",
-                              "--export=exercise", "--export=fields", "--export=fail",
-                              "--export=lookup", "--export=borrowed", "-o", artifact],
+        artifact, manifest = self._build_artifact(
+            source, "members", "obj", ["exercise", "fields", "fail", "lookup", "borrowed"])
+        self._run_artifact_host(source, artifact, OFFLINE_MEMBER_HOST.replace(
+            "REFLECTION_IMAGE", manifest["image"]))
+
+    def _build_artifact(self, source: Path, name: str, emission: str,
+                       exports: list[str]) -> tuple[Path, dict]:
+        if emission == "obj":
+            suffix = ".obj" if sys.platform == "win32" else ".o"
+        else:
+            suffix = ".lib" if sys.platform == "win32" else ".a"
+        artifact = self.directory / (name + suffix)
+        native_command(self, [self.native_compiler, "build", source, "--emit=" + emission,
+                              *["--export=" + name for name in exports], "-o", artifact],
                        env=self.native_environment, cwd=self.directory)
         manifest = json.loads(Path(str(artifact) + ".aot.json").read_text(encoding="utf-8"))
-        host = '#include "' + artifact.name + '.h"\n' + OFFLINE_MEMBER_HOST.replace(
-            "REFLECTION_IMAGE", manifest["image"])
-        host_source = self.write("members_host.cc", host)
-        executable = self.directory / executable_name("members_host")
+        support = manifest["target_support"]
+        self.assertNotIn("link_arguments", support)
+        if emission == "staticlib":
+            self.assertTrue(support["archive_arguments"])
+        else:
+            self.assertNotIn("archive_arguments", support)
+        return artifact, manifest
+
+    def _run_artifact_host(self, source: Path, artifact: Path, host: str) -> None:
+        host_source = self.write(artifact.stem + "_host.cc",
+                                 '#include "' + artifact.name + '.h"\n' + host)
+        executable = self.directory / executable_name(artifact.stem + "_host")
         libraries = native_test_libraries(self.executable.parent)
-        includes = [ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
-                    ROOT / "third_party/googletest/googletest/include"]
         compile_native_host(self, [host_source], executable, [artifact, *libraries],
-                            includes, cwd=self.directory)
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
+        original = source.read_bytes()
         source.unlink()
-        result = native_command(self, [executable], cwd=self.directory)
-        self.assertIn("[  PASSED  ] 1 test.", result.stdout)
+        try:
+            result = native_command(self, [executable], cwd=self.directory)
+            self.assertIn("[  PASSED  ] 1 test.", result.stdout)
+        finally:
+            source.write_bytes(original)
 
 
 if __name__ == "__main__":

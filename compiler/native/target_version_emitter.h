@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/Transforms/Utils/ValueMapper.h>
+
 #include "compiler/ir/ir.h"
 
 namespace llvm {
@@ -13,19 +16,22 @@ class Module;
 
 namespace vela::compiler::native {
 
-struct GeneratedFunction;
 struct NativeCallPlan;
+struct FunctionDeclarations;
 
 struct NativeTargetGroup final {
   std::vector<llvm::Function*> functions;
   llvm::Function* entry = nullptr;
 };
 
+void CloneWideVersion(llvm::Function& generic,
+                      llvm::Function& wide,
+                      llvm::ValueToValueMapTy& values);
+llvm::Value* WideTargetCondition(llvm::IRBuilder<>& builder, llvm::Value* target);
+
 std::vector<NativeTargetGroup> PlanTargetVersions(const ir::Program& program,
                                                   const NativeCallPlan& calls,
-                                                  std::span<const GeneratedFunction> baseline,
-                                                  std::span<const GeneratedFunction> optimized,
-                                                  std::span<const GeneratedFunction> specialized);
+                                                  const FunctionDeclarations& declarations);
 
 void EmitTargetVersions(llvm::Module& module,
                         std::span<const NativeTargetGroup> groups,

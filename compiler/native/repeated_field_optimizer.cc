@@ -394,7 +394,7 @@ bool CanHaveRepeatedTripCount(const llvm::Loop& loop, llvm::ScalarEvolution& evo
   const auto* latch = loop.getLoopLatch();
   const auto rotated = latch != nullptr && loop.isLoopExiting(latch);
   const auto* exit = rotated ? latch : loop.getHeader();
-  if (!loop.isLoopExiting(exit)) {
+  if (!rotated && !loop.isLoopExiting(exit)) {
     return true;
   }
   const auto* count = evolution.getExitCount(&loop, exit);
@@ -421,11 +421,7 @@ bool HasRepeatedFields(llvm::Function& function, llvm::FunctionAnalysisManager& 
       continue;
     }
     const auto has_fields = std::ranges::any_of(loop->blocks(), [](const auto* block) {
-      return std::ranges::any_of(*block, [](const auto& instruction) {
-        const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-        return store != nullptr && store->getValueOperand()->getType()->isFPOrFPVectorTy() &&
-               HasStorageTag(*store, MemoryRegion::FieldPayloads);
-      });
+      return std::ranges::any_of(*block, IsFloatingFieldStore);
     });
     if (has_fields && CanHaveRepeatedTripCount(
                           *loop, analyses.getResult<llvm::ScalarEvolutionAnalysis>(function))) {

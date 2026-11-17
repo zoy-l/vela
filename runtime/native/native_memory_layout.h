@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 
@@ -13,6 +14,7 @@
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_control.h"
+#include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/value/object.h"
@@ -41,6 +43,8 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
   static constexpr auto kArrayIntegerRange =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, integer_range);
+  static constexpr unsigned kArrayIntegerRangeBits =
+      std::numeric_limits<std::underlying_type_t<internal::IntegerArrayRange>>::digits;
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
   static constexpr auto kExecutionBaseDepth = offsetof(NativeExecution, base_frame_count_);
@@ -73,6 +77,8 @@ struct NativeMemoryLayout final {
   static constexpr auto kProgramImage = offsetof(NativeProgramState, image);
   static constexpr auto kProgramImports = offsetof(NativeProgramState, imports);
   static constexpr auto kProgramHostTarget = offsetof(NativeProgramState, host_target);
+  static constexpr unsigned kHostTargetBits =
+      std::numeric_limits<std::underlying_type_t<NativeHostTarget>>::digits;
   static constexpr auto kProgramReflectionTypeCache =
       offsetof(NativeProgramState, reflection_type_cache);
   static constexpr auto kProgramDirectFieldLayouts =

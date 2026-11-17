@@ -40,6 +40,7 @@ llvm::MDNode* NativeMemoryTag(llvm::LLVMContext& context,
                               MemoryRegion region,
                               DeclarationId field = {});
 [[nodiscard]] bool HasStorageTag(const llvm::Instruction& instruction, MemoryRegion region);
+[[nodiscard]] bool IsFloatingFieldStore(const llvm::Instruction& instruction);
 DeclarationId ClosedFieldDeclaration(const ir::Program& program,
                                      std::string_view type,
                                      ir::FieldId slot);

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -61,6 +62,21 @@ class RecursiveCallTest
   runtime::Isolate isolate_{1};
   std::unique_ptr<runtime::NativeInstance> closed_instance_;
 };
+
+void MaterializeOuterFrames(runtime::NativeExecution& execution,
+                            std::uint32_t function,
+                            std::span<runtime::NativeTraceFrame> frames) {
+  // 帧存储由调用方持有，退出这些帧后才能销毁。
+  for (auto& frame : frames) {
+    execution.MaterializeFrame(frame, function);
+  }
+}
+
+void ExitAllFrames(runtime::NativeExecution& execution) {
+  while (execution.current_frame() != nullptr) {
+    execution.Exit();
+  }
+}
 
 TEST_P(RecursiveCallTest, EarlyReturnsPreserveRecursiveFailuresAndInstanceReuse) {
   ASSERT_NO_FATAL_FAILURE(Load(R"(
@@ -148,9 +164,7 @@ export func throughLoop(count: int): int {
   for (const std::size_t remaining : {1U, 3U, 4U, 5U, 8U}) {
     runtime::NativeExecution execution(instance);
     std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - remaining);
-    for (auto& frame : outer) {
-      execution.MaterializeFrame(frame, *descend);
-    }
+    MaterializeOuterFrames(execution, *descend, outer);
     const auto fitting_depth = static_cast<std::int64_t>(remaining - 1);
     const std::array fitting{runtime::Value::Integer(fitting_depth)};
     const auto returned = runtime::InvokeNativeFunction(execution, *descend, fitting);
@@ -183,9 +197,7 @@ export func throughLoop(count: int): int {
       EXPECT_EQ(loop_result->AsInteger(), 4096);
     }
     EXPECT_EQ(execution.current_frame(), &outer.back());
-    while (execution.current_frame() != nullptr) {
-      execution.Exit();
-    }
+    ExitAllFrames(execution);
     const std::array zero{runtime::Value::Integer(0)};
     const auto reused = runtime::InvokeNativeFunction(execution, *descend, zero);
     ASSERT_TRUE(reused);
@@ -208,9 +220,7 @@ export func sorted(count: int): int {
   for (const std::size_t remaining : {1U, 2U}) {
     runtime::NativeExecution execution(instance);
     std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - remaining);
-    for (auto& frame : outer) {
-      execution.MaterializeFrame(frame, *sorted);
-    }
+    MaterializeOuterFrames(execution, *sorted, outer);
     for (const std::int64_t count : {0, 1, 2}) {
       const std::array arguments{runtime::Value::Integer(count)};
       const auto result = runtime::InvokeNativeFunction(execution, *sorted, arguments);
@@ -223,9 +233,7 @@ export func sorted(count: int): int {
       }
       EXPECT_EQ(execution.current_frame(), &outer.back());
     }
-    while (execution.current_frame() != nullptr) {
-      execution.Exit();
-    }
+    ExitAllFrames(execution);
   }
 }
 

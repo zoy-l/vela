@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 from pathlib import Path
 import subprocess
@@ -12,6 +13,10 @@ import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
 from tools.package import create_package
+
+
+NATIVE_TEST_INCLUDES = (ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
+                        ROOT / "third_party/googletest/googletest/include")
 
 
 def vela_executable() -> Path:
@@ -34,7 +39,7 @@ def create_native_package(executable: Path, destination: Path) -> dict[str, str]
 
 
 def compile_native_host(test: unittest.TestCase, sources: list[Path], executable: Path,
-                        libraries: list[Path], includes: list[Path], *, cwd: Path) -> None:
+                        libraries: list[Path], includes: Sequence[Path], *, cwd: Path) -> None:
     tools = toolchain_tools()
     if sys.platform == "win32":
         objects = []

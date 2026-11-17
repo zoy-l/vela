@@ -238,8 +238,6 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
         EmitTemporary({.opcode = Opcode::GetIndex, .lhs = base, .rhs = one, .location = location});
     const auto previous =
         EmitTemporary({.opcode = Opcode::GetIndex, .lhs = base, .rhs = zero, .location = location});
-    RecordValueType(first, element_type);
-    RecordValueType(previous, element_type);
     const std::array values{first, previous};
     const std::array types{element_type, element_type};
     EmitArrayCallback(callback, values, *signature, types, guard, location);

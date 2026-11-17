@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -42,6 +43,14 @@ bool BooleanHost(NativeContext& /*unused*/, bool value) noexcept {
   return value;
 }
 
+void SetIntegerImportSignature(NativeFunctionDescription& function,
+                               const std::array<NativeCallParameter, 1>& parameters) {
+  function.parameters = Table(parameters);
+  function.parameter_count = static_cast<std::uint32_t>(parameters.size());
+  function.result_type = 0;
+  function.flags = kNativeTypedFunction;
+}
+
 TEST(NativeInstanceTest, RejectsAbiAndTargetBeforeCreatingLayouts) {
   Isolate isolate;
   const auto initial = isolate.layout_counts();
@@ -75,10 +84,7 @@ TEST(NativeInstanceTest, BindsImportsBeforePublishingAnyLayoutsOrConstants) {
   NativeFunctionDescription function;
   function.name = Text("read");
   function.native_symbol = Text("host.read");
-  function.parameters = Table(parameters);
-  function.parameter_count = 1;
-  function.result_type = 0;
-  function.flags = kNativeTypedFunction;
+  SetIntegerImportSignature(function, parameters);
   const std::array functions{function};
   NativeClassDescription owned;
   owned.name = Text("Owned");
@@ -117,16 +123,14 @@ TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedSt
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   const std::array types{
-      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer)}};
+      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer)},
+  };
   const std::array parameters{NativeCallParameter{.name = Text("value"), .type = 0}};
   std::array<NativeFunctionDescription, 4> functions;
   functions[0].name = Text("plainFirst");
   functions[1].name = Text("first");
   functions[1].native_symbol = Text("host.first");
-  functions[1].parameters = Table(parameters);
-  functions[1].parameter_count = 1;
-  functions[1].result_type = 0;
-  functions[1].flags = kNativeTypedFunction;
+  SetIntegerImportSignature(functions[1], parameters);
   functions[2].name = Text("plainSecond");
   functions[3] = functions[1];
   functions[3].name = Text("second");
@@ -139,14 +143,15 @@ TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedSt
   auto created = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(created);
   auto instance = std::move(*created);
-  const auto* imports = instance->program().imports;
-  ASSERT_NE(imports, nullptr);
+  const auto* import_data = instance->program().imports;
+  ASSERT_NE(import_data, nullptr);
+  const auto imports = std::span(import_data, image.functions.size);
   EXPECT_EQ(imports[0], nullptr);
   EXPECT_EQ(imports[1], &first->aot_entry());
   EXPECT_EQ(imports[2], nullptr);
   EXPECT_EQ(imports[3], &second->aot_entry());
   heap.Collect();
-  EXPECT_EQ(instance->program().imports, imports);
+  EXPECT_EQ(instance->program().imports, import_data);
   EXPECT_EQ(imports[1], &first->aot_entry());
   EXPECT_EQ(imports[3], &second->aot_entry());
   instance.reset();

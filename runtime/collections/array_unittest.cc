@@ -18,10 +18,18 @@
 namespace vela::runtime {
 namespace {
 
-TEST(IntegerArrayRangeTest, MutationsAndFailedWritesOnlyWeakenTheRange) {
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+template <std::size_t GcThreshold>
+struct IntegerArrayFixture : public testing::Test {
+  Isolate isolate{GcThreshold};
+  Heap& heap = isolate.heap();
+  const ArrayLayout* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+};
+
+using IntegerArrayRangeTest = IntegerArrayFixture<1>;
+using MutableIntegerArrayRangeTest = IntegerArrayFixture<kDefaultGcThreshold>;
+using ArraySortTest = IntegerArrayFixture<1>;
+
+TEST_F(IntegerArrayRangeTest, MutationsAndFailedWritesOnlyWeakenTheRange) {
   Value value = Value::Object(heap.AllocateArray(*layout, 2));
   ASSERT_NE(value.AsObject(), nullptr);
   const RootRange root(heap, &value, 1);
@@ -61,10 +69,30 @@ TEST(IntegerArrayRangeTest, MutationsAndFailedWritesOnlyWeakenTheRange) {
             internal::IntegerArrayRange::Unknown);
 }
 
-TEST(IntegerArrayRangeTest, MutableViewsCannotBeRecertifiedByNarrowWrites) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+TEST_F(IntegerArrayRangeTest, SignedEndpointsInvalidateExactlyOutsideTheCertifiedDomain) {
+  constexpr auto kMaximum = std::numeric_limits<std::int32_t>::max();
+  constexpr std::array<std::int64_t, 6> kValues{
+      std::numeric_limits<std::int64_t>::min(),
+      -1,
+      0,
+      kMaximum,
+      static_cast<std::int64_t>(kMaximum) + 1,
+      std::numeric_limits<std::int64_t>::max(),
+  };
+  for (const auto integer : kValues) {
+    SCOPED_TRACE(integer);
+    Value value = Value::Object(heap.AllocateArray(*layout, 1));
+    ASSERT_NE(value.AsObject(), nullptr);
+    const RootRange root(heap, &value, 1);
+    auto& array = *value.AsObject();
+    ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(integer)));
+    EXPECT_EQ(internal::ArrayBuffer(array).integer_range,
+              integer < 0 || integer > kMaximum ? internal::IntegerArrayRange::Unknown
+                                                : internal::IntegerArrayRange::Nonnegative31);
+  }
+}
+
+TEST_F(MutableIntegerArrayRangeTest, MutableViewsCannotBeRecertifiedByNarrowWrites) {
   Value value = Value::Object(heap.AllocateArray(*layout, 2));
   ASSERT_NE(value.AsObject(), nullptr);
   const RootRange root(heap, &value, 1);
@@ -83,11 +111,9 @@ TEST(IntegerArrayRangeTest, MutableViewsCannotBeRecertifiedByNarrowWrites) {
   EXPECT_EQ(internal::ArrayBuffer(*tagged).integer_range, internal::IntegerArrayRange::Unknown);
 }
 
-TEST(IntegerArrayRangeTest, SlicesAndSplicesPropagateOnlyExistingProofs) {
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
-  std::array<Value, 5> values;
+TEST_F(IntegerArrayRangeTest, SlicesAndSplicesPropagateOnlyExistingProofs) {
+  constexpr std::size_t kRetainedArrays = 5;
+  std::array<Value, kRetainedArrays> values;
   const RootRange roots(heap, values.data(), values.size());
   values[0] = Value::Object(heap.AllocateArray(*layout, 2));
   ASSERT_NE(values[0].AsObject(), nullptr);
@@ -142,10 +168,7 @@ TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
   EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 42);
 }
 
-TEST(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEveryValue) {
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+TEST_F(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEveryValue) {
   Value value = Value::Object(heap.AllocateArray(*layout, 3));
   const RootRange root(heap, &value, 1);
   auto& array = *value.AsObject();
@@ -170,10 +193,7 @@ TEST(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEver
   }
 }
 
-TEST(ArraySortTest, IntegerOrdersPreserveFullDomainDuplicatesAndReceiverIdentity) {
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+TEST_F(ArraySortTest, IntegerOrdersPreserveFullDomainDuplicatesAndReceiverIdentity) {
   constexpr std::array<std::int64_t, 8> kValues{
       0,
       std::numeric_limits<std::int64_t>::max(),
@@ -208,13 +228,33 @@ TEST(ArraySortTest, IntegerOrdersPreserveFullDomainDuplicatesAndReceiverIdentity
   }
 }
 
-TEST(ArraySortTest, IntegerOrdersAcceptEmptyArraysAndRejectTaggedStorage) {
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
+TEST_F(ArraySortTest, PreservesCertifiedRangesWithoutRecertifyingEscapedViews) {
+  Value value = Value::Object(heap.AllocateArray(*layout, 3));
+  ASSERT_NE(value.AsObject(), nullptr);
+  const RootRange root(heap, &value, 1);
+  auto& array = *value.AsObject();
+  auto& range = internal::ArrayBuffer(array).integer_range;
+  ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(42)));
+  ASSERT_TRUE(heap.SetElement(array, 1, Value::Integer(1)));
+  for (const auto builtin : {Builtin::ArraySortIntAscending, Builtin::ArraySortIntDescending}) {
+    ASSERT_TRUE(ExecuteArrayBuiltin(builtin, std::span(&value, 1), heap));
+    EXPECT_EQ(range, internal::IntegerArrayRange::Nonnegative31);
+  }
+  const auto exposed = Heap::IntegerElements(array);
+  ASSERT_TRUE(exposed);
+  ASSERT_TRUE(ExecuteArrayBuiltin(Builtin::ArraySortIntAscending, std::span(&value, 1), heap));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Unknown);
+  exposed->front() = -1;
+  ASSERT_TRUE(ExecuteArrayBuiltin(Builtin::ArraySortIntDescending, std::span(&value, 1), heap));
+  EXPECT_EQ(range, internal::IntegerArrayRange::Unknown);
+  EXPECT_EQ(Heap::GetElement(array, 2)->AsInteger(), -1);
+}
+
+TEST_F(ArraySortTest, IntegerOrdersAcceptEmptyArraysAndRejectTaggedStorage) {
   for (const auto nullable : {false, true}) {
-    const auto* layout =
+    const auto* selected_layout =
         isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = nullable}});
-    Value value = Value::Object(heap.AllocateArray(*layout, 0));
+    Value value = Value::Object(heap.AllocateArray(*selected_layout, 0));
     ASSERT_FALSE(value.IsNull());
     const RootRange root(heap, &value, 1);
     for (const auto builtin : {Builtin::ArraySortIntAscending, Builtin::ArraySortIntDescending}) {

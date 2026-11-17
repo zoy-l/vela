@@ -1678,6 +1678,71 @@ export func prefix(initial: int): int {
   ASSERT_TRUE(test::ReturnsInteger(*prefix, kMaximum, overflow));
 }
 
+class JitGlobalLoopTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(JitGlobalLoopTest, ChunksCachedAccessWithoutSkippingColdInitialization) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler,
+                                    R"(
+class Counter {
+  value: int = 0;
+  add(value: int): int { this.value = value; return this.value; }
+}
+let initializations = 0;
+func create(): Counter { initializations++; return Counter(); }
+const object = create();
+export func initialized(): int { return initializations; }
+export func last(): int { return object.value; }
+export func run(values: int[]): int {
+  let sum = 0;
+  for (let index = 0; index < values.length; index++) {
+)" + std::string(GetParam()) + R"(
+  }
+  return sum;
+}
+)",
+                                    NativeCodeTier::Optimized, test::IRPreservation::Preserve);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  // 只有 run 含循环；检查完整流水线仍能越过含安全点和失败出口的全局解析冷入口。
+  EXPECT_NE(compiled->llvm_ir.find("poll.chunk"), std::string::npos);
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  auto& dispatch = isolate.native_dispatch();
+  const auto run = dispatch.FindEntry("main.vela", "run");
+  const auto initialized = dispatch.FindEntry("main.vela", "initialized");
+  const auto last = dispatch.FindEntry("main.vela", "last");
+  ASSERT_TRUE(run);
+  ASSERT_TRUE(initialized);
+  ASSERT_TRUE(last);
+  auto& heap = isolate.heap();
+  const auto* layout =
+      isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
+  for (const std::uint32_t count : {0U, 1U, 128U, 1025U}) {
+    auto* values = heap.AllocateArray(*layout, count);
+    ASSERT_NE(values, nullptr);
+    const auto root = runtime::HostRoot::Create(isolate, runtime::Value::Object(values));
+    ASSERT_TRUE(root);
+    for (std::uint32_t index = 0; index < count; ++index) {
+      ASSERT_TRUE(heap.SetElement(*values, index, runtime::Value::Integer(1)));
+    }
+    const std::array arguments{root->value()};
+    for (std::size_t repeat = 0; repeat < 2; ++repeat) {
+      ASSERT_TRUE(test::ReturnsInteger(*run, static_cast<std::int64_t>(count), arguments));
+      ASSERT_TRUE(test::ReturnsInteger(*initialized, count == 0 ? 0 : 1));
+      if (count != 0) {
+        ASSERT_TRUE(test::ReturnsInteger(*last, 1));
+      }
+      heap.Collect();
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(DirectAccess,
+                         JitGlobalLoopTest,
+                         testing::Values("object.value = values[index]; sum += object.value;",
+                                         "sum += object.add(values[index]);"));
+
 TEST(JitCompilerTest, ChunkedPureLoopsPreserveMemoryAndEarlyExitPrefixes) {
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();

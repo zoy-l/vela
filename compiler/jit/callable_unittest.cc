@@ -32,6 +32,16 @@ namespace {
 
 using frontend::DiagnosticsText;
 
+constexpr std::string_view kArrayCallbackSource = R"(
+external func collect(): void;
+export func decimals(): double[] { return [40.0, 2.0]; }
+export func empty(): int[] { return []; }
+export func required(values: int[]): int {
+  collect();
+  return values.length == 0 ? 42 : values[0] + values[1];
+}
+)";
+
 struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
   void SetUp() override {
     auto created = Compiler::Create();
@@ -50,6 +60,18 @@ struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
 
 void CollectCallbackInputs(runtime::NativeContext& context) noexcept {
   context.isolate().heap().Collect();
+}
+
+std::expected<runtime::HostRoot, ExecutionStatus> CreateForeignIntegerArray(
+    runtime::Isolate& isolate,
+    std::size_t count) {
+  const auto* layout =
+      isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
+  auto* array = isolate.heap().AllocateArray(*layout, count);
+  if (array == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  return runtime::HostRoot::Create(isolate, runtime::Value::Object(array));
 }
 
 TEST_P(JitCallableTest, HostCallbacksKeepExplicitAndImplicitInputsAcrossCollection) {
@@ -119,15 +141,8 @@ export func text(): string { return 42.toString(); }
 TEST_P(JitCallableTest, ArrayCallbackArgumentsKeepCanonicalLayoutsAndNullability) {
   ASSERT_TRUE(
       isolate_.RegisterNative(runtime::NativeFunction::Bind<CollectCallbackInputs>("collect")));
-  const auto published = Publish(R"(
-external func collect(): void;
+  const auto published = Publish(std::string(kArrayCallbackSource) + R"(
 export func integers(): int[] { return [40, 2]; }
-export func decimals(): double[] { return [40.0, 2.0]; }
-export func empty(): int[] { return []; }
-export func required(values: int[]): int {
-  collect();
-  return values.length == 0 ? 42 : values[0] + values[1];
-}
 export func nullable(values: int[]?): int {
   collect();
   return values == null || values.length == 0 ? 42 : values[0] + values[1];
@@ -167,14 +182,12 @@ export func nullable(values: int[]?): int {
   EXPECT_EQ(nullable_result->AsInteger(), 42);
 
   runtime::Isolate other(1);
-  const auto* layout = other.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
-  auto* foreign = other.heap().AllocateArray(*layout, 2);
-  ASSERT_NE(foreign, nullptr);
-  const auto foreign_root = runtime::HostRoot::Create(other, runtime::Value::Object(foreign));
+  const auto foreign_root = CreateForeignIntegerArray(other, 2);
   ASSERT_TRUE(foreign_root);
-  const std::array invalid{runtime::Value::Null(), runtime::Value::Integer(42),
-                           runtime::Value::Object(nullptr), arrays.back().value(),
-                           foreign_root->value()};
+  const std::array invalid{
+      runtime::Value::Null(), runtime::Value::Integer(42), runtime::Value::Object(nullptr),
+      arrays.back().value(),  foreign_root->value(),
+  };
   for (const auto value : invalid) {
     const std::array arguments{value};
     const auto rejected = required->Invoke(arguments);
@@ -186,15 +199,8 @@ export func nullable(values: int[]?): int {
 TEST_P(JitCallableTest, CapturedArrayEntriesKeepBindingsRootsAndValidationAcrossPublication) {
   ASSERT_TRUE(
       isolate_.RegisterNative(runtime::NativeFunction::Bind<CollectCallbackInputs>("collect")));
-  const auto first = R"(
-external func collect(): void;
+  const auto first = std::string(kArrayCallbackSource) + R"(
 export func input(): int[] { return [40, 2]; }
-export func empty(): int[] { return []; }
-export func decimals(): double[] { return [40.0, 2.0]; }
-export func required(values: int[]): int {
-  collect();
-  return values.length == 0 ? 42 : values[0] + values[1];
-}
 export func nullable(values: int[]?): int { collect(); return values == null ? 42 : values[0]; }
 )";
   ASSERT_TRUE(Publish(first));
@@ -247,12 +253,7 @@ export func nullable(values: int[]?): int { collect(); return values == null ? 4
   ASSERT_FALSE(rejected);
   EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidCast);
   runtime::Isolate foreign;
-  const auto* foreign_layout =
-      foreign.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
-  auto* foreign_array = foreign.heap().AllocateArray(*foreign_layout, 0);
-  ASSERT_NE(foreign_array, nullptr);
-  const auto foreign_root =
-      runtime::HostRoot::Create(foreign, runtime::Value::Object(foreign_array));
+  const auto foreign_root = CreateForeignIntegerArray(foreign, 0);
   ASSERT_TRUE(foreign_root);
   const std::array foreign_arguments{foreign_root->value()};
   const auto foreign_result = captured->Invoke(foreign_arguments);
@@ -277,6 +278,40 @@ export func required(values: int[]): int { collect(); return values.length + 41;
   const auto current = named->Invoke(arguments);
   ASSERT_TRUE(current);
   EXPECT_EQ(current->AsInteger(), 43);
+}
+
+TEST_P(JitCallableTest, ArrayVersionEntriesKeepCapturedDescriptionsAndRespectExportWithdrawal) {
+  ASSERT_TRUE(Publish(R"(
+export func input(): int[] { return [42]; }
+export func required(values: int[]): int { return values.length; }
+)"));
+  auto& dispatch = isolate_.native_dispatch();
+  const auto named = dispatch.FindEntry("main.vela", "required");
+  const auto factory = dispatch.FindEntry("main.vela", "input");
+  ASSERT_TRUE(named);
+  ASSERT_TRUE(factory);
+  const auto captured = named->Capture();
+  ASSERT_TRUE(captured);
+  const auto identity = captured->identity();
+  const auto input = factory->Invoke({});
+  ASSERT_TRUE(input);
+  const auto retained = runtime::HostRoot::Create(isolate_, *input);
+  ASSERT_TRUE(retained);
+  ASSERT_TRUE(Publish(R"(
+func required(values: int[]): int { return values.length + 1; }
+export func anchor(values: int[]): int { return required(values); }
+)"));
+  isolate_.heap().Collect();
+  const std::array arguments{retained->value()};
+  EXPECT_EQ(captured->identity(), identity);
+  const auto previous = captured->Invoke(arguments);
+  ASSERT_TRUE(previous);
+  EXPECT_EQ(previous->AsInteger(), 1);
+  const auto current_capture = named->Capture();
+  ASSERT_TRUE(current_capture);
+  const auto rejected = current_capture->Invoke(arguments);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error(), ExecutionStatus::InvalidEntry);
 }
 
 std::string FactorySource(int result) {

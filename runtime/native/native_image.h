@@ -131,7 +131,7 @@ using NativeTypedEntry = void (*)() noexcept;
 // Observe 已完成计算，必须处理返回边界而不能重放函数。
 using NativeHostEntry = std::uint8_t (*)(NativeHostContext*, HeapObject*, NativeValue*) noexcept;
 
-enum class NativeHostTarget : std::uint32_t { Generic, X86_64V4 };
+enum class NativeHostTarget : std::uint8_t { Generic, X86_64V4 };
 // 在绑定时选择一次；CPU 与操作系统均支持该目标后，才可传入对应枚举。
 using NativeHostEntrySelector = NativeHostEntry (*)(NativeHostTarget) noexcept;
 

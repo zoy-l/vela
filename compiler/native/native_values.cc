@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <llvm/ADT/ArrayRef.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -24,6 +25,8 @@
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
+#include <llvm/Support/AtomicOrdering.h>
+#include <llvm/Support/ModRef.h>
 
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
@@ -33,10 +36,13 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
+#include "runtime/heap/array_storage.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_memory_layout.h"
@@ -44,6 +50,53 @@
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
+
+void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source) {
+  for (auto* entry : entries) {
+    if (entry == nullptr) {
+      continue;
+    }
+    // 类型化内部调用的结果独占调用者暂存槽，地址仅在同步 ABI 调用内借用。
+    const auto result = static_cast<unsigned>(entry->arg_size() - 1);
+    entry->addParamAttr(result, llvm::Attribute::NoAlias);
+    entry->addParamAttr(result, llvm::Attribute::getWithCaptureInfo(entry->getContext(),
+                                                                    llvm::CaptureInfo::none()));
+    for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
+      const auto& type = source.value_types[parameter];
+      if (IsReferenceKind(type.kind) && !type.nullable) {
+        entry->addParamAttr(static_cast<unsigned>(parameter + 1), llvm::Attribute::NonNull);
+      }
+    }
+  }
+}
+
+llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control) {
+  auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), control,
+                                             offsetof(runtime::NativeControlState, requests));
+  auto* requests_address = builder.CreateLoad(builder.getPtrTy(), address);
+  // Isolate 在线程执行期间持有固定请求字地址；每次探测仍需原子读取其值。
+  MarkInvariant(*requests_address);
+  auto* requests = builder.CreateLoad(builder.getInt8Ty(), requests_address);
+  requests->setMetadata(
+      kNativePollReadyStateMetadata,
+      llvm::MDNode::get(builder.getContext(), llvm::ConstantAsMetadata::get(builder.getInt8(0))));
+  // 慢路径用 acquire 消费请求；零值探测不读取跨线程发布的数据。
+  requests->setAtomic(llvm::AtomicOrdering::Monotonic);
+  return requests;
+}
+
+llvm::Value* HasNonnegative31ArrayRange(Builder& builder, llvm::Value* array) {
+  auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), array,
+                                             runtime::NativeMemoryLayout::kArrayIntegerRange);
+  auto* range = builder.CreateLoad(
+      builder.getIntNTy(runtime::NativeMemoryLayout::kArrayIntegerRangeBits), address);
+  range->setMetadata(llvm::LLVMContext::MD_tbaa,
+                     NativeMemoryTag(builder.getContext(), MemoryRegion::HeapHeader));
+  return builder.CreateICmpEQ(
+      range, llvm::ConstantInt::get(
+                 range->getType(),
+                 static_cast<std::uint64_t>(runtime::internal::IntegerArrayRange::Nonnegative31)));
+}
 
 std::optional<llvm::CmpInst::Predicate> IntegerComparison(Opcode opcode) {
   switch (opcode) {
@@ -111,6 +164,24 @@ llvm::Value* LoadProgramImage(Builder& builder, llvm::Value* execution) {
   return builder.CreateLoad(builder.getPtrTy(), address);
 }
 
+llvm::LoadInst* LoadInstanceStorage(Builder& builder, llvm::Value* object) {
+  auto* address = builder.CreateConstInBoundsGEP1_64(
+      builder.getInt8Ty(), object, runtime::NativeMemoryLayout::kObjectNativePayload);
+  auto* storage = builder.CreateLoad(builder.getPtrTy(), address);
+  storage->setMetadata(llvm::LLVMContext::MD_tbaa,
+                       NativeMemoryTag(builder.getContext(), MemoryRegion::HeapHeader));
+  return storage;
+}
+
+llvm::LoadInst* LoadInstanceUnready(Builder& builder, llvm::Value* storage) {
+  auto* address = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), storage,
+                                                     offsetof(runtime::InstanceStorage, unready));
+  auto* unready = builder.CreateLoad(builder.getInt32Ty(), address);
+  unready->setMetadata(llvm::LLVMContext::MD_tbaa,
+                       NativeMemoryTag(builder.getContext(), MemoryRegion::InstanceHeader));
+  return unready;
+}
+
 NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode) {
   using runtime::NativeMemoryLayout;
   const auto address = [&](llvm::Value* base, std::size_t offset) {
@@ -129,9 +200,7 @@ NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, Nativ
     MarkInvariant(*physical);
     count = physical;
   } else {
-    auto* payload =
-        load(builder.getPtrTy(), address(object, NativeMemoryLayout::kObjectNativePayload),
-             MemoryRegion::HeapHeader);
+    auto* payload = LoadInstanceStorage(builder, object);
     // 调用方已建立普通脚本实例契约，不含宿主对象或 callable 环境。
     // 此时 native_payload 仅在可重载实例中持有字段块；从物理存储读取字段数也支持派生类。
     auto* indirect = builder.CreateIsNotNull(payload);
@@ -640,22 +709,13 @@ void EmitWrapper(llvm::Module& module,
   auto& context = module.getContext();
   Builder builder(llvm::BasicBlock::Create(context, "entry", entry));
   if (bounded) {
-    using runtime::NativeMemoryLayout;
     auto* miss = llvm::BasicBlock::Create(context, "bounded.unready", entry);
     Builder unmatched(miss);
     unmatched.CreateRet(unmatched.getInt8(runtime::kNativeReflectionCallMiss));
     // 调用点已验证本次边界没有请求并保存观察状态；有界体中没有成功的发布边界。
     // 初始化未完成时必须在任何副作用之前交还完整入口，不能执行后再重放。
-    auto* storage_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), entry->getArg(1),
-                                                       NativeMemoryLayout::kObjectNativePayload);
-    auto* storage = builder.CreateLoad(builder.getPtrTy(), storage_address);
-    storage->setMetadata(llvm::LLVMContext::MD_tbaa,
-                         NativeMemoryTag(context, MemoryRegion::HeapHeader));
-    auto* unready_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), storage,
-                                                       offsetof(runtime::InstanceStorage, unready));
-    auto* unready = builder.CreateLoad(builder.getInt32Ty(), unready_address);
-    unready->setMetadata(llvm::LLVMContext::MD_tbaa,
-                         NativeMemoryTag(context, MemoryRegion::InstanceHeader));
+    auto* storage = LoadInstanceStorage(builder, entry->getArg(1));
+    auto* unready = LoadInstanceUnready(builder, storage);
     auto* initialized = llvm::BasicBlock::Create(context, "bounded.initialized", entry);
     builder.CreateCondBr(builder.CreateICmpEQ(unready, builder.getInt32(0)), initialized, miss,
                          llvm::MDBuilder(context).createLikelyBranchWeights());

@@ -147,7 +147,6 @@ struct CompiledObject final {
 };
 
 std::expected<CompiledObject, std::string> PrepareObject(native::NativeModule& generated,
-                                                         NativeProgramMode mode,
                                                          const CompileOptions& options,
                                                          CompileTimings& timings) {
   using Clock = std::chrono::steady_clock;
@@ -169,9 +168,7 @@ std::expected<CompiledObject, std::string> PrepareObject(native::NativeModule& g
   }
   if (cached.status != CodeCacheStatus::Hit || options.preserve_ir) {
     const auto started = Clock::now();
-    if (const auto finalized =
-            native::Finalize(generated, options.optimization, mode, NativeCodePlacement::Dynamic);
-        !finalized) {
+    if (const auto finalized = native::Finalize(generated); !finalized) {
       return std::unexpected(finalized.error());
     }
     timings.optimization = Clock::now() - started;
@@ -423,9 +420,9 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
                                *reuse);
   }
   const std::string module_name = "vela_jit";
-  auto generated =
-      native::Generate(program, calls, fields, module_name, options.debugging, options.tier,
-                       options.escape, NativeCodePlacement::Dynamic, reuse_plan.reused);
+  auto generated = native::Generate(program, calls, fields, module_name, options.debugging,
+                                    options.tier, options.escape, NativeCodePlacement::Dynamic,
+                                    options.optimization, reuse_plan.reused);
   timings.generation = Clock::now() - generation_started;
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
@@ -440,7 +437,7 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   }
   auto image_data = std::move(generated->image_data);
   const auto entry_symbols = EntrySymbols(*generated, reuse_plan);
-  auto prepared = PrepareObject(*generated, program.native_mode, options, timings);
+  auto prepared = PrepareObject(*generated, options, timings);
   if (!prepared) {
     return std::unexpected(Diagnostic(prepared.error()));
   }

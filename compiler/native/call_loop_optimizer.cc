@@ -11,8 +11,8 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Scalar/LoopUnrollPass.h>
-#include <llvm/Transforms/Utils/LoopUtils.h>
-#include <llvm/Transforms/Utils/UnrollLoop.h>
+
+#include "compiler/native/loop_hints.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -41,11 +41,9 @@ class CallLoopHintsPass : public llvm::PassInfoMixin<CallLoopHintsPass> {
                                      llvm::FunctionAnalysisManager& analyses) {
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      if (!loop->getSubLoops().empty() ||
-          llvm::getUnrollMetadataForLoop(loop, "llvm.loop.unroll.disable") != nullptr ||
-          llvm::getUnrollMetadataForLoop(loop, "llvm.loop.unroll.count") != nullptr ||
-          llvm::getUnrollMetadataForLoop(loop, "llvm.loop.unroll.full") != nullptr ||
+      if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop) ||
           !HasInvariantIndirectCall(*loop) ||
           evolution.getSmallConstantMaxTripCount(loop) < kCallLoopUnrollCount) {
         continue;
@@ -57,10 +55,11 @@ class CallLoopHintsPass : public llvm::PassInfoMixin<CallLoopHintsPass> {
       if (instructions * kMaximumLoopCopies <= kMaximumExpandedInstructions) {
         // 通用优化完成后再展开，保留每次调用、错误出口及观察边界，
         // 只摊薄间接调用循环的计数与回跳；不同时复制嵌套遍历。
-        llvm::addStringMetadataToLoop(loop, "llvm.loop.unroll.count", kCallLoopUnrollCount);
+        SetLoopUnrollCount(*loop, kCallLoopUnrollCount, LoopUnrollHints::Retain);
+        changed = true;
       }
     }
-    return llvm::PreservedAnalyses::all();
+    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
   }
 };
 

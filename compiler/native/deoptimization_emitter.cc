@@ -1,6 +1,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/memory_regions.h"
 #include "runtime/native/native_symbols.h"
 
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Value.h>
 
 #include "compiler/native/integer_loop_optimizer.h"
@@ -247,8 +249,16 @@ void FunctionEmitter::Recover() {
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
   auto* output = IsResuming() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : Output();
   auto* status = builder_.CreateCall(helper, {body_->getArg(0), checkpoint_, output});
-  status->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(module_.getContext(), {}));
+  MarkGuardFailure(*status);
   Finish(status);
+}
+
+void FunctionEmitter::RecoverGuardFailure() {
+  // 失配尚未执行当前操作；恢复 Instruction 状态，不能沿用 AwaitingResult 而跳过调用。
+  SetPosition();
+  StoreRoots(instruction_index_);
+  StoreCheckpoint();
+  Recover();
 }
 
 void FunctionEmitter::EmitRecoveryDispatch() {

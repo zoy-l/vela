@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include <llvm/IR/Instruction.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/Support/Casting.h>
@@ -13,6 +14,12 @@
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler::native {
+
+bool IsFloatingFieldStore(const llvm::Instruction& instruction) {
+  const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+  return store != nullptr && store->getValueOperand()->getType()->isFPOrFPVectorTy() &&
+         HasStorageTag(*store, MemoryRegion::FieldPayloads);
+}
 
 bool HasStorageTag(const llvm::Instruction& instruction, MemoryRegion region) {
   const auto* tag = instruction.getMetadata(llvm::LLVMContext::MD_tbaa);

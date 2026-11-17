@@ -1,5 +1,6 @@
 #include "base/declaration.h"
 #include "runtime/heap/heap.h"
+#include "runtime/native/native_image.h"
 #include "runtime/reflection/reflection_handle.h"
 
 #include <absl/functional/function_ref.h>
@@ -28,7 +29,7 @@ NativeProgramState::NativeProgramState(NativeHostTarget target) : host_target(ta
 NativeProgramState::~NativeProgramState() {
   if (isolate != nullptr) {
     auto& heap = isolate->heap();
-    heap.FreeNative(imports);
+    heap.FreeNative(static_cast<void*>(imports));
     heap.FreeNative(global_states);
     heap.FreeNative(global_caches);
     heap.FreeNative(static_cast<void*>(direct_field_layouts));

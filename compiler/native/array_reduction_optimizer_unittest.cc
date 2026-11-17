@@ -14,6 +14,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/ValueSymbolTable.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Support/Casting.h>
 
 #include "compiler/native/memory_regions.h"
 #include "compiler/test_support/native_pass_test_support.h"
@@ -24,6 +25,31 @@ namespace {
 
 class ArrayReductionOptimizerTest : public testing::TestWithParam<bool> {};
 
+TEST(ArrayReductionShapeTest, RejectsLoopsThatSimplifyCannotGiveAPreheader) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+define void @indirect(ptr %destination, i1 %again) {
+entry:
+  indirectbr ptr %destination, [label %header, label %exit]
+header:
+  br label %latch
+latch:
+  br i1 %again, label %header, label %exit
+exit:
+  ret void
+}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("indirect");
+  function.addFnAttr(kNativeArrayReductionCandidateAttribute);
+  test::RunFunctionPasses(function, AddArrayReductionPasses);
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  test::WithFunctionLoops(*module, [&](auto&, const auto& loops) {
+    ASSERT_FALSE(loops.empty());
+    EXPECT_EQ((*loops.begin())->getLoopPreheader(), nullptr);
+  });
+}
 TEST_P(ArrayReductionOptimizerTest, ChecksTheSliceOwnerAndNeverRetriesTheCheckedFallback) {
   llvm::LLVMContext context;
   auto module = test::ParseModule(R"(

@@ -88,6 +88,8 @@ struct NativeObjectFields final {
 };
 // 只接受普通脚本实例；不接受宿主对象或 native callable 环境，地址不跨安全点借用。
 NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode);
+llvm::LoadInst* LoadInstanceStorage(Builder& builder, llvm::Value* object);
+llvm::LoadInst* LoadInstanceUnready(Builder& builder, llvm::Value* storage);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* MakeOptional(Builder& builder,
@@ -95,6 +97,9 @@ llvm::Value* MakeOptional(Builder& builder,
                           llvm::Value* payload,
                           const SourceType& type);
 void MarkInvariant(llvm::LoadInst& load);
+void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source);
+llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control);
+llvm::Value* HasNonnegative31ArrayRange(Builder& builder, llvm::Value* array);
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType& type);
 llvm::ConstantInt* Status(Builder& builder, ExecutionStatus status);

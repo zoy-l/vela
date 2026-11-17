@@ -8,9 +8,11 @@
 
 #include "base/callable.h"
 #include "base/layout_description.h"
+#include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_type.h"
 #include "runtime/native/native_type_traits.h"
+#include "vela/error.h"
 
 namespace vela {
 namespace {

@@ -215,8 +215,10 @@ extern "C" std::uint8_t vela_native_v1_numeric_parse(std::uint32_t operation,
                                                      NativeValue* result) {
   const auto builtin = static_cast<Builtin>(operation);
   // 生成代码已建立非空字符串契约；解析不分配，沿用语言库的语法、范围与 tryParse 规则。
-  const std::array values{Value::String(source),
-                          radix == nullptr ? Value::Null() : DecodeNativeValue(*radix)};
+  const std::array values{
+      Value::String(source),
+      radix == nullptr ? Value::Null() : DecodeNativeValue(*radix),
+  };
   return StoreNativeResult(result, ExecuteNumericParse(builtin, values));
 }
 

@@ -23,6 +23,7 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_stack.h"
 #include "runtime/strings/string.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -216,9 +217,14 @@ TEST(NativeAbiTest, ArrayEntryArgumentsPublishNestedReferencesDuringMarkAndSweep
     heap.Collect();
     const auto baseline = heap.object_count();
     const auto* integers = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
-    const auto* nested = isolate.CreateArrayLayout(
-        {.element = {
-             .kind = ValueKind::Object, .object_kind = ObjectKind::Array, .array = integers}});
+    const auto* nested = isolate.CreateArrayLayout({
+        .element =
+            {
+                .kind = ValueKind::Object,
+                .object_kind = ObjectKind::Array,
+                .array = integers,
+            },
+    });
     Value input = Value::Object(heap.AllocateArray(*nested, 1));
     ASSERT_NE(input.AsObject(), nullptr);
     RootRange setup(heap, &input, 1, std::nullopt);

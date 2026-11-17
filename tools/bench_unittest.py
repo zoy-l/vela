@@ -671,14 +671,9 @@ class BenchmarkReportTest(unittest.TestCase):
         rows[-1]["end_heap_bytes"] = float("nan")
         with self.assertRaisesRegex(ValueError, "invalid end_heap_bytes"):
             native_call_report({"benchmarks": rows}, names, 1)
-        rows = native_samples()
-        incomplete = [row for row in rows if "/aot/" not in row["name"]]
-        with self.assertRaisesRegex(ValueError, "all eight backends"):
-            native_call_report({"benchmarks": incomplete},
-                               [row["name"] for row in incomplete], 1)
-
-    def test_native_report_requires_each_optimized_path(self) -> None:
-        for backend in ("optimized", "optimized_control"):
+    def test_native_report_requires_every_backend(self) -> None:
+        for backend in ("cpp", "cpp_indirect", "baseline", "baseline_control",
+                        "optimized", "optimized_control", "aot", "aot_control"):
             with self.subTest(backend=backend):
                 rows = [row for row in native_samples() if f"/{backend}/" not in row["name"]]
                 with self.assertRaisesRegex(ValueError, "all eight backends"):

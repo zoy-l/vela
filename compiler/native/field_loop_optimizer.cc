@@ -5,7 +5,9 @@
 #include <optional>
 #include <utility>
 
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AssumptionCache.h>
@@ -13,6 +15,7 @@
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/Analysis.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/CFG.h>
 #include <llvm/IR/Constants.h>
@@ -21,6 +24,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/MDBuilder.h>
@@ -40,13 +44,13 @@
 #include <llvm/Transforms/Utils/LCSSA.h>
 #include <llvm/Transforms/Utils/LoopPeel.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
-#include <llvm/Transforms/Utils/LoopUtils.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 #include <llvm/Transforms/Vectorize/SLPVectorizer.h>
 
 #include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/loop_cloning.h"
+#include "compiler/native/loop_hints.h"
 #include "compiler/native/memory_regions.h"
 #include "runtime/native/native_abi.h"
 
@@ -57,13 +61,32 @@ constexpr unsigned kMaximumFieldLoopTrips = 8;
 constexpr unsigned kMaximumNestedUnrollRounds = 16;
 constexpr std::size_t kMaximumFieldLoopInstructions = 4096;
 constexpr std::size_t kMaximumFieldLocations = 64;
+constexpr unsigned kMaximumFieldVectorLanes = 8;
+constexpr unsigned kInlineFieldLocations = 16;
+constexpr unsigned kInlineFieldAccesses = 8;
 
-bool HasFloatingFields(const llvm::Function& function) {
-  return std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
-    const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-    return store != nullptr && store->getValueOperand()->getType()->isFPOrFPVectorTy() &&
-           HasStorageTag(*store, MemoryRegion::FieldPayloads);
-  });
+bool IsFieldLoopCandidate(const llvm::Function& function) {
+  return function.hasFnAttribute(kNativeArrayReductionCandidateAttribute) &&
+         std::ranges::any_of(llvm::instructions(function), IsFloatingFieldStore);
+}
+
+struct FieldLoopCost final {
+  std::size_t instructions = 0;
+  bool fields = false;
+  bool calls = false;
+};
+
+FieldLoopCost MeasureFieldLoop(const llvm::Loop& loop) {
+  FieldLoopCost cost;
+  for (const auto* block : loop.blocks()) {
+    cost.instructions += block->size();
+    for (const auto& instruction : *block) {
+      cost.fields |= IsFloatingFieldStore(instruction);
+      cost.calls |=
+          llvm::isa<llvm::CallBase>(instruction) && !llvm::isa<llvm::IntrinsicInst>(instruction);
+    }
+  }
+  return cost;
 }
 
 class FieldLoopHintsPass : public llvm::PassInfoMixin<FieldLoopHintsPass> {
@@ -74,41 +97,29 @@ class FieldLoopHintsPass : public llvm::PassInfoMixin<FieldLoopHintsPass> {
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto trips = evolution.getSmallConstantMaxTripCount(loop);
-      if (trips == 0 || trips > kMaximumFieldLoopTrips)
+      if (trips == 0 || trips > kMaximumFieldLoopTrips) {
         continue;
-      std::size_t instructions = 0;
-      bool fields = false;
-      bool calls = false;
-      for (auto* block : loop->blocks()) {
-        instructions += block->size();
-        for (auto& instruction : *block) {
-          if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
-            fields |= store->getValueOperand()->getType()->isFPOrFPVectorTy() &&
-                      HasStorageTag(*store, MemoryRegion::FieldPayloads);
-          }
-          calls |= llvm::isa<llvm::CallBase>(instruction) &&
-                   !llvm::isa<llvm::IntrinsicInst>(instruction);
-        }
       }
-      if (!fields || calls || instructions * trips > kMaximumFieldLoopInstructions ||
-          function.getInstructionCount() + instructions * (trips - 1) >
-              4 * kMaximumFieldLoopInstructions)
+      const auto cost = MeasureFieldLoop(*loop);
+      const auto instructions = cost.instructions;
+      if (!cost.fields || cost.calls || instructions * trips > kMaximumFieldLoopInstructions ||
+          function.getInstructionCount() + (instructions * (trips - 1)) >
+              4 * kMaximumFieldLoopInstructions) {
         continue;
+      }
       if (trips == 1) {
         auto* latch = loop->getLoopLatch();
         auto* branch =
             latch == nullptr ? nullptr : llvm::dyn_cast<llvm::CondBrInst>(latch->getTerminator());
         if (branch == nullptr ||
-            (loop->contains(branch->getSuccessor(0)) == loop->contains(branch->getSuccessor(1))))
+            (loop->contains(branch->getSuccessor(0)) == loop->contains(branch->getSuccessor(1)))) {
           continue;
+        }
         branch->setCondition(llvm::ConstantInt::getBool(function.getContext(),
                                                         !loop->contains(branch->getSuccessor(0))));
         return llvm::PreservedAnalyses::none();
       }
-      if (auto* metadata = loop->getLoopID()) {
-        loop->setLoopID(*llvm::makeFollowupLoopID(metadata, {}, "llvm.loop.unroll.", true));
-      }
-      llvm::addStringMetadataToLoop(loop, "llvm.loop.unroll.count", trips);
+      SetLoopUnrollCount(*loop, trips, LoopUnrollHints::Replace);
       return llvm::PreservedAnalyses::none();
     }
     return llvm::PreservedAnalyses::all();
@@ -117,57 +128,71 @@ class FieldLoopHintsPass : public llvm::PassInfoMixin<FieldLoopHintsPass> {
 
 struct FieldLocation final {
   llvm::Value* pointer;
-  llvm::SmallVector<llvm::Instruction*, 8> accesses;
+  llvm::SmallVector<llvm::Instruction*, kInlineFieldAccesses> accesses;
   llvm::Instruction* first = nullptr;
 };
+
+bool IsScalarizableFieldAccess(const llvm::Instruction& instruction) {
+  llvm::Type* type = nullptr;
+  if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+    if (!load->isSimple()) {
+      return false;
+    }
+    type = load->getType();
+  } else if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+    if (!store->isSimple()) {
+      return false;
+    }
+    type = store->getValueOperand()->getType();
+  }
+  const auto* vector = llvm::dyn_cast_or_null<llvm::FixedVectorType>(type);
+  return vector != nullptr && vector->getElementType()->isDoubleTy() &&
+         vector->getNumElements() <= kMaximumFieldVectorLanes &&
+         HasStorageTag(instruction, MemoryRegion::FieldPayloads);
+}
+
+void ScalarizeFieldAccess(llvm::Instruction& access) {
+  auto* load = llvm::dyn_cast<llvm::LoadInst>(&access);
+  auto* store = llvm::dyn_cast<llvm::StoreInst>(&access);
+  auto* type = llvm::cast<llvm::FixedVectorType>(
+      load != nullptr ? load->getType() : store->getValueOperand()->getType());
+  auto* pointer = load != nullptr ? load->getPointerOperand() : store->getPointerOperand();
+  const auto alignment = load != nullptr ? load->getAlign() : store->getAlign();
+  llvm::IRBuilder<> builder(&access);
+  llvm::Value* value = load != nullptr ? llvm::PoisonValue::get(type) : store->getValueOperand();
+  for (unsigned lane = 0; lane < type->getNumElements(); ++lane) {
+    const auto offset = lane * sizeof(double);
+    auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), pointer, offset);
+    llvm::Instruction* scalar = nullptr;
+    if (load != nullptr) {
+      auto* item = builder.CreateAlignedLoad(builder.getDoubleTy(), address,
+                                             llvm::commonAlignment(alignment, offset));
+      scalar = item;
+      value = builder.CreateInsertElement(value, item, lane);
+    } else {
+      scalar = builder.CreateAlignedStore(builder.CreateExtractElement(value, lane), address,
+                                          llvm::commonAlignment(alignment, offset));
+    }
+    scalar->copyMetadata(access);
+  }
+  if (load != nullptr) {
+    load->replaceAllUsesWith(value);
+  }
+  access.eraseFromParent();
+}
 
 class ScalarFieldAccessPass : public llvm::PassInfoMixin<ScalarFieldAccessPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
                                      llvm::FunctionAnalysisManager& /*analyses*/) {
-    llvm::SmallVector<llvm::Instruction*, 16> accesses;
+    llvm::SmallVector<llvm::Instruction*, kInlineFieldLocations> accesses;
     for (auto& instruction : llvm::instructions(function)) {
-      auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
-      auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-      auto* type = load != nullptr    ? load->getType()
-                   : store != nullptr ? store->getValueOperand()->getType()
-                                      : nullptr;
-      const auto* vector = llvm::dyn_cast_or_null<llvm::FixedVectorType>(type);
-      if (vector != nullptr && vector->getElementType()->isDoubleTy() &&
-          vector->getNumElements() <= 8 &&
-          HasStorageTag(instruction, MemoryRegion::FieldPayloads) &&
-          ((load != nullptr && load->isSimple()) || (store != nullptr && store->isSimple()))) {
+      if (IsScalarizableFieldAccess(instruction)) {
         accesses.push_back(&instruction);
       }
     }
     for (auto* access : accesses) {
-      auto* load = llvm::dyn_cast<llvm::LoadInst>(access);
-      auto* store = llvm::dyn_cast<llvm::StoreInst>(access);
-      auto* type = llvm::cast<llvm::FixedVectorType>(
-          load != nullptr ? load->getType() : store->getValueOperand()->getType());
-      auto* pointer = load != nullptr ? load->getPointerOperand() : store->getPointerOperand();
-      const auto alignment = load != nullptr ? load->getAlign() : store->getAlign();
-      llvm::IRBuilder<> builder(access);
-      llvm::Value* value =
-          load != nullptr ? llvm::PoisonValue::get(type) : store->getValueOperand();
-      for (unsigned lane = 0; lane < type->getNumElements(); ++lane) {
-        const auto offset = lane * sizeof(double);
-        auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), pointer, offset);
-        llvm::Instruction* scalar = nullptr;
-        if (load != nullptr) {
-          auto* item = builder.CreateAlignedLoad(builder.getDoubleTy(), address,
-                                                 llvm::commonAlignment(alignment, offset));
-          scalar = item;
-          value = builder.CreateInsertElement(value, item, lane);
-        } else {
-          scalar = builder.CreateAlignedStore(builder.CreateExtractElement(value, lane), address,
-                                              llvm::commonAlignment(alignment, offset));
-        }
-        scalar->copyMetadata(*access);
-      }
-      if (load != nullptr)
-        load->replaceAllUsesWith(value);
-      access->eraseFromParent();
+      ScalarizeFieldAccess(*access);
     }
     return accesses.empty() ? llvm::PreservedAnalyses::all() : llvm::PreservedAnalyses::none();
   }
@@ -175,10 +200,10 @@ class ScalarFieldAccessPass : public llvm::PassInfoMixin<ScalarFieldAccessPass> 
 
 struct FieldLoopPlan final {
   llvm::Loop* loop;
-  llvm::SmallVector<llvm::BasicBlock*, 16> blocks;
-  llvm::SmallVector<FieldLocation, 16> fields;
-  llvm::SmallVector<FieldLocation, 8> readers;
-  llvm::SmallVector<std::pair<llvm::Value*, llvm::Value*>, 16> disjoint;
+  llvm::SmallVector<llvm::BasicBlock*, kInlineFieldLocations> blocks;
+  llvm::SmallVector<FieldLocation, kInlineFieldLocations> fields;
+  llvm::SmallVector<FieldLocation, kInlineFieldAccesses> readers;
+  llvm::SmallVector<std::pair<llvm::Value*, llvm::Value*>, kInlineFieldLocations> disjoint;
 };
 
 llvm::MemoryLocation Location(const llvm::Instruction* instruction) {
@@ -198,69 +223,118 @@ bool IsEntryInvariant(const llvm::Value* pointer,
 }
 
 bool IsAdministrative(const llvm::StoreInst& store) {
+  // 此阶段只暂存 double 字段载荷；其他 kind 写入仍是可观察内存效果，不能一并折叠。
   const auto* constant = llvm::dyn_cast<llvm::Constant>(store.getValueOperand());
-  if (constant == nullptr)
+  if (constant == nullptr) {
     return false;
-  if (constant->isNullValue() && HasStorageTag(store, MemoryRegion::Roots))
+  }
+  if (constant->isNullValue() && HasStorageTag(store, MemoryRegion::Roots)) {
     return true;
+  }
   const auto* kind = llvm::dyn_cast<llvm::ConstantInt>(constant);
   return kind != nullptr &&
          kind->equalsInt(static_cast<unsigned>(runtime::NativeValueKind::Double)) &&
          HasStorageTag(store, MemoryRegion::FieldKinds);
 }
 
-bool CanStageMemory(const llvm::Loop& loop) {
-  for (auto* block : loop.blocks()) {
-    const auto* terminator = block->getTerminator();
-    if (!llvm::isa<llvm::UncondBrInst>(terminator) && !llvm::isa<llvm::CondBrInst>(terminator))
-      return false;
-    for (const auto& instruction : *block) {
-      if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
-        if (!load->isSimple())
-          return false;
-      } else if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
-        if (!store->isSimple())
-          return false;
-      } else if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
-        if (llvm::isa<llvm::AssumeInst>(call))
-          continue;
-        if (!llvm::isa<llvm::IntrinsicInst>(call) || !call->doesNotAccessMemory() ||
-            call->mayThrow() || !call->willReturn() || call->isConvergent())
-          return false;
-      } else if (instruction.mayReadOrWriteMemory() || instruction.mayHaveSideEffects()) {
-        return false;
-      }
-    }
+bool CanStageInstruction(const llvm::Instruction& instruction) {
+  if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+    return load->isSimple();
   }
-  return true;
+  if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+    return store->isSimple();
+  }
+  if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+    return llvm::isa<llvm::AssumeInst>(call) ||
+           (llvm::isa<llvm::IntrinsicInst>(call) && call->doesNotAccessMemory() &&
+            !call->mayThrow() && call->willReturn() && !call->isConvergent());
+  }
+  return !instruction.mayReadOrWriteMemory() && !instruction.mayHaveSideEffects();
+}
+
+bool CanStageMemory(const llvm::Loop& loop) {
+  return std::ranges::all_of(loop.blocks(), [](const auto* block) {
+    return llvm::isa<llvm::UncondBrInst, llvm::CondBrInst>(block->getTerminator()) &&
+           std::ranges::all_of(*block, CanStageInstruction);
+  });
 }
 
 bool HasStablePointer(const llvm::Value* pointer,
                       const llvm::Loop& loop,
-                      llvm::AAResults& aliases) {
-  if (loop.isLoopInvariant(pointer))
+                      llvm::AAResults& aliases,
+                      llvm::ArrayRef<llvm::MemoryLocation> stores,
+                      llvm::DenseMap<const llvm::Value*, bool>& stable) {
+  if (loop.isLoopInvariant(pointer)) {
     return true;
-  if (auto* address = llvm::dyn_cast<llvm::GetElementPtrInst>(pointer)) {
-    return HasStablePointer(address->getPointerOperand(), loop, aliases) &&
-           std::ranges::all_of(address->indices(), [&](const auto& index) {
-             return loop.isLoopInvariant(index.get());
-           });
   }
-  const auto* load = llvm::dyn_cast<llvm::LoadInst>(pointer);
-  if (load == nullptr || !load->isSimple() || !load->getType()->isPointerTy() ||
-      !loop.isLoopInvariant(load->getPointerOperand()) ||
-      !HasStorageTag(*load, MemoryRegion::Elements))
-    return false;
-  const auto location = llvm::MemoryLocation::get(load);
+  if (const auto found = stable.find(pointer); found != stable.end()) {
+    return found->second;
+  }
+  bool result = false;
+  if (const auto* address = llvm::dyn_cast<llvm::GetElementPtrInst>(pointer)) {
+    result = HasStablePointer(address->getPointerOperand(), loop, aliases, stores, stable) &&
+             std::ranges::all_of(address->indices(), [&](const auto& index) {
+               return loop.isLoopInvariant(index.get());
+             });
+  } else if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(pointer);
+             load != nullptr && load->isSimple() && load->getType()->isPointerTy() &&
+             loop.isLoopInvariant(load->getPointerOperand()) &&
+             HasStorageTag(*load, MemoryRegion::Elements)) {
+    const auto location = llvm::MemoryLocation::get(load);
+    result = std::ranges::all_of(
+        stores, [&](const auto& store) { return aliases.isNoAlias(location, store); });
+  }
+  stable.try_emplace(pointer, result);
+  return result;
+}
+
+std::optional<llvm::SmallVector<llvm::LoadInst*, kInlineFieldAccesses>> MatchFieldEntry(
+    const llvm::Loop& loop,
+    const llvm::DominatorTree& dominators,
+    llvm::AAResults& aliases) {
+  std::size_t instructions = 0;
+  bool needs_entry = false;
+  llvm::SmallVector<llvm::MemoryLocation, kInlineFieldLocations> stores;
+  llvm::SmallVector<const llvm::Value*, kInlineFieldLocations> fields;
+  llvm::SmallVector<llvm::LoadInst*, kInlineFieldAccesses> loads;
   for (auto* block : loop.blocks()) {
-    for (const auto& instruction : *block) {
+    instructions += block->size();
+    if (instructions > kMaximumFieldLoopInstructions) {
+      return std::nullopt;
+    }
+    for (auto& instruction : *block) {
       const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-      if (store != nullptr && !aliases.isNoAlias(location, llvm::MemoryLocation::get(store))) {
-        return false;
+      if (store != nullptr) {
+        stores.push_back(llvm::MemoryLocation::get(store));
+        if (IsAdministrative(*store)) {
+          continue;
+        }
+        const auto* pointer = store->getPointerOperand();
+        if (!store->getValueOperand()->getType()->isDoubleTy() ||
+            !HasStorageTag(*store, MemoryRegion::FieldPayloads)) {
+          return std::nullopt;
+        }
+        fields.push_back(pointer);
+        needs_entry |= !IsEntryInvariant(pointer, loop, dominators);
+      } else if (auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+                 load != nullptr && load->getType()->isPointerTy()) {
+        loads.push_back(load);
       }
     }
   }
-  return true;
+  if (!needs_entry) {
+    return std::nullopt;
+  }
+  llvm::DenseMap<const llvm::Value*, bool> stable;
+  if (!std::ranges::all_of(fields, [&](const auto* pointer) {
+        return HasStablePointer(pointer, loop, aliases, stores, stable);
+      })) {
+    return std::nullopt;
+  }
+  llvm::erase_if(loads, [&](const auto* load) {
+    return !HasStablePointer(load, loop, aliases, stores, stable);
+  });
+  return loads;
 }
 
 class FieldEntryPeelPass : public llvm::PassInfoMixin<FieldEntryPeelPass> {
@@ -272,48 +346,24 @@ class FieldEntryPeelPass : public llvm::PassInfoMixin<FieldEntryPeelPass> {
     auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
     auto& aliases = analyses.getResult<llvm::AAManager>(function);
     for (auto* loop : loops.getLoopsInPreorder()) {
-      if (!loop->getSubLoops().empty() || !CanStageMemory(*loop))
+      if (!loop->getSubLoops().empty() || !CanStageMemory(*loop) || !llvm::canPeel(loop)) {
         continue;
-      if (!llvm::canPeel(loop))
-        continue;
-      std::size_t instructions = 0;
-      bool needs_entry = false;
-      bool eligible = true;
-      for (auto* block : loop->blocks()) {
-        instructions += block->size();
-        for (auto& instruction : *block) {
-          const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-          if (store == nullptr || IsAdministrative(*store))
-            continue;
-          auto* pointer = store->getPointerOperand();
-          eligible &= store->getValueOperand()->getType()->isDoubleTy() &&
-                      HasStorageTag(*store, MemoryRegion::FieldPayloads) &&
-                      HasStablePointer(pointer, *loop, aliases);
-          needs_entry |= !IsEntryInvariant(pointer, *loop, dominators);
-        }
       }
-      if (!eligible || !needs_entry || instructions > kMaximumFieldLoopInstructions)
+      const auto stable = MatchFieldEntry(*loop, dominators, aliases);
+      if (!stable) {
         continue;
+      }
       auto& assumptions = analyses.getResult<llvm::AssumptionAnalysis>(function);
-      llvm::SmallVector<llvm::LoadInst*, 8> stable;
-      for (auto* block : loop->blocks()) {
-        for (auto& instruction : *block) {
-          auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
-          if (load != nullptr && load->getType()->isPointerTy() &&
-              HasStablePointer(load, *loop, aliases))
-            stable.push_back(load);
-        }
-      }
       llvm::ValueToValueMapTy mapped;
       // 首轮仍在原守卫后读取；完整成功后，剩余循环才能复用已经可用的固定数组元素。
       llvm::peelLoop(loop, 1, false, &loops, &evolution, dominators, &assumptions, true, mapped);
       const auto* entry = loop->getLoopPreheader()->getTerminator();
-      for (auto* load : stable) {
+      for (auto* load : *stable) {
         llvm::Value* value = mapped.lookup(load);
         const auto* definition = llvm::dyn_cast_or_null<llvm::Instruction>(value);
         if (value != nullptr &&
             (definition == nullptr || dominators.dominates(definition, entry))) {
-          // 别名分析已证明循环不写该元素；借用成功首轮的真实读取，无需投机读取或额外表。
+          // 借用成功首轮的真实读取，不在原守卫前额外解引用。
           load->replaceAllUsesWith(value);
           load->eraseFromParent();
         }
@@ -324,16 +374,18 @@ class FieldEntryPeelPass : public llvm::PassInfoMixin<FieldEntryPeelPass> {
   }
 };
 
-llvm::SmallVector<llvm::BasicBlock*, 16> IterationPath(llvm::Loop& loop) {
+llvm::SmallVector<llvm::BasicBlock*, kInlineFieldLocations> IterationPath(llvm::Loop& loop) {
   auto* latch = loop.getLoopLatch();
-  llvm::SmallVector<llvm::BasicBlock*, 16> blocks;
+  llvm::SmallVector<llvm::BasicBlock*, kInlineFieldLocations> blocks;
   auto* current = loop.getHeader();
   while (true) {
-    if (blocks.size() == loop.getBlocks().size())
+    if (blocks.size() == loop.getBlocks().size()) {
       return {};
+    }
     blocks.push_back(current);
-    if (current == latch)
+    if (current == latch) {
       break;
+    }
     llvm::BasicBlock* next = nullptr;
     for (auto* successor : llvm::successors(current)) {
       if (loop.contains(successor)) {
@@ -343,13 +395,143 @@ llvm::SmallVector<llvm::BasicBlock*, 16> IterationPath(llvm::Loop& loop) {
         next = successor;
       }
     }
-    if (next == nullptr)
+    if (next == nullptr) {
       return {};
+    }
     current = next;
   }
-  if (blocks.size() != loop.getBlocks().size())
+  if (blocks.size() != loop.getBlocks().size()) {
     return {};
+  }
   return blocks;
+}
+
+struct FieldWrites final {
+  llvm::SmallVector<FieldLocation, kInlineFieldLocations> fields;
+  llvm::DenseMap<llvm::Value*, std::size_t> indices;
+  std::size_t instructions = 0;
+};
+
+std::optional<FieldWrites> MatchFieldWrites(const llvm::Loop& loop,
+                                            const llvm::DominatorTree& dominators) {
+  FieldWrites result;
+  std::size_t writes = 0;
+  const auto* latch = loop.getLoopLatch()->getTerminator();
+  for (auto* block : loop.blocks()) {
+    result.instructions += block->size();
+    if (result.instructions > kMaximumFieldLoopInstructions) {
+      return std::nullopt;
+    }
+    for (auto& instruction : *block) {
+      auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+      if (store == nullptr || IsAdministrative(*store)) {
+        continue;
+      }
+      auto* pointer = store->getPointerOperand();
+      if (!IsEntryInvariant(pointer, loop, dominators) || !dominators.dominates(store, latch) ||
+          !store->getValueOperand()->getType()->isDoubleTy() ||
+          store->getAlign().value() < alignof(double) ||
+          !HasStorageTag(*store, MemoryRegion::FieldPayloads)) {
+        return std::nullopt;
+      }
+      auto [position, inserted] = result.indices.try_emplace(pointer, result.fields.size());
+      if (inserted) {
+        result.fields.push_back({.pointer = pointer, .accesses = {}});
+      }
+      result.fields[position->second].accesses.push_back(store);
+      ++writes;
+    }
+  }
+  const auto count = result.fields.size();
+  if (count == 0 || count >= writes || count > kMaximumFieldLocations) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+std::optional<llvm::SmallVector<FieldLocation, kInlineFieldAccesses>> MatchFieldReaders(
+    const llvm::Loop& loop,
+    FieldWrites& writes,
+    const llvm::DominatorTree& dominators,
+    llvm::AAResults& aliases) {
+  llvm::SmallVector<FieldLocation, kInlineFieldAccesses> readers;
+  llvm::DenseMap<llvm::Value*, std::size_t> indices;
+  llvm::SmallVector<llvm::MemoryLocation, kInlineFieldLocations> locations;
+  for (const auto& field : writes.fields) {
+    locations.push_back(Location(field.accesses.front()));
+  }
+  for (auto* block : loop.blocks()) {
+    for (auto& instruction : *block) {
+      auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+      if (load == nullptr) {
+        continue;
+      }
+      auto* pointer = load->getPointerOperand();
+      if (const auto found = writes.indices.find(pointer); found != writes.indices.end()) {
+        if (!load->getType()->isDoubleTy()) {
+          return std::nullopt;
+        }
+        writes.fields[found->second].accesses.push_back(load);
+        continue;
+      }
+      const auto location = llvm::MemoryLocation::get(load);
+      const auto overlaps = std::ranges::any_of(
+          locations, [&](const auto& field) { return !aliases.isNoAlias(location, field); });
+      if (!overlaps) {
+        continue;
+      }
+      if (!load->getType()->isDoubleTy() || load->getAlign().value() < alignof(double) ||
+          !IsEntryInvariant(pointer, loop, dominators)) {
+        return std::nullopt;
+      }
+      auto [position, inserted] = indices.try_emplace(pointer, readers.size());
+      if (inserted) {
+        readers.push_back({.pointer = pointer, .accesses = {}});
+      }
+      readers[position->second].accesses.push_back(load);
+    }
+  }
+  return readers;
+}
+
+llvm::Instruction* FirstDominatingAccess(const FieldLocation& field,
+                                         const llvm::Loop& loop,
+                                         const llvm::DominatorTree& dominators) {
+  const auto* latch = loop.getLoopLatch()->getTerminator();
+  auto* first = field.accesses.front();
+  for (auto* access : field.accesses) {
+    if (first != access && !dominators.dominates(first, access)) {
+      first = access;
+    }
+  }
+  // 指令级 dominates 判断值在使用点是否可用；自身位置需要单独接受。
+  return dominators.dominates(first, latch) &&
+                 std::ranges::all_of(field.accesses,
+                                     [&](auto* access) {
+                                       return first == access ||
+                                              dominators.dominates(first, access);
+                                     })
+             ? first
+             : nullptr;
+}
+
+void FindFieldDisjointness(FieldLoopPlan& plan, llvm::AAResults& aliases) {
+  const auto& fields = plan.fields;
+  for (std::size_t left = 0; left < fields.size(); ++left) {
+    const auto& field = fields[left];
+    const auto location = Location(field.accesses.front());
+    const auto append = [&](const FieldLocation& right) {
+      if (!aliases.isNoAlias(location, Location(right.accesses.front()))) {
+        plan.disjoint.emplace_back(field.pointer, right.pointer);
+      }
+    };
+    for (std::size_t right = left + 1; right < fields.size(); ++right) {
+      append(fields[right]);
+    }
+    for (const auto& reader : plan.readers) {
+      append(reader);
+    }
+  }
 }
 
 std::optional<FieldLoopPlan> AnalyzeFieldLoop(llvm::Loop& loop,
@@ -358,111 +540,48 @@ std::optional<FieldLoopPlan> AnalyzeFieldLoop(llvm::Loop& loop,
   auto* preheader = loop.getLoopPreheader();
   auto* latch = loop.getLoopLatch();
   if (preheader == nullptr || latch == nullptr || !loop.getSubLoops().empty() ||
-      !loop.isLoopExiting(latch) || !CanStageMemory(loop))
+      !loop.isLoopExiting(latch) || !CanStageMemory(loop)) {
     return std::nullopt;
+  }
   auto blocks = IterationPath(loop);
-  if (blocks.empty())
+  if (blocks.empty()) {
     return std::nullopt;
+  }
+  auto writes = MatchFieldWrites(loop, dominators);
+  if (!writes) {
+    return std::nullopt;
+  }
+  auto readers = MatchFieldReaders(loop, *writes, dominators, aliases);
+  if (!readers || writes->fields.size() + readers->size() > kMaximumFieldLocations) {
+    return std::nullopt;
+  }
   FieldLoopPlan plan{
-      .loop = &loop, .blocks = std::move(blocks), .fields = {}, .readers = {}, .disjoint = {}};
-  llvm::DenseMap<llvm::Value*, std::size_t> fields;
-  std::size_t instructions = 0;
-  std::size_t writes = 0;
-  for (auto* block : loop.blocks()) {
-    instructions += block->size();
-    if (instructions > kMaximumFieldLoopInstructions)
-      return std::nullopt;
-    for (auto& instruction : *block) {
-      auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
-      if (store == nullptr)
-        continue;
-      auto* pointer = store->getPointerOperand();
-      if (IsAdministrative(*store)) {
-        continue;
-      } else {
-        if (!IsEntryInvariant(pointer, loop, dominators) ||
-            !dominators.dominates(store, latch->getTerminator()) ||
-            !store->getValueOperand()->getType()->isDoubleTy() || store->getAlign().value() < 8 ||
-            !HasStorageTag(*store, MemoryRegion::FieldPayloads)) {
-          return std::nullopt;
-        }
-        auto [position, inserted] = fields.try_emplace(pointer, plan.fields.size());
-        if (inserted)
-          plan.fields.push_back({.pointer = pointer, .accesses = {}});
-        plan.fields[position->second].accesses.push_back(store);
-        ++writes;
-      }
-    }
-  }
-  if (plan.fields.empty() || plan.fields.size() >= writes ||
-      plan.fields.size() > kMaximumFieldLocations)
-    return std::nullopt;
-  llvm::DenseMap<llvm::Value*, std::size_t> readers;
-  for (auto* block : loop.blocks()) {
-    for (auto& instruction : *block) {
-      auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
-      if (load == nullptr)
-        continue;
-      const auto location = llvm::MemoryLocation::get(load);
-      auto* pointer = load->getPointerOperand();
-      if (const auto found = fields.find(pointer); found != fields.end()) {
-        if (!load->getType()->isDoubleTy())
-          return std::nullopt;
-        plan.fields[found->second].accesses.push_back(load);
-        continue;
-      }
-      const auto overlaps = std::ranges::any_of(plan.fields, [&](const auto& field) {
-        return !aliases.isNoAlias(location, Location(field.accesses.front()));
-      });
-      if (!overlaps)
-        continue;
-      if (!load->getType()->isDoubleTy() || load->getAlign().value() < 8 ||
-          !IsEntryInvariant(pointer, loop, dominators))
-        return std::nullopt;
-      auto [position, inserted] = readers.try_emplace(pointer, plan.readers.size());
-      if (inserted)
-        plan.readers.push_back({.pointer = pointer, .accesses = {}});
-      plan.readers[position->second].accesses.push_back(load);
-    }
-  }
-  if (plan.fields.size() + plan.readers.size() > kMaximumFieldLocations)
-    return std::nullopt;
+      .loop = &loop,
+      .blocks = std::move(blocks),
+      .fields = std::move(writes->fields),
+      .readers = std::move(*readers),
+      .disjoint = {},
+  };
   for (auto& field : plan.fields) {
-    for (auto* first : field.accesses) {
-      if (dominators.dominates(first, latch->getTerminator()) &&
-          std::ranges::all_of(field.accesses, [&](auto* access) {
-            return first == access || dominators.dominates(first, access);
-          })) {
-        field.first = first;
-        break;
-      }
-    }
+    field.first = FirstDominatingAccess(field, loop, dominators);
     if (field.first == nullptr) {
       return std::nullopt;
     }
   }
-  for (std::size_t left = 0; left < plan.fields.size(); ++left) {
-    const auto& field = plan.fields[left];
-    const auto append = [&](const FieldLocation& right) {
-      if (!aliases.isNoAlias(Location(field.accesses.front()), Location(right.accesses.front()))) {
-        plan.disjoint.emplace_back(field.pointer, right.pointer);
-      }
-    };
-    for (std::size_t right = left + 1; right < plan.fields.size(); ++right)
-      append(plan.fields[right]);
-    for (const auto& reader : plan.readers)
-      append(reader);
-  }
+  FindFieldDisjointness(plan, aliases);
   std::size_t exits = 0;
   for (auto* block : plan.blocks) {
-    if (block == loop.getLoopLatch())
+    if (block == latch) {
       continue;
-    for (auto* successor : llvm::successors(block))
-      exits += !loop.contains(successor);
+    }
+    for (auto* successor : llvm::successors(block)) {
+      exits += static_cast<std::size_t>(!loop.contains(successor));
+    }
   }
   // 预算覆盖首轮剥离、克隆、别名守卫及所有失败出口的最坏前缀提交。
-  if (2 * instructions + 4 * plan.disjoint.size() + 2 * plan.fields.size() * (exits + 2) + exits >
-      kMaximumFieldLoopInstructions) {
+  const auto expansion = (2 * writes->instructions) + (4 * plan.disjoint.size()) +
+                         (2 * plan.fields.size() * (exits + 2)) + exits;
+  if (expansion > kMaximumFieldLoopInstructions) {
     return std::nullopt;
   }
   return plan;
@@ -471,13 +590,94 @@ std::optional<FieldLoopPlan> AnalyzeFieldLoop(llvm::Loop& loop,
 void AddScope(llvm::Instruction& instruction,
               unsigned kind,
               llvm::ArrayRef<llvm::Metadata*> values) {
-  llvm::SmallVector<llvm::Metadata*, 16> combined;
+  llvm::SmallVector<llvm::Metadata*, kInlineFieldLocations> combined;
   if (auto* existing = instruction.getMetadata(kind)) {
-    for (const auto& operand : existing->operands())
+    for (const auto& operand : existing->operands()) {
       combined.push_back(operand.get());
+    }
   }
   combined.append(values.begin(), values.end());
   instruction.setMetadata(kind, llvm::MDNode::get(instruction.getContext(), combined));
+}
+
+struct FieldStaging final {
+  llvm::SmallVector<llvm::AllocaInst*, kInlineFieldLocations> shadows;
+  llvm::DenseMap<llvm::Instruction*, std::size_t> written_fields;
+};
+
+template <class Annotate>
+FieldStaging StageFieldAccesses(const FieldLoopPlan& plan,
+                                const llvm::ValueToValueMapTy& mapped,
+                                const Annotate& annotate) {
+  auto* function = plan.loop->getHeader()->getParent();
+  llvm::IRBuilder<> allocation(&function->getEntryBlock(), function->getEntryBlock().begin());
+  FieldStaging staged;
+  for (std::size_t index = 0; index < plan.fields.size(); ++index) {
+    const auto& field = plan.fields[index];
+    auto* shadow = allocation.CreateAlloca(allocation.getDoubleTy(), nullptr, "field.shadow");
+    staged.shadows.push_back(shadow);
+    for (auto* access : field.accesses) {
+      auto* cloned = llvm::cast<llvm::Instruction>(mapped.lookup(access));
+      annotate(*cloned, index);
+      if (auto* load = llvm::dyn_cast<llvm::LoadInst>(cloned)) {
+        if (access == field.first) {
+          // 第一次读取保留原有守卫和位置，不能为了快路径在失败之前额外解引用。
+          llvm::IRBuilder<> initialize(load->getNextNode());
+          initialize.CreateStore(load, shadow);
+        } else {
+          load->setOperand(0, shadow);
+        }
+      } else {
+        llvm::cast<llvm::StoreInst>(cloned)->setOperand(1, shadow);
+        staged.written_fields.insert({access, index});
+      }
+    }
+  }
+  return staged;
+}
+
+template <class Flush>
+void FlushFieldExitPrefixes(const FieldLoopPlan& plan,
+                            const llvm::ValueToValueMapTy& mapped,
+                            const FieldStaging& staged,
+                            const Flush& flush_shadow) {
+  auto& loop = *plan.loop;
+  auto* function = loop.getHeader()->getParent();
+  auto& context = function->getContext();
+  llvm::SmallVector<bool, kInlineFieldLocations> written(plan.fields.size(), false);
+  for (auto* block : plan.blocks) {
+    for (auto& instruction : *block) {
+      if (const auto found = staged.written_fields.find(&instruction);
+          found != staged.written_fields.end()) {
+        written[found->second] = true;
+      }
+    }
+    if (block == loop.getLoopLatch() ||
+        std::ranges::none_of(written, [](auto value) { return value; })) {
+      continue;
+    }
+    auto* cloned = llvm::cast<llvm::BasicBlock>(mapped.lookup(block));
+    auto* branch = cloned->getTerminator();
+    for (unsigned edge = 0; edge < branch->getNumSuccessors(); ++edge) {
+      auto* successor = block->getTerminator()->getSuccessor(edge);
+      if (loop.contains(successor)) {
+        continue;
+      }
+      auto* flush = llvm::BasicBlock::Create(context, "fields.prefix", function, successor);
+      llvm::IRBuilder<> prefix(flush);
+      // 唯一正常路径明确每个失败边之前已执行的写入；只提交该前缀，不重放计算。
+      for (std::size_t index = 0; index < plan.fields.size(); ++index) {
+        if (written[index]) {
+          flush_shadow(prefix, index);
+        }
+      }
+      prefix.CreateBr(successor);
+      for (auto& phi : successor->phis()) {
+        phi.setIncomingBlock(static_cast<unsigned>(phi.getBasicBlockIndex(cloned)), flush);
+      }
+      branch->setSuccessor(edge, flush);
+    }
+  }
 }
 
 void StageFieldLoop(const FieldLoopPlan& plan) {
@@ -494,90 +694,41 @@ void StageFieldLoop(const FieldLoopPlan& plan) {
   VersionLoop(loop, *disjoint, mapped, ".fields");
   llvm::MDBuilder metadata(context);
   auto* domain = metadata.createAnonymousAliasScopeDomain("staged fields");
-  llvm::SmallVector<llvm::Metadata*, 16> scopes;
-  for (std::size_t index = 0; index < plan.fields.size() + plan.readers.size(); ++index) {
+  llvm::SmallVector<llvm::Metadata*, kInlineFieldLocations> scopes;
+  const auto field_count = plan.fields.size();
+  for (std::size_t index = 0; index < field_count + plan.readers.size(); ++index) {
     scopes.push_back(metadata.createAnonymousAliasScope(domain));
   }
   const auto annotate = [&](llvm::Instruction& instruction, std::size_t index) {
-    llvm::SmallVector<llvm::Metadata*, 16> separate;
-    const auto count = index < plan.fields.size() ? scopes.size() : plan.fields.size();
+    llvm::SmallVector<llvm::Metadata*, kInlineFieldLocations> separate;
+    const auto count = index < field_count ? scopes.size() : field_count;
     for (std::size_t other = 0; other < count; ++other) {
-      if (other != index)
+      if (other != index) {
         separate.push_back(scopes[other]);
+      }
     }
     AddScope(instruction, llvm::LLVMContext::MD_alias_scope, {scopes[index]});
     AddScope(instruction, llvm::LLVMContext::MD_noalias, separate);
   };
   for (std::size_t index = 0; index < plan.readers.size(); ++index) {
     for (auto* access : plan.readers[index].accesses) {
-      annotate(*llvm::cast<llvm::Instruction>(mapped.lookup(access)), plan.fields.size() + index);
+      annotate(*llvm::cast<llvm::Instruction>(mapped.lookup(access)), field_count + index);
     }
   }
-  auto* fast_latch = llvm::cast<llvm::BasicBlock>(mapped.lookup(loop.getLoopLatch()));
-  llvm::IRBuilder<> commit(fast_latch->getTerminator());
-  llvm::IRBuilder<> allocation(&function->getEntryBlock(), function->getEntryBlock().begin());
-  llvm::SmallVector<llvm::AllocaInst*, 16> shadows;
-  llvm::DenseMap<llvm::Instruction*, std::size_t> written_fields;
-  for (std::size_t index = 0; index < plan.fields.size(); ++index) {
+  const auto staged = StageFieldAccesses(plan, mapped, annotate);
+  const auto flush_shadow = [&](llvm::IRBuilder<>& builder, std::size_t index) {
     const auto& field = plan.fields[index];
-    auto* shadow = allocation.CreateAlloca(allocation.getDoubleTy(), nullptr, "field.shadow");
-    shadows.push_back(shadow);
-    for (auto* access : field.accesses) {
-      auto* cloned = llvm::cast<llvm::Instruction>(mapped.lookup(access));
-      annotate(*cloned, index);
-      if (auto* load = llvm::dyn_cast<llvm::LoadInst>(cloned)) {
-        if (access == field.first) {
-          // 第一次读取保留原有守卫和位置，不能为了快路径在失败之前额外解引用。
-          llvm::IRBuilder<> initialize(load->getNextNode());
-          initialize.CreateStore(load, shadow);
-        } else {
-          load->setOperand(0, shadow);
-        }
-      } else {
-        llvm::cast<llvm::StoreInst>(cloned)->setOperand(1, shadow);
-        written_fields.insert({access, index});
-      }
-    }
-    auto* value = commit.CreateLoad(commit.getDoubleTy(), shadow);
-    auto* stored = commit.CreateAlignedStore(value, field.pointer, llvm::Align(8));
+    auto* value = builder.CreateLoad(builder.getDoubleTy(), staged.shadows[index]);
+    auto* stored = builder.CreateAlignedStore(value, field.pointer, llvm::Align(alignof(double)));
     stored->copyMetadata(*field.accesses.front());
     annotate(*stored, index);
+  };
+  auto* fast_latch = llvm::cast<llvm::BasicBlock>(mapped.lookup(loop.getLoopLatch()));
+  llvm::IRBuilder<> commit(fast_latch->getTerminator());
+  for (std::size_t index = 0; index < field_count; ++index) {
+    flush_shadow(commit, index);
   }
-  llvm::SmallVector<bool, 16> written(plan.fields.size(), false);
-  for (auto* block : plan.blocks) {
-    for (auto& instruction : *block) {
-      if (const auto found = written_fields.find(&instruction); found != written_fields.end()) {
-        written[found->second] = true;
-      }
-    }
-    if (block == loop.getLoopLatch() ||
-        std::ranges::none_of(written, [](auto value) { return value; }))
-      continue;
-    auto* cloned = llvm::cast<llvm::BasicBlock>(mapped.lookup(block));
-    auto* branch = cloned->getTerminator();
-    for (unsigned edge = 0; edge < branch->getNumSuccessors(); ++edge) {
-      auto* successor = block->getTerminator()->getSuccessor(edge);
-      if (loop.contains(successor))
-        continue;
-      auto* flush = llvm::BasicBlock::Create(context, "fields.prefix", function, successor);
-      llvm::IRBuilder<> prefix(flush);
-      // 唯一正常路径明确每个失败边之前已执行的写入；只提交该前缀，不重放计算。
-      for (std::size_t index = 0; index < plan.fields.size(); ++index) {
-        if (!written[index])
-          continue;
-        const auto& field = plan.fields[index];
-        auto* value = prefix.CreateLoad(prefix.getDoubleTy(), shadows[index]);
-        auto* stored = prefix.CreateAlignedStore(value, field.pointer, llvm::Align(8));
-        stored->copyMetadata(*field.accesses.front());
-        annotate(*stored, index);
-      }
-      prefix.CreateBr(successor);
-      for (auto& phi : successor->phis()) {
-        phi.setIncomingBlock(static_cast<unsigned>(phi.getBasicBlockIndex(cloned)), flush);
-      }
-      branch->setSuccessor(edge, flush);
-    }
-  }
+  FlushFieldExitPrefixes(plan, mapped, staged, flush_shadow);
   // 标签和清根保持原位置；所有可观察出口均已提交当前写入前缀。
 }
 
@@ -594,13 +745,71 @@ class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
         plans.push_back(std::move(*plan));
       }
     }
-    for (const auto& plan : plans)
+    for (const auto& plan : plans) {
       StageFieldLoop(plan);
-    if (plans.empty())
+    }
+    if (plans.empty()) {
       return llvm::PreservedAnalyses::all();
+    }
     return llvm::PreservedAnalyses::none();
   }
 };
+
+llvm::Instruction* EarlierFieldCalculationAnchor(
+    const llvm::Instruction& instruction,
+    llvm::ArrayRef<llvm::BasicBlock*> blocks,
+    const llvm::DenseMap<llvm::BasicBlock*, std::size_t>& positions,
+    const llvm::DominatorTree& dominators,
+    std::size_t current) {
+  std::size_t first = 0;
+  for (const auto& operand : instruction.operands()) {
+    const auto* definition = llvm::dyn_cast<llvm::Instruction>(operand.get());
+    if (definition != nullptr) {
+      if (const auto found = positions.find(definition->getParent()); found != positions.end()) {
+        first = std::max(first, found->second);
+      }
+    }
+  }
+  if (first >= current) {
+    return nullptr;
+  }
+  auto* anchor = blocks[first]->getTerminator();
+  if (std::ranges::any_of(instruction.operands(), [&](const auto& operand) {
+        const auto* definition = llvm::dyn_cast<llvm::Instruction>(operand.get());
+        return definition != nullptr && !dominators.dominates(definition, anchor);
+      })) {
+    return nullptr;
+  }
+  return anchor;
+}
+
+std::size_t ScheduleFieldCalculations(llvm::Loop& loop, const llvm::DominatorTree& dominators) {
+  const auto blocks = IterationPath(loop);
+  llvm::DenseMap<llvm::BasicBlock*, std::size_t> positions;
+  for (std::size_t index = 0; index < blocks.size(); ++index) {
+    positions.insert({blocks[index], index});
+  }
+  std::size_t moved = 0;
+  for (std::size_t index = 1; index < blocks.size(); ++index) {
+    auto* block = blocks[index];
+    for (auto cursor = block->begin(); cursor != block->end();) {
+      auto& instruction = *cursor++;
+      if (!instruction.getType()->isFPOrFPVectorTy() || llvm::isa<llvm::PHINode>(instruction) ||
+          instruction.mayReadOrWriteMemory() || instruction.mayHaveSideEffects() ||
+          !llvm::isSafeToSpeculativelyExecute(&instruction)) {
+        continue;
+      }
+      auto* anchor =
+          EarlierFieldCalculationAnchor(instruction, blocks, positions, dominators, index);
+      if (anchor != nullptr) {
+        // 仅提前可安全投机的独立计算；依赖次序、守卫和字段提交保持不变。
+        instruction.moveBefore(anchor->getIterator());
+        ++moved;
+      }
+    }
+  }
+  return moved;
+}
 
 class FieldCalculationSchedulePass : public llvm::PassInfoMixin<FieldCalculationSchedulePass> {
  public:
@@ -608,46 +817,13 @@ class FieldCalculationSchedulePass : public llvm::PassInfoMixin<FieldCalculation
                                      llvm::FunctionAnalysisManager& analyses) {
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     const auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
-    bool changed = false;
+    std::size_t moved = 0;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      if (!loop->getSubLoops().empty() || loop->getLoopLatch() == nullptr || !CanStageMemory(*loop))
-        continue;
-      const auto blocks = IterationPath(*loop);
-      llvm::DenseMap<llvm::BasicBlock*, std::size_t> positions;
-      for (std::size_t index = 0; index < blocks.size(); ++index)
-        positions.insert({blocks[index], index});
-      for (std::size_t index = 1; index < blocks.size(); ++index) {
-        auto* block = blocks[index];
-        for (auto cursor = block->begin(); cursor != block->end();) {
-          auto& instruction = *cursor++;
-          if (!instruction.getType()->isFPOrFPVectorTy() || llvm::isa<llvm::PHINode>(instruction) ||
-              instruction.mayReadOrWriteMemory() || instruction.mayHaveSideEffects() ||
-              !llvm::isSafeToSpeculativelyExecute(&instruction))
-            continue;
-          std::size_t first = 0;
-          for (const auto& operand : instruction.operands()) {
-            const auto* definition = llvm::dyn_cast<llvm::Instruction>(operand.get());
-            if (definition != nullptr) {
-              if (const auto found = positions.find(definition->getParent());
-                  found != positions.end())
-                first = std::max(first, found->second);
-            }
-          }
-          if (first >= index)
-            continue;
-          auto* anchor = blocks[first]->getTerminator();
-          if (std::ranges::any_of(instruction.operands(), [&](const auto& operand) {
-                const auto* definition = llvm::dyn_cast<llvm::Instruction>(operand.get());
-                return definition != nullptr && !dominators.dominates(definition, anchor);
-              }))
-            continue;
-          // 仅提前无内存效果且可安全投机的计算；依赖次序、守卫和所有字段提交保持不变。
-          instruction.moveBefore(anchor->getIterator());
-          changed = true;
-        }
+      if (loop->getSubLoops().empty() && loop->getLoopLatch() != nullptr && CanStageMemory(*loop)) {
+        moved += ScheduleFieldCalculations(*loop, dominators);
       }
     }
-    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+    return moved == 0 ? llvm::PreservedAnalyses::all() : llvm::PreservedAnalyses::none();
   }
 };
 
@@ -655,9 +831,9 @@ class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
                                      llvm::FunctionAnalysisManager& analyses) {
-    if (!function.hasFnAttribute(kNativeArrayReductionCandidateAttribute) ||
-        !HasFloatingFields(function))
+    if (!IsFieldLoopCandidate(function)) {
       return llvm::PreservedAnalyses::all();
+    }
     auto preserved = llvm::PreservedAnalyses::all();
     for (unsigned round = 0; round < kMaximumNestedUnrollRounds; ++round) {
       llvm::FunctionPassManager hints;
@@ -666,8 +842,9 @@ class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
       hints.addPass(FieldLoopHintsPass());
       const auto selected = hints.run(function, analyses);
       preserved.intersect(selected);
-      if (selected.areAllPreserved())
+      if (selected.areAllPreserved()) {
         break;
+      }
       llvm::FunctionPassManager preparation;
       preparation.addPass(
           llvm::LoopUnrollPass(llvm::LoopUnrollOptions(3, true).setUpperBound(true)));
@@ -719,20 +896,22 @@ class LateFieldGuardPass : public llvm::PassInfoMixin<LateFieldGuardPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
                                      llvm::FunctionAnalysisManager& analyses) {
-    if (!function.hasFnAttribute(kNativeArrayReductionCandidateAttribute) ||
-        !HasFloatingFields(function))
+    if (!IsFieldLoopCandidate(function)) {
       return llvm::PreservedAnalyses::all();
+    }
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
-    llvm::SmallVector<llvm::FCmpInst*, 16> guards;
+    llvm::SmallVector<llvm::FCmpInst*, kInlineFieldLocations> guards;
     for (auto& instruction : llvm::instructions(function)) {
       auto* compare = llvm::dyn_cast<llvm::FCmpInst>(&instruction);
       if (compare == nullptr || compare->getPredicate() != llvm::CmpInst::FCMP_UNE ||
           !compare->getOperand(0)->getType()->isDoubleTy() ||
-          loops.getLoopFor(compare->getParent()) == nullptr)
+          loops.getLoopFor(compare->getParent()) == nullptr) {
         continue;
+      }
       const auto* zero = llvm::dyn_cast<llvm::ConstantFP>(compare->getOperand(1));
-      if (zero != nullptr && zero->isZero())
+      if (zero != nullptr && zero->isZero()) {
         guards.push_back(compare);
+      }
     }
     for (auto* guard : guards) {
       llvm::IRBuilder<> builder(guard);

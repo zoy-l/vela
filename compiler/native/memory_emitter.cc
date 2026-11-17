@@ -31,7 +31,6 @@
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
-#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/array_storage.h"
@@ -352,8 +351,7 @@ llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
   auto& context = module_.getContext();
   auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
   auto* inspect = llvm::BasicBlock::Create(context, "field.inspect", body_);
-  auto* unready_address = ByteAddress(storage, offsetof(InstanceStorage, unready));
-  auto* unready = LoadMemory(builder_.getInt32Ty(), unready_address, MemoryRegion::InstanceHeader);
+  auto* unready = LoadInstanceUnready(builder_, storage);
   builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, inspect,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(inspect);
@@ -387,7 +385,7 @@ llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
             state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
         available, unavailable, llvm::MDBuilder(context).createLikelyBranchWeights());
     builder_.SetInsertPoint(available);
-    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready_address,
+    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready->getPointerOperand(),
                 MemoryRegion::InstanceHeader);
     StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)), state_address,
                 MemoryRegion::FieldStates);
@@ -456,9 +454,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
       LoadMemory(builder_.getInt64Ty(), ByteAddress(cache, offsetof(NativeFieldCache, kind_offset)),
                  MemoryRegion::FieldCache);
   // 字段块可在提交时迁移；只在本安全点之后读取，地址不跨任何运行时调用保留。
-  auto* storage =
-      LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
-                 MemoryRegion::HeapHeader);
+  auto* storage = LoadInstanceStorage(builder_, object);
   auto* values = ByteAddress(storage, sizeof(InstanceStorage));
   builder_.SetInsertPoint(EmitFieldReadiness(storage, instruction, slot, std::nullopt, resolve));
   // 全部字段就绪后不再读取或写入逐字段状态，直到发布替换整个字段块。
@@ -491,9 +487,30 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   builder_.SetInsertPoint(done);
 }
 
-void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object) {
-  using runtime::InstanceStorage;
+llvm::Value* FunctionEmitter::GuardReadyFields(ReceiverLayout receiver) {
   using runtime::NativeMemoryLayout;
+  auto* object = receiver.object;
+  auto& context = module_.getContext();
+  auto* matched = llvm::BasicBlock::Create(context, "field.matched", body_);
+  auto* recover = llvm::BasicBlock::Create(context, "field.recover", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
+  auto* layout =
+      LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),
+                 MemoryRegion::HeapHeader);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(layout, receiver.expected), matched, recover,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(matched);
+  auto* storage = LoadInstanceStorage(builder_, object);
+  auto* unready = LoadInstanceUnready(builder_, storage);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, recover,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(recover);
+  RecoverGuardFailure();
+  builder_.SetInsertPoint(ready);
+  return storage;
+}
+
+void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object) {
   const auto declaration = instruction.field_declaration;
   if (!declaration) {
     std::unreachable();
@@ -512,46 +529,10 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
     guarded_receiver =
         field_targets_.at(*declaration).owner == program_.layouts.types[receiver].index;
   }
-  if (guarded_receiver) {
-    // 直接调用与反射缓存分别守卫规范接收者布局，并验证全部字段就绪。
-    // 该共享片段没有发布、分配或其他用户调用，保留原算术失败和字段写入前缀。
-    auto* storage = LoadMemory(builder_.getPtrTy(),
-                               ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
-                               MemoryRegion::HeapHeader);
-    const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
-    EmitFieldAccess(instruction, object, address);
-    return;
-  }
-  auto& context = module_.getContext();
-  auto* matched = llvm::BasicBlock::Create(context, "field.matched", body_);
-  auto* recover = llvm::BasicBlock::Create(context, "field.recover", body_);
-  auto* layout =
-      LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),
-                 MemoryRegion::HeapHeader);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(layout, direct.layout), matched, recover,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(matched);
-  auto* storage =
-      LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
-                 MemoryRegion::HeapHeader);
-  // 优化片段只借用完整就绪的字段块；惰性字段与布局失配统一由规范基线操作处理。
-  // 成功片段不再混入状态初始化写入，布局、存储和就绪守卫可按有界预算复用。
-  auto* unready =
-      LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, unready)),
-                 MemoryRegion::InstanceHeader);
-  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, recover,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(recover);
-  // 不执行当前读写；保存规范输入后由基线处理布局变化、惰性初始化和精确异常。
-  // 冷路径直接退出当前机器帧，成功路径间不再汇合可能修改堆存储的运行时调用。
-  SetPosition();
-  StoreRoots(instruction_index_);
-  StoreCheckpoint();
-  Recover();
-  recover->getTerminator()->setMetadata(kNativeGuardFailureMetadata,
-                                        llvm::MDNode::get(context, {}));
-  builder_.SetInsertPoint(ready);
+  // 标量字段体的直接调用和反射入口已经验证规范接收者布局及全部字段就绪。
+  auto* storage = guarded_receiver
+                      ? LoadInstanceStorage(builder_, object)
+                      : GuardReadyFields({.object = object, .expected = direct.layout});
   const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
   EmitFieldAccess(instruction, object, address);
 }
@@ -718,10 +699,11 @@ void FunctionEmitter::InvalidateArrayIntegerRange(llvm::Value* array,
        array_access_.element_bits[reg] <= runtime::internal::kNonnegative31Mask)) {
     return;
   }
-  StoreMemory(
-      builder_.getInt32(static_cast<std::uint32_t>(runtime::internal::IntegerArrayRange::Unknown)),
-      ByteAddress(array, runtime::NativeMemoryLayout::kArrayIntegerRange),
-      MemoryRegion::HeapHeader);
+  StoreMemory(llvm::ConstantInt::get(
+                  builder_.getIntNTy(runtime::NativeMemoryLayout::kArrayIntegerRangeBits),
+                  static_cast<std::uint64_t>(runtime::internal::IntegerArrayRange::Unknown)),
+              ByteAddress(array, runtime::NativeMemoryLayout::kArrayIntegerRange),
+              MemoryRegion::HeapHeader);
 }
 
 void FunctionEmitter::WriteElement(llvm::Value* address,

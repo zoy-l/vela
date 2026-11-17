@@ -180,21 +180,23 @@ Future FailedCallback(Isolate& isolate,
   return result;
 }
 
+bool HasArrayLayout(Value value, const ArrayLayout& layout) {
+  const auto* object = value.IsObject() ? value.AsObject() : nullptr;
+  return object != nullptr && Heap::ArrayTypeOf(*object) == &layout;
+}
+
 std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstance& instance,
                                                               const NativeCallParameter& parameter,
                                                               Value value) {
   const auto& declared = instance.layouts().types.at(parameter.type);
   const auto optional = (parameter.flags & kNativeOptionalParameter) != 0;
   if (const auto* array = declared.array; array != nullptr) {
-    // 实例化后的数组约束只持有规范元素布局，没有 nominal、enum 或 callable 转换。
+    // 规范数组布局完整表达容器约束；无需 nominal、enum 或 callable 转换。
     if (value.IsNull() && (declared.nullable || optional)) {
       return value;
     }
-    const auto* object = value.IsObject() ? value.AsObject() : nullptr;
-    if (object == nullptr || Heap::ArrayTypeOf(*object) != array) {
-      return std::unexpected(ExecutionStatus::InvalidCast);
-    }
-    return value;
+    return HasArrayLayout(value, *array) ? std::expected<Value, ExecutionStatus>(value)
+                                         : std::unexpected(ExecutionStatus::InvalidCast);
   }
   auto type = declared;
   if (optional) {
@@ -548,15 +550,14 @@ std::expected<Value, ExecutionStatus> CompleteInvocation(
                         ? selected_host
                         : nullptr;
   const auto value = input.front();
-  auto* object = value.IsObject() ? value.AsObject() : nullptr;
-  if (object == nullptr || Heap::ArrayTypeOf(*object) != &array) {
+  if (!HasArrayLayout(value, array)) {
     return RejectArrayEntry(instance, input, parent, failure, ExecutionStatus::InvalidCast);
   }
+  auto* object = value.AsObject();
   if (host != nullptr) {
     const auto limit = CurrentNativeStackLimit();
     NativeHostContext context(instance.program(), isolate.native_control().state(),
-                              parent == nullptr ? 0 : parent->frame_count(), limit.value_or(0),
-                              limit ? ExecutionStatus::Returned : limit.error());
+                              parent == nullptr ? 0 : parent->frame_count(), limit);
     NativeValue output;
     const auto status = host(&context, object, &output);
     if (status == ToNativeStatus(ExecutionStatus::Returned)) {

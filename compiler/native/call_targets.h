@@ -3,7 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
+
+#include <llvm/ADT/STLFunctionalExtras.h>
 
 #include "base/callable.h"
 #include "base/native_program_mode.h"
@@ -24,6 +27,10 @@ struct NativeCallPlan final {
   std::vector<std::vector<std::optional<CallableTarget>>> direct_calls;
   [[nodiscard]] bool IsEntrySlotRequired(CallEdge edge) const;
 };
+
+void ForEachDirectCallee(const ir::Function& function,
+                         std::span<const std::optional<CallableTarget>> direct,
+                         llvm::function_ref<void(std::size_t)> visit);
 
 NativeCallPlan PlanNativeCalls(const ir::Program& program,
                                NativeCodeTier tier,

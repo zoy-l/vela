@@ -5,6 +5,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <tuple>
 
@@ -14,7 +15,6 @@
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstIterator.h>
@@ -32,6 +32,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "base/declaration.h"
+#include "compiler/native/function_emitter.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/test_support/native_pass_test_support.h"
 #include "runtime/native/native_memory_layout.h"
@@ -40,6 +41,71 @@ namespace vela::compiler::native {
 namespace {
 
 enum class LoopComparison : std::uint8_t { Signed, SameSign, Unsigned };
+
+class BoundedLeafGuardTest : public testing::TestWithParam<bool> {};
+
+TEST_P(BoundedLeafGuardTest, RequiresARealExitAndCopiesOnlyInputsUsedByAcceptedGuards) {
+  llvm::LLVMContext context;
+  auto module = test::ParseModule(R"(
+define i64 @body(ptr %array, i1 %continue) {
+entry:
+  %length.address = getelementptr i8, ptr %array, i64 0
+  %length = load i32, ptr %length.address
+  %bound = zext i32 %length to i64
+  %unused = load i32, ptr %length.address
+  %unused.cast = zext i32 %unused to i64
+  br label %header
+header:
+  %index = phi i64 [ 0, %entry ], [ %next, %latch ]
+  %more = icmp slt i64 %index, %bound
+  br i1 %more, label %first, label %done
+first:
+  br label %latch
+second:
+  br label %latch
+latch:
+  %next = add nsw i64 %index, 1
+  br i1 %continue, label %header, label %done
+done:
+  ret i64 0
+}
+declare i1 @guard(ptr, i1)
+)",
+                                  context);
+  ASSERT_NE(module, nullptr);
+  auto& body = *module->getFunction("body");
+  for (auto& instruction : llvm::instructions(body)) {
+    if (instruction.getName() == "length.address") {
+      llvm::cast<llvm::GetElementPtrInst>(instruction)
+          .setOperand(1, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context),
+                                                runtime::NativeMemoryLayout::kObjectLength));
+    }
+  }
+  const auto real_exit = GetParam();
+  if (!real_exit) {
+    auto* header = body.getValueSymbolTable()->lookup("header");
+    auto* second = llvm::cast<llvm::BasicBlock>(body.getValueSymbolTable()->lookup("second"));
+    llvm::cast<llvm::CondBrInst>(llvm::cast<llvm::BasicBlock>(header)->getTerminator())
+        ->setSuccessor(1, second);
+  }
+  auto& guard = *module->getFunction("guard");
+  const unsigned parameter = 0;
+  EmitBoundedLeafGuard({.leaf = &body, .leaf_guard = &guard}, std::span(&parameter, 1));
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  std::size_t loads = 0;
+  for (const auto& instruction : llvm::instructions(guard)) {
+    loads += static_cast<std::size_t>(llvm::isa<llvm::LoadInst>(instruction));
+  }
+  EXPECT_EQ(loads, real_exit ? 1U : 0U);
+  if (!real_exit) {
+    const auto* returned = llvm::cast<llvm::ReturnInst>(guard.getEntryBlock().getTerminator());
+    const auto* result = llvm::dyn_cast<llvm::ConstantInt>(returned->getReturnValue());
+    ASSERT_NE(result, nullptr);
+    EXPECT_TRUE(result->isZero());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(ExitEdges, BoundedLeafGuardTest, testing::Bool());
 
 class IntegerLoopOptimizerTest
     : public testing::TestWithParam<std::tuple<bool, bool, LoopComparison>> {};
@@ -284,15 +350,15 @@ TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsO
   }
   test::RunFunctionPasses(function, AddIntegerLoopPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
-  llvm::DominatorTree dominators(function);
-  const llvm::LoopInfo loops(dominators);
   std::size_t bounded_loops = 0;
-  for (const auto* loop : loops.getLoopsInPreorder()) {
-    if (!loop->getSubLoops().empty()) {
-      continue;
+  test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      if (!loop->getSubLoops().empty()) {
+        continue;
+      }
+      bounded_loops += HasUnpolledArrayLoad(*loop) ? 1 : 0;
     }
-    bounded_loops += HasUnpolledArrayLoad(*loop) ? 1 : 0;
-  }
+  });
   EXPECT_EQ(bounded_loops != 0, marked && !observable);
 }
 
@@ -364,12 +430,12 @@ done:
   }
   EXPECT_GT(request_handlers, 0U);
   EXPECT_GT(checked_updates, 1U);
-  llvm::DominatorTree dominators(function);
-  const llvm::LoopInfo loops(dominators);
   bool has_unpolled = false;
-  for (const auto* loop : loops.getLoopsInPreorder()) {
-    has_unpolled = has_unpolled || HasUnpolledArrayLoad(*loop);
-  }
+  test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      has_unpolled = has_unpolled || HasUnpolledArrayLoad(*loop);
+    }
+  });
   EXPECT_TRUE(has_unpolled);
 }
 
@@ -416,11 +482,11 @@ done:
     marked = marked || block.getTerminator()->getMetadata(kNativeBoundedPollMetadata) != nullptr;
   }
   EXPECT_TRUE(marked);
-  llvm::DominatorTree dominators(function);
-  const llvm::LoopInfo loops(dominators);
-  for (const auto* loop : loops.getLoopsInPreorder()) {
-    EXPECT_FALSE(HasUnpolledArrayLoad(*loop));
-  }
+  test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      EXPECT_FALSE(HasUnpolledArrayLoad(*loop));
+    }
+  });
 }
 
 INSTANTIATE_TEST_SUITE_P(Phases,
@@ -697,12 +763,12 @@ done:
   ASSERT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
   test::RunFunctionPasses(function, AddBoundedPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
-  llvm::DominatorTree dominators(function);
-  const llvm::LoopInfo loops(dominators);
   bool unpolled = false;
-  for (const auto* loop : loops.getLoopsInPreorder()) {
-    unpolled = unpolled || (loop->getSubLoops().empty() && HasUnpolledArrayLoad(*loop));
-  }
+  test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      unpolled = unpolled || (loop->getSubLoops().empty() && HasUnpolledArrayLoad(*loop));
+    }
+  });
   std::string generated;
   llvm::raw_string_ostream stream(generated);
   function.print(stream);

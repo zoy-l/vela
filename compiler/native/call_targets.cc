@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/ADT/SmallVector.h>
 
 #include "base/builtin.h"
@@ -134,16 +135,7 @@ std::vector<std::size_t> FunctionCallees(const ir::Function& function,
       }
     }
   }
-  for (const auto& instruction : function.instructions) {
-    if (instruction.opcode == Opcode::Call) {
-      callees.push_back(instruction.index);
-    }
-  }
-  for (const auto& target : direct) {
-    if (target) {
-      callees.push_back(target->function);
-    }
-  }
+  ForEachDirectCallee(function, direct, [&](std::size_t callee) { callees.push_back(callee); });
   SortUnique(callees);
   return callees;
 }
@@ -193,12 +185,20 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
   const auto count = functions.size();
   const auto components = CallComponents(edges);
   llvm::SmallVector<std::optional<LeafKind>> leaves(count);
+  llvm::SmallVector<std::optional<bool>> scalar_fields(count);
   const auto leaf_kind = [&](std::size_t callee) {
     auto& leaf = leaves[callee];
     if (!leaf) {
       leaf = PlanNonrecursiveLeaf(functions[callee], debugging);
     }
     return *leaf;
+  };
+  const auto can_use_scalar_fields = [&](std::size_t callee) {
+    auto& eligible = scalar_fields[callee];
+    if (!eligible) {
+      eligible = CanUseScalarFieldBody(functions[callee], program.native_mode, debugging);
+    }
+    return *eligible;
   };
   for (std::size_t index = 0; index < count; ++index) {
     const auto& callees = edges[index];
@@ -211,8 +211,7 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
     }
     auto repeated = RepeatedCallees(functions[index], plan.direct_calls[index]);
     std::erase_if(repeated, [&](std::size_t callee) {
-      return leaf_kind(callee) == LeafKind::None &&
-             !CanUseScalarFieldBody(functions[callee], program.native_mode, debugging);
+      return leaf_kind(callee) == LeafKind::None && !can_use_scalar_fields(callee);
     });
     for (const auto callee : callees) {
       const auto external = is_external(callee);
@@ -230,6 +229,21 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
 }
 
 }  // namespace
+
+void ForEachDirectCallee(const ir::Function& function,
+                         std::span<const std::optional<CallableTarget>> direct,
+                         llvm::function_ref<void(std::size_t)> visit) {
+  for (const auto& instruction : function.instructions) {
+    if (instruction.opcode == Opcode::Call) {
+      visit(instruction.index);
+    }
+  }
+  for (const auto& target : direct) {
+    if (target) {
+      visit(target->function);
+    }
+  }
+}
 
 bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
   return mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&

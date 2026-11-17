@@ -65,8 +65,8 @@ export func ordinaryMutate(values: int[]): int {
 }
 """
 
-EXPORTS = ["calculate", "through", "failing", "lazyRead", "nested", "allocate", "mutate",
-           "recursive", "enter", "reset", "read", "ordinary", "ordinaryMutate"]
+EXTRA_EXPORTS = ["through", "failing", "lazyRead", "nested", "allocate", "mutate",
+                 "recursive", "enter", "reset", "read", "ordinary", "ordinaryMutate"]
 
 HOST_TESTS = r'''
 #include <algorithm>
@@ -74,6 +74,7 @@ HOST_TESTS = r'''
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -98,6 +99,20 @@ using IntegerArray = vela::Local<vela::Array<std::int64_t>>;
 using ArrayEntry = vela::Entry<std::int64_t(vela::Array<std::int64_t>)>;
 extern "C" const NativeImage* HOST_IMAGE() noexcept;
 
+std::span<const NativeHostTarget> AvailableTargets() {
+  static constexpr std::array targets{NativeHostTarget::Generic, NativeHostTarget::X86_64V4};
+  return std::span(targets).first(CurrentNativeHostTarget() == NativeHostTarget::X86_64V4 ? 2 : 1);
+}
+
+void ExpectSameStackTrace(std::span<const FutureTraceFrame> actual,
+                         std::span<const FutureTraceFrame> expected) {
+  ASSERT_EQ(actual.size(), expected.size());
+  for (std::size_t index = 0; index < actual.size(); ++index) {
+    EXPECT_EQ(actual[index].function, expected[index].function);
+    EXPECT_EQ(actual[index].line, expected[index].line);
+  }
+}
+
 std::int64_t ReenterHostEntry(NativeContext& context) noexcept {
   auto* parent = context.isolate().native_control().state().host_execution;
   if (parent == nullptr) { return -100; }
@@ -119,6 +134,19 @@ class NativeHostEntryTest : public ::testing::Test {
   }
   const NativeFunctionDescription& Function(std::string_view name) const {
     return instance->image().function(instance->FindFunction(name).value());
+  }
+  struct Kernel final {
+    const NativeFunctionDescription& function;
+    NativeHostEntry entry;
+    const ArrayLayout* layout;
+  };
+  std::optional<Kernel> SelectKernel(std::string_view name, NativeHostTarget target) const {
+    const auto& function = Function(name);
+    if (function.host_entry_selector == nullptr) { return std::nullopt; }
+    const auto entry = function.host_entry_selector(target);
+    const auto* layout = instance->layouts().types[function.parameters.values().front().type].array;
+    if (entry == nullptr || layout == nullptr) { return std::nullopt; }
+    return Kernel{.function = function, .entry = entry, .layout = layout};
   }
   vela::Result<IntegerArray> Array(std::span<const std::int64_t> values) {
     auto result = vela::CreateArray<std::int64_t>(scope);
@@ -197,21 +225,23 @@ class NativeHostEntryTest : public ::testing::Test {
 
 TEST_F(NativeHostEntryTest, OrdinaryTargetsKeepVectorTailsMultipleArgumentsAndGcRoots) {
   NativeValue output;
+  const auto& ordinary = Function("ordinary");
   EXPECT_EQ(static_cast<ExecutionStatus>(
-                Function("ordinary").entry(nullptr, nullptr, 0, &output)),
+                ordinary.entry(nullptr, nullptr, 0, &output)),
             ExecutionStatus::InvalidEntry);
   const std::array<NativeValue, 2> arguments{};
   EXPECT_EQ(static_cast<ExecutionStatus>(
-                Function("ordinary").entry(nullptr, arguments.data(), arguments.size(), &output)),
+                ordinary.entry(nullptr, arguments.data(), arguments.size(), &output)),
             ExecutionStatus::InvalidIsolate);
   EXPECT_EQ(static_cast<ExecutionStatus>(
-                Function("ordinary").entry(nullptr, arguments.data(), arguments.size(), nullptr)),
+                ordinary.entry(nullptr, arguments.data(), arguments.size(), nullptr)),
             ExecutionStatus::InvalidEntry);
-  for (const auto target : {NativeHostTarget::Generic, NativeHostTarget::X86_64V4}) {
-    if (target != NativeHostTarget::Generic && target != CurrentNativeHostTarget()) { continue; }
+  for (const auto target : AvailableTargets()) {
     auto* state = StateForTarget(target);
     ASSERT_NE(state, nullptr);
     auto selected = NativeInstance::Borrow(*state);
+    const auto function = selected.FindFunction("ordinary");
+    ASSERT_TRUE(function);
     for (const std::size_t size : {0U, 1U, 7U, 8U, 9U, 31U, 32U, 33U, 127U, 128U, 129U,
                                    511U, 512U, 513U, 1024U, 1025U, 4097U}) {
       const std::vector<std::int64_t> terms(size, 1);
@@ -220,27 +250,26 @@ TEST_F(NativeHostEntryTest, OrdinaryTargetsKeepVectorTailsMultipleArgumentsAndGc
       const auto input = vela::internal::HandleAccess::Read(*array);
       const std::array arguments{input, Value::Integer(7)};
       isolate.heap().StartCollection();
-      const auto result = ExecuteNativeFunction(selected, selected.FindFunction("ordinary").value(),
+      const auto result = ExecuteNativeFunction(selected, *function,
                                                  arguments);
       ASSERT_TRUE(result.Succeeded()) << size;
       EXPECT_EQ(result.value.AsInteger(), static_cast<std::int64_t>(size) + 7);
       isolate.heap().FinishCollection();
       const std::array explicit_arguments{input, Value::Integer(11)};
       const auto explicit_result = ExecuteNativeFunction(
-          selected, selected.FindFunction("ordinary").value(), explicit_arguments);
+          selected, *function, explicit_arguments);
       ASSERT_TRUE(explicit_result.Succeeded());
       EXPECT_EQ(explicit_result.value.AsInteger(), static_cast<std::int64_t>(size) + 11);
     }
     const std::array invalid{Value::Integer(1), Value::Integer(7)};
-    const auto rejected = ExecuteNativeFunction(selected, selected.FindFunction("ordinary").value(),
+    const auto rejected = ExecuteNativeFunction(selected, *function,
                                                    invalid);
     EXPECT_EQ(rejected.status, ExecutionStatus::InvalidCast);
   }
 }
 
 TEST_F(NativeHostEntryTest, OrdinaryTargetsPreserveOverflowTracesAndCompletedWrites) {
-  for (const auto target : {NativeHostTarget::Generic, NativeHostTarget::X86_64V4}) {
-    if (target != NativeHostTarget::Generic && target != CurrentNativeHostTarget()) { continue; }
+  for (const auto target : AvailableTargets()) {
     auto* state = StateForTarget(target);
     ASSERT_NE(state, nullptr);
     auto selected = NativeInstance::Borrow(*state);
@@ -273,8 +302,7 @@ TEST_F(NativeHostEntryTest, OrdinaryTargetsPreserveOverflowTracesAndCompletedWri
 }
 
 TEST_F(NativeHostEntryTest, OrdinaryTargetsProcessScheduledObservationsOnce) {
-  for (const auto target : {NativeHostTarget::Generic, NativeHostTarget::X86_64V4}) {
-    if (target != NativeHostTarget::Generic && target != CurrentNativeHostTarget()) { continue; }
+  for (const auto target : AvailableTargets()) {
     Reset();
     auto* state = StateForTarget(target);
     ASSERT_NE(state, nullptr);
@@ -320,15 +348,13 @@ TEST_F(NativeHostEntryTest, ColdGlobalsAndArrayBudgetsKeepCompleteResults) {
   auto array = Array(values);
   ASSERT_TRUE(array);
   const auto input = vela::internal::HandleAccess::Read(*array);
-  NativeHostContext cold(instance->program(), isolate.native_control().state(), 0, *limit,
-                         ExecutionStatus::Returned);
+  NativeHostContext cold(instance->program(), isolate.native_control().state(), 0, limit);
   NativeValue output;
   EXPECT_EQ(host(&cold, input.AsObject(), &output), kNativeHostMiss);
   auto first = Invoke("calculate", input);
   ASSERT_TRUE(first);
   EXPECT_EQ(first->AsInteger(), 6);
-  NativeHostContext warm(instance->program(), isolate.native_control().state(), 0, *limit,
-                         ExecutionStatus::Returned);
+  NativeHostContext warm(instance->program(), isolate.native_control().state(), 0, limit);
   EXPECT_EQ(host(&warm, input.AsObject(), &output),
             ToNativeStatus(ExecutionStatus::Returned));
   EXPECT_EQ(DecodeNativeValue(output).AsInteger(), 6);
@@ -349,16 +375,11 @@ TEST_F(NativeHostEntryTest, UnsupportedGraphsDoNotPublishHostEntries) {
 }
 
 TEST_F(NativeHostEntryTest, SelectedKernelsKeepVectorTailsAndBudgetMisses) {
-  constexpr std::array targets{NativeHostTarget::Generic, NativeHostTarget::X86_64V4};
-  for (const auto target : targets) {
-    if (target != NativeHostTarget::Generic && target != CurrentNativeHostTarget()) { continue; }
+  for (const auto target : AvailableTargets()) {
     for (const auto name : {"calculate", "through"}) {
-      const auto& function = Function(name);
-      ASSERT_NE(function.host_entry_selector, nullptr);
-      const auto host = function.host_entry_selector(target);
-      ASSERT_NE(host, nullptr);
-      const auto* layout = instance->layouts().types[function.parameters.values().front().type].array;
-      ASSERT_NE(layout, nullptr);
+      const auto kernel = SelectKernel(name, target);
+      ASSERT_TRUE(kernel);
+      const auto& [function, host, layout] = *kernel;
       for (const std::size_t size : {0U, 1U, 2U, 3U, 7U, 8U, 9U, 15U, 16U, 17U, 31U, 32U,
                                       33U, 63U, 64U, 65U, 127U, 128U, 129U, 511U, 512U, 513U,
                                       1023U, 1024U, 1025U}) {
@@ -376,8 +397,7 @@ TEST_F(NativeHostEntryTest, SelectedKernelsKeepVectorTailsAndBudgetMisses) {
         isolate.heap().FinishCollection();
         const auto limit = CurrentNativeStackLimit();
         ASSERT_TRUE(limit);
-        NativeHostContext context(instance->program(), isolate.native_control().state(), 0,
-                                    *limit, ExecutionStatus::Returned);
+        NativeHostContext context(instance->program(), isolate.native_control().state(), 0, limit);
         NativeValue output;
         const auto status = host(&context, input.AsObject(), &output);
         if (status == kNativeHostMiss) {
@@ -403,14 +423,10 @@ TEST_F(NativeHostEntryTest, KernelFailuresCaptureOwnedErrorsBeforeExecutionRelea
     std::size_t calls = 0;
     vela::Result<void> result;
   };
-  constexpr std::array targets{NativeHostTarget::Generic, NativeHostTarget::X86_64V4};
-  const auto& function = Function("calculate");
-  ASSERT_NE(function.host_entry_selector, nullptr);
-  const auto* layout = instance->layouts().types[function.parameters.values().front().type].array;
-  ASSERT_NE(layout, nullptr);
-  for (const auto target : targets) {
-    if (target != NativeHostTarget::Generic && target != CurrentNativeHostTarget()) { continue; }
-    const auto host = function.host_entry_selector(target);
+  for (const auto target : AvailableTargets()) {
+    const auto kernel = SelectKernel("calculate", target);
+    ASSERT_TRUE(kernel);
+    const auto& [function, host, layout] = *kernel;
     for (const auto sign : {std::int64_t{1}, std::int64_t{-1}}) {
       for (const std::size_t prefix : {0U, 1U, 7U, 8U, 15U, 16U, 31U, 32U, 63U, 64U, 127U}) {
         SCOPED_TRACE(::testing::Message() << static_cast<int>(target) << '/' << sign << '/' << prefix);
@@ -448,11 +464,7 @@ TEST_F(NativeHostEntryTest, KernelFailuresCaptureOwnedErrorsBeforeExecutionRelea
         ASSERT_FALSE(capture.result);
         const auto& error = capture.result.error();
         EXPECT_EQ(error.status, ordinary.status);
-        ASSERT_EQ(error.stack_trace.size(), ordinary.stack_trace.size());
-        for (std::size_t index = 0; index < error.stack_trace.size(); ++index) {
-          EXPECT_EQ(error.stack_trace[index].function, ordinary.stack_trace[index].function);
-          EXPECT_EQ(error.stack_trace[index].line, ordinary.stack_trace[index].line);
-        }
+        ASSERT_NO_FATAL_FAILURE(ExpectSameStackTrace(error.stack_trace, ordinary.stack_trace));
         EXPECT_EQ(Read(), sign);
         isolate.heap().Collect();
         EXPECT_FALSE(error.payload.IsEmpty());
@@ -477,11 +489,7 @@ TEST_F(NativeHostEntryTest, PublicErrorsMatchOrdinaryTracesAndRetainWrittenPrefi
   ASSERT_FALSE(failed);
   const auto& error = failed.error();
   EXPECT_EQ(error.status, ordinary.status);
-  ASSERT_EQ(error.stack_trace.size(), ordinary.stack_trace.size());
-  for (std::size_t index = 0; index < error.stack_trace.size(); ++index) {
-    EXPECT_EQ(error.stack_trace[index].function, ordinary.stack_trace[index].function);
-    EXPECT_EQ(error.stack_trace[index].line, ordinary.stack_trace[index].line);
-  }
+  ASSERT_NO_FATAL_FAILURE(ExpectSameStackTrace(error.stack_trace, ordinary.stack_trace));
   EXPECT_EQ(Read(), 1);
   Reset(std::numeric_limits<std::int64_t>::max());
   auto through = ArrayEntry::Bind(*instance, "through");
@@ -545,20 +553,19 @@ TEST_F(NativeHostEntryTest, LogicalAndPhysicalStackLimitsFailBeforeCalleeEffects
   Reset();
   const auto limit = CurrentNativeStackLimit();
   ASSERT_TRUE(limit);
-  const auto& function = Function("through");
-  ASSERT_NE(function.host_entry_selector, nullptr);
-  const auto host = function.host_entry_selector(CurrentNativeHostTarget());
+  const auto kernel = SelectKernel("through", CurrentNativeHostTarget());
+  ASSERT_TRUE(kernel);
+  const auto host = kernel->entry;
   for (const auto depth : {std::uint64_t{vela::kMaxCallFrames - 1},
                            std::uint64_t{vela::kMaxCallFrames}}) {
-    NativeHostContext context(instance->program(), isolate.native_control().state(), depth,
-                               *limit, ExecutionStatus::Returned);
+    NativeHostContext context(instance->program(), isolate.native_control().state(), depth, limit);
     NativeValue output;
     EXPECT_EQ(host(&context, input.AsObject(), &output),
               ToNativeStatus(ExecutionStatus::StackOverflow));
     EXPECT_EQ(Read(), -1);
   }
   NativeHostContext context(instance->program(), isolate.native_control().state(), 0,
-                             std::numeric_limits<std::uintptr_t>::max(), ExecutionStatus::Returned);
+                             std::numeric_limits<std::uintptr_t>::max());
   NativeValue output;
   EXPECT_EQ(host(&context, input.AsObject(), &output),
             ToNativeStatus(ExecutionStatus::StackOverflow));
@@ -615,10 +622,10 @@ TEST_F(NativeHostEntryTest, CompletedEffectsAreNotReplayedAtReturnObservation) {
   ASSERT_TRUE(array);
   const auto input = vela::internal::HandleAccess::Read(*array);
   Reset();
-  auto function = Function("calculate");
-  ASSERT_NE(function.host_entry_selector, nullptr);
-  const auto* layout = instance->layouts().types[function.parameters.values().front().type].array;
-  ASSERT_NE(layout, nullptr);
+  const auto kernel = SelectKernel("calculate", CurrentNativeHostTarget());
+  ASSERT_TRUE(kernel);
+  const auto& function = kernel->function;
+  const auto* layout = kernel->layout;
   isolate.heap().FinishCollection();
   const std::array arguments{input};
   NativeExecution parent(*instance);

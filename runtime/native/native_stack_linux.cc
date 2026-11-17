@@ -12,6 +12,11 @@
 namespace vela::runtime {
 
 std::expected<NativeStackBounds, ExecutionStatus> CurrentNativeStackBounds() noexcept {
+  // 线程栈区在线程存活期间固定；与 Darwin 一样只缓存成功的查询。
+  constinit thread_local NativeStackBounds bounds{};
+  if (bounds.upper != 0) {
+    return bounds;
+  }
   pthread_attr_t attributes;
   if (pthread_getattr_np(pthread_self(), &attributes) != 0) {
     return std::unexpected(ExecutionStatus::NativeFailure);
@@ -24,7 +29,8 @@ std::expected<NativeStackBounds, ExecutionStatus> CurrentNativeStackBounds() noe
     return std::unexpected(ExecutionStatus::NativeFailure);
   }
   const auto lower = std::bit_cast<std::uintptr_t>(address);
-  return NativeStackBounds{.lower = lower, .upper = lower + size};
+  bounds = {.lower = lower, .upper = lower + size};
+  return bounds;
 }
 
 }  // namespace vela::runtime

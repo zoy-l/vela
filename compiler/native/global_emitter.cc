@@ -192,11 +192,11 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
                                               builder_.getInt32Ty(), builder_.getPtrTy());
     auto* status = builder_.CreateCall(
         helper, {body_->getArg(0), builder_.getInt32(instruction.index), result_});
-    status->setMetadata(kNativeGuardFailureMetadata, llvm::MDNode::get(context, {}));
+    MarkGuardFailure(*status);
     CompleteCall(status, instruction.dst);
     PollAfterRuntimeCall();
-    resolve->getTerminator()->setMetadata(kNativeGuardFailureMetadata,
-                                          llvm::MDNode::get(context, {}));
+    // 冷入口包含调用前安全点的失败出口；只标记 load_global 无法反向覆盖这些分支。
+    MarkGuardFailure(*resolve->getTerminator());
   } else {
     // 赋值不执行初始化器，也不增加安全点；缓存失效时只解析当前版本槽并完成写入。
     auto helper = module_.getOrInsertFunction(runtime::kNativeStoreGlobalSymbol,

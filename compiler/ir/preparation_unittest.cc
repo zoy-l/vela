@@ -29,6 +29,22 @@ namespace {
 
 using test::Prepare;
 
+template <class Verify>
+void WithPreparedModes(std::string_view source, const Verify& verify) {
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+  ASSERT_TRUE(parsed.diagnostics.empty()) << frontend::DiagnosticsText(parsed.diagnostics);
+  const auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded()) << frontend::DiagnosticsText(checked.diagnostics);
+  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+    frontend::DeclarationIds identities;
+    const auto prepared = PrepareProgram(parsed.program, checked.model,
+                                         {.declarations = &identities, .native_mode = mode});
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    ASSERT_NO_FATAL_FAILURE(verify(prepared.program, mode));
+  }
+}
+
 TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
   const auto prepared = Prepare("import 'sdk:mock' as mock; func main(): void {}");
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
@@ -88,83 +104,62 @@ TEST(PreparationTest, SpecializesOnlyProvenClosedIntegerSortOrders) {
     const auto source =
         "let calls = 0; const limit = 1; func run(values: int[]): int[] { return values.sort(" +
         std::string(entry.comparator) + "); }";
-    const frontend::SourceInput input{
-        .path = "main.vela",
-        .text = source,
-    };
-    auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
-    ASSERT_TRUE(parsed.diagnostics.empty());
-    const auto checked = frontend::TypeChecker().Check(parsed.program);
-    ASSERT_TRUE(checked.Succeeded()) << frontend::DiagnosticsText(checked.diagnostics);
-    for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
-      frontend::DeclarationIds identities;
-      const auto prepared = PrepareProgram(parsed.program, checked.model,
-                                           {.declarations = &identities, .native_mode = mode});
-      ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-      const auto found = std::ranges::find(prepared.program.functions, "run", &Function::name);
-      ASSERT_NE(found, prepared.program.functions.end());
-      std::size_t specialized = 0;
-      std::size_t callbacks = 0;
-      for (const auto& instruction : found->instructions) {
-        callbacks += static_cast<std::size_t>(instruction.opcode == Opcode::CallIndirect);
-        if (instruction.opcode != Opcode::BuiltinCall) {
-          continue;
-        }
-        const auto builtin = static_cast<Builtin>(instruction.index);
-        if (builtin == Builtin::ArraySortIntAscending ||
-            builtin == Builtin::ArraySortIntDescending) {
-          ++specialized;
-          ASSERT_TRUE(entry.builtin);
-          EXPECT_EQ(builtin, *entry.builtin);
-        }
-      }
-      EXPECT_EQ(specialized, mode == NativeProgramMode::Closed && entry.builtin ? 1U : 0U);
-      // 特化也保留一次原比较器调用，覆盖非平凡输入的深度及控制请求边界。
-      EXPECT_GT(callbacks, 0U);
-    }
+    ASSERT_NO_FATAL_FAILURE(
+        WithPreparedModes(source, [&](const Program& program, NativeProgramMode mode) {
+          const auto found = std::ranges::find(program.functions, "run", &Function::name);
+          ASSERT_NE(found, program.functions.end());
+          std::size_t specialized = 0;
+          std::size_t callbacks = 0;
+          for (const auto& instruction : found->instructions) {
+            callbacks += static_cast<std::size_t>(instruction.opcode == Opcode::CallIndirect);
+            if (instruction.opcode != Opcode::BuiltinCall) {
+              continue;
+            }
+            const auto builtin = static_cast<Builtin>(instruction.index);
+            if (builtin == Builtin::ArraySortIntAscending ||
+                builtin == Builtin::ArraySortIntDescending) {
+              ++specialized;
+              ASSERT_TRUE(entry.builtin);
+              EXPECT_EQ(builtin, *entry.builtin);
+            }
+          }
+          EXPECT_EQ(specialized, mode == NativeProgramMode::Closed && entry.builtin ? 1U : 0U);
+          // 特化也保留一次原比较器调用，覆盖非平凡输入的深度及控制请求边界。
+          EXPECT_GT(callbacks, 0U);
+        }));
   }
 }
 
 TEST(PreparationTest, FieldIdentitiesApplyOnlyToReloadableInstances) {
-  const frontend::SourceInput input{
-      .path = "main.vela",
-      .text = R"(
+  constexpr std::string_view kSource = R"(
 class Box { value: int; }
 func read(box: Box, error: Error, parts: DateParts): int {
   return box.value + error.code.length + parts.millisecond;
 }
-)",
-  };
-  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
-  ASSERT_TRUE(parsed.diagnostics.empty());
-  auto checked = frontend::TypeChecker().Check(parsed.program);
-  ASSERT_TRUE(checked.Succeeded()) << frontend::DiagnosticsText(checked.diagnostics);
-  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
-    frontend::DeclarationIds identities;
-    const auto prepared = PrepareProgram(parsed.program, checked.model,
-                                         {.declarations = &identities, .native_mode = mode});
-    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-    std::size_t instance_reads = 0;
-    std::size_t fixed_reads = 0;
-    for (const auto& function : prepared.program.functions) {
-      for (const auto& instruction : function.instructions) {
-        if (instruction.opcode != Opcode::GetField) {
-          continue;
+)";
+  ASSERT_NO_FATAL_FAILURE(
+      WithPreparedModes(kSource, [&](const Program& program, NativeProgramMode mode) {
+        std::size_t instance_reads = 0;
+        std::size_t fixed_reads = 0;
+        for (const auto& function : program.functions) {
+          for (const auto& instruction : function.instructions) {
+            if (instruction.opcode != Opcode::GetField) {
+              continue;
+            }
+            const auto name = function.value_types[instruction.lhs].name;
+            if (name == "Box") {
+              ++instance_reads;
+              EXPECT_EQ(instruction.field_declaration.has_value(),
+                        mode == NativeProgramMode::Reloadable);
+            } else if (name == "Error" || name == "DateParts") {
+              ++fixed_reads;
+              EXPECT_FALSE(instruction.field_declaration);
+            }
+          }
         }
-        const auto name = function.value_types[instruction.lhs].name;
-        if (name == "Box") {
-          ++instance_reads;
-          EXPECT_EQ(instruction.field_declaration.has_value(),
-                    mode == NativeProgramMode::Reloadable);
-        } else if (name == "Error" || name == "DateParts") {
-          ++fixed_reads;
-          EXPECT_FALSE(instruction.field_declaration);
-        }
-      }
-    }
-    EXPECT_GT(instance_reads, 0U);
-    EXPECT_GT(fixed_reads, 1U);
-  }
+        EXPECT_GT(instance_reads, 0U);
+        EXPECT_GT(fixed_reads, 1U);
+      }));
 }
 
 TEST(PreparationTest, EnumRuntimeNamesDoNotBorrowSourceDeclarations) {

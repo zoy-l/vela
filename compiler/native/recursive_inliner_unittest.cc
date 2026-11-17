@@ -13,7 +13,6 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalValue.h>
 #include <llvm/IR/IRBuilder.h>
@@ -109,8 +108,8 @@ TEST(RecursiveInlinerTest, LeavesAnAlreadyOversizedBodyUnchanged) {
 TEST(RecursiveLoopHintsTest, RequiresProvenShortTripsAndBoundsExpandedCode) {
   struct Case final {
     std::optional<std::uint64_t> limit;
-    std::size_t padding;
-    std::uint64_t expected_count;
+    std::size_t padding = 0;
+    std::uint64_t expected_count = 0;
   };
   constexpr std::array kCases{
       Case{.limit = 4, .padding = 0, .expected_count = 4},
@@ -163,26 +162,27 @@ TEST(RecursiveLoopHintsTest, RequiresProvenShortTripsAndBoundsExpandedCode) {
     EXPECT_EQ(function->getInstructionCount(), original_count);
     EXPECT_EQ(RecursiveCallCount(*function), 1U);
     EXPECT_EQ(call->hasFnAttr(llvm::Attribute::NoInline), entry.expected_count != 0);
-    llvm::DominatorTree dominators(*function);
-    const llvm::LoopInfo loops(dominators);
-    const auto* hint = llvm::findOptionMDForLoop(loops.getLoopFor(loop), "llvm.loop.unroll.count");
-    if (entry.expected_count == 0) {
-      EXPECT_EQ(hint, nullptr);
-    } else {
-      ASSERT_NE(hint, nullptr);
-      const auto* count = llvm::mdconst::dyn_extract<llvm::ConstantInt>(hint->getOperand(1));
-      ASSERT_NE(count, nullptr);
-      EXPECT_EQ(count->getZExtValue(), entry.expected_count);
-    }
+    ASSERT_NO_FATAL_FAILURE(test::WithFunctionLoops(*function, [&](auto&, const auto& loops) {
+      const auto* hint =
+          llvm::findOptionMDForLoop(loops.getLoopFor(loop), "llvm.loop.unroll.count");
+      if (entry.expected_count == 0) {
+        EXPECT_EQ(hint, nullptr);
+      } else {
+        ASSERT_NE(hint, nullptr);
+        const auto* count = llvm::mdconst::dyn_extract<llvm::ConstantInt>(hint->getOperand(1));
+        ASSERT_NE(count, nullptr);
+        EXPECT_EQ(count->getZExtValue(), entry.expected_count);
+      }
+    }));
   }
 }
 
 TEST(RecursiveLoopHintsTest, CountsNestedCopiesAndPreservesTheirOwnUnrollPolicy) {
   struct Case final {
     std::optional<std::uint64_t> inner_limit;
-    std::size_t padding;
-    bool disabled;
-    bool expected;
+    std::size_t padding = 0;
+    bool disabled = false;
+    bool expected = false;
   };
   constexpr std::array kCases{
       Case{.inner_limit = 4, .padding = 0, .disabled = false, .expected = true},
@@ -233,16 +233,16 @@ done:
     auto& function = *module->getFunction("recursive");
     test::RunFunctionPasses(function, AddRecursiveLoopHints);
     EXPECT_FALSE(llvm::verifyModule(*module));
-    llvm::DominatorTree dominators(function);
-    const llvm::LoopInfo loops(dominators);
-    ASSERT_EQ(loops.getTopLevelLoops().size(), 1U);
-    const auto* outer = *loops.begin();
-    ASSERT_EQ(outer->getSubLoops().size(), 1U);
-    const auto* inner = outer->getSubLoops().front();
-    EXPECT_EQ(llvm::findOptionMDForLoop(outer, "llvm.loop.unroll.count") != nullptr,
-              entry.expected);
-    EXPECT_EQ(llvm::findOptionMDForLoop(inner, "llvm.loop.unroll.disable") != nullptr,
-              entry.disabled);
+    ASSERT_NO_FATAL_FAILURE(test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+      ASSERT_EQ(loops.getTopLevelLoops().size(), 1U);
+      const auto* outer = *loops.begin();
+      ASSERT_EQ(outer->getSubLoops().size(), 1U);
+      const auto* inner = outer->getSubLoops().front();
+      EXPECT_EQ(llvm::findOptionMDForLoop(outer, "llvm.loop.unroll.count") != nullptr,
+                entry.expected);
+      EXPECT_EQ(llvm::findOptionMDForLoop(inner, "llvm.loop.unroll.disable") != nullptr,
+                entry.disabled);
+    }));
     EXPECT_EQ(RecursiveCallCount(function), 1U);
   }
 }

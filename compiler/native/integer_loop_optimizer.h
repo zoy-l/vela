@@ -1,11 +1,16 @@
 #pragma once
 
+#include <algorithm>
 #include <span>
 
 #include <cstdint>
 #include <string_view>
 
 #include <llvm/IR/PassManager.h>
+
+namespace llvm {
+class Instruction;
+}
 
 namespace vela::compiler::native {
 
@@ -18,6 +23,13 @@ inline constexpr std::string_view kNativePollReadyStateMetadata = "vela.poll.rea
 inline constexpr std::string_view kNativeGuardFailureMetadata = "vela.guard.failure";
 inline constexpr std::uint64_t kNativeMaximumUnpolledIterations = 1024;
 inline constexpr std::uint64_t kNativeMaximumUnpolledInstructions = 131072;
+
+constexpr std::uint64_t NativePollBudget(std::uint64_t instructions) {
+  return std::min(kNativeMaximumUnpolledIterations,
+                  kNativeMaximumUnpolledInstructions / instructions);
+}
+
+void MarkGuardFailure(llvm::Instruction& instruction);
 
 void AddIntegerLoopPasses(llvm::FunctionPassManager& passes);
 void AddBoundedPollPasses(llvm::FunctionPassManager& passes);

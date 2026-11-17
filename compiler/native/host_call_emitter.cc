@@ -351,6 +351,16 @@ void FunctionEmitter::ReleaseHostHandles(llvm::Value* native_context) {
   builder_.SetInsertPoint(released);
 }
 
+void FunctionEmitter::ConvertNativeStringArguments(const ir::Function& callee,
+                                                   std::vector<llvm::Value*>& parameters,
+                                                   llvm::Value* kind) {
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    if (callee.value_types[index].kind == Kind::String) {
+      parameters[index] = EmitNativeStringArgument(parameters[index], index, kind);
+    }
+  }
+}
+
 llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
                                                  llvm::Value* entries,
                                                  std::span<llvm::Value* const> arguments) {
@@ -375,10 +385,10 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     const auto& type = callee.value_types[index];
     if (IsHostParameter(program_.layouts, call_signature, type, index)) {
       parameters[index] = EmitHostPointer(parameters[index], type);
-    } else if (placement_ == NativeCodePlacement::Linked && type.kind == Kind::String &&
-               !register_views) {
-      parameters[index] = EmitNativeStringArgument(parameters[index], index, kind);
     }
+  }
+  if (placement_ == NativeCodePlacement::Linked && !register_views) {
+    ConvertNativeStringArguments(callee, parameters, kind);
   }
   EmitHostBoundary(HostBorrow::Enter);
   llvm::Value* specialized_result = nullptr;
@@ -396,11 +406,7 @@ llvm::Value* FunctionEmitter::EmitDirectHostCall(const ir::Function& callee,
     builder_.SetInsertPoint(specialized);
     auto specialized_parameters = parameters;
     if (register_views) {
-      for (std::size_t index = 0; index < parameters.size(); ++index) {
-        if (callee_parameters[index].kind == Kind::String) {
-          specialized_parameters[index] = EmitNativeStringArgument(arguments[index], index, kind);
-        }
-      }
+      ConvertNativeStringArguments(callee, specialized_parameters, kind);
       specialized_parameters.insert(specialized_parameters.begin(), native_context);
     }
     specialized_result = EmitHostFunctionCall(return_type, target, specialized_parameters);

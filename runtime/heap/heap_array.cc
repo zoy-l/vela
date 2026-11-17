@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -28,9 +29,10 @@ std::span<std::byte> ElementBytes(HeapObject& array,
 
 void UpdateIntegerRange(HeapObject& array, Value value) noexcept {
   auto& range = internal::ArrayBuffer(array).integer_range;
+  // 仅无标签 int 数组能持有窄域事实，调用方已通过 ValueLayout/IsValueOfType 验证写入。
+  // 按无符号位模式比较才能同时排除负数，不能替换成 signed/unsigned 的数学大小比较。
   if (range != internal::IntegerArrayRange::Unknown &&
-      (!value.IsInteger() ||
-       static_cast<std::uint64_t>(value.AsInteger()) > internal::kNonnegative31Mask)) {
+      std::bit_cast<std::uint64_t>(value.AsInteger()) > internal::kNonnegative31Mask) {
     range = internal::IntegerArrayRange::Unknown;
   }
 }
@@ -138,14 +140,23 @@ std::expected<std::uint64_t, ArrayAccessError> Heap::ArrayMutation(
   return internal::ArrayBuffer(array).mutation;
 }
 
-std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
+std::expected<std::span<std::int64_t>, ArrayAccessError> internal::BorrowIntegerElements(
     HeapObject& array) noexcept {
-  if (array.kind != ObjectKind::Array || array.array_layout()->element.kind != ValueKind::Integer ||
-      array.array_layout()->HasTaggedElements()) {
+  const auto* layout = Heap::ArrayTypeOf(array);
+  if (layout == nullptr || layout->element.kind != ValueKind::Integer ||
+      layout->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  internal::ArrayBuffer(array).integer_range = internal::IntegerArrayRange::Unknown;
-  return ElementSlots<std::int64_t>(ElementBytes(array, *array.array_layout(), array.length));
+  return ElementSlots<std::int64_t>(ElementBytes(array, *layout, *Heap::ArrayLength(array)));
+}
+
+std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
+    HeapObject& array) noexcept {
+  const auto elements = internal::BorrowIntegerElements(array);
+  if (elements) {
+    internal::ArrayBuffer(array).integer_range = internal::IntegerArrayRange::Unknown;
+  }
+  return elements;
 }
 
 std::expected<Value, ArrayAccessError> Heap::GetElement(const HeapObject& array,

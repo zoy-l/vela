@@ -57,6 +57,7 @@
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/field_loop_optimizer.h"
+#include "compiler/native/function_declarations.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/global_analysis.h"
 #include "compiler/native/host_entry_emitter.h"
@@ -358,38 +359,6 @@ llvm::Function* AddResumeEntry(llvm::Module& module,
   return llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, symbol, module);
 }
 
-struct FunctionDeclarations final {
-  std::vector<GeneratedFunction> baseline;
-  std::vector<GeneratedFunction> optimized;
-  std::vector<GeneratedFunction> specialized;
-  std::vector<std::optional<ir::ClassId>> borrowable;
-
-  [[nodiscard]] bool HasRangeSpecialization(std::size_t index) const {
-    return !specialized.empty() && specialized[index].body != optimized[index].body;
-  }
-};
-
-void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source) {
-  for (auto* entry : entries) {
-    if (entry == nullptr) {
-      continue;
-    }
-    // 类型化内部调用的结果独占调用者暂存槽，不与执行状态或托管实参重叠。
-    const auto result = static_cast<unsigned>(entry->arg_size() - 1);
-    entry->addParamAttr(result, llvm::Attribute::NoAlias);
-    // 结果地址只在本次同步 ABI 调用内借用，不能发布到程序全局或托管对象中。
-    entry->addParamAttr(result, llvm::Attribute::getWithCaptureInfo(entry->getContext(),
-                                                                    llvm::CaptureInfo::none()));
-    for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
-      const auto& type = source.value_types.at(parameter);
-      if (IsReferenceKind(type.kind) && !type.nullable) {
-        // 非空契约已在装箱入口和受查转换处验证；内部调用保留此事实供内联与 GVN 使用。
-        entry->addParamAttr(static_cast<unsigned>(parameter + 1), llvm::Attribute::NonNull);
-      }
-    }
-  }
-}
-
 struct InliningPlan final {
   bool enabled;
   LeafKind leaf;
@@ -462,16 +431,8 @@ std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
     }
     needed.at(index) = 1;
     const auto& function = program.functions.at(index);
-    for (const auto& instruction : function.instructions) {
-      if (instruction.opcode == Opcode::Call) {
-        needed.at(instruction.index) = 1;
-      }
-    }
-    for (const auto& target : calls.direct_calls[index]) {
-      if (target) {
-        needed.at(target->function) = 1;
-      }
-    }
+    ForEachDirectCallee(function, calls.direct_calls[index],
+                        [&](std::size_t callee) { needed.at(callee) = 1; });
   }
   return needed;
 }
@@ -820,6 +781,65 @@ void RequireReflectionReceiverLayouts(const ir::Program& program,
   }
 }
 
+std::expected<llvm::Constant*, std::string> EmitModuleImage(
+    NativeModule& output,
+    const ir::Program& program,
+    const FunctionDeclarations& declarations,
+    const std::string& module_name,
+    NativeDebugging debugging,
+    NativeCodeTier tier) {
+  auto& module = *output.module;
+  const auto& generated = declarations.baseline;
+  const auto& optimized = declarations.optimized;
+  const auto placement = output.placement;
+  std::vector<llvm::Function*> entries;
+  std::vector<llvm::Function*> reflection_entries;
+  std::vector<llvm::Function*> host_entries;
+  const auto count = generated.size();
+  entries.reserve(count);
+  reflection_entries.reserve(count);
+  host_entries.reserve(count);
+  for (const auto& function : generated) {
+    entries.push_back(function.entry);
+    reflection_entries.push_back(function.reflection_entry);
+    host_entries.push_back(function.host_entry_selector);
+  }
+  auto description = DescribeNativeImage(program);
+  RequireReflectionReceiverLayouts(program, optimized, debugging, tier, *description);
+  llvm::Constant* image =
+      llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context));
+  if (placement == NativeCodePlacement::Dynamic &&
+      program.native_mode == NativeProgramMode::Reloadable) {
+    output.image_data = std::move(description);
+    BindDynamicEntries(output, entries, optimized);
+  } else {
+    const auto emitted = EmitNativeImage(
+        module, *description->image(),
+        {.external = entries, .reflection = reflection_entries, .host = host_entries}, module_name);
+    if (!emitted) {
+      return std::unexpected(emitted.error());
+    }
+    output.image_symbol = emitted->symbol;
+    image = emitted->data;
+  }
+  return image;
+}
+
+void SetModuleTargetAttributes(NativeModule& output) {
+  auto& module = *output.module;
+  for (auto& function : module) {
+    if (!function.isDeclaration()) {
+      // 标准 LLVM 目标属性同时参与机器码生成和对象缓存身份，避免跨 CPU 误用产物。
+      if (!function.hasFnAttribute("target-cpu")) {
+        function.addFnAttr("target-cpu", output.machine->getTargetCPU());
+      }
+      if (!function.hasFnAttribute("target-features")) {
+        function.addFnAttr("target-features", output.machine->getTargetFeatureString());
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void InitializeTarget() {
@@ -850,7 +870,10 @@ CpuProfile TargetCpu(NativeCodePlacement placement) {
   return {.name = llvm::sys::getHostCPUName().str(), .features = std::move(joined)};
 }
 
-NativeModule::NativeModule() = default;
+NativeModule::NativeModule(NativeProgramMode mode,
+                           NativeCodePlacement placement,
+                           NativeOptimization optimization)
+    : mode(mode), placement(placement), optimization(optimization) {}
 NativeModule::~NativeModule() = default;
 NativeModule::NativeModule(NativeModule&&) noexcept = default;
 
@@ -862,6 +885,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                                                             NativeCodeTier tier,
                                                             EscapeOptimization escape,
                                                             NativeCodePlacement placement,
+                                                            NativeOptimization optimization,
                                                             std::span<const std::uint8_t> reused) {
   if (debugging == NativeDebugging::Instructions) {
     // 逐指令检查需要真实对象与规范 IR 值，不让标量替换隐藏可观察的对象字段。
@@ -874,7 +898,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   if (!target) {
     return diagnostic(target.error());
   }
-  NativeModule output;
+  NativeModule output(program.native_mode, placement, optimization);
   output.context = std::make_unique<llvm::LLVMContext>();
   output.machine = std::move(*target);
   output.body_dependencies = calls.dependencies;
@@ -902,46 +926,20 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   HostEntryPlan host_plan{.needed = {}, .globals = {}};
   if (IsClosedLinkedProgram(program.native_mode, placement) &&
       debugging == NativeDebugging::Safepoints) {
-    host_plan =
-        DeclareHostEntries(module, program, declarations->baseline, declarations->optimized);
+    host_plan = DeclareHostEntries(module, program, *declarations);
   }
   DeclareRangeSpecializations(module, program, closed_access, *declarations);
   const auto& generated = declarations->baseline;
   const auto& optimized = declarations->optimized;
-  std::vector<llvm::Function*> entries;
-  std::vector<llvm::Function*> reflection_entries;
-  std::vector<llvm::Function*> host_entries;
-  entries.reserve(generated.size());
-  reflection_entries.reserve(generated.size());
-  for (const auto& function : generated) {
-    entries.push_back(function.entry);
-    reflection_entries.push_back(function.reflection_entry);
-    host_entries.push_back(function.host_entry_selector);
+  const auto emitted_image =
+      EmitModuleImage(output, program, *declarations, module_name, debugging, tier);
+  if (!emitted_image) {
+    return diagnostic(emitted_image.error());
   }
-  auto description = DescribeNativeImage(program);
-  RequireReflectionReceiverLayouts(program, optimized, debugging, tier, *description);
-  llvm::Constant* image =
-      llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context));
-  if (placement == NativeCodePlacement::Dynamic &&
-      program.native_mode == NativeProgramMode::Reloadable) {
-    output.image_data = std::move(description);
-    BindDynamicEntries(output, entries, optimized);
-  } else {
-    const auto emitted = EmitNativeImage(
-        module, *description->image(),
-        {.external = entries, .reflection = reflection_entries, .host = host_entries}, module_name);
-    if (!emitted) {
-      return diagnostic(emitted.error());
-    }
-    output.image_symbol = emitted->symbol;
-    image = emitted->data;
-  }
+  auto* image = *emitted_image;
   std::vector<NativeFunctionMetrics> metrics;
   const auto global_access = AnalyzeGlobalAccess(program, placement);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    output.function_symbols.push_back(FunctionSymbols(
-        generated.at(index), optimized.at(index),
-        declarations->specialized.empty() ? nullptr : &declarations->specialized[index]));
     if (!reused.empty() && reused[index] != 0) {
       metrics.emplace_back();
       continue;
@@ -966,53 +964,40 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   output.function_metrics = std::move(metrics);
   if (!host_plan.needed.empty()) {
     FinalizeHostEntries(module, program, host_plan, declarations->optimized);
-    output.function_symbols.clear();
-    for (std::size_t index = 0; index < program.functions.size(); ++index) {
-      output.function_symbols.push_back(FunctionSymbols(
-          generated[index], optimized[index],
-          declarations->specialized.empty() ? nullptr : &declarations->specialized[index]));
-    }
   }
-  if (IsClosedLinkedProgram(program.native_mode, placement) &&
+  output.function_symbols.reserve(generated.size());
+  const auto& specialized = declarations->specialized;
+  const auto has_specialized = !specialized.empty();
+  for (std::size_t index = 0; index < generated.size(); ++index) {
+    output.function_symbols.push_back(FunctionSymbols(
+        generated[index], optimized[index], has_specialized ? &specialized[index] : nullptr));
+  }
+  if (optimization == NativeOptimization::Release &&
+      IsClosedLinkedProgram(program.native_mode, placement) &&
       module.getTargetTriple().getArch() == llvm::Triple::x86_64 &&
       debugging == NativeDebugging::Safepoints) {
-    output.target_functions =
-        PlanTargetVersions(program, calls, generated, optimized, declarations->specialized);
+    output.target_functions = PlanTargetVersions(program, calls, *declarations);
   }
-  for (auto& function : module) {
-    if (!function.isDeclaration()) {
-      // 标准 LLVM 目标属性同时参与机器码生成和对象缓存身份，避免跨 CPU 误用产物。
-      if (!function.hasFnAttribute("target-cpu")) {
-        function.addFnAttr("target-cpu", output.machine->getTargetCPU());
-      }
-      if (!function.hasFnAttribute("target-features")) {
-        function.addFnAttr("target-features", output.machine->getTargetFeatureString());
-      }
-    }
-  }
+  SetModuleTargetAttributes(output);
   return output;
 }
 
-std::expected<void, std::string> Finalize(NativeModule& generated,
-                                          NativeOptimization optimization,
-                                          NativeProgramMode mode,
-                                          NativeCodePlacement placement) {
+std::expected<void, std::string> Finalize(NativeModule& generated) {
   auto& module = *generated.module;
   std::string verification;
   llvm::raw_string_ostream verifier(verification);
   if (llvm::verifyModule(module, &verifier)) {
     return std::unexpected(verification);
   }
-  if (optimization == NativeOptimization::Release) {
+  if (generated.optimization == NativeOptimization::Release) {
     for (auto* function : generated.recursive_functions) {
       InlineRecursion(*function);
     }
     generated.recursive_functions.clear();
     EmitTargetVersions(module, generated.target_functions, generated.function_symbols);
     generated.target_functions.clear();
-    Optimize(module, *generated.machine, mode, placement);
+    Optimize(module, *generated.machine, generated.mode, generated.placement);
   } else {
-    generated.target_functions.clear();
     // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的
     // 临时值全部留在物理栈上，绕过大帧的有界外部存储。
     for (auto& function : module) {

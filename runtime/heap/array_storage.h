@@ -2,17 +2,26 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <limits>
 #include <span>
 
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
-namespace vela::runtime::internal {
+namespace vela::runtime {
+
+enum class ArrayAccessError : std::uint8_t;
+
+namespace internal {
+
+// 仅供内部重排现有元素；不得写入新值或让借用逸出，否则必须使用 Heap::IntegerElements。
+std::expected<std::span<std::int64_t>, ArrayAccessError> BorrowIntegerElements(
+    HeapObject& array) noexcept;
 
 inline constexpr std::uint32_t kInlineArrayCapacity = 4;
 
-enum class IntegerArrayRange : std::uint32_t { Unknown, Nonnegative31 };
+enum class IntegerArrayRange : std::uint8_t { Unknown, Nonnegative31 };
 inline constexpr std::uint64_t kNonnegative31Mask = std::numeric_limits<std::int32_t>::max();
 
 // 数组身份与 GC 链接保持稳定；只有 data 指向的连续元素缓冲区在扩容时迁移。
@@ -46,4 +55,5 @@ inline std::span<const std::byte> ArrayBytes(const HeapObject& array,
   return {buffer.data, static_cast<std::size_t>(buffer.capacity) * layout.element_size()};
 }
 
-}  // namespace vela::runtime::internal
+}  // namespace internal
+}  // namespace vela::runtime

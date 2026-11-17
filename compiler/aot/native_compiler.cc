@@ -185,7 +185,7 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   const auto fields = native::FindFieldTargets(program);
   auto generated = native::Generate(program, calls, fields, options.module_name,
                                     native::NativeDebugging::Safepoints, NativeCodeTier::Baseline,
-                                    options.escape, options.placement);
+                                    options.escape, options.placement, options.optimization);
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
   }
@@ -201,9 +201,7 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     EmitMain(module, *module.getFunction(generated->image_symbol), *main);
   }
   const auto optimizing = Clock::now();
-  if (const auto finalized = native::Finalize(*generated, options.optimization, program.native_mode,
-                                              options.placement);
-      !finalized) {
+  if (const auto finalized = native::Finalize(*generated); !finalized) {
     return diagnostic(finalized.error());
   }
   timings.optimization = Clock::now() - optimizing;

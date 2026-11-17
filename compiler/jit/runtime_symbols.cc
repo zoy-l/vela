@@ -18,7 +18,6 @@
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_deoptimization.h"
 #include "runtime/native/native_dispatch.h"
-#include "runtime/native/native_function.h"
 #include "runtime/native/native_operations.h"
 
 namespace vela::compiler::jit {

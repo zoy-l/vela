@@ -564,6 +564,7 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
     backends = ("cpp", "cpp_indirect", "baseline", "optimized", "aot",
                 "baseline_control", "optimized_control", "aot_control")
     keys = sorted({(workload, count) for _, workload, count in samples})
+    medians = {key: median(values) for key, values in samples.items()}
     for workload, count in keys:
         missing = [backend for backend in backends if (backend, workload, count) not in samples]
         if missing:
@@ -584,9 +585,9 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
     for workload, count in keys:
         values = [samples[backend, workload, count] for backend in backends]
-        medians = [median(times) for times in values]
-        elapsed = [f"{value:.3f}" for value in medians[:5]]
-        ratios = [f"{medians[index] / medians[0]:.3f}" for index in (2, 3, 4)]
+        measured = [medians[backend, workload, count] for backend in backends]
+        elapsed = [f"{value:.3f}" for value in measured[:5]]
+        ratios = [f"{measured[index] / measured[0]:.3f}" for index in (2, 3, 4)]
         counts = "/".join(str(len(times)) for times in values)
         cvs = "/".join(variation(times) for times in values[:5])
         lines.append("| " + " | ".join([workload, str(count), *elapsed, *ratios, counts, cvs]) + " |")
@@ -595,12 +596,14 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
                   "not an isolated ABI cost.", "",
                   "| Workload | Calls/batch | Baseline control ns | Optimized control ns | AOT control ns | Baseline minus control ns | Optimized minus control ns | AOT minus control ns | CV baseline/optimized/AOT controls |",
                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"])
+    native_backends = ("baseline", "optimized", "aot")
     for workload, count in keys:
         controls = [samples[backend + "_control", workload, count]
-                    for backend in ("baseline", "optimized", "aot")]
-        control_medians = [median(values) for values in controls]
-        differences = [median(samples[backend, workload, count]) - control
-                       for backend, control in zip(("baseline", "optimized", "aot"), control_medians)]
+                    for backend in native_backends]
+        control_medians = [medians[backend + "_control", workload, count]
+                           for backend in native_backends]
+        differences = [medians[backend, workload, count] - control
+                       for backend, control in zip(native_backends, control_medians)]
         times = control_medians + differences
         lines.append("| " + " | ".join([workload, str(count), *[f"{time:.3f}" for time in times],
                                           "/".join(variation(values) for values in controls)]) + " |")

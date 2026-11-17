@@ -10,7 +10,7 @@ import sys
 import unittest
 
 from tools.config import ROOT, executable_name, toolchain_tools
-from tools.test_support import (CommandTestCase, compile_native_host, native_command,
+from tools.test_support import (CommandTestCase, NATIVE_TEST_INCLUDES, compile_native_host, native_command,
                                 native_test_libraries)
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
@@ -24,7 +24,7 @@ from tools.aot_class_fixture import HOST_TESTS as CLASS_TESTS, SOURCE as CLASS_S
 from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
 from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
 from tools.aot_host_entry_fixture import (HOST_TESTS as HOST_ENTRY_TESTS, SOURCE as HOST_ENTRY_SOURCE,
-                                         EXPORTS as HOST_ENTRY_EXPORTS)
+                                         EXTRA_EXPORTS as HOST_ENTRY_EXTRA_EXPORTS)
 from tools.aot_repeated_field_fixture import (HOST_TESTS as REPEATED_FIELD_TESTS,
                                             SOURCE as REPEATED_FIELD_SOURCE)
 from tools.aot_binding_fixture import HOST_TESTS as BINDING_TESTS, SOURCE as BINDING_SOURCE
@@ -855,7 +855,7 @@ class NativeObjectTest(CommandTestCase):
             "global_leaf_entry": ["repair"],
             "integer_loop_entry": ["assignArray", "callArray", "writeArray", "appendArray", "rootedArray"],
             "field_loop_entry": ["floatPrepare", "floatUpdate", "floatRootUpdate"],
-            "host_entry": HOST_ENTRY_EXPORTS[1:],
+            "host_entry": HOST_ENTRY_EXTRA_EXPORTS,
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
                       *["--export=" + value for value in exports], "-o", object_file])
@@ -891,10 +891,8 @@ class NativeObjectTest(CommandTestCase):
                           encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("host_entries")
         runtime, *gtest = native_test_libraries(self.output)
-        includes = [ROOT, ROOT / "include", ROOT / "third_party/googletest/googletest/include",
-                    ROOT / "third_party/abseil-cpp"]
         compile_native_host(self, [source], executable, [object_file, runtime, *gtest],
-                            includes, cwd=self.directory)
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
         executed = self.command([executable]).stdout
         self.assertIn("[==========] 15 tests from 1 test suite ran.", executed)
 
@@ -1388,8 +1386,6 @@ export async func calculate(): Future<int> {
                             encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("host")
         runtime, *gtest = native_test_libraries(self.output)
-        includes = [ROOT, ROOT / "include", ROOT / "third_party/googletest/googletest/include",
-                    ROOT / "third_party/abseil-cpp"]
         if sys.platform == "win32":
             self.command([self.tools["cxx"], "/nologo", "/TC", "/W4", "/WX", "/c", c_source,
                           f"/I{ROOT}", f"/Fo{self.directory / 'headers.obj'}"])
@@ -1402,7 +1398,7 @@ export async func calculate(): Future<int> {
                           f"-I{ROOT}", "-o", self.directory / "headers.o"])
             c_object = self.directory / "headers.o"
         compile_native_host(self, [source_file], executable, [*objects, runtime, *gtest],
-                            includes, cwd=self.directory)
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
         c_executable = self.directory / executable_name("c_host")
         compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
                             cwd=self.directory)

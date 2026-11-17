@@ -428,6 +428,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
     }
     std::uninitialized_value_construct_n(data_->imports, functions.size());
   }
+  const auto imports = std::span(data_->imports, functions.size());
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
     data_->signatures.push_back(DescribeCall(function));
@@ -449,7 +450,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
                      std::string(symbol) + "'",
       });
     }
-    data_->imports[index] = &binding->aot_entry();
+    imports[index] = &binding->aot_entry();
     data_->import_owners.push_back(std::move(binding));
   }
   return {};
