@@ -47,7 +47,9 @@ and [AOT contracts](aot.md) for native distribution and platform SDK acceptance.
 ## GitHub builds and releases
 
 The `Build` workflow runs Debug and Release tests on macOS arm64 and Windows x64
-for branch pushes, pull requests, and manual runs. Each configuration uses a separate
+for branch pushes, pull requests, and manual runs. macOS uses the `macos-26` runner
+with Xcode 26.6 selected through `DEVELOPER_DIR`; Clang and LLD still come from the
+pinned LLVM package. Each configuration uses a separate
 runner. Release jobs also create a tested SDK archive and SHA-256 checksum as workflow
 artifacts. Build outputs and ThinLTO link caches are removed after successful testing
 and artifact upload, before saving the dependency cache, to reclaim runner disk space.

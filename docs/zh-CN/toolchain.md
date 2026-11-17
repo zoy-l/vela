@@ -28,7 +28,9 @@ macOS SDK 来自系统安装的 Xcode 或 Command Line Tools。`xcrun` 解析 `S
 ## GitHub 构建与发布
 
 `Build` 工作流在分支推送、Pull Request 和手动运行时，分别执行 macOS arm64 与 Windows x64
-的 Debug、Release 测试。每个配置使用独立 runner。Release 作业还会将经过自检的 SDK 归档和
+的 Debug、Release 测试。macOS 使用 `macos-26` runner，并通过 `DEVELOPER_DIR` 固定选择
+Xcode 26.6；Clang 和 LLD 仍使用固定版本的 LLVM 包。每个配置使用独立 runner。
+Release 作业还会将经过自检的 SDK 归档和
 SHA-256 校验文件上传为工作流产物。测试和产物上传成功后，清理构建输出与 ThinLTO 链接缓存，
 为依赖缓存保存回收 runner 磁盘空间。
 

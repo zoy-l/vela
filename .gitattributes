@@ -1,0 +1,2 @@
+# 固定 SHA-256 的上游文件按原始字节检出，避免自动换行转换。
+/third_party/unicode_data/LICENSE -text

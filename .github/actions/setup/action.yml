@@ -3,6 +3,11 @@ description: Restore pinned dependencies and enable the default sccache compiler
 runs:
   using: composite
   steps:
+    - name: Select Xcode 26.6
+      if: runner.os == 'macOS'
+      shell: bash
+      run: echo "DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer" >> "$GITHUB_ENV"
+
     - name: Set up Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
