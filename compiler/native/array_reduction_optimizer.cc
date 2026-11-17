@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <utility>
 
 #include <llvm/ADT/DenseMap.h>
@@ -409,13 +410,14 @@ llvm::BasicBlock* EmitTrial(const ArrayReduction& reduction,
     copied->setMetadata(kNativeRootClearMetadata, store->getMetadata(kNativeRootClearMetadata));
     copied->setMetadata(llvm::LLVMContext::MD_tbaa, store->getMetadata(llvm::LLVMContext::MD_tbaa));
   }
-  const auto mapped = reduction.ExitMapping({
+  const auto exit_mapping = reduction.ExitMapping({
       .index = index,
       .total = total,
       .increment = next,
       .sum = sum,
       .element = value,
   });
+  const std::span mapped(exit_mapping);
   for (auto& phi : reduction.normal_exit->phis()) {
     auto* value_on_exit = phi.getIncomingValueForBlock(loop.getLoopLatch());
     if (const auto found = std::ranges::find_if(

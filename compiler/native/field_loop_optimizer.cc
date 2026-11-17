@@ -883,9 +883,10 @@ class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
     transform.addPass(llvm::LCSSAPass());
     transform.addPass(
         llvm::createFunctionToLoopPassAdaptor(llvm::LICMPass(llvm::LICMOptions()), true));
+    // 先把可安全投机的独立计算归并到同一基本块，再让 SLP 打包平方根与除法。
+    transform.addPass(FieldCalculationSchedulePass());
     transform.addPass(llvm::SLPVectorizerPass());
     transform.addPass(llvm::InstCombinePass());
-    transform.addPass(FieldCalculationSchedulePass());
     transform.addPass(llvm::DCEPass());
     preserved.intersect(transform.run(function, analyses));
     return preserved;

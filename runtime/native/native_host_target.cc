@@ -1,10 +1,11 @@
 #include "runtime/native/native_host_target.h"
 
-#include <array>
-#include <cstdint>
 #include "runtime/native/native_image.h"
 
 #if defined(__x86_64__) || defined(_M_X64)
+#include <array>
+#include <cstdint>
+
 #ifdef _WIN32
 #include <intrin.h>
 #else
