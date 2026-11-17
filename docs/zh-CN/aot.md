@@ -2,7 +2,7 @@
 
 [English](../en/aot.md) | [**简体中文**](aot.md)
 
-> 状态：A2/A3 原生执行及 A4 的 `exe`/`obj`/`staticlib` 接口已实现。Windows x64 的 Debug/Release 回归、仅链接原生运行时的宿主测试、显式 SDK 发行包测试、静态检查及 Release 测量已通过。Linux/macOS 目标包和干净主机验收仍未完成，因此 A4/A5 尚未全部验收，不宣称三平台正式发行已获认证。
+> 状态：A2/A3 原生执行及 A4 的 `exe`/`obj`/`staticlib` 接口已实现。Windows x64 的 Debug/Release 回归、仅链接原生运行时的宿主测试、显式 SDK 发行包测试、静态检查及 Release 测量已通过。Windows、macOS 已有自动 SDK 打包探测；Linux 目标打包及发布 runner 上的干净主机验收仍未完成，因此 A4/A5 尚未全部验收，不宣称三平台正式发行已获认证。
 
 Vela AOT 从共享的 Typed IR 生成原生目标文件，通过随工具链分发的链接工具生成可执行文件或静态库。LLVM 作为编译器内部依赖集成；使用官方发行包的用户无需单独安装 Clang 或 LLVM。生成的程序依赖 Vela 运行时和目标平台库，不依赖 LLVM 或 Vela 编译器。
 
@@ -39,7 +39,7 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 
 可执行文件和归档构建从安装的编译器相对路径读取 `share/vela/target.json`，也可用 `--target-support=FILE` 显式选择配置。仅生成目标文件时，不需要最终 SDK 或链接输入。配置通过 SHA-256 固定包内工具与运行时，并记录 SDK 版本、来源、许可、必需输入和链接参数；不从 `PATH` 选择工具。
 
-开发者可以运行 `python -m tools.vl package release OUTPUT` 创建 Windows 开发包。清单提供精确的 MSVC、Windows SDK/UCRT 版本及安装说明；按清单将 `VELA_MSVC_TOOLS` 设为带版本的 MSVC 工具目录，将 `VELA_WINDOWS_SDK` 设为 Windows Kits 根目录，无需 Visual Studio IDE。SDK 链接输入保留在外部。其他主机目前需要通过经过审计的 `--support-spec` 描述 SDK/sysroot 输入及随包文件，仍须完成各平台验收。
+开发者可以运行 `python -m tools.vl package release OUTPUT` 创建 Windows 或 macOS 开发包。Windows 清单提供精确的 MSVC、Windows SDK/UCRT 版本及安装说明；按清单将 `VELA_MSVC_TOOLS` 设为带版本的 MSVC 工具目录，将 `VELA_WINDOWS_SDK` 设为 Windows Kits 根目录，无需 Visual Studio IDE。macOS 包记录当前选择的 Apple SDK 和最低系统版本，携带匹配的 LLVM 编译运行库；将 `VELA_MACOS_SDK` 设为匹配 SDK 的绝对路径，可通过 `xcrun --sdk macosx --show-sdk-path` 获取。两个平台的 SDK 链接输入均保留在外部。Linux 包仍需通过经过审计的 `--support-spec` 描述 SDK/sysroot 输入及随包文件。各平台仍须完成干净主机验收，见 [GitHub 构建与发布](toolchain.md#github-构建与发布)。
 
 首期支持本机编译本机，目标发行矩阵与现有引导主机一致：Windows x64、Linux x64、macOS arm64；每个平台必须独立通过发行验收后才能宣称支持。本 AOT 交付范围不包含原生动态库装载、跨发行版本 ABI 兼容、独立模块二进制分发或 跨版本原生调用；JIT 与热重载由[开发模式](hot_reload.md)提供。REPL 与独立调试器也使用 JIT/原生执行。未支持的 AOT 操作必须明确报错。
 

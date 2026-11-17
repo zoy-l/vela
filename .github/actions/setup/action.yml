@@ -1,0 +1,59 @@
+name: Set up Vela
+description: Restore pinned dependencies and enable the default sccache compiler wrapper.
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: '3.13'
+
+    - name: Set up sccache
+      uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.16.0
+
+    - name: Restore pinned dependencies
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('DEPS', 'tools/llvm.py', 'tools/unicode_case.py', 'third_party/unicode_data/manifest.json') }}
+        path: |
+          third_party/build_tools
+          third_party/abseil-cpp
+          third_party/benchmark
+          third_party/efsw
+          third_party/googletest
+          third_party/luajit
+          third_party/pcre2
+          third_party/utf8proc
+          third_party/yyjson
+          third_party/xxhash
+          third_party/zlib
+          third_party/zstd
+          third_party/unicode_data/inputs
+          .cipd
+          .gclient_entries
+
+    - name: Synchronize and verify dependencies
+      shell: python
+      run: |
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+
+        depot = Path(os.environ['RUNNER_TEMP']) / 'depot_tools'
+        subprocess.run(['git', 'init', str(depot)], check=True)
+        subprocess.run(['git', '-C', str(depot), 'remote', 'add', 'origin',
+                        'https://chromium.googlesource.com/chromium/tools/depot_tools.git'], check=True)
+        subprocess.run(['git', '-C', str(depot), 'fetch', '--depth=1', 'origin',
+                        'ec77017fb3e090ff02bffb9c6980ebcdd3006ddc'], check=True)
+        subprocess.run(['git', '-C', str(depot), 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+        environment = dict(os.environ, DEPOT_TOOLS_UPDATE='0', DEPOT_TOOLS_WIN_TOOLCHAIN='0')
+        gclient = depot / ('gclient.bat' if sys.platform == 'win32' else 'gclient')
+        subprocess.run([str(gclient), 'sync', '--no-history'], env=environment, check=True)
+        subprocess.run([sys.executable, '-m', 'tools.vl', 'doctor'], check=True)
+
+    - name: Verify sccache
+      shell: bash
+      run: sccache --show-stats

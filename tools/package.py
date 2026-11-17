@@ -198,6 +198,76 @@ def windows_support(runtime: Path) -> tuple[dict, dict[str, str]]:
         }, {"VELA_MSVC_TOOLS": str(msvc), "VELA_WINDOWS_SDK": str(sdk)})
 
 
+def macos_support(runtime: Path, package: Path) -> tuple[dict, dict[str, str]]:
+    """Record the selected Apple SDK and bundle the pinned compiler runtime."""
+    tools = toolchain_tools()
+    sdk = tools["sysroot"]
+    settings = json.loads((sdk / "SDKSettings.json").read_text(encoding="utf-8"))
+    version = settings["Version"]
+    with tempfile.TemporaryDirectory(prefix="vela-macos-sdk-") as temporary:
+        work = Path(temporary)
+        source = work / "main.cc"
+        source.write_text("int main() { return 0; }\n", encoding="utf-8", newline="\n")
+        obj, application = work / "main.o", work / "main"
+        command([tools["cxx"], "-c", source, "-o", obj, "-isysroot", sdk])
+        driver = command([tools["cxx"], "-###", "-stdlib=libc++", "-fuse-ld=lld",
+                          "--ld-path=" + str(tools["linker"]), "-isysroot", sdk,
+                          "-framework", "CoreFoundation", obj, runtime, "-o", application])
+        invocation = shlex.split(driver.stderr.splitlines()[-1])[1:]
+        platform = invocation.index("-platform_version")
+        minimum = invocation[platform + 2]
+        linked = command([tools["linker"], *invocation, "-t", "-force_load", runtime])
+        files = []
+        sdk_inputs = set()
+        for line in linked.stdout.splitlines():
+            match = re.fullmatch(r"(.*\.tbd)\(.*\)", line)
+            path = Path(match[1] if match else line)
+            if path.is_absolute() and path.is_relative_to(sdk) and path.is_file():
+                sdk_inputs.add(path)
+        if not sdk_inputs:
+            raise RuntimeError("Pinned linker did not report Apple SDK input files")
+        for path in sorted(sdk_inputs):
+            files.append({"path": "{macos_sdk}/" + path.relative_to(sdk).as_posix(),
+                          "sha256": digest(path), "role": "link", "source": "Apple macOS SDK",
+                          "license": "Apple SDK license", "redistribution": "external SDK; not bundled"})
+        replacements = {str(obj): "{object}", str(application): "{output}",
+                        str(runtime): "{runtime}", str(sdk): "{macos_sdk}"}
+        arguments = []
+        llvm_root = sdk_directory()
+        for value in invocation:
+            if value in replacements:
+                arguments.append(replacements[value])
+                continue
+            path = Path(value)
+            if path.is_absolute():
+                if not path.is_relative_to(llvm_root) or path.suffix != ".a":
+                    raise RuntimeError(f"Undeclared macOS linker input: {value}")
+                relative = "lib/clang/" + path.name
+                files.append(copy_file(path, package, relative, "link", "LLVM",
+                                       "Apache-2.0 WITH LLVM-exception"))
+                arguments.append("{package}/" + relative)
+            else:
+                arguments.append(value)
+        readobj = tools["cxx"].parent / executable_name("llvm-readobj")
+        dependencies = command([readobj, "--needed-libs", application]).stdout
+        libraries = dependencies.split("NeededLibraries [", 1)[1].split("]", 1)[0]
+        return ({
+            "external_roots": [{
+                "name": "macos_sdk", "environment": "VELA_MACOS_SDK", "version": version,
+                "source": "https://developer.apple.com/xcode/",
+                "license": "Apple SDK license; SDK link inputs are not redistributed",
+                "instructions": f"Install Apple macOS SDK {version} and set VELA_MACOS_SDK "
+                                "to the absolute path returned by xcrun --sdk macosx --show-sdk-path",
+            }],
+            "files": files, "archive_arguments": ["rcs", "{output}", "{object}"],
+            "link_arguments": arguments,
+            "application_dependencies": sorted(line.strip() for line in libraries.splitlines()
+                                               if line.strip()),
+            "minimum_os": "macOS " + minimum + " (arm64)", "object_format": "Mach-O",
+            "runtime_variant": "Apple system libc++; matching Vela runtime build identity",
+        }, {"VELA_MACOS_SDK": str(sdk)})
+
+
 def create_package(executable: Path, runtime: Path, destination: Path,
                    support_spec: Path | None = None) -> dict[str, str]:
     """Publish a new directory only after every packaged file and target input is recorded."""
@@ -225,6 +295,8 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             environment = {}
         elif sys.platform == "win32":
             support, environment = windows_support(runtime)
+        elif sys.platform == "darwin":
+            support, environment = macos_support(runtime, package)
         else:
             raise RuntimeError("This host requires an audited --support-spec with its SDK/sysroot, "
                                "link inputs, licenses, minimum OS, and linker arguments")

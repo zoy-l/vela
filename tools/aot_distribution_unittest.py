@@ -13,16 +13,16 @@ import tempfile
 import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
-from tools.test_support import (closed_output_command, compile_native_host, create_native_package,
-                                native_command, native_test_libraries, pending_command,
-                                vela_executable)
+from tools.test_support import (NATIVE_PACKAGE_AVAILABLE, closed_output_command, compile_native_host,
+                                create_native_package, native_command, native_test_libraries,
+                                pending_command, vela_executable)
 from tools.aot_c_fixture import host_source as c_host_source
 from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
                                     PROGRAM_CASES)
 
 
-@unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
-                     "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
+@unittest.skipUnless(NATIVE_PACKAGE_AVAILABLE,
+                     "This platform requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
 class NativeDistributionTest(unittest.TestCase):
     def test_existing_language_corpus_matches_jit(self) -> None:
         categories = [

@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing version tag to build for a release.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ inputs.release_tag == '' }}
+
+env:
+  PYTHONUTF8: '1'
+  SCCACHE_GHA_ENABLED: 'true'
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }} / ${{ matrix.configuration }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 180
+    env:
+      SCCACHE_GHA_VERSION: vela-v1-${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos-arm64
+            runner: macos-15
+          - name: windows-x64
+            runner: windows-2025
+        configuration: ${{ fromJSON(inputs.release_tag != '' && '["release"]' || '["debug","release"]') }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set up build environment
+        uses: ./.github/actions/setup
+
+      - name: Build and test
+        run: python -m tools.vl test ${{ matrix.configuration }} all
+
+      - name: Package Release SDK
+        if: matrix.configuration == 'release'
+        shell: python
+        env:
+          PLATFORM: ${{ matrix.platform.name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          import hashlib
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import sys
+
+          executable = Path('out/release') / ('vela.exe' if sys.platform == 'win32' else 'vela')
+          version = subprocess.check_output([str(executable), '--version'], text=True).strip().split()[1]
+          tag = os.environ['RELEASE_TAG']
+          if tag and tag != 'v' + version:
+              raise SystemExit(f'Release tag {tag} does not match binary version v{version}')
+          name = f'vela-{version}-{os.environ["PLATFORM"]}'
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          package = temporary / name
+          subprocess.run([sys.executable, '-m', 'tools.vl', 'package', 'release', str(package)], check=True)
+          distribution = temporary / 'vela-dist'
+          distribution.mkdir()
+          archive = Path(shutil.make_archive(str(distribution / name),
+                         'zip' if sys.platform == 'win32' else 'gztar',
+                         root_dir=temporary, base_dir=name))
+          with archive.open('rb') as source:
+              checksum = hashlib.file_digest(source, 'sha256').hexdigest()
+          archive.with_name(archive.name + '.sha256').write_text(
+              checksum + '  ' + archive.name + '\n', encoding='utf-8', newline='\n')
+
+      - name: Upload Release SDK
+        if: matrix.configuration == 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vela-${{ matrix.platform.name }}
+          path: ${{ runner.temp }}/vela-dist/*
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+          retention-days: 14
+
+      - name: Reclaim build disk space before saving dependencies
+        shell: python
+        run: |
+          import shutil
+          shutil.rmtree('out')

@@ -43,3 +43,38 @@ The `vela` target provides source checking, JIT execution, native AOT builds,
 JIT development sessions, testing, and source tooling commands. See
 [language architecture](architecture.md) for language and runtime contracts,
 and [AOT contracts](aot.md) for native distribution and platform SDK acceptance.
+
+## GitHub builds and releases
+
+The `Build` workflow runs Debug and Release tests on macOS arm64 and Windows x64
+for branch pushes, pull requests, and manual runs. Each configuration uses a separate
+runner. Release jobs also create a tested SDK archive and SHA-256 checksum as workflow
+artifacts. Build outputs and ThinLTO link caches are removed after successful testing
+and artifact upload, before saving the dependency cache, to reclaim runner disk space.
+
+The shared setup action installs sccache 0.16.0 and enables its GitHub Actions cache
+backend. The default compiler wrapper remains enabled. Pinned source dependencies,
+GN, Ninja, LLVM and Unicode inputs use a separate cache keyed by OS, architecture and
+dependency declarations. Debug and Release share this dependency cache. Every run
+executes `gclient sync --no-history`, including cache hits, to synchronize the fixed
+inputs and run their verification hooks. A missing or evicted cache requires a normal
+download and build; cache availability does not determine build correctness. GitHub's
+repository cache quota and eviction policy apply to both caches.
+
+Push a tag matching `v` plus the version in `compiler/build_info.h` to run the `Release`
+workflow. It rebuilds and tests both platforms at that tag, verifies archive checksums,
+and publishes a GitHub Release after both builds and all asset uploads succeed. Tags
+containing a hyphen produce prereleases. The workflow can also be run manually for an
+existing version tag.
+Only the publication job has `contents: write`; build jobs have read-only repository
+access. No personal access token is required.
+
+macOS packages probe the selected Apple SDK, record the exact SDK inputs and minimum
+OS selected by Clang, and bundle the matching LLVM compiler-runtime archive. Apple SDK
+files remain external. Before building AOT executables with an installed package, set
+`VELA_MACOS_SDK` to the matching SDK path returned by
+`xcrun --sdk macosx --show-sdk-path`; the required SDK version and file hashes are in
+`share/vela/target.json`. Windows packages record their required MSVC and Windows SDK
+roots in the same manifest. Object and static-library output do not require the final
+system SDK link inputs. Linux distribution packaging still requires an audited
+`--support-spec`; it is not part of these release workflows.

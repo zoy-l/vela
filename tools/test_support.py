@@ -17,6 +17,8 @@ from tools.package import create_package
 
 NATIVE_TEST_INCLUDES = (ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
                         ROOT / "third_party/googletest/googletest/include")
+NATIVE_PACKAGE_AVAILABLE = (sys.platform in {"win32", "darwin"}
+                            or bool(os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")))
 
 
 def vela_executable() -> Path:

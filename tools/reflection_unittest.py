@@ -10,8 +10,9 @@ import unittest
 
 from tools.aot_reflection_fixture import HOST as OFFLINE_MEMBER_HOST, SOURCE as OFFLINE_MEMBER_SOURCE
 from tools.config import executable_name
-from tools.test_support import (CommandTestCase, NATIVE_TEST_INCLUDES, compile_native_host, create_native_package,
-                                native_command, native_test_libraries)
+from tools.test_support import (CommandTestCase, NATIVE_PACKAGE_AVAILABLE, NATIVE_TEST_INCLUDES,
+                                compile_native_host, create_native_package, native_command,
+                                native_test_libraries)
 
 
 SOURCE = r'''
@@ -144,8 +145,8 @@ TEST(ReflectionArtifactTest, QueriesAndInvokesUsingOnlyTheStandaloneRuntime) {
 '''
 
 
-@unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
-                     "Native reflection acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
+@unittest.skipUnless(NATIVE_PACKAGE_AVAILABLE,
+                     "This platform requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
 class ReflectionCommandTest(CommandTestCase):
     def setUp(self) -> None:
         super().setUp()

@@ -13,7 +13,8 @@ from tools.clang_sdk import resource_directory
 from tools.bindgen import fingerprints, generate, verify_manifest
 from tools.package import package_bindgen
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools, xcode_path
-from tools.test_support import CommandTestCase, compile_native_host, create_native_package
+from tools.test_support import (CommandTestCase, NATIVE_PACKAGE_AVAILABLE, compile_native_host,
+                                create_native_package)
 from tools.llvm import sdk_specification
 
 
@@ -458,8 +459,8 @@ class VELA_CLASS("app.Service") Service { public:
                 self.assertTrue(registration.startswith("vela::bindings::module_"))
                 self.assertNotIn("__", registration)
 
-    @unittest.skipUnless(sys.platform == "win32" or os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC"),
-                         "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
+    @unittest.skipUnless(NATIVE_PACKAGE_AVAILABLE,
+                         "This platform requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
     def test_aot_exports_use_typed_rooted_host_handles_and_run_without_source(self) -> None:
         package = self.directory / "aot_package"
         create_native_package(self.executable, package)
