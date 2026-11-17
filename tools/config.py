@@ -96,6 +96,8 @@ def llvm_tools(directory: Path) -> dict[str, Path]:
         "cxx": require_file(cxx, "project Clang++ executable"),
         "archiver": require_file(archiver, "project LLVM archiver"),
         "linker": require_file(linker, "project LLD linker"),
+        "strip": require_file(clang_bin / executable_name("llvm-strip"),
+                              "project LLVM symbol stripping tool"),
         "clang_format": require_file(
             clang_bin / executable_name("clang-format"),
             "project clang-format executable",
@@ -181,6 +183,7 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
         "vela_cc": tools["cc"].as_posix(),
         "vela_cxx": tools["cxx"].as_posix(),
         "vela_linker": tools["linker"].as_posix(),
+        "vela_strip": tools["strip"].as_posix(),
         "vela_python": Path(sys.executable).resolve().as_posix(),
     }
     args.update(link_configuration())

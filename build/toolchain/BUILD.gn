@@ -92,6 +92,11 @@ toolchain("clang") {
       # 识别链接器类型。
       command = "\"$cxx\" -fuse-ld=lld --ld-path=\"$vela_linker\" @{{output}}.rsp -o \"{{output}}\""
     }
+    if (vela_build_config == "release") {
+      # 只裁剪最终可执行文件；静态库必须保留后续链接需要的符号和
+      # bitcode。
+      command += " && \"$vela_strip\" --strip-all \"{{output}}\""
+    }
     description = "LINK {{output}}"
     rspfile = "{{output}}.rsp"
     rspfile_content =

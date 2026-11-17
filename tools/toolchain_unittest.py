@@ -9,7 +9,8 @@ import sys
 import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name, gn_value, target_cpu, target_os, toolchain_tools
+from tools.config import (ROOT, executable_name, gn_value, static_library_name, target_cpu,
+                          target_os, toolchain_tools)
 
 
 class FormatLintTest(unittest.TestCase):
@@ -132,6 +133,7 @@ executable("sample") {
                         "vela_cc": tools["cc"].as_posix(), "vela_cxx": tools["cxx"].as_posix(),
                         "vela_archiver": tools["archiver"].as_posix(),
                         "vela_linker": tools["linker"].as_posix(),
+                        "vela_strip": tools["strip"].as_posix(),
                         "vela_python": Path(sys.executable).resolve().as_posix(),
                     }
                     if sys.platform == "darwin":
@@ -158,6 +160,19 @@ executable("sample") {
                                          expected_bitcode, str(obj))
                     cached = list((output / "thinlto-cache").glob("llvmcache-*"))
                     self.assertEqual(bool(cached), project_bitcode or bitcode_dependency)
+                    nm = tools["cxx"].parent / executable_name("llvm-nm")
+                    archive = output / "obj" / static_library_name("values")
+                    symbols = subprocess.run([str(nm), "--defined-only", "-j", str(archive)],
+                                             capture_output=True, text=True, encoding="utf-8",
+                                             check=True).stdout
+                    self.assertIn("Calculate", symbols)
+                    if sys.platform != "win32":
+                        symbols = subprocess.run(
+                            [str(nm), "--defined-only", "-j",
+                             str(output / executable_name("sample"))], capture_output=True,
+                            text=True, encoding="utf-8", check=True).stdout
+                        self.assertEqual(any(symbol.lstrip("_") == "main"
+                                             for symbol in symbols.splitlines()), variant == "debug")
 
 
 if __name__ == "__main__":

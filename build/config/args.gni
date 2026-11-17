@@ -8,6 +8,7 @@ declare_args() {
   vela_cxx = ""
   vela_archiver = ""
   vela_linker = ""
+  vela_strip = ""
   vela_sysroot = ""
   vela_python = ""
   vela_llvm_root = ""
@@ -29,7 +30,7 @@ assert(vela_build_config == "debug" || vela_build_config == "release",
 assert(!vela_thin_lto || vela_build_config == "release",
        "ThinLTO requires vela_build_config=release")
 assert(vela_cc != "" && vela_cxx != "" && vela_archiver != "" &&
-           vela_linker != "" && vela_python != "",
+           vela_linker != "" && vela_strip != "" && vela_python != "",
        "vl config must provide the host tool paths")
 assert(target_os != "mac" || vela_sysroot != "",
        "vl config must provide the Xcode SDK")

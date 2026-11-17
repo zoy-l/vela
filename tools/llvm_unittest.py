@@ -35,6 +35,7 @@ class ToolchainLayoutTest(unittest.TestCase):
                     directory = root / "llvm_toolchain" / version / host
                     suffix = ".exe" if system == "Windows" else ""
                     expected = {"cc": cc, "cxx": cxx, "archiver": archiver, "linker": linker,
+                                "strip": "llvm-strip" + suffix,
                                 "clang_format": "clang-format" + suffix,
                                 "clangd": "clangd" + suffix, "clang_tidy": "clang-tidy" + suffix}
                     inputs = [directory / "bin" / name for name in expected.values()]
