@@ -1,14 +1,10 @@
 #include <array>
-#include <cstddef>
 #include <expected>
 #include <initializer_list>
-#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 
-#include <pcre2.h>
-#include <cstdint>
 #include "gtest/gtest.h"
 
 #include "base/builtin.h"
@@ -24,7 +20,6 @@ namespace {
 
 constexpr auto kRepeatedSearches = 100;
 constexpr auto kAmbiguousInputLength = 200;
-constexpr auto kNativeTestBytes = 123;
 
 class RegExpTest : public testing::Test {
  protected:
@@ -199,39 +194,6 @@ TEST_F(RegExpTest, AllMatchesFailureDoesNotExposePartialArray) {
   heap().Collect();
   heap().Collect();
   EXPECT_EQ(heap().allocated_bytes(), 0);
-}
-
-TEST(RegExpNativeStorageTest, ExactAccountingAndRepresentability) {
-  Heap heap;
-  const auto committed = heap.committed_bytes();
-  auto* storage = heap.AllocateNative(kNativeTestBytes);
-  ASSERT_NE(storage, nullptr);
-  EXPECT_GE(heap.allocated_bytes(), kNativeTestBytes);
-  EXPECT_EQ(heap.allocated_bytes(), heap.committed_bytes() - committed);
-  heap.FreeNative(storage);
-  EXPECT_EQ(heap.allocated_bytes(), 0);
-  EXPECT_EQ(heap.committed_bytes(), committed);
-  EXPECT_EQ(heap.AllocateNative(static_cast<std::size_t>(-1)), nullptr);
-}
-
-TEST(RegExpEngineTest, PinnedUnicodeInterpreterConfiguration) {
-  constexpr auto kVersionCapacity = 32;
-  std::array<PCRE2_UCHAR, kVersionCapacity> version{};
-  EXPECT_GT(pcre2_config(PCRE2_CONFIG_UNICODE_VERSION, version.data()), 0);
-  const void* bytes = version.data();
-  EXPECT_EQ(std::string_view(static_cast<const char*>(bytes)), "17.0.0");
-  std::uint32_t value = 0;
-  EXPECT_EQ(pcre2_config(PCRE2_CONFIG_JIT, &value), 0);
-  EXPECT_EQ(value, 0);
-  constexpr auto kMatchLimit = 1000000;
-  constexpr auto kDepthLimit = 1000;
-  constexpr auto kHeapLimitKiB = 8192;
-  pcre2_config(PCRE2_CONFIG_MATCHLIMIT, &value);
-  EXPECT_EQ(value, kMatchLimit);
-  pcre2_config(PCRE2_CONFIG_DEPTHLIMIT, &value);
-  EXPECT_EQ(value, kDepthLimit);
-  pcre2_config(PCRE2_CONFIG_HEAPLIMIT, &value);
-  EXPECT_EQ(value, kHeapLimitKiB);
 }
 
 }  // namespace

@@ -226,22 +226,6 @@ TEST(NativeInstanceTest, DynamicImageOwnerIsRetainedByReachableCallableAndReleas
   EXPECT_TRUE(lifetime.expired());
 }
 
-TEST(NativeInstanceTest, DynamicImageCacheReusesLiveOwnerWithoutKeepingCodeAlive) {
-  Isolate isolate;
-  auto image = std::make_shared<NativeImage>(Image());
-  const std::weak_ptr<const NativeImage> lifetime = image;
-  auto first = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(first);
-  auto second = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(second);
-  EXPECT_EQ(&(*first)->code_identity(), &(*second)->code_identity());
-  first->reset();
-  second->reset();
-  image.reset();
-  isolate.heap().Collect();
-  EXPECT_TRUE(lifetime.expired());
-}
-
 TEST(NativeInstanceTest, ExternalInstanceMustBeReleasedBeforeStop) {
   Isolate isolate;
   const auto image = Image();

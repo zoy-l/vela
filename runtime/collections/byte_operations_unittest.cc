@@ -207,11 +207,24 @@ class ByteIntegerTest : public ByteOperationsTest,
   }
 };
 
-TEST_P(ByteIntegerTest, PreservesEndpointsInEveryByteOrder) {
+TEST_P(ByteIntegerTest, PreservesEndpointsInEveryByteOrderAndRejectsOverflowBeforeWriting) {
   const auto& sample = GetParam();
   for (const auto order : {ByteOrder::Big, ByteOrder::Little, ByteOrder::Host}) {
     CheckRoundTrip(sample.minimum, order);
     CheckRoundTrip(sample.maximum, order);
+  }
+  if (sample.width < sizeof(std::int64_t)) {
+    const auto view = roots().at(1);
+    auto storage = Heap::ByteDataBytes(*view.AsObject());
+    std::ranges::fill(storage, kSentinel);
+    for (const auto invalid : {sample.minimum - 1, sample.maximum + 1}) {
+      const std::array args{view, Value::Integer(0), Value::Integer(invalid), Value::Integer(0)};
+      EXPECT_EQ(
+          ExecuteByteBuiltin(sample.set, std::span(args).first(BuiltinArity(sample.set)), heap())
+              .error(),
+          ExecutionStatus::InvalidNumericConversion);
+    }
+    EXPECT_TRUE(std::ranges::all_of(storage, [](auto byte) { return byte == kSentinel; }));
   }
 }
 
@@ -254,24 +267,6 @@ TEST_P(ByteIntegerTest, WritesTheGoldenByteWidthAtTheLastValidOffset) {
   EXPECT_EQ(written.front(), sample.minimum < 0 ? 0x7f : 0xff);
   EXPECT_TRUE(
       std::ranges::all_of(written.subspan(1), [](auto byte) { return byte == kMaximumByte; }));
-}
-
-TEST_P(ByteIntegerTest, RejectsIntegerOverflowBeforeWriting) {
-  const auto& sample = GetParam();
-  if (sample.width == sizeof(std::int64_t)) {
-    return;
-  }
-  const auto view = roots().at(1);
-  auto storage = Heap::ByteDataBytes(*view.AsObject());
-  std::ranges::fill(storage, kSentinel);
-  for (const auto invalid : {sample.minimum - 1, sample.maximum + 1}) {
-    const std::array args{view, Value::Integer(0), Value::Integer(invalid), Value::Integer(0)};
-    EXPECT_EQ(
-        ExecuteByteBuiltin(sample.set, std::span(args).first(BuiltinArity(sample.set)), heap())
-            .error(),
-        ExecutionStatus::InvalidNumericConversion);
-  }
-  EXPECT_TRUE(std::ranges::all_of(storage, [](auto byte) { return byte == kSentinel; }));
 }
 
 INSTANTIATE_TEST_SUITE_P(EveryIntegerWidth,

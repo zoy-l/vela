@@ -38,11 +38,14 @@ TEST(NativeBufferTest, ExternalStorageIsAccountedAndOverflowIsRejected) {
   {
     NativeBuffer<std::size_t> buffer(heap, kCount);
     ASSERT_TRUE(buffer.IsAllocated());
-    EXPECT_GE(heap.allocated_bytes() - bytes, kCount * sizeof(std::size_t));
+    const auto allocated = heap.allocated_bytes() - bytes;
+    EXPECT_GE(allocated, kCount * sizeof(std::size_t));
+    EXPECT_EQ(heap.committed_bytes() - committed, allocated);
     buffer.values().front() = kValue;
     EXPECT_EQ(buffer.values().front(), kValue);
     NativeBuffer<std::size_t> overflow(heap, std::numeric_limits<std::size_t>::max());
     EXPECT_FALSE(overflow.IsAllocated());
+    EXPECT_EQ(heap.AllocateNative(std::numeric_limits<std::size_t>::max()), nullptr);
   }
   EXPECT_EQ(heap.allocated_bytes(), bytes);
   EXPECT_EQ(heap.committed_bytes(), committed);

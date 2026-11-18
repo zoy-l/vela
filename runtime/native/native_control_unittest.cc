@@ -114,24 +114,8 @@ TEST(NativeControlTest, PublicationWaitsForNestedInitializationsAndHostReentry) 
   EXPECT_TRUE(control.CanPublish());
   EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
   EXPECT_EQ(publications, 1);
-}
-
-TEST(NativeControlTest, PendingPublicationWaitsForHostAndInitializationAndRunsOnce) {
-  NativeControl control;
-  int calls = 0;
-  ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
-  ++control.state().host_borrows;
-  control.EnterInitialization();
   EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 0);
-  --control.state().host_borrows;
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 0);
-  control.ExitInitialization();
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 1);
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(publications, 1);
 }
 
 TEST(NativeControlTest, NestedSafepointsDoNotConsumeTheNextPublicationReentrantly) {

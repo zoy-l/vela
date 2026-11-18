@@ -127,6 +127,7 @@ TEST(NativeImageLifetimeTest, SharedClosedImagePreservesCacheIdentityUntilItsLas
   const auto before = isolate.layout_counts();
   auto resource = std::make_shared<AsyncImage>();
   std::shared_ptr<const NativeImage> image(resource, &resource->image);
+  const std::weak_ptr<const NativeImage> lifetime = image;
   const CodeIdentity* identity = nullptr;
   const TypeSignature* signature = nullptr;
   {
@@ -151,6 +152,7 @@ TEST(NativeImageLifetimeTest, SharedClosedImagePreservesCacheIdentityUntilItsLas
   image.reset();
   resource.reset();
   isolate.heap().Collect();
+  EXPECT_TRUE(lifetime.expired());
   EXPECT_EQ(isolate.heap().object_count(), 0U);
   EXPECT_EQ(isolate.layout_counts(), before);
 }

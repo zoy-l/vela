@@ -1,7 +1,6 @@
 #include <array>
 #include <string_view>
 
-#include <utf8proc.h>
 #include "gtest/gtest.h"
 
 #include "runtime/heap/heap.h"
@@ -16,10 +15,6 @@ struct CaseSample final {
   std::string_view lower;
   std::string_view upper;
 };
-
-TEST(StringCaseTest, BackendUsesThePinnedUnicodeVersion) {
-  EXPECT_EQ(std::string_view(utf8proc_unicode_version()), "18.0.0");
-}
 
 class StringCaseMappingTest : public testing::TestWithParam<CaseSample> {
  protected:

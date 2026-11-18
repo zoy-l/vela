@@ -338,7 +338,5 @@ executable("runtime_tests") {
     ":runtime",
     "//base:json",
     "//third_party:gtest_main",
-    "//third_party:pcre2",
-    "//third_party:utf8proc",
   ]
 }

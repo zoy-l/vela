@@ -164,9 +164,11 @@ TEST(NativeAbiTest, StackRootEntryInitializesReusedStorageAndReleasesRegistratio
     for (const auto value : std::span(roots, kRoots)) {
       EXPECT_EQ(value.AsString()->value(), "retained");
     }
+    EXPECT_EQ(heap.object_count(), baseline + kRoots);
   }
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, NativeStackRootsKeepNestedFramesAndReleasePoppedValues) {
@@ -355,31 +357,6 @@ TEST(NativeAbiTest, ResourceEntryOwnsRootsAndReleasesStorage) {
   ASSERT_NE(outer.storage, nullptr);
   EXPECT_EQ(outer.storage, frame->storage());
   vela_native_v1_frame_release(frame);
-  EXPECT_EQ(execution.current_frame(), nullptr);
-}
-
-TEST(NativeAbiTest, BorrowedStackRootsUseOnlyRootRangeAndReleaseTheirReferences) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto image = EmptyImage();
-  const auto instance = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  const auto baseline = heap.object_count();
-  alignas(RootRange) std::array<std::byte, sizeof(RootRange)> storage{};
-  void* range_storage = storage.data();
-  auto* range = static_cast<RootRange*>(range_storage);
-  std::array<Value, 1> roots;
-  vela_native_v1_roots_enter(&execution, roots.data(), roots.size(), range);
-  auto* text = heap.AllocateString("stack rooted");
-  ASSERT_NE(text, nullptr);
-  roots.front() = Value::String(text);
-  heap.Collect();
-  EXPECT_EQ(text->value(), "stack rooted");
-  EXPECT_EQ(heap.object_count(), baseline + 1);
-  vela_native_v1_roots_exit(range);
-  heap.Collect();
-  EXPECT_EQ(heap.object_count(), baseline);
   EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
