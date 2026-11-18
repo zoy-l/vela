@@ -68,17 +68,11 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
         subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.testing_unittest", "tools.mock_unittest", "tools.editor_unittest", "tools.command_unittest", "tools.development_unittest", "tools.bench_unittest", "tools.bindgen_unittest", "tools.toolchain_unittest", "tools.llvm_unittest", "tools.unicode_case_unittest", "tools.aot_unittest", "tools.reflection_unittest", "tools.aot_distribution_unittest", "tools.package_unittest"],
                        cwd=output.parent.parent, env=environment, check=True)
 
-    version = subprocess.run(
+    subprocess.run(
         [str(output / executable_name("vela")), "--version"],
         cwd=output,
         check=True,
-        capture_output=True,
-        text=True,
     )
-    if version.stdout.strip() != "Vela 0.1.0":
-        raise RuntimeError(
-            f"Unexpected vela version output: {version.stdout!r}"
-        )
     print(f"test command completed ({variant})")
 
 

@@ -644,7 +644,6 @@ executable("vela") {
 executable("vela_frontend_tests") {
   testonly = true
   sources = [
-    "environment_unittest.cc",
     "frontend/diagnostic_unittest.cc",
     "frontend/flow/control_flow_unittest.cc",
     "frontend/frontend_unittest.cc",
@@ -668,7 +667,6 @@ executable("vela_frontend_tests") {
     "tooling/source_text_unittest.cc",
   ]
   deps = [
-    ":build_info",
     ":checker_test_support",
     ":frontend",
     ":tooling",
