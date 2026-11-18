@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/Support/InitLLVM.h>
+
 #include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/native_program_mode.h"
@@ -328,6 +330,7 @@ int DocumentCommand(std::span<char*> arguments) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  llvm::InitLLVM initialization(argc, argv, /*InstallPipeSignalExitHandler=*/false);
   const std::span<char*> arguments(argv, static_cast<std::size_t>(argc));
   if (argc == 1) {
     PrintUsage(std::cout);

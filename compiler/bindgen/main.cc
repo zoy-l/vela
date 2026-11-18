@@ -16,17 +16,21 @@
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #include <llvm/ADT/IntrusiveRefCntPtr.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/ErrorOr.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/FormatVariadic.h>
+#include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/JSON.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/VirtualFileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include "base/fingerprint.h"
+#include "base/path.h"
 #include "compiler/bindgen/collector.h"
 #include "compiler/bindgen/emitter.h"
 #include "compiler/bindgen/input_files.h"
@@ -83,11 +87,11 @@ std::expected<void, std::string> ReadDependency(const std::string& path, Collect
   if (!module || !frontend::IsIdentifier(*module)) {
     return std::unexpected("invalid dependency module: " + path);
   }
-  const auto directory = std::filesystem::path(path).parent_path();
+  const auto directory = Utf8Path(path).parent_path();
   Module::Dependency dependency{
       .module = module->str(),
-      .source = (directory / (module->str() + ".vela")).string(),
-      .header = (directory / (module->str() + "_bindings.h")).string(),
+      .source = PathText(directory / (module->str() + ".vela")),
+      .header = PathText(directory / (module->str() + "_bindings.h")),
       .classes = {},
   };
   for (const auto& value : *classes) {
@@ -117,7 +121,7 @@ std::expected<void, std::string> SelectDriver(clang::tooling::CompileCommand& co
   if (arguments.empty()) {
     return std::unexpected("empty compilation command");
   }
-  const auto wrapper = std::filesystem::path(arguments.front()).stem().string();
+  const auto wrapper = PathText(Utf8Path(arguments.front()).stem());
   if (wrapper == "sccache" || wrapper == "ccache") {
     arguments.erase(arguments.begin());
     if (!arguments.empty() && arguments.front() == "--") {
@@ -125,7 +129,7 @@ std::expected<void, std::string> SelectDriver(clang::tooling::CompileCommand& co
     }
   }
   const auto driver =
-      arguments.empty() ? std::string{} : std::filesystem::path(arguments.front()).stem().string();
+      arguments.empty() ? std::string{} : PathText(Utf8Path(arguments.front()).stem());
   if (driver != "clang" && driver != "clang++" && driver != "clang-cl") {
     return std::unexpected("unsupported binding parser driver: " + driver + "; expected Clang");
   }
@@ -170,14 +174,15 @@ int Collect(const Options& options) {
     llvm::errs() << error << '\n';
     return 1;
   }
+  const auto source = Utf8Path(options.source.getValue());
   std::vector<clang::tooling::CompileCommand> selected;
   for (auto command : commands->getAllCompileCommands()) {
     std::error_code failure;
-    auto path = std::filesystem::path(command.Filename);
+    auto path = Utf8Path(command.Filename);
     if (path.is_relative()) {
-      path = std::filesystem::path(command.Directory) / path;
+      path = Utf8Path(command.Directory) / path;
     }
-    if (std::filesystem::equivalent(path, options.source.getValue(), failure) && !failure) {
+    if (std::filesystem::equivalent(path, source, failure) && !failure) {
       selected.push_back(std::move(command));
     }
   }
@@ -194,13 +199,12 @@ int Collect(const Options& options) {
   Collection collection;
   collection.module.name = options.module.getValue();
   for (const auto& header : options.headers) {
-    std::error_code failure;
-    const auto path = std::filesystem::canonical(header, failure);
-    if (failure) {
+    llvm::SmallString<0> path;
+    if (const auto failure = llvm::sys::fs::real_path(header, path)) {
       llvm::errs() << "cannot resolve binding header: " << header << '\n';
       return 1;
     }
-    collection.headers.insert(path.string());
+    collection.headers.insert(std::string(path));
   }
   for (const auto& dependency : options.dependencies) {
     if (auto result = ReadDependency(dependency, collection); !result) {
@@ -281,6 +285,7 @@ int FingerprintFiles() {
 }  // namespace vela::bindgen
 
 int main(int argc, const char** argv) {
+  llvm::InitLLVM initialization(argc, argv, /*InstallPipeSignalExitHandler=*/false);
   const auto arguments = std::span(argv, static_cast<std::size_t>(argc));
   if (argc == 2 && std::string_view(arguments[1]) == "fingerprint") {
     return vela::bindgen::FingerprintFiles();

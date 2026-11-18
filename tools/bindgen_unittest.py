@@ -19,7 +19,7 @@ from tools.llvm import sdk_specification
 
 
 class BindingCollectorTest(CommandTestCase):
-    directory_prefix = "vela-bindgen-"
+    directory_prefix = "vela-bindgen-接口 "
 
     def setUp(self) -> None:
         super().setUp()
