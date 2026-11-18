@@ -230,7 +230,7 @@ LLVM 与 LLD 版本随发行包固定，只包含该发行矩阵所需后端。�
 
 发行维护者通过 `--support-spec=FILE` 提供已审计的 SDK/sysroot 配置。JSON 指定 `target`、`minimum_os`、`object_format`、`runtime_variant`、`application_dependencies`、`archive_arguments` 和 `link_arguments`。每个 `external_roots` 项记录 SDK 根目录名称、环境变量、精确版本、来源、许可证及安装说明；每个 `files` 项记录展开路径、SHA-256、用途、来源、许可证及分发条件。可选的 `bundled_files` 项包含相对配置文件的 `source_path`、包内相对路径 `destination`、来源和许可证，由打包工具复制并计算指纹。参数可使用 `{package}`、具名 SDK 根目录、`{object}`、`{output}` 和 `{runtime}`。用途为 `link` 的 SDK 文件仅在生成可执行文件时必需；目标文件和归档输出不依赖最终 SDK 输入。
 
-发布包目录前，打包工具使用暂存包内的编译器及声明的 SDK 输入构建、运行异步原生程序，并清除构建工具和库搜索环境变量。缺少链接输入或运行时 ABI 不匹配时，拒绝发布且不留下已发布目录。该检查确认包在本机可用；各平台仍须完成完整发行验收矩阵。
+打包工具新建目标目录，直接在最终路径生成并验证发行包。自检使用包内编译器及声明的 SDK 输入构建、运行异步原生程序，并清除构建工具和库搜索环境变量；探测源码与产物保存在独立临时工作区。调用方必须等打包成功后才能使用或归档该目录。失败时删除本次新建的包，已有目标目录则拒绝修改。固定包的最终路径可避免 Windows 读取进程仍持有可执行文件句柄时移动整个目录。该检查确认包在本机可用；各平台仍须完成完整发行验收矩阵。
 
 各主机配置好 SDK 后，用 `VELA_TEST_TARGET_SUPPORT_SPEC` 为 `python -m tools.vl test release tooling` 指定上述审计配置。发行测试会清除构建工具环境变量，覆盖含中文和空格的路径、JIT/AOT 程序对照、两个库共享同一运行时、不一致发布拒绝，以及删除源码与发行包后再次运行产物。Windows 也可使用内置开发 SDK 探测。跳过某平台测试不代表该平台发布验收通过。
 

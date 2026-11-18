@@ -77,7 +77,7 @@ def load_support_specification(path: Path, target: str) -> dict:
 
 
 def verify_package(package: Path, workspace: Path, sdk_environment: dict[str, str]) -> None:
-    """Exercise the staged compiler, linker and runtime before publishing the package."""
+    """Exercise the packaged compiler, linker and runtime before reporting success."""
     source = workspace / "package-check.vela"
     application = workspace / executable_name("package-check")
     marker = "Vela native package verified\n"
@@ -270,85 +270,89 @@ def macos_support(runtime: Path, package: Path) -> tuple[dict, dict[str, str]]:
 
 def create_package(executable: Path, runtime: Path, destination: Path,
                    support_spec: Path | None = None) -> dict[str, str]:
-    """Publish a new directory only after every packaged file and target input is recorded."""
+    """Build and verify a new package at its final path, removing it on failure."""
     executable, runtime, destination = (path.resolve() for path in (executable, runtime, destination))
     if destination.exists():
         raise RuntimeError(f"Package destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".vela-package-", dir=destination.parent) as temporary:
-        package = Path(temporary) / "package"
-        package.mkdir()
-        probe = Path(temporary) / "identity.vela"
-        probe.write_text("export func identity(): int { return 0; }\n", encoding="utf-8", newline="\n")
-        obj = Path(temporary) / "identity.o"
-        command([executable, "build", probe, "--emit=obj", "--export=identity", "-o", obj])
-        identity = json.loads(Path(str(obj) + ".aot.json").read_text(encoding="utf-8"))
-        target = identity["target"]
-        llvm_version = sdk_specification()[0]
-        tools = toolchain_tools()
-        if support_spec is not None:
-            support = load_support_specification(support_spec, target)
-            for bundled in support.pop("bundled_files", []):
-                support["files"].append(copy_file(
-                    support_spec.parent / bundled["source_path"], package, bundled["destination"],
-                    "link", bundled["source"], bundled["license"]))
-            environment = {}
-        elif sys.platform == "win32":
-            support, environment = windows_support(runtime)
-        elif sys.platform == "darwin":
-            support, environment = macos_support(runtime, package)
-        else:
-            raise RuntimeError("This host requires an audited --support-spec with its SDK/sysroot, "
-                               "link inputs, licenses, minimum OS, and linker arguments")
-        library_name = "vela_runtime.lib" if sys.platform == "win32" else "libvela_runtime.a"
-        runtime_relative = f"lib/{target}/{library_name}"
-        archiver = "libexec/" + tools["archiver"].name
-        linker = "libexec/" + tools["linker"].name
-        files = support["files"]
-        for source, relative, role, owner, license_name in (
-                (executable, "bin/" + executable_name("vela"), "compiler", "Vela", "MIT"),
-                (runtime, runtime_relative, "runtime", "Vela and third-party runtime", "share/vela/licenses"),
-                (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
-                (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
-            files.append(copy_file(source, package, relative, role, owner, license_name))
-        # 嵌入宿主需要完整的公共头依赖；不打包编译器实现。
-        for directory in ("base", "runtime"):
-            for header in (ROOT / directory).rglob("*.h"):
-                relative = (Path("include") / header.relative_to(ROOT)).as_posix()
-                copy_file(header, package, relative, "header", "Vela", "MIT")
-        for header in (ROOT / "include/vela").rglob("*.h"):
-            relative = header.relative_to(ROOT / "include").as_posix()
-            copy_file(header, package, "include/" + relative, "header", "Vela", "MIT")
-        package_bindgen(executable.parent / executable_name("vela_bindgen"), package)
-        for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
-            if header.is_file() and header.suffix in {".h", ".inc"}:
-                relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()
-                copy_file(header, package, "include/" + relative, "header", "Abseil", "Apache-2.0")
-        copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", package,
-                  "include/efsw/efsw.hpp", "header", "efsw", "MIT")
-        for name, path in {
-            "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
-            "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
-            "efsw": ROOT / "third_party/efsw/LICENSE",
-            "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
-            "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
-            "yyjson": ROOT / "third_party/yyjson/LICENSE",
-            "xxhash": ROOT / "third_party/xxhash/LICENSE",
-            "unicode": ROOT / "third_party/unicode_data/LICENSE",
-            "zlib": ROOT / "third_party/zlib/LICENSE",
-            "zstd": ROOT / "third_party/zstd/LICENSE",
-        }.items():
-            copy_file(path, package, "share/vela/licenses/" + name + ".txt", "license", name, "included")
-        support.update({"format_version": 1, "target": target, "runtime_abi": identity["runtime_abi"],
-                        "toolchain_build": identity["toolchain_build"], "llvm_version": llvm_version,
-                        "package_root": "../..", "runtime": runtime_relative,
-                        "archiver": archiver, "linker": linker,
-                        "acceptance": "development package; platform acceptance has not been certified"})
-        (package / "share/vela/target.json").write_text(
-            json.dumps(support, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-        verify_package(package, Path(temporary), environment)
-        package.rename(destination)
-        return environment
+    # Windows readers can prevent moving a directory containing freshly executed tools.
+    destination.mkdir()
+    try:
+        with tempfile.TemporaryDirectory(prefix=".vela-package-", dir=destination.parent) as temporary:
+            workspace = Path(temporary)
+            probe = workspace / "identity.vela"
+            probe.write_text("export func identity(): int { return 0; }\n", encoding="utf-8", newline="\n")
+            obj = workspace / "identity.o"
+            command([executable, "build", probe, "--emit=obj", "--export=identity", "-o", obj])
+            identity = json.loads(Path(str(obj) + ".aot.json").read_text(encoding="utf-8"))
+            target = identity["target"]
+            llvm_version = sdk_specification()[0]
+            tools = toolchain_tools()
+            if support_spec is not None:
+                support = load_support_specification(support_spec, target)
+                for bundled in support.pop("bundled_files", []):
+                    support["files"].append(copy_file(
+                        support_spec.parent / bundled["source_path"], destination, bundled["destination"],
+                        "link", bundled["source"], bundled["license"]))
+                environment = {}
+            elif sys.platform == "win32":
+                support, environment = windows_support(runtime)
+            elif sys.platform == "darwin":
+                support, environment = macos_support(runtime, destination)
+            else:
+                raise RuntimeError("This host requires an audited --support-spec with its SDK/sysroot, "
+                                   "link inputs, licenses, minimum OS, and linker arguments")
+            library_name = "vela_runtime.lib" if sys.platform == "win32" else "libvela_runtime.a"
+            runtime_relative = f"lib/{target}/{library_name}"
+            archiver = "libexec/" + tools["archiver"].name
+            linker = "libexec/" + tools["linker"].name
+            files = support["files"]
+            for source, relative, role, owner, license_name in (
+                    (executable, "bin/" + executable_name("vela"), "compiler", "Vela", "MIT"),
+                    (runtime, runtime_relative, "runtime", "Vela and third-party runtime", "share/vela/licenses"),
+                    (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
+                    (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
+                files.append(copy_file(source, destination, relative, role, owner, license_name))
+            # 嵌入宿主需要完整的公共头依赖；不打包编译器实现。
+            for directory in ("base", "runtime"):
+                for header in (ROOT / directory).rglob("*.h"):
+                    relative = (Path("include") / header.relative_to(ROOT)).as_posix()
+                    copy_file(header, destination, relative, "header", "Vela", "MIT")
+            for header in (ROOT / "include/vela").rglob("*.h"):
+                relative = header.relative_to(ROOT / "include").as_posix()
+                copy_file(header, destination, "include/" + relative, "header", "Vela", "MIT")
+            package_bindgen(executable.parent / executable_name("vela_bindgen"), destination)
+            for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
+                if header.is_file() and header.suffix in {".h", ".inc"}:
+                    relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()
+                    copy_file(header, destination, "include/" + relative, "header", "Abseil", "Apache-2.0")
+            copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", destination,
+                      "include/efsw/efsw.hpp", "header", "efsw", "MIT")
+            for name, path in {
+                "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
+                "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
+                "efsw": ROOT / "third_party/efsw/LICENSE",
+                "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
+                "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
+                "yyjson": ROOT / "third_party/yyjson/LICENSE",
+                "xxhash": ROOT / "third_party/xxhash/LICENSE",
+                "unicode": ROOT / "third_party/unicode_data/LICENSE",
+                "zlib": ROOT / "third_party/zlib/LICENSE",
+                "zstd": ROOT / "third_party/zstd/LICENSE",
+            }.items():
+                copy_file(path, destination, "share/vela/licenses/" + name + ".txt", "license", name, "included")
+            support.update({"format_version": 1, "target": target, "runtime_abi": identity["runtime_abi"],
+                            "toolchain_build": identity["toolchain_build"], "llvm_version": llvm_version,
+                            "package_root": "../..", "runtime": runtime_relative,
+                            "archiver": archiver, "linker": linker,
+                            "acceptance": "development package; platform acceptance has not been certified"})
+            (destination / "share/vela/target.json").write_text(
+                json.dumps(support, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+            verify_package(destination, workspace, environment)
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
+    return environment
 
 
 def main(arguments: list[str] | None = None) -> int:
