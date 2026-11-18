@@ -7,7 +7,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -37,22 +36,6 @@ ReflectionMemberKind ReflectedMethodKind(const Function& method) {
 
 const std::string& ReflectedMethodName(const Function& method) {
   return method.application ? method.application->name : method.name;
-}
-
-bool IsSameReflectionSelections(std::span<const ReflectionSelection> left,
-                                std::span<const ReflectionSelection> right) {
-  return std::ranges::equal(left, right, [](const auto& first, const auto& second) {
-    return first.module == second.module && first.source_path == second.source_path &&
-           first.location == second.location &&
-           CanonicalTypeText(first.type) == CanonicalTypeText(second.type) &&
-           std::ranges::equal(
-               first.members, second.members, [](const auto& member, const auto& other) {
-                 return member.kind == other.kind && member.name == other.name &&
-                        member.location == other.location &&
-                        std::ranges::equal(member.type_arguments, other.type_arguments, {},
-                                           CanonicalTypeText, CanonicalTypeText);
-               });
-  });
 }
 
 std::optional<std::int64_t> Expression::IntegerValue() const noexcept {

@@ -8,6 +8,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -18,12 +19,13 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
 #include "compiler/native/code_generator.h"
-#include "compiler/project/project_config.h"
 #include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/test_support/reflection_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_execution.h"
@@ -258,10 +260,10 @@ export func answer(): int {
 }
 )",
   };
-  const auto selected = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Box","members":[{"kind":"method","name":"read"}]}
-  ]})");
-  ASSERT_TRUE(selected);
+  const std::vector selected{
+      test::SelectReflection("Box",
+                             {test::SelectMember(frontend::ReflectionMemberKind::Method, "read")}),
+  };
   for (const auto registered : {false, true}) {
     for (const auto expected : {CodeCacheStatus::Miss, CodeCacheStatus::Hit}) {
       auto compiler = Compiler::Create();
@@ -270,7 +272,7 @@ export func answer(): int {
       options.compilation.code_cache = directory();
       options.compilation.tier = NativeCodeTier::Optimized;
       if (registered) {
-        options.reflection = selected->reflection;
+        options.reflection = selected;
       }
       const auto compiled = CompileModules(**compiler, std::span(&source, 1), source.path, options);
       ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);

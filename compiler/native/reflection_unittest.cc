@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <string>
@@ -12,9 +13,9 @@
 #include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/native/native_image_data.h"
-#include "compiler/project/project_config.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -26,14 +27,15 @@
 namespace vela::compiler::native {
 namespace {
 
+using SelectionKind = frontend::ReflectionMemberKind;
+
 class ReflectionIndexTest : public ::testing::Test {
  protected:
-  void Load(test::ReflectionInput source) {
-    const auto config = ParseProjectConfiguration("vela.json", source.configuration);
-    ASSERT_TRUE(config) << config.error().message;
-    const frontend::SourceInput input{.path = "main.vela", .text = source.source};
-    const auto prepared = ir::PrepareParsed(
-        frontend::LoadSources(std::span(&input, 1), input.path, config->reflection));
+  void Load(std::string_view source,
+            std::initializer_list<frontend::ReflectionSelection> reflection) {
+    const frontend::SourceInput input{.path = "main.vela", .text = source};
+    const auto prepared =
+        ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path, reflection));
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto data = DescribeNativeImage(prepared.program);
     auto instance = runtime::NativeInstance::Instantiate(
@@ -56,8 +58,7 @@ class ReflectionIndexTest : public ::testing::Test {
 };
 
 TEST_F(ReflectionIndexTest, ResolvesInheritanceBeforeRegistrationAndQueryFilters) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Base {
   inherited: int = 7;
   read(): int { return this.inherited; }
@@ -67,12 +68,14 @@ class Derived extends Base {
   override read(): int { return 3; }
 }
 )",
-      .configuration = R"({"reflection":[
-  {"module":"main","type":"Base","members":[
-    {"kind":"field","name":"inherited"},{"kind":"method","name":"read"}]},
-  {"module":"main","type":"Derived","members":[{"kind":"field","name":"own"}]}
-]})",
-  });
+       {
+           test::SelectReflection("Base",
+                                  {
+                                      test::SelectMember(SelectionKind::Field, "inherited"),
+                                      test::SelectMember(SelectionKind::Method, "read"),
+                                  }),
+           test::SelectReflection("Derived", {test::SelectMember(SelectionKind::Field, "own")}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto* description = Find("Derived");
   ASSERT_NE(description, nullptr);
@@ -102,18 +105,16 @@ class Derived extends Base {
 }
 
 TEST_F(ReflectionIndexTest, PropertyVisibilityUsesOnlyRegisteredAccessors) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Counter {
   value: int = 1;
   get amount(): int { return this.value; }
   private set amount(value: int): void { this.value = value; }
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Counter","members":[
-  {"kind":"setter","name":"amount"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Counter", {test::SelectMember(SelectionKind::Setter, "amount")}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto* description = Find("Counter");
   ASSERT_NE(description, nullptr);
@@ -135,13 +136,14 @@ class Counter {
 }
 
 TEST_F(ReflectionIndexTest, EnumeratesSelectedEnumValuesInDeclarationOrder) {
-  Load({
-      .source = "enum Color { red, green, blue }",
-      .configuration = R"({"reflection":[
-    {"module":"main","type":"Color","members":[
-      {"kind":"enumMember","name":"red"},{"kind":"enumMember","name":"blue"}]}
-  ]})",
-  });
+  Load("enum Color { red, green, blue }",
+       {
+           test::SelectReflection("Color",
+                                  {
+                                      test::SelectMember(SelectionKind::EnumMember, "red"),
+                                      test::SelectMember(SelectionKind::EnumMember, "blue"),
+                                  }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto* description = Find("Color");
   ASSERT_NE(description, nullptr);
@@ -159,20 +161,21 @@ TEST_F(ReflectionIndexTest, EnumeratesSelectedEnumValuesInDeclarationOrder) {
 }
 
 TEST_F(ReflectionIndexTest, LooksUpConcreteTypeAndMethodArgumentsWithoutParsingDisplayNames) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Box<T> {
   value: T;
   convert<U>(value: U): U { return value; }
 }
 )",
-      .configuration = R"({"reflection":[
-  {"module":"main","type":"Box<int>","members":[
-    {"kind":"method","name":"convert","typeArguments":["int"]},
-    {"kind":"method","name":"convert","typeArguments":["string"]}]},
-  {"module":"main","type":"Box<string>"}
-]})",
-  });
+       {
+           test::SelectReflection(
+               "Box<int>",
+               {
+                   test::SelectMember(SelectionKind::Method, "convert", {"int"}),
+                   test::SelectMember(SelectionKind::Method, "convert", {"string"}),
+               }),
+           test::SelectReflection("Box<string>", {}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const runtime::ReflectedType integer{
       .constraint = runtime::Heap::TypeOf(runtime::Value::Integer(0)),

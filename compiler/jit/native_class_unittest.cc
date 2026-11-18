@@ -16,9 +16,9 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
-#include "compiler/project/project_config.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -259,16 +259,19 @@ TEST_P(NativeClassJitTest, RejectsDriftInUnusedMembersAsPartOfTheWholeClassContr
 TEST_P(NativeClassJitTest, ReflectionUsesBoundNativeConstructionPropertiesAndGcCheckedMethods) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Counter","members":[{"kind":"constructor"},
-      {"kind":"method","name":"gcAdd"},{"kind":"getter","name":"value"},
-      {"kind":"setter","name":"value"}]}
-  ]})");
-  ASSERT_TRUE(configuration);
   const frontend::SourceInput source{.path = "main.vela", .text = kSource};
   SourceOptions options;
   options.compilation.tier = GetParam();
-  options.reflection = configuration->reflection;
+  using SelectionKind = frontend::ReflectionMemberKind;
+  options.reflection = {
+      test::SelectReflection("Counter",
+                             {
+                                 test::SelectMember(SelectionKind::Constructor),
+                                 test::SelectMember(SelectionKind::Method, "gcAdd"),
+                                 test::SelectMember(SelectionKind::Getter, "value"),
+                                 test::SelectMember(SelectionKind::Setter, "value"),
+                             }),
+  };
   const auto compiled = CompileModules(**compiler, std::span(&source, 1), source.path, options);
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);

@@ -18,8 +18,6 @@
 namespace vela::frontend {
 
 [[nodiscard]] bool IsFileModule(std::string_view module);
-[[nodiscard]] std::vector<std::string> ReflectionFileModules(
-    std::span<const ReflectionSelection> selections);
 
 struct SourceInput final {
   std::string_view path;
@@ -83,8 +81,7 @@ struct CapturedSources final {
 [[nodiscard]] ParseResult LoadProgram(std::string_view path,
                                       ModuleCache& cache,
                                       std::span<const SourceInput> overlays,
-                                      SourceLoadMode mode = SourceLoadMode::Compilation,
-                                      std::span<const ReflectionSelection> reflection = {});
+                                      SourceLoadMode mode = SourceLoadMode::Compilation);
 // 内存模块只从给定输入解析依赖，不隐式读取磁盘；entry 的模块编号为零。
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
                                       std::string_view entry,

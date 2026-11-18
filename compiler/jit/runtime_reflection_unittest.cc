@@ -17,9 +17,9 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
-#include "compiler/project/project_config.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/async/future.h"
@@ -46,6 +46,7 @@ namespace compiler::jit {
 namespace {
 
 using CounterObject = Object<ReflectionCounterTag>;
+using SelectionKind = frontend::ReflectionMemberKind;
 static_assert(std::is_same_v<decltype(std::declval<Type<CounterObject>>().Describe()),
                              Result<TypeInfo<CounterObject>>>);
 static_assert(std::is_invocable_v<decltype(&FieldInfo<CounterObject>::GetValue),
@@ -79,17 +80,15 @@ TEST(ReflectionContextTest, DistinguishesUnpublishedAndStoppedDispatch) {
 
 class RuntimeReflectionTest : public ::testing::TestWithParam<NativeCodeTier> {
  protected:
-  void Load(test::ReflectionInput source) {
-    const frontend::SourceInput input{.path = "main.vela", .text = source.source};
-    LoadModules(std::span(&input, 1), source.configuration);
+  void Load(std::string_view source, std::vector<frontend::ReflectionSelection> reflection = {}) {
+    const frontend::SourceInput input{.path = "main.vela", .text = source};
+    LoadModules(std::span(&input, 1), std::move(reflection));
   }
   void LoadModules(std::span<const frontend::SourceInput> inputs,
-                   std::string_view configuration = "{}") {
-    const auto config = ParseProjectConfiguration("vela.json", configuration);
-    ASSERT_TRUE(config) << config.error().message;
+                   std::vector<frontend::ReflectionSelection> reflection = {}) {
     SourceOptions options;
     options.compilation.tier = GetParam();
-    options.reflection = config->reflection;
+    options.reflection = std::move(reflection);
     auto compiled = test::CompileModules(inputs, inputs.front().path, isolate_storage_, options);
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     instance_storage_ = std::move(compiled.instance);
@@ -109,8 +108,7 @@ class RuntimeReflectionTest : public ::testing::TestWithParam<NativeCodeTier> {
 };
 
 TEST_P(RuntimeReflectionTest, ConstructsAndUsesFieldsPropertiesMethodsAndStatics) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Counter {
   value: int = 10;
   static total: int = 2;
@@ -120,13 +118,18 @@ class Counter {
   static twice(value: int): int { return value * 2; }
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Counter","members":[
-  {"kind":"constructor"},{"kind":"field","name":"value"},
-  {"kind":"field","name":"total"},{"kind":"getter","name":"amount"},
-  {"kind":"setter","name":"amount"},{"kind":"method","name":"add"},
-  {"kind":"method","name":"twice"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Counter",
+                                  {
+                                      test::SelectMember(SelectionKind::Constructor),
+                                      test::SelectMember(SelectionKind::Field, "value"),
+                                      test::SelectMember(SelectionKind::Field, "total"),
+                                      test::SelectMember(SelectionKind::Getter, "amount"),
+                                      test::SelectMember(SelectionKind::Setter, "amount"),
+                                      test::SelectMember(SelectionKind::Method, "add"),
+                                      test::SelectMember(SelectionKind::Method, "twice"),
+                                  }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   EXPECT_EQ(instance().program().reflection, nullptr);
   auto reflection = Reflection::Bind(instance());
@@ -211,8 +214,7 @@ class Counter {
 }
 
 TEST_P(RuntimeReflectionTest, KeepsPrivateMetadataAndRejectsInvalidArgumentsBeforeUserCode) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Box {
   value: int = 0;
   private hidden: int = 3;
@@ -221,12 +223,17 @@ class Box {
   update(value: int, second: int): int { this.value += value; return second; }
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Box","members":[
-  {"kind":"constructor"},{"kind":"field","name":"value"},
-  {"kind":"field","name":"hidden"},{"kind":"setter","name":"amount"},
-  {"kind":"setter","name":"only"},{"kind":"method","name":"update"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Box",
+                                  {
+                                      test::SelectMember(SelectionKind::Constructor),
+                                      test::SelectMember(SelectionKind::Field, "value"),
+                                      test::SelectMember(SelectionKind::Field, "hidden"),
+                                      test::SelectMember(SelectionKind::Setter, "amount"),
+                                      test::SelectMember(SelectionKind::Setter, "only"),
+                                      test::SelectMember(SelectionKind::Method, "update"),
+                                  }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto reflection = Reflection::Bind(instance());
   ASSERT_TRUE(reflection);
@@ -264,8 +271,7 @@ class Box {
 }
 
 TEST_P(RuntimeReflectionTest, PreservesLargeNamedArgumentSnapshotsAcrossCollection) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Box {
   join(a: string, b: string, c: string, d: string, e: string,
@@ -289,16 +295,13 @@ export func answer(): int {
   }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, PreservesPositionalArgumentSnapshotsAcrossCollection) {
-  Load({
-      .source = R"(
+  Load(R"(
 const first = CallArgument(value: 'a');
 const second = CallArgument(value: 'b');
 [Reflect]
@@ -341,16 +344,13 @@ export func answer(): int {
   catch (error: Error) { if (error.code != 'InvalidCast') { return -7; } }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, LiteralSnapshotsPreserveEvaluationOrderAndBindingFailures) {
-  Load({
-      .source = R"(
+  Load(R"(
 let order = '';
 let calls = 0;
 func value(label: string): string { order += label; return label + '!'; }
@@ -388,16 +388,13 @@ export func answer(): int {
   catch (error: Error) { if (error.code != 'InvalidCast') { return -9; } }
   return calls == 3 ? 42 : -10;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, LargeLiteralSnapshotsKeepComputedValuesAliveAcrossCollection) {
-  Load({
-      .source = R"(
+  Load(R"(
 func text(value: int): string { return '${value}!'; }
 [Reflect]
 class Box {
@@ -421,16 +418,13 @@ export func answer(): int {
   }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, LiteralSnapshotsSurviveSuspensionBetweenArguments) {
-  Load({
-      .source = R"(
+  Load(R"(
 const gate = Completer<string>();
 [Reflect]
 class Box { join(a: string, b: string): string { return a + b; } }
@@ -443,9 +437,7 @@ async func main(): Future<int> {
   ]));
   return result == '42b' ? 42 : -2;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   auto pending = test::StartFuture(instance());
   auto& scheduler = isolate().scheduler();
@@ -461,8 +453,7 @@ async func main(): Future<int> {
 }
 
 TEST_P(RuntimeReflectionTest, ArgumentFactoriesPreserveCallsAndEffects) {
-  Load({
-      .source = R"(
+  Load(R"(
 let effects = 0;
 [Reflect]
 class Box { read(value: int): int { return value; } }
@@ -486,9 +477,7 @@ export func answer(): int {
   if (method.invoke(object, CallArguments()) != 42 || effects != 23) { return -4; }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
@@ -511,17 +500,13 @@ export func answer(): int {
   return argument.extra.length + arguments.extra + 33;
 }
 )";
-  Load({
-      .source = source,
-      .configuration = "{}",
-  });
+  Load(source);
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, CachedCallsKeepCompletedEffectsWhenScalarCodeFails) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Box {
   calls: int = 0;
@@ -539,16 +524,13 @@ export func answer(): int {
   catch (error: Error) { if (error.code != 'IntegerOverflow') { return -4; } }
   return receiver.calls + 40;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, CachedFieldsPreserveNullableDynamicAndBoundAccess) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Box { text: string? = null; value: dynamic = null; }
 export func answer(): int {
@@ -576,16 +558,13 @@ export func answer(): int {
   catch (error: Error) { if (error.code != 'InvalidCast') { return -8; } }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, StaticEnumFieldsPreserveDynamicBoxingAndNominalIdentity) {
-  Load({
-      .source = R"(
+  Load(R"(
 enum Color { red, [Reflect] blue }
 [Reflect]
 class Palette {
@@ -616,9 +595,7 @@ export func answer() : int {
   }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   const auto reflection = Reflection::Bind(instance());
   ASSERT_TRUE(reflection);
@@ -638,8 +615,7 @@ export func answer() : int {
 }
 
 TEST_P(RuntimeReflectionTest, SeparatesStaticAccessorsAndValidatesErasedReceiversAndValues) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Counter {
   value: int = 0;
@@ -680,9 +656,7 @@ export func answer(): int {
   if (object.value != 0) { return -13; }
   return Counter.total;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
   const auto reflection = Reflection::Bind(instance());
@@ -706,12 +680,10 @@ export func answer(): int {
 }
 
 TEST_P(RuntimeReflectionTest, PreservesEnumIdentityAndCrossIsolateBoundaries) {
-  Load({
-      .source = "enum Color { red, green, blue }",
-      .configuration = R"({"reflection":[
-    {"module":"main","type":"Color","members":[{"kind":"enumMember","name":"blue"}]}
-  ]})",
-  });
+  Load("enum Color { red, green, blue }",
+       {
+           test::SelectReflection("Color", {test::SelectMember(SelectionKind::EnumMember, "blue")}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto reflection = Reflection::Bind(instance());
   ASSERT_TRUE(reflection);
@@ -741,8 +713,7 @@ TEST_P(RuntimeReflectionTest, PreservesEnumIdentityAndCrossIsolateBoundaries) {
 }
 
 TEST_P(RuntimeReflectionTest, GlobalStandardApiQueriesAndExecutesWithoutAnImport) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Counter {
   value: int = 10;
   add(amount: int): int { this.value += amount; return this.value; }
@@ -773,10 +744,14 @@ export func answer(): int {
   return -101;
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Counter","members":[
-  {"kind":"constructor"},{"kind":"field","name":"value"},{"kind":"method","name":"add"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Counter",
+                                  {
+                                      test::SelectMember(SelectionKind::Constructor),
+                                      test::SelectMember(SelectionKind::Field, "value"),
+                                      test::SelectMember(SelectionKind::Method, "add"),
+                                  }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto result = test::Execute(instance(), "answer");
   ASSERT_TRUE(result.Succeeded()) << result.message;
@@ -784,8 +759,7 @@ export func answer(): int {
 }
 
 TEST_P(RuntimeReflectionTest, StructuralTypesAndForwardedGenericDescriptionsPreserveTheirGraphs) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Box { value: int = 1; echo<T>(value: T): T { return value; } }
 class Generic<T> { value: T; }
 func describe<T>(): TypeInfo<T> { return Reflect.typeInfo<T>(); }
@@ -805,11 +779,14 @@ export func answer(): int {
   return result == 'ok' ? 42 : -4;
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Box","members":[
-  {"kind":"method","name":"echo","typeArguments":["string"]},
-  {"kind":"method","name":"echo","typeArguments":["(int) => string"]}
-]}]})",
-  });
+       {
+           test::SelectReflection(
+               "Box",
+               {
+                   test::SelectMember(SelectionKind::Method, "echo", {"string"}),
+                   test::SelectMember(SelectionKind::Method, "echo", {"(int) => string"}),
+               }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
@@ -862,8 +839,7 @@ TEST(RuntimeReflectionBuiltinTest, DescribesAndChecksStructuralHostTypesWithoutA
 }
 
 TEST_P(RuntimeReflectionTest, InheritedQueriesRespectOverridesOwnersAndInterfaceDispatch) {
-  Load({
-      .source = R"(
+  Load(R"(
 interface Reader { read(): int; }
 class Base {
   base: int = 10;
@@ -895,21 +871,24 @@ export func answer(): int {
   return 42;
 }
 )",
-      .configuration = R"({"reflection":[
- {"module":"main","type":"Base","members":[
-  {"kind":"field","name":"base"},{"kind":"field","name":"hidden"},
-  {"kind":"field","name":"total"},{"kind":"method","name":"read"}]},
- {"module":"main","type":"Derived","members":[{"kind":"field","name":"last"}]},
- {"module":"main","type":"Reader","members":[{"kind":"method","name":"read"}]}
-]})",
-  });
+       {
+           test::SelectReflection("Base",
+                                  {
+                                      test::SelectMember(SelectionKind::Field, "base"),
+                                      test::SelectMember(SelectionKind::Field, "hidden"),
+                                      test::SelectMember(SelectionKind::Field, "total"),
+                                      test::SelectMember(SelectionKind::Method, "read"),
+                                  }),
+           test::SelectReflection("Derived", {test::SelectMember(SelectionKind::Field, "last")}),
+           test::SelectReflection("Reader", {test::SelectMember(SelectionKind::Method, "read")}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, ConstructorsValidateBeforeDefaultsAndPreserveNullAndUserExceptions) {
-  Load({
-      .source = R"(
+  Load(
+      R"(
 let defaults = 0;
 let bodies = 0;
 const expected = Error(message: 'original', code: 'Original');
@@ -964,20 +943,23 @@ export func answer(): int {
   return 42;
 }
 )",
-      .configuration = R"({"reflection":[
- {"module":"main","type":"Generated","members":[{"kind":"constructor"},
-  {"kind":"field","name":"required"},{"kind":"field","name":"value"},
-  {"kind":"method","name":"fail"},{"kind":"method","name":"clear"}]},
- {"module":"main","type":"Explicit","members":[{"kind":"constructor"}]}
-]})",
-  });
+      {
+          test::SelectReflection("Generated",
+                                 {
+                                     test::SelectMember(SelectionKind::Constructor),
+                                     test::SelectMember(SelectionKind::Field, "required"),
+                                     test::SelectMember(SelectionKind::Field, "value"),
+                                     test::SelectMember(SelectionKind::Method, "fail"),
+                                     test::SelectMember(SelectionKind::Method, "clear"),
+                                 }),
+          test::SelectReflection("Explicit", {test::SelectMember(SelectionKind::Constructor)}),
+      });
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, AsyncCallsReturnTheOriginalFutureWithItsPayloadContract) {
-  Load({
-      .source = R"(
+  Load(R"(
 const source = Completer<int>();
 const original = source.future;
 class Worker {
@@ -1000,10 +982,13 @@ async func main(): Future<int> {
   return await pending;
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Worker","members":[
- {"kind":"method","name":"fetch"},{"kind":"method","name":"work"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Worker",
+                                  {
+                                      test::SelectMember(SelectionKind::Method, "fetch"),
+                                      test::SelectMember(SelectionKind::Method, "work"),
+                                  }),
+       });
   ASSERT_FALSE(HasFatalFailure());
   auto result = test::StartFuture(instance());
   isolate().heap().Collect();
@@ -1013,8 +998,7 @@ async func main(): Future<int> {
 }
 
 TEST_P(RuntimeReflectionTest, RegisteredStandardStaticsRespectReadonlyFieldsAndBuiltinSignatures) {
-  Load({
-      .source = R"(
+  Load(R"(
 export func answer(): int {
   const info = Reflect.typeInfo<Math>();
   const constant = info.findStaticField('PI');
@@ -1042,19 +1026,22 @@ export func answer(): int {
   return -101;
 }
 )",
-      .configuration = R"({"reflection":[
- {"module":"builtin:Math","type":"Math","members":[
-  {"kind":"field","name":"PI"},{"kind":"method","name":"sqrt"}]},
- {"module":"builtin:int","type":"int","members":[{"kind":"method","name":"parse"}]}
-]})",
-  });
+       {
+           test::SelectReflection("Math",
+                                  {
+                                      test::SelectMember(SelectionKind::Field, "PI"),
+                                      test::SelectMember(SelectionKind::Method, "sqrt"),
+                                  },
+                                  "builtin:Math"),
+           test::SelectReflection("int", {test::SelectMember(SelectionKind::Method, "parse")},
+                                  "builtin:int"),
+       });
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, UnreachableProgramAndManagedDescriptorCyclesAreCollected) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Button extends Reflect { label: string = 'saved'; }
 class Box { value: int = 42; [Button] read(): int { return this.value; } }
 let saved: TypeInfo<Box>? = null;
@@ -1066,10 +1053,9 @@ export func remember(): void {
   matches = Reflect.findMethods<Button>();
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Box","members":[
- {"kind":"field","name":"value"}
-]}]})",
-  });
+       {
+           test::SelectReflection("Box", {test::SelectMember(SelectionKind::Field, "value")}),
+       });
   ASSERT_FALSE(HasFatalFailure());
   const auto result = test::Execute(instance(), "remember");
   ASSERT_TRUE(result.Succeeded()) << result.message;
@@ -1080,8 +1066,7 @@ export func remember(): void {
 }
 
 TEST_P(RuntimeReflectionTest, CachedLookupDescriptorsSurviveCollectionWithoutRetainingPrograms) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Box { value: int = 42; }
 const info = Reflect.typeInfo<Box>();
@@ -1092,9 +1077,7 @@ export func lookupType(): TypeInfo<dynamic>? {
   if (owner == null) { return null; }
   return Reflect.findType(owner, 'Box');
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   const auto field = test::Execute(instance(), "field");
   const auto type = test::Execute(instance(), "lookupType");
@@ -1112,8 +1095,7 @@ export func lookupType(): TypeInfo<dynamic>? {
 }
 
 TEST_P(RuntimeReflectionTest, CachedLookupsKeepNamesQueriesAndGenericResultContractsDistinct) {
-  Load({
-      .source = R"(
+  Load(R"(
 [Reflect]
 class Box { value: int = 42; other: int = 1; }
 const info = Reflect.typeInfo<Box>();
@@ -1137,16 +1119,14 @@ export func answer(): int {
   if (first.getValue(object) != 42 || erased.getValue(object) != 42) { return -9; }
   return 42;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, MetadataQueriesArePureAndAccessorFailuresRemainDistinct) {
-  Load({
-      .source = R"(
+  Load(
+      R"(
 let initialized = 0;
 let setters = 0;
 func next(): int { initialized++; return 42; }
@@ -1189,19 +1169,22 @@ export func answer(): int {
   return initialized == 1 && setters == 0 ? 42 : -14;
 }
 )",
-      .configuration = R"({"reflection":[{"module":"main","type":"Box","members":[
- {"kind":"field","name":"value"},{"kind":"getter","name":"readOnly"},
- {"kind":"getter","name":"omittedSetter"},{"kind":"setter","name":"onlySetter"},
- {"kind":"getter","name":"failing"}
-]}]})",
-  });
+      {
+          test::SelectReflection("Box",
+                                 {
+                                     test::SelectMember(SelectionKind::Field, "value"),
+                                     test::SelectMember(SelectionKind::Getter, "readOnly"),
+                                     test::SelectMember(SelectionKind::Getter, "omittedSetter"),
+                                     test::SelectMember(SelectionKind::Setter, "onlySetter"),
+                                     test::SelectMember(SelectionKind::Getter, "failing"),
+                                 }),
+      });
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, SourceAttributesRegisterMembersAndCopyMethodData) {
-  Load({
-      .source = R"(
+  Load(R"(
 [AttributeUsage(allowMultiple: true)]
 class Button extends Reflect { label: string = ''; }
 class PrimaryButton extends Button { priority: int = 7; }
@@ -1260,16 +1243,13 @@ export func answer(): int {
   if (output is int) { return output; }
   return -101;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, AttributeDataPreservesScalarTypesWithoutInitializationEffects) {
-  Load({
-      .source = R"(
+  Load(R"(
 enum Color { Red, Blue }
 let effects = 0;
 func initialize(): int { effects++; return 1; }
@@ -1304,16 +1284,13 @@ export func answer(): int {
   if (output is int) { return output; }
   return -101;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }
 
 TEST_P(RuntimeReflectionTest, AttributeDiscoveryUsesConcreteSpecializationsAndInterfaceSelectors) {
-  Load({
-      .source = R"(
+  Load(R"(
 class Tag<T> extends Reflect { label: string = 'generic'; }
 [Reflect]
 class Box<T> {
@@ -1342,9 +1319,7 @@ export func answer(): int {
   if (output is int) { return output; }
   return -101;
 }
-)",
-      .configuration = "{}",
-  });
+)");
   ASSERT_FALSE(HasFatalFailure());
   ExpectAnswer();
 }

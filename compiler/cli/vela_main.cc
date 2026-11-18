@@ -84,7 +84,7 @@ int CheckFile(std::string_view path_text) {
     return options.error().exit_code;
   }
   const vela::frontend::CheckResult result =
-      vela::frontend::CheckFile(path, {}, options->diagnostics, options->reflection);
+      vela::frontend::CheckFile(path, {}, options->diagnostics);
   PrintDiagnostics(path, result.diagnostics);
   if (!result.Succeeded()) {
     return kSourceErrorExitCode;
@@ -108,7 +108,6 @@ int RunFile(std::string_view path, ExecutionMode mode) {
   }
   vela::compiler::jit::SourceOptions options;
   options.diagnostics = configuration->diagnostics;
-  options.reflection = configuration->reflection;
   options.compilation.code_cache = ".cache/vela/native/run";
   if (mode == ExecutionMode::Debug) {
     options.compilation.debugging = vela::compiler::native::NativeDebugging::Instructions;
@@ -211,10 +210,8 @@ int HostHeaderCommand(std::span<char*> arguments) {
   if (!options) {
     return options.error().exit_code;
   }
-  const auto prepared = vela::ir::PrepareParsed(
-      vela::frontend::LoadProgram(path, {}, vela::frontend::SourceLoadMode::Compilation,
-                                  options->reflection),
-      options->diagnostics);
+  const auto prepared =
+      vela::ir::PrepareParsed(vela::frontend::LoadProgram(path), options->diagnostics);
   PrintDiagnostics(path, prepared.diagnostics);
   if (!prepared.Succeeded()) {
     return kSourceErrorExitCode;

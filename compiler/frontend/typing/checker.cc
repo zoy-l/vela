@@ -25,9 +25,8 @@ CheckResult CheckProgram(Program& program, DiagnosticOptions options) {
 
 CheckResult CheckFile(std::string_view path,
                       std::span<const SourceInput> overlays,
-                      DiagnosticOptions options,
-                      std::span<const ReflectionSelection> reflection) {
-  return CheckParsed(LoadProgram(path, overlays, SourceLoadMode::Compilation, reflection), options);
+                      DiagnosticOptions options) {
+  return CheckParsed(LoadProgram(path, overlays), options);
 }
 
 }  // namespace vela::frontend

@@ -96,9 +96,9 @@ class Counter extends Base {
                   .location = {},
               },
           },
-      .source_path = "vela.json",
+      .source_path = "<reflection>",
       .location = {},
-      .source = frontend::ParseSourceSnapshot("{}").source,
+      .source = frontend::ParseSourceSnapshot({}).source,
   };
   auto parsed = frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1));
   ASSERT_TRUE(parsed.diagnostics.empty());
@@ -166,9 +166,9 @@ TEST(ReflectionPreparationTest, EnumSelectionKeepsOriginalOrdinalsAndUnregistere
                   .location = {},
               },
           },
-      .source_path = "vela.json",
+      .source_path = "<reflection>",
       .location = {},
-      .source = frontend::ParseSourceSnapshot("{}").source,
+      .source = frontend::ParseSourceSnapshot({}).source,
   };
   const auto prepared = PrepareParsed(
       frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1)));

@@ -7,16 +7,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/syntax/ast.h"
 #include "compiler/testing/settings.h"
 
 namespace vela::compiler {
-
-inline constexpr std::string_view kProjectConfigurationName = "vela.json";
 
 struct ConfigurationError final {
   std::filesystem::path file;
@@ -36,7 +32,6 @@ struct ProjectConfiguration final {
   std::filesystem::path root;
   std::optional<testing::Settings> test;
   frontend::DiagnosticOptions diagnostics;
-  std::vector<frontend::ReflectionSelection> reflection;
 };
 
 enum class ConfigurationRequirement : std::uint8_t { Required, Optional };

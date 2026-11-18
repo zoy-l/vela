@@ -13,7 +13,6 @@
 #include "compiler/development/development_session.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
-#include "compiler/project/project_config.h"
 #include "compiler/test_support/development_test_support.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/async/future.h"
@@ -24,18 +23,22 @@
 namespace vela::compiler::jit {
 namespace {
 
+using SelectionKind = frontend::ReflectionMemberKind;
+
 class ReflectionReloadTest : public ::testing::TestWithParam<NativeCodeTier> {
  protected:
   void SetUp() override {
-    auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-      {"module":"main","type":"Box","members":[
-        {"kind":"constructor"},{"kind":"field","name":"value"},{"kind":"method","name":"read"}]}
-    ]})");
-    ASSERT_TRUE(configuration);
     DevelopmentOptions options;
     options.gc_threshold = 1;
     options.compilation.tier = GetParam();
-    options.reflection = configuration->reflection;
+    options.reflection = {
+        test::SelectReflection("Box",
+                               {
+                                   test::SelectMember(SelectionKind::Constructor),
+                                   test::SelectMember(SelectionKind::Field, "value"),
+                                   test::SelectMember(SelectionKind::Method, "read"),
+                               }),
+    };
     auto session = DevelopmentSession::Create("main.vela", {}, std::move(options));
     ASSERT_TRUE(session);
     session_storage_ = std::move(*session);
@@ -129,13 +132,10 @@ export func lookupType(): bool { return Reflect.findType('main.vela', 'Box') != 
     ASSERT_TRUE(first && repeated);
     EXPECT_TRUE(first->AsBoolean() && repeated->AsBoolean());
   }
-  const auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Box","members":[{"kind":"field","name":"value"}]}
-  ]})");
-  ASSERT_TRUE(configuration);
-  auto withdrawn_members = configuration->reflection;
-  withdrawn_members.front().members.clear();
-  result = Update(source, std::move(withdrawn_members));
+  const std::vector selected{
+      test::SelectReflection("Box", {test::SelectMember(SelectionKind::Field, "value")}),
+  };
+  result = Update(source, std::vector{test::SelectReflection("Box", {})});
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   for (const auto* entry : {"field", "lookupType"}) {
     const auto first = session().Invoke("main.vela", entry);
@@ -145,7 +145,7 @@ export func lookupType(): bool { return Reflect.findType('main.vela', 'Box') != 
     EXPECT_EQ(first->AsBoolean(), registered);
     EXPECT_EQ(repeated->AsBoolean(), registered);
   }
-  result = Update(source, configuration->reflection);
+  result = Update(source, selected);
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   session().isolate().heap().Collect();
   for (const auto* entry : {"field", "lookupType"}) {
@@ -159,7 +159,7 @@ export func lookupType(): bool { return Reflect.findType('main.vela', 'Box') != 
   const auto repeated_missing = session().Invoke("main.vela", "lookupType");
   ASSERT_TRUE(missing && repeated_missing);
   EXPECT_FALSE(missing->AsBoolean() || repeated_missing->AsBoolean());
-  result = Update(source, configuration->reflection);
+  result = Update(source, selected);
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   const auto restored = session().Invoke("main.vela", "lookupType");
   ASSERT_TRUE(restored);
@@ -199,11 +199,11 @@ TEST_P(ReflectionReloadTest, WithdrawalAndDeletionHaveDistinctErrorsAndOldNamesD
   const auto deleted_method = method->Describe();
   ASSERT_FALSE(deleted_method);
   EXPECT_EQ(deleted_method.error().status, ExecutionStatus::TargetDeleted);
-  auto config = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Box","members":[{"kind":"field","name":"value"}]}
-  ]})");
-  ASSERT_TRUE(config);
-  result = Update("class Box { value: int = 30; }", config->reflection);
+  result =
+      Update("class Box { value: int = 30; }",
+             std::vector{
+                 test::SelectReflection("Box", {test::SelectMember(SelectionKind::Field, "value")}),
+             });
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   const auto replacement = test::RequireReflectionValue(type->FindField("value"));
   ASSERT_TRUE(replacement) << replacement.error();
@@ -234,12 +234,6 @@ export func count(): int { return defaults; }
   HandleScope scope(session().isolate());
   const auto object = constructor->Invoke(scope);
   ASSERT_TRUE(object);
-  auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-   {"module":"main","type":"Box","members":[{"kind":"constructor"},
-    {"kind":"field","name":"value"},{"kind":"field","name":"added"},
-    {"kind":"method","name":"read"}]}
-  ]})");
-  ASSERT_TRUE(configuration);
   result = Update(R"(
 let defaults = 0;
 func next(): int { defaults++; return 7; }
@@ -251,7 +245,15 @@ class Box {
 }
 export func count(): int { return defaults; }
 )",
-                  configuration->reflection);
+                  std::vector{
+                      test::SelectReflection("Box",
+                                             {
+                                                 test::SelectMember(SelectionKind::Constructor),
+                                                 test::SelectMember(SelectionKind::Field, "value"),
+                                                 test::SelectMember(SelectionKind::Field, "added"),
+                                                 test::SelectMember(SelectionKind::Method, "read"),
+                                             }),
+                  });
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   EXPECT_EQ(result.changes.registered_members.size(), 1U);
   const auto current = test::RequireReflectionValue(type->FindField("value"));
@@ -560,13 +562,13 @@ TEST_P(ReflectionReloadTest, StoppedContextsRejectMetadataAndExecutionOperations
 }
 
 TEST_P(ReflectionReloadTest, NotificationsUseStandardTypeDeclarationsAndStablePropertyIdentities) {
-  auto configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Box","members":[{"kind":"getter","name":"amount"}]},
-    {"module":"builtin:int","type":"int","members":[{"kind":"method","name":"parse"}]}
-  ]})");
-  ASSERT_TRUE(configuration);
-  auto result = Update("class Box { value: int = 10; get amount(): int { return this.value; } }",
-                       configuration->reflection);
+  auto result = Update(
+      "class Box { value: int = 10; get amount(): int { return this.value; } }",
+      std::vector{
+          test::SelectReflection("Box", {test::SelectMember(SelectionKind::Getter, "amount")}),
+          test::SelectReflection("int", {test::SelectMember(SelectionKind::Method, "parse")},
+                                 "builtin:int"),
+      });
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   EXPECT_EQ(result.changes.registered_types.size(), 2U);
   const auto type = test::RequireReflectionValue(FindType("Box"));
@@ -576,19 +578,21 @@ TEST_P(ReflectionReloadTest, NotificationsUseStandardTypeDeclarationsAndStablePr
   const auto identity = property->id();
   EXPECT_EQ(property->CanRead(), true);
   EXPECT_EQ(property->CanWrite(), false);
-  configuration = ParseProjectConfiguration("vela.json", R"({"reflection":[
-    {"module":"main","type":"Box","members":[{"kind":"getter","name":"amount"},
-      {"kind":"setter","name":"amount"}]}
-  ]})");
-  ASSERT_TRUE(configuration);
-  result = Update(R"(
+  result =
+      Update(R"(
 class Box {
   value: int = 10;
   get amount(): int { return this.value; }
   set amount(value: int): void { this.value = value; }
 }
 )",
-                  configuration->reflection);
+             std::vector{
+                 test::SelectReflection("Box",
+                                        {
+                                            test::SelectMember(SelectionKind::Getter, "amount"),
+                                            test::SelectMember(SelectionKind::Setter, "amount"),
+                                        }),
+             });
   ASSERT_NO_FATAL_FAILURE(test::ExpectAccepted(result));
   EXPECT_EQ(result.changes.withdrawn_types.size(), 1U);
   EXPECT_EQ(result.changes.registered_members.size(), 1U);

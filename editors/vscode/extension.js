@@ -412,7 +412,7 @@ function activate(context) {
       refreshLinks();
     }).catch(report);
   };
-  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.vela,vela.json}");
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*.vela");
   context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
   connection.ready.catch(report);
 }

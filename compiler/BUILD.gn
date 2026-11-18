@@ -448,7 +448,6 @@ source_set("jit") {
 }
 
 source_set("development") {
-  deps = [ ":project_configuration" ]
   sources = [
     "development/development_files.cc",
     "development/development_files.h",
@@ -540,7 +539,6 @@ executable("vela_jit_tests") {
     ":development",
     ":jit",
     ":program_test_support",
-    ":project_configuration",
     ":source_session",
     ":test_sources",
     "//base:test_directory",
@@ -622,7 +620,6 @@ executable("vela_aot_tests") {
     ":aot",
     ":native_pass_test_support",
     ":preparation_test_support",
-    ":project_configuration",
     ":reflection_test_support",
     ":test_sources",
     "//runtime",
@@ -705,7 +702,10 @@ source_set("native_pass_test_support") {
 source_set("reflection_test_support") {
   testonly = true
   sources = [ "test_support/reflection_test_support.h" ]
-  public_deps = [ "//runtime" ]
+  public_deps = [
+    ":frontend",
+    "//runtime",
+  ]
 }
 
 source_set("program_test_support") {

@@ -7,7 +7,6 @@
 #include <expected>
 #include <filesystem>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <ranges>
@@ -26,17 +25,15 @@
 #include "base/json.h"
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "base/source_lines.h"
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/parser.h"
 #include "compiler/testing/pattern.h"
 #include "compiler/testing/settings.h"
 
 namespace vela::compiler {
 namespace {
+
+constexpr std::string_view kProjectConfigurationName = "vela.json";
 
 bool IsSeparator(char value) {
   return value == ' ' || value == '\r' || value == '\n' || value == '\t' || value == ',' ||
@@ -105,8 +102,6 @@ class ConfigurationReader final {
   ConfigurationReader(const std::filesystem::path& file, std::string_view source)
       : file_(&file), source_(source) {}
   std::expected<void, ConfigurationError> Index(const yyjson_val* root);
-  [[nodiscard]] SourceLocation Location(const yyjson_val* value) const;
-  [[nodiscard]] SourceLocation Location(std::size_t offset) const;
   [[nodiscard]] ConfigurationError Error(const yyjson_val* value,
                                          std::string field,
                                          std::string message) const;
@@ -118,14 +113,13 @@ class ConfigurationReader final {
                                                  std::span<const std::string_view> allowed) const;
   std::expected<std::string, ConfigurationError> String(const yyjson_val* value,
                                                         std::string_view field) const;
-  std::expected<frontend::TypeName, ConfigurationError> Type(const yyjson_val* value,
-                                                             std::string_view field) const;
   std::expected<testing::Timeout, ConfigurationError> Timeout(const yyjson_val* value,
                                                               std::string_view field) const;
   std::expected<testing::TagSelector, ConfigurationError> Selector(const yyjson_val* value,
                                                                    std::string_view field) const;
 
  private:
+  [[nodiscard]] SourceLocation Location(std::size_t offset) const;
   const std::filesystem::path* file_;
   std::string_view source_;
   absl::flat_hash_map<const yyjson_val*, std::size_t> offsets_;
@@ -136,10 +130,6 @@ SourceLocation ConfigurationReader::Location(std::size_t offset) const {
   std::size_t column = 1;
   yyjson_locate_pos(source_.data(), source_.size(), offset, &line, &column, nullptr);
   return {.line = static_cast<std::uint32_t>(line), .column = static_cast<std::uint32_t>(column)};
-}
-
-SourceLocation ConfigurationReader::Location(const yyjson_val* value) const {
-  return Location(offsets_.at(value));
 }
 
 ConfigurationError ConfigurationReader::Error(std::size_t offset,
@@ -207,181 +197,6 @@ std::expected<std::string, ConfigurationError> ConfigurationReader::String(
     return std::unexpected(Error(value, std::string(field), "must be a nonempty string"));
   }
   return std::string(GetJsonString(value));
-}
-
-std::expected<frontend::TypeName, ConfigurationError> ConfigurationReader::Type(
-    const yyjson_val* value,
-    std::string_view field) const {
-  const auto text = String(value, field);
-  if (!text) {
-    return std::unexpected(text.error());
-  }
-  auto type = frontend::ParseTypeSource(*text);
-  if (!type) {
-    return std::unexpected(Error(value, std::string(field), type.error().front().message));
-  }
-  const auto location = Location(value);
-  const auto relocate = [&](const auto& self, frontend::TypeName& node) -> void {
-    node.location = location;
-    for (auto& argument : node.arguments) {
-      self(self, argument);
-    }
-  };
-  relocate(relocate, *type);
-  return std::move(*type);
-}
-
-std::expected<frontend::ReflectionMemberSelection, ConfigurationError> ReadReflectionMember(
-    const ConfigurationReader& reader,
-    const yyjson_val* object,
-    const std::string& field) {
-  constexpr auto kFields = std::to_array<std::string_view>({"kind", "name", "typeArguments"});
-  const auto fields = reader.Fields(object, field, kFields);
-  if (!fields) {
-    return std::unexpected(fields.error());
-  }
-  const auto* kind_value = GetJsonField(object, "kind");
-  if (kind_value == nullptr) {
-    return std::unexpected(reader.Error(object, field, "member kind is required"));
-  }
-  const auto kind_field = field + ".kind";
-  const auto kind = reader.String(kind_value, kind_field);
-  if (!kind) {
-    return std::unexpected(kind.error());
-  }
-  using Kind = frontend::ReflectionMemberKind;
-  constexpr auto kKinds = std::to_array<std::pair<std::string_view, Kind>>({
-      {"field", Kind::Field},
-      {"getter", Kind::Getter},
-      {"setter", Kind::Setter},
-      {"method", Kind::Method},
-      {"constructor", Kind::Constructor},
-      {"enumMember", Kind::EnumMember},
-  });
-  const auto kinds = std::span(kKinds);
-  const auto found = std::ranges::find(kinds, *kind, &decltype(kKinds)::value_type::first);
-  if (found == kinds.end()) {
-    return std::unexpected(reader.Error(kind_value, kind_field, "unknown member kind"));
-  }
-  frontend::ReflectionMemberSelection result{
-      .kind = found->second,
-      .name = {},
-      .type_arguments = {},
-      .location = reader.Location(object),
-  };
-  const auto* name = GetJsonField(object, "name");
-  const auto name_field = field + ".name";
-  if (result.kind == Kind::Constructor) {
-    if (name != nullptr) {
-      return std::unexpected(reader.Error(name, name_field, "constructor has no name"));
-    }
-  } else {
-    if (name == nullptr) {
-      return std::unexpected(reader.Error(object, field, "member name is required"));
-    }
-    auto text = reader.String(name, name_field);
-    if (!text) {
-      return std::unexpected(text.error());
-    }
-    result.name = std::move(*text);
-  }
-  if (const auto* arguments = GetJsonField(object, "typeArguments")) {
-    const auto argument_field = field + ".typeArguments";
-    if (result.kind != Kind::Method || !yyjson_is_arr(arguments)) {
-      return std::unexpected(
-          reader.Error(arguments, argument_field, "must be a type array on a method selection"));
-    }
-    auto iterator = yyjson_arr_iter_with(arguments);
-    std::size_t index = 0;
-    while (const auto* argument = yyjson_arr_iter_next(&iterator)) {
-      auto type = reader.Type(argument, argument_field + "[" + std::to_string(index++) + "]");
-      if (!type) {
-        return std::unexpected(type.error());
-      }
-      result.type_arguments.push_back(std::move(*type));
-    }
-  }
-  return result;
-}
-
-std::expected<std::vector<frontend::ReflectionMemberSelection>, ConfigurationError>
-ReadReflectionMembers(const ConfigurationReader& reader,
-                      const yyjson_val* members,
-                      const std::string& field) {
-  std::vector<frontend::ReflectionMemberSelection> result;
-  if (members == nullptr) {
-    return result;
-  }
-  if (!yyjson_is_arr(members)) {
-    return std::unexpected(reader.Error(members, field, "must be an array"));
-  }
-  auto iterator = yyjson_arr_iter_with(members);
-  std::size_t index = 0;
-  while (const auto* member = yyjson_arr_iter_next(&iterator)) {
-    auto parsed = ReadReflectionMember(reader, member, field + "[" + std::to_string(index++) + "]");
-    if (!parsed) {
-      return std::unexpected(parsed.error());
-    }
-    result.push_back(std::move(*parsed));
-  }
-  return result;
-}
-
-std::expected<std::vector<frontend::ReflectionSelection>, ConfigurationError> ReadReflection(
-    const ConfigurationReader& reader,
-    const yyjson_val* value,
-    const std::filesystem::path& file,
-    const std::shared_ptr<const frontend::SourceSnapshot>& source) {
-  if (!yyjson_is_arr(value)) {
-    return std::unexpected(reader.Error(value, "reflection", "must be an array"));
-  }
-  std::vector<frontend::ReflectionSelection> result;
-  auto iterator = yyjson_arr_iter_with(value);
-  std::size_t index = 0;
-  while (const auto* entry = yyjson_arr_iter_next(&iterator)) {
-    const auto field = "reflection[" + std::to_string(index++) + "]";
-    constexpr auto kFields = std::to_array<std::string_view>({"module", "type", "members"});
-    const auto fields = reader.Fields(entry, field, kFields);
-    if (!fields) {
-      return std::unexpected(fields.error());
-    }
-    const auto* module_value = GetJsonField(entry, "module");
-    const auto* type_value = GetJsonField(entry, "type");
-    if (module_value == nullptr || type_value == nullptr) {
-      return std::unexpected(reader.Error(entry, field, "module and type are required"));
-    }
-    const auto module_field = field + ".module";
-    const auto module = reader.String(module_value, module_field);
-    if (!module) {
-      return std::unexpected(module.error());
-    }
-    if (!IsConcretePath(*module)) {
-      return std::unexpected(reader.Error(module_value, module_field,
-                                          "must be a concrete module path using / separators"));
-    }
-    auto type = reader.Type(type_value, field + ".type");
-    if (!type) {
-      return std::unexpected(type.error());
-    }
-    frontend::ReflectionSelection selection{
-        .module = frontend::IsFileModule(*module)
-                      ? PathText(frontend::ResolveImportPath(file, Utf8Path(*module)))
-                      : *module,
-        .type = std::move(*type),
-        .members = {},
-        .source_path = PathText(file),
-        .location = reader.Location(type_value),
-        .source = source,
-    };
-    auto members =
-        ReadReflectionMembers(reader, GetJsonField(entry, "members"), field + ".members");
-    if (!members) {
-      return std::unexpected(members.error());
-    }
-    selection.members = std::move(*members);
-    result.push_back(std::move(selection));
-  }
-  return result;
 }
 
 std::expected<testing::Timeout, ConfigurationError> ConfigurationReader::Timeout(
@@ -668,7 +483,7 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
   if (!indexed) {
     return std::unexpected(indexed.error());
   }
-  constexpr auto kSections = std::to_array<std::string_view>({"test", "diagnostics", "reflection"});
+  constexpr auto kSections = std::to_array<std::string_view>({"test", "diagnostics"});
   const auto fields = reader.Fields(root, {}, kSections);
   if (!fields) {
     return std::unexpected(fields.error());
@@ -678,23 +493,7 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
       .root = file.parent_path(),
       .test = std::nullopt,
       .diagnostics = {},
-      .reflection = {},
   };
-  if (const auto* reflection = GetJsonField(root, "reflection")) {
-    const auto snapshot = std::make_shared<const frontend::SourceSnapshot>(frontend::SourceSnapshot{
-        .text = std::string(source),
-        .lines = IndexSourceLines(source),
-        .tokens = {},
-        .comments = {},
-        .imports = {},
-        .standard_names = {},
-    });
-    auto selections = ReadReflection(reader, reflection, file, snapshot);
-    if (!selections) {
-      return std::unexpected(selections.error());
-    }
-    result.reflection = std::move(*selections);
-  }
   const auto diagnostics = ReadDiagnosticOptions(reader, GetJsonField(root, "diagnostics"));
   if (!diagnostics) {
     return std::unexpected(diagnostics.error());
@@ -744,7 +543,6 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
               .root = working,
               .test = std::nullopt,
               .diagnostics = {},
-              .reflection = {},
           };
         }
         return std::unexpected(ConfigurationError{

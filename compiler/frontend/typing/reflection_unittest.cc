@@ -40,9 +40,9 @@ ReflectionSelection Select(std::string_view type) {
       .module = "models.vela",
       .type = *ParseTypeSource(type),
       .members = {},
-      .source_path = "vela.json",
+      .source_path = "<reflection>",
       .location = {.line = 3, .column = 1},
-      .source = ParseSourceSnapshot("\n\n{}").source,
+      .source = ParseSourceSnapshot("\n\n").source,
   };
 }
 
@@ -336,7 +336,7 @@ class Item extends Base {
     const auto checked = TypeChecker().Check(parsed.program);
     ASSERT_FALSE(checked.Succeeded());
     EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [](const auto& diagnostic) {
-      return diagnostic.source_path == "vela.json";
+      return diagnostic.source_path == "<reflection>";
     }));
   }
 }

@@ -113,6 +113,7 @@ static_library("values") {
 executable("sample") {
   sources = [ "main.c" ]
   deps = [ ":values" ]
+  output_dir = "$root_out_dir/bin with spaces"
 }
 ''', encoding="utf-8", newline="\n")
             (root / "calculate.cc").write_text(
@@ -126,6 +127,7 @@ executable("sample") {
                 with self.subTest(variant=variant, bitcode_dependency=bitcode_dependency):
                     project_bitcode = variant == "release"
                     output = root / (variant + ("-bitcode-sdk" if bitcode_dependency else ""))
+                    binary = output / "bin with spaces" / executable_name("sample")
                     args = {
                         "cc_wrapper": "", "target_os": target_os(), "target_cpu": target_cpu(),
                         "vela_build_config": variant, "vela_thin_lto": project_bitcode,
@@ -142,7 +144,7 @@ executable("sample") {
                     commands = [
                         [tools["gn"], "gen", output, f"--root={root}", f"--args={encoded_args}"],
                         [tools["ninja"], "-C", output, "sample"],
-                        [output / executable_name("sample")],
+                        [binary],
                     ]
                     for command in commands:
                         result = subprocess.run([str(value) for value in command], cwd=root,
@@ -168,8 +170,7 @@ executable("sample") {
                     self.assertIn("Calculate", symbols)
                     if sys.platform != "win32":
                         symbols = subprocess.run(
-                            [str(nm), "--defined-only", "-j",
-                             str(output / executable_name("sample"))], capture_output=True,
+                            [str(nm), "--defined-only", "-j", str(binary)], capture_output=True,
                             text=True, encoding="utf-8", check=True).stdout
                         self.assertEqual(any(symbol.lstrip("_") == "main"
                                              for symbol in symbols.splitlines()), variant == "debug")

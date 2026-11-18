@@ -1,6 +1,5 @@
 #include "compiler/development/development_files.h"
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <expected>
@@ -16,7 +15,6 @@
 #include <gtest/gtest.h>
 
 #include "base/path.h"
-#include "base/reflection.h"
 #include "base/testing/directory.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
@@ -59,131 +57,16 @@ class DevelopmentFilesTest : public test::DirectoryTest {
         {.location = {}, .message = "file event did not arrive", .source_path = {}},
     });
   }
+  static void ExpectNoChange(DevelopmentFiles& files) {
+    constexpr auto kObservationTime = std::chrono::milliseconds(100);
+    const auto deadline = std::chrono::steady_clock::now() + kObservationTime;
+    while (std::chrono::steady_clock::now() < deadline) {
+      const auto polled = files.Poll(kObservationTime);
+      ASSERT_TRUE(polled) << frontend::DiagnosticsText(polled.error());
+      ASSERT_FALSE(*polled);
+    }
+  }
 };
-
-TEST_F(DevelopmentFilesTest, CapturesReflectionOnlyModulesAndConfigurationAsOneSnapshot) {
-  constexpr std::string_view kConfiguration = R"({"reflection":[
-    {"module":"models","type":"Counter","members":[{"kind":"field","name":"value"}]}
-  ]})";
-  Write("vela.json", kConfiguration);
-  Write("main.vela", "func main(): void {}");
-  Write("models.vela", "class Counter { value: int = 1; }");
-  DevelopmentFiles files(Path("main.vela"));
-  const auto update = files.Capture(CompiledSourceSnapshot{});
-  ASSERT_TRUE(update);
-  const auto& registration = update->reflection;
-  if (!registration) {
-    FAIL() << "reflection capture omitted its registration update";
-  }
-  ASSERT_EQ(registration->size(), 1U);
-  Write("vela.json", R"({"reflection":[]})");
-  SourceSession session(files.entry());
-  const auto candidate = session.Prepare(*update);
-  ASSERT_TRUE(candidate);
-  const auto& snapshot = candidate->snapshot();
-  EXPECT_TRUE(snapshot.sources.contains(Path("models.vela")));
-  const auto& types = snapshot.program.reflection_types;
-  EXPECT_TRUE(std::ranges::any_of(types, [](const auto& type) {
-    return type.name == "Counter" && (type.flags & reflection::kRegistered) != 0;
-  }));
-  const auto& paths = snapshot.program.source_paths;
-  const auto configuration = std::ranges::find(paths, Path("vela.json"));
-  ASSERT_NE(configuration, paths.end());
-  EXPECT_EQ(
-      snapshot.program.source_texts.at(static_cast<std::size_t>(configuration - paths.begin())),
-      kConfiguration);
-}
-
-TEST_F(DevelopmentFilesTest, WatchesRegistrationChangesAndRejectsInvalidConfiguration) {
-  Write("main.vela", "class Counter { value: int = 1; }");
-  Write("vela.json", R"({"reflection":[{"module":"main","type":"Counter"}]})");
-  DevelopmentFiles files(Path("main.vela"));
-  ASSERT_TRUE(files.StartWatching());
-  const auto first = files.Capture(CompiledSourceSnapshot{});
-  ASSERT_TRUE(first);
-  SourceSession session(files.entry());
-  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, *first));
-  Write("vela.json", R"({"reflection":)");
-  const auto invalid = AwaitChange(files);
-  ASSERT_FALSE(invalid);
-  EXPECT_EQ(session.snapshot()->revision, 1U);
-  Write("vela.json", R"({"reflection":[]})");
-  const auto withdrawn = AwaitChange(files);
-  ASSERT_TRUE(withdrawn) << frontend::DiagnosticsText(withdrawn.error());
-  EXPECT_TRUE(withdrawn->changes.empty());
-  const auto& registration = withdrawn->reflection;
-  if (!registration) {
-    FAIL() << "reflection withdrawal omitted its registration update";
-  }
-  EXPECT_TRUE(registration->empty());
-  const auto replacement = session.Prepare(*withdrawn);
-  ASSERT_TRUE(replacement);
-  ASSERT_TRUE(session.Commit(*replacement));
-  EXPECT_TRUE(session.snapshot()->reflection.empty());
-}
-
-TEST_F(DevelopmentFilesTest, NearestConfigurationShieldsAncestorsUntilDeleted) {
-  MakeDirectory("project");
-  Write("vela.json", "{}");
-  Write("project/vela.json", "{}");
-  Write("project/main.vela", "class Counter {}");
-  DevelopmentFiles files(Path("project/main.vela"));
-  ASSERT_TRUE(files.StartWatching());
-  auto first = files.Capture(CompiledSourceSnapshot{});
-  ASSERT_TRUE(first);
-  SourceSession session(files.entry());
-  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, std::move(*first)));
-  Write("vela.json", R"({"reflection":[{"module":"project/main","type":"Counter"}]})");
-  const auto unchanged = files.Poll(std::chrono::milliseconds(100));
-  ASSERT_TRUE(unchanged) << frontend::DiagnosticsText(unchanged.error());
-  EXPECT_FALSE(*unchanged);
-  ASSERT_TRUE(std::filesystem::remove(directory() / "project/vela.json"));
-  const auto discovered = AwaitChange(files);
-  ASSERT_TRUE(discovered) << frontend::DiagnosticsText(discovered.error());
-  const auto& registration = discovered->reflection;
-  if (!registration) {
-    FAIL() << "configuration discovery omitted its registration update";
-  }
-  EXPECT_EQ(registration->size(), 1U);
-}
-
-TEST_F(DevelopmentFilesTest, AcceptingAnOlderReflectionCaptureKeepsTheCurrentConfigurationPending) {
-  constexpr std::string_view kRegistered = R"({"reflection":[{"module":"main","type":"Counter"}]})";
-  Write("main.vela", "class Counter {}");
-  Write("vela.json", kRegistered);
-  DevelopmentFiles files(Path("main.vela"));
-  ASSERT_TRUE(files.StartWatching());
-  auto first = files.Capture(CompiledSourceSnapshot{});
-  ASSERT_TRUE(first);
-  SourceSession session(files.entry());
-  ASSERT_NO_FATAL_FAILURE(CommitAndAccept(files, session, std::move(*first)));
-
-  Write("vela.json", R"({"reflection":[]})");
-  const auto withdrawn = AwaitChange(files);
-  ASSERT_TRUE(withdrawn) << frontend::DiagnosticsText(withdrawn.error());
-  const auto older = session.Prepare(*withdrawn);
-  ASSERT_TRUE(older);
-  Write("vela.json", kRegistered);
-  const auto restored = AwaitChange(files);
-  ASSERT_TRUE(restored) << frontend::DiagnosticsText(restored.error());
-  EXPECT_TRUE(restored->IsEmpty());
-
-  ASSERT_TRUE(session.Commit(*older));
-  ASSERT_TRUE(files.Accept(session.snapshot()));
-  const auto pending = files.Poll();
-  ASSERT_TRUE(pending) << frontend::DiagnosticsText(pending.error());
-  const auto& captured = *pending;
-  if (!captured) {
-    FAIL() << "missing pending update";
-  }
-  const auto& update = *captured;
-  const auto& registration = update.reflection;
-  if (!registration) {
-    FAIL() << "accepting an older capture lost pending registrations";
-  }
-  EXPECT_EQ(registration->size(), 1U);
-  EXPECT_EQ(update.base_revision, session.snapshot()->revision);
-}
 
 TEST_F(DevelopmentFilesTest, CapturedTextsStayImmutableWhenFilesChangeBeforeCompilation) {
   Write("main.vela",
@@ -503,9 +386,12 @@ TEST_F(DevelopmentFilesTest, RepeatedSavesOfRejectedContentsDoNotReemitPendingCa
   ASSERT_TRUE(invalid);
   EXPECT_FALSE(sources.Prepare(*invalid));
   Write("main.vela", kInvalid);
-  const auto duplicate = files.Poll(std::chrono::milliseconds(100));
-  ASSERT_TRUE(duplicate) << frontend::DiagnosticsText(duplicate.error());
-  EXPECT_FALSE(*duplicate);
+  ASSERT_NO_FATAL_FAILURE(ExpectNoChange(files));
+  const auto explicit_capture = files.Capture(*sources.snapshot());
+  ASSERT_TRUE(explicit_capture) << frontend::DiagnosticsText(explicit_capture.error());
+  ASSERT_EQ(explicit_capture->changes.size(), 1U);
+  EXPECT_EQ(explicit_capture->changes.front().text, kInvalid);
+
   Write("main.vela", "export func read(): int { return 43; }");
   const auto repaired = AwaitChange(files);
   ASSERT_TRUE(repaired) << frontend::DiagnosticsText(repaired.error());

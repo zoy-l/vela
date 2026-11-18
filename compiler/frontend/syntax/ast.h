@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -62,7 +61,7 @@ struct ReflectionMemberSelection final {
   SourceLocation location;
 };
 
-// 编译输入保留配置位置；绑定后的类型名与普通声明使用相同的模块作用域和特化机制。
+// 编译输入保留登记位置；绑定后的类型名与普通声明使用相同的模块作用域和特化机制。
 struct ReflectionSelection final {
   std::string module;
   TypeName type;
@@ -81,9 +80,6 @@ void ForEachReflectionType(Selection& selection, const Visit& visit) {
     }
   }
 }
-
-[[nodiscard]] bool IsSameReflectionSelections(std::span<const ReflectionSelection> left,
-                                              std::span<const ReflectionSelection> right);
 
 // 声明中的类型参数；上界与引用它的类型使用同一参数身份。
 struct TypeParameter final {

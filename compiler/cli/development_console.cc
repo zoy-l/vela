@@ -34,7 +34,6 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
@@ -98,9 +97,6 @@ std::string_view StatusName(DevelopmentStatus status) {
 
 bool IsSameChanges(const SourceUpdate& left, const SourceUpdate& right) {
   return left.base_revision == right.base_revision && left.added_roots == right.added_roots &&
-         left.reflection.has_value() == right.reflection.has_value() &&
-         (!left.reflection ||
-          frontend::IsSameReflectionSelections(*left.reflection, *right.reflection)) &&
          std::ranges::equal(left.changes, right.changes, [](const auto& first, const auto& second) {
            return first.path == second.path && first.text == second.text;
          });
@@ -507,7 +503,6 @@ int DevelopmentConsole::Run() {
     return configuration.error().exit_code;
   }
   options.diagnostics = configuration->diagnostics;
-  options.reflection = configuration->reflection;
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
   options.progress = [this](const DevelopmentResult& result) {

@@ -106,8 +106,7 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   if (!configuration) {
     return configuration.error().exit_code;
   }
-  auto parsed = frontend::LoadProgram(arguments.source, {}, frontend::SourceLoadMode::Compilation,
-                                      configuration->reflection);
+  auto parsed = frontend::LoadProgram(arguments.source);
   BinaryWriter identity;
   for (const auto& file : parsed.program.sources) {
     identity.Write(file.path);

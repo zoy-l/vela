@@ -17,7 +17,6 @@
 #include "compiler/development/development_files.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/modules/source_loader.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -179,34 +178,6 @@ void CaptureFiles(benchmark::State& state, FileActivity activity) {
     state.SetIterationTime(std::chrono::duration<double>(*elapsed).count());
   }
 }
-
-void CaptureReflectionIdle(benchmark::State& state) {
-  BenchmarkDirectory directory(state);
-  if (!directory.IsValid()) {
-    return;
-  }
-  constexpr std::array sources{
-      frontend::SourceInput{.path = "main.vela", .text = "class Box<T> {}"},
-      frontend::SourceInput{
-          .path = "vela.json",
-          .text = R"({"reflection":[
-        {"module":"main","type":"Box<Map<string, int[]>>"}
-      ]})",
-      },
-  };
-  for (const auto& source : sources) {
-    const auto written =
-        WriteFileAtomically(directory.path() / source.path, std::as_bytes(std::span(source.text)));
-    if (!written) {
-      state.SkipWithError(written.error());
-      return;
-    }
-  }
-  compiler::DevelopmentFiles files(PathText(directory.path() / "main.vela"));
-  OpenAndPollIdle(state, files);
-}
-
-BENCHMARK(CaptureReflectionIdle)->Name("files/capture/reflection_idle")->UseRealTime();
 
 int Register() {
   for (const auto activity : {FileActivity::Idle, FileActivity::Edit}) {

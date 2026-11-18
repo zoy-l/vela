@@ -7,7 +7,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "base/path.h"
 #include "base/process_exit.h"
@@ -17,7 +16,6 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_source.h"
 #include "runtime/heap/heap.h"
@@ -115,14 +113,6 @@ int RunRepl(const std::filesystem::path& directory, Streams streams) {
   }
   compiler::DevelopmentOptions development;
   development.diagnostics = options->diagnostics;
-  development.reflection = options->reflection;
-  const auto roots = frontend::ReflectionFileModules(options->reflection);
-  frontend::ModuleCache cache;
-  const auto reflected_sources = frontend::CaptureSourceFiles(roots, cache, {});
-  if (!reflected_sources.diagnostics.empty()) {
-    WriteDiagnostics(errors, reflected_sources.diagnostics);
-    return kSourceErrorExitCode;
-  }
   const auto entry = PathText(directory / "__vela_repl_host__.vela");
   auto created = compiler::DevelopmentSession::Create(entry, {}, std::move(development));
   if (!created) {
@@ -135,13 +125,6 @@ int RunRepl(const std::filesystem::path& directory, Streams streams) {
       .changes = {{.path = entry, .text = "func main(): void {}"}},
       .added_roots = {},
   };
-  for (const auto& source : reflected_sources.sources) {
-    update.changes.push_back({
-        .path = source.path,
-        .text = std::string(source.text),
-        .syntax = cache.sources.find(source.path)->second,
-    });
-  }
   auto candidate = session.Prepare(std::move(update), compiler::DevelopmentOperation::Load);
   if (!candidate) {
     errors << "vela: cannot initialize REPL: " << candidate.error().message << '\n';

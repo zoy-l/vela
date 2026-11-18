@@ -54,9 +54,9 @@ TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExis
                   .location = {},
               },
           },
-      .source_path = "vela.json",
+      .source_path = "<reflection>",
       .location = {},
-      .source = frontend::ParseSourceSnapshot("{}").source,
+      .source = frontend::ParseSourceSnapshot({}).source,
   };
   const auto first = session.Prepare({
       .changes = {{.path = "main.vela", .text = "class Counter { value: int = 1; }"}},

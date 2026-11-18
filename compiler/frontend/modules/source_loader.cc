@@ -670,18 +670,6 @@ bool IsFileModule(std::string_view module) {
   return !module.starts_with(kSdkSourcePrefix) && !module.starts_with(kStandardSourcePrefix);
 }
 
-std::vector<std::string> ReflectionFileModules(std::span<const ReflectionSelection> selections) {
-  absl::flat_hash_set<std::string_view> seen;
-  std::vector<std::string> modules;
-  for (const auto& selection : selections) {
-    const auto& module = selection.module;
-    if (IsFileModule(module) && seen.insert(module).second) {
-      modules.push_back(module);
-    }
-  }
-  return modules;
-}
-
 CapturedSources CaptureSourceFiles(std::span<const std::string> roots,
                                    ModuleCache& cache,
                                    std::span<const SourceInput> overlays,
@@ -743,11 +731,9 @@ ParseResult LoadProgram(std::string_view path,
 ParseResult LoadProgram(std::string_view path,
                         ModuleCache& cache,
                         std::span<const SourceInput> overlays,
-                        SourceLoadMode mode,
-                        std::span<const ReflectionSelection> reflection) {
+                        SourceLoadMode mode) {
   return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode, reflection)
-          .Run(path),
+      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode).Run(path),
       RetainedStandardNames(mode));
 }
 
