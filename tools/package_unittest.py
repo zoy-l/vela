@@ -10,12 +10,36 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import patch
 
-from tools.config import executable_name
-from tools.package import copy_file, create_package, load_support_specification, verify_package
+from tools.config import ROOT, executable_name
+from tools.package import (copy_file, create_package, load_support_specification, runtime_headers,
+                           verify_package)
 from tools.test_support import CommandTestCase, NATIVE_PACKAGE_AVAILABLE, create_native_package
 
 
 class SupportSpecificationTest(unittest.TestCase):
+    def test_runtime_headers_follow_only_production_dependencies(self) -> None:
+        targets = {
+            "//runtime:vela_runtime": {"deps": ["//runtime:runtime"]},
+            "//runtime:runtime": {
+                "sources": ["//runtime/isolate/isolate.h", "//runtime/isolate/isolate.cc"],
+                "public_deps": ["//base:base"],
+            },
+            "//base:base": {"sources": ["//base/builtin.h"]},
+            "//runtime:native_test_support": {
+                "sources": ["//runtime/native/native_image_test_support.h"],
+                "public_deps": ["//runtime:runtime"],
+            },
+            "//compiler:testing_runtime": {
+                "sources": ["//compiler/testing/test_bridge.h"],
+                "public_deps": ["//runtime:runtime"],
+            },
+        }
+        with patch("tools.package.command") as described, \
+                patch("tools.package.toolchain_tools", return_value={"gn": Path("gn")}):
+            described.return_value.stdout = json.dumps(targets)
+            self.assertEqual(runtime_headers(ROOT / "out/release"),
+                             [ROOT / "base/builtin.h", ROOT / "runtime/isolate/isolate.h"])
+
     def test_packaged_files_are_writable_without_changing_cached_sources(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-support-") as temporary:
             root = Path(temporary)
@@ -107,6 +131,10 @@ class NativePackageCreationTest(CommandTestCase):
             with patch("tools.package.verify_package", side_effect=verify_and_open_tools):
                 create_native_package(self.executable, destination)
             self.assertEqual(len(opened), 2)
+            self.assertFalse((destination / "include/runtime/testing").exists())
+            self.assertFalse((destination / "include/runtime/native/native_image_test_support.h").exists())
+            self.assertFalse((destination / "include/base/mock_operation.h").exists())
+            self.assertFalse((destination / "include/compiler").exists())
             for tool in opened:
                 self.assertFalse(tool.closed)
                 self.assertTrue(Path(tool.name).is_relative_to(destination))

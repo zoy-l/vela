@@ -1,4 +1,4 @@
-#include "runtime/testing/trace_value.h"
+#include "compiler/testing/trace_value.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,7 +15,12 @@
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
 
-namespace vela::runtime {
+namespace vela::testing {
+
+using runtime::AllocatedValue;
+using runtime::FutureTraceFrame;
+using runtime::Heap;
+using runtime::Value;
 
 std::expected<Value, ExecutionStatus> CaptureTestTrace(Heap& heap,
                                                        std::span<const FutureTraceFrame> frames) {
@@ -76,4 +81,4 @@ std::expected<std::vector<FutureTraceFrame>, ExecutionStatus> ReadTestTrace(Valu
   return frames;
 }
 
-}  // namespace vela::runtime
+}  // namespace vela::testing

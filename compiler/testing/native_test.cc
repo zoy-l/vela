@@ -1,4 +1,4 @@
-#include "runtime/native/native_test.h"
+#include "compiler/testing/native_test.h"
 
 #include <cstddef>
 #include <expected>
@@ -8,16 +8,22 @@
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_status.h"
-#include "base/test_operation.h"
+#include "compiler/frontend/builtins/test_operation.h"
+#include "compiler/testing/test_bridge.h"
+#include "runtime/isolate/host_data.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/strings/string.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
 
-namespace vela::runtime {
+namespace vela::testing {
+
+using runtime::DecodeOperation;
+using runtime::InspectNativeCallable;
+using runtime::NativeExecution;
+using runtime::Value;
 namespace {
 
 std::unexpected<ExecutionStatus> Failure(NativeExecution& execution, std::string_view message) {
@@ -53,7 +59,7 @@ std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
       return Failure(execution, "group callback must be synchronous and return void");
     }
   }
-  auto* bridge = execution.isolate().test_bridge();
+  auto* bridge = runtime::HostData::Find<TestBridge>(execution.isolate());
   if (bridge == nullptr) {
     return Failure(execution, "sdk:test registration requires a test execution session");
   }
@@ -111,7 +117,7 @@ std::expected<Value, ExecutionStatus> Control(NativeExecution& execution,
       return std::unexpected(valid.error());
     }
   }
-  auto* bridge = execution.isolate().test_bridge();
+  auto* bridge = runtime::HostData::Find<TestBridge>(execution.isolate());
   if (bridge == nullptr) {
     if (operation == TestControl::CurrentTestScope) {
       return Value::Integer(0);
@@ -134,4 +140,4 @@ std::expected<Value, ExecutionStatus> ExecuteNativeTest(NativeExecution& executi
                                           : Control(execution, arguments);
 }
 
-}  // namespace vela::runtime
+}  // namespace vela::testing

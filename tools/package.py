@@ -46,6 +46,28 @@ def copy_file(source: Path, package: Path, relative: str, role: str, source_name
             "source": source_name, "license": license_name, "redistribution": "bundled"}
 
 
+def runtime_headers(output: Path) -> list[Path]:
+    """Select runtime headers from the production GN dependency graph."""
+    described = command([toolchain_tools()["gn"], "desc", output, "//*", "--format=json"],
+                        directory=ROOT)
+    targets = json.loads(described.stdout)
+    pending = ["//runtime:vela_runtime"]
+    visited = set()
+    headers = set()
+    while pending:
+        label = pending.pop()
+        if label in visited:
+            continue
+        visited.add(label)
+        target = targets[label]
+        pending.extend(target.get("deps", []))
+        pending.extend(target.get("public_deps", []))
+        for source in target.get("sources", []):
+            if source.startswith(("//base/", "//runtime/")) and Path(source).suffix == ".h":
+                headers.add(ROOT / source.removeprefix("//"))
+    return sorted(headers)
+
+
 def load_support_specification(path: Path, target: str) -> dict:
     support = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(support, dict) or support.get("target") != target:
@@ -313,11 +335,10 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                     (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
                     (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
                 files.append(copy_file(source, destination, relative, role, owner, license_name))
-            # 嵌入宿主需要完整的公共头依赖；不打包编译器实现。
-            for directory in ("base", "runtime"):
-                for header in (ROOT / directory).rglob("*.h"):
-                    relative = (Path("include") / header.relative_to(ROOT)).as_posix()
-                    copy_file(header, destination, relative, "header", "Vela", "MIT")
+            # GN 的生产依赖闭包决定头文件范围，测试专用头不进入运行时 SDK。
+            for header in runtime_headers(executable.parent):
+                relative = (Path("include") / header.relative_to(ROOT)).as_posix()
+                copy_file(header, destination, relative, "header", "Vela", "MIT")
             for header in (ROOT / "include/vela").rglob("*.h"):
                 relative = header.relative_to(ROOT / "include").as_posix()
                 copy_file(header, destination, "include/" + relative, "header", "Vela", "MIT")

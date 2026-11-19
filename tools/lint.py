@@ -18,6 +18,7 @@ from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
 
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
+HEADER_SUFFIXES = {".h", ".hpp", ".hxx"}
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,8 @@ def collect_build_files(gn: Path, variant: str) -> list[Path]:
     return sorted(files)
 
 
-def prepare_generated_headers(variant: str, tools: dict[str, Path], files: list[Path]) -> None:
+def prepare_generated_headers(variant: str, tools: dict[str, Path],
+                              files: list[Path]) -> dict[str, dict]:
     output = output_directory(variant)
     described = subprocess.run(
         [str(tools["gn"]), "desc", str(output), "//*", "--format=json"],
@@ -103,6 +105,37 @@ def prepare_generated_headers(variant: str, tools: dict[str, Path], files: list[
     if headers:
         subprocess.run([str(tools["ninja"]), "-C", str(output), *sorted(headers)],
                        cwd=ROOT, check=True)
+    return targets
+
+
+def header_contexts(targets: dict[str, dict], files: list[Path],
+                    compiler: Path) -> dict[Path, list[str]]:
+    selected = {source for source in files if source.suffix in HEADER_SUFFIXES}
+    contexts = {}
+    clang_cl = compiler.stem == "clang-cl"
+    define_prefix = "/D" if clang_cl else "-D"
+    include_prefix = "/I" if clang_cl else "-I"
+    for target in targets.values():
+        owned = selected.intersection(
+            (ROOT / source.removeprefix("//")).resolve()
+            for source in target.get("sources", [])
+        )
+        if not owned:
+            continue
+        arguments = ["--driver-mode=cl", "/TP"] if clang_cl else ["-x", "c++"]
+        arguments.extend(define_prefix + value for value in target.get("defines", []))
+        arguments.extend(include_prefix + str((ROOT / value.removeprefix("//")).resolve())
+                         for value in target.get("include_dirs", []))
+        arguments.extend(target.get("cflags", []))
+        arguments.extend(target.get("cflags_cc", []))
+        for source in owned:
+            if source in contexts and contexts[source] != arguments:
+                raise RuntimeError(f"header has conflicting GN compilation contexts: {source}")
+            contexts[source] = arguments
+    missing = selected.difference(contexts)
+    if missing:
+        raise RuntimeError(f"header requires an owning GN target: {min(missing)}")
+    return contexts
 
 
 def path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
@@ -122,15 +155,20 @@ def path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     return sorted(files)
 
 
-def check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) -> LintResult:
+def check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool,
+                 arguments: list[str] | None = None) -> LintResult:
     command = [
-        str(clang_tidy), str(source), "-p", str(database), "--quiet", "--warnings-as-errors=*",
+        str(clang_tidy), str(source), "--quiet", "--warnings-as-errors=*",
     ]
     if fix:
         command.extend(["--fix", "--format-style=file"])
+    if arguments is None:
+        command.extend(["-p", str(database)])
+    else:
+        command.extend(["--", *arguments])
     result = subprocess.run(
         command,
-        cwd=ROOT,
+        cwd=ROOT if arguments is None else database,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -161,11 +199,13 @@ def run(parsed: argparse.Namespace) -> int:
     files = path_files(parsed.paths, build_files) if parsed.paths else build_files
     if not files:
         raise RuntimeError("no C++ source files or headers were selected for lint")
-    prepare_generated_headers(parsed.variant, tools, files)
+    targets = prepare_generated_headers(parsed.variant, tools, files)
+    contexts = header_contexts(targets, files, tools["cxx"])
 
     if parsed.fix:
         # 不并行修复：多个翻译单元可能同时改写共享头文件。
-        results = [check_source(tools["clang_tidy"], source, database, fix=True) for source in files]
+        results = [check_source(tools["clang_tidy"], source, database, fix=True,
+                                 arguments=contexts.get(source)) for source in files]
     else:
         worker_count = min(parsed.jobs, len(files))
         print(
@@ -176,7 +216,8 @@ def run(parsed: argparse.Namespace) -> int:
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
             pending = {
-                pool.submit(check_source, tools["clang_tidy"], source, database, fix=False)
+                pool.submit(check_source, tools["clang_tidy"], source, database, fix=False,
+                            arguments=contexts.get(source))
                 for source in files
             }
             completed = 0

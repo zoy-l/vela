@@ -22,10 +22,12 @@ and module boundaries.
 | `exceptions` | Error values and exception payload and trace contracts. |
 | `process` | Process entry, shutdown diagnostics, and exit values. |
 | `native` | Native ABI and API, host bindings, program instances, dispatch, async execution, and debugging. |
-| `testing` | Source-test bridges, value inspection, runtime integration tests, and shared test support. |
+| `testing` | C++ runtime integration tests and test-only support. |
 
 Module tests live beside their implementations. Generated native build identity and Unicode data
-headers remain in the generated `runtime/` directory. Distribution packages preserve the source
+headers remain in the generated `runtime/` directory. Source-test and mock execution support belongs
+to `compiler/testing` and is linked by development tools. Distribution packages select headers from
+the production GN dependency graph and preserve the source
 header hierarchy beneath `include/runtime`, including dependencies used by generated C and C++
 export headers. Consumers include headers by their owning directory, such as
 `runtime/isolate/isolate.h` and `runtime/native/native_api.h`.

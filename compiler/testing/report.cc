@@ -14,7 +14,7 @@
 #include <yyjson.h>
 
 #include "base/json.h"
-#include "base/mock_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"

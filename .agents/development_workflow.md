@@ -57,6 +57,8 @@ in its cache key; enabling a wrapper does not change Debug/Release separation or
 - For tasks that require lint, run repository-wide `vl lint` and fix every reported diagnostic,
   including pre-existing findings outside the initial change scope. Existing lint failures are not
   an acceptable completion state.
+- Header lint uses the owning GN target's C++ flags, defines, and include paths. Project headers
+  selected for lint must belong to a GN target; do not infer their context from a nearby test file.
 - Validate behavior and performance separately. Performance conclusions require measurements from
   a Release build; compilation or static reasoning cannot replace benchmarks.
 - Retain benchmark evidence according to [Benchmark Result Retention](benchmark_results.md).

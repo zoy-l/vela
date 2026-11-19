@@ -34,8 +34,9 @@ for execution and validation.
   `runtime/heap` owns allocation, storage, GC, and host roots; `runtime/isolate` owns runtime metadata
   and external-resource lifetimes. `runtime/async` owns futures, scheduling, and execution contexts.
   `runtime/native` owns native ABI, host bindings, instances, and execution. Collection, dynamic,
-  string, JSON, regular-expression, library, exception, process, and testing responsibilities live
-  in their corresponding runtime directories. Runtime GN targets remain centralized in
+  string, JSON, regular-expression, library, exception, and process responsibilities live
+  in their corresponding runtime directories. `runtime/testing` contains C++ tests and test-only
+  support. Runtime GN targets remain centralized in
   `runtime/BUILD.gn`; distribution headers preserve these paths beneath `include/runtime`.
 - Keep dependencies unidirectional: frontend does not depend on IR or runtime; IR depends on
   frontend; native compilation connects IR and runtime contracts; runtime does not depend on compiler.
@@ -404,7 +405,13 @@ ordinary script objects. Generated adapters retain the original interface signat
 separate call-pattern methods. The generator reads the production bound module graph, checks its
 output before atomic publication, and never evaluates source initializers or test registration.
 
-The native runtime exposes signature inspection, resolved source traces and test-context bridges.
+The core runtime exposes ordinary callable inspection and resolved source traces.
+`compiler/testing` owns test registration, mock-specific inspection, test trace serialization and
+the test-context bridge. JIT installs their separate development-only native entry; the production
+runtime archive and its header dependency graph exclude this support. Production AOT rejects
+`sdk:test` and `sdk:mock` before pruning, including imports whose testing functions are unused.
+Test drivers attach their borrowed bridge with scoped, typed `runtime::HostData`; nested attachments
+restore the previous value, remain Isolate-local and do not replace GC roots.
 Matchers and responses execute in normal script frames. Each mock session belongs to one real test
 scope; the suite invokes its internal finalizers after all user cleanup and teardown callbacks,
 before `testDone`. Call observations reuse tracked asynchronous expectations and retain their

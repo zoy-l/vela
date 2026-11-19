@@ -29,7 +29,7 @@ namespace vela::runtime {
 
 struct NativeImage;
 class NativeInstance;
-class TestBridge;
+class HostData;
 
 enum class NativeRegistrationError : std::uint8_t {
   InvalidName,
@@ -104,8 +104,6 @@ class Isolate final {
   [[nodiscard]] std::expected<void, std::vector<ExternalResourceInfo>> TryStop();
   [[nodiscard]] std::ostream& output() noexcept;
   void SetOutput(std::ostream& output) noexcept;
-  [[nodiscard]] TestBridge* test_bridge() const noexcept { return test_bridge_; }
-  void SetTestBridge(TestBridge* bridge) noexcept { test_bridge_ = bridge; }
 
   [[nodiscard]] ClassLayout* CreateClassLayout(std::uint32_t field_count,
                                                std::span<const std::uint32_t> reference_fields,
@@ -164,7 +162,8 @@ class Isolate final {
   Random random_;
   FutureScheduler scheduler_;
   std::ostream* output_ = nullptr;
-  TestBridge* test_bridge_ = nullptr;
+  friend class HostData;
+  HostData* host_data_ = nullptr;
   Heap heap_;
   NativeControl native_control_{scheduler_.wakeup()};
   NativeDispatch native_dispatch_;

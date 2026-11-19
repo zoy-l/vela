@@ -1,4 +1,4 @@
-#include "runtime/testing/test_inspection.h"
+#include "compiler/testing/test_inspection.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -10,8 +10,8 @@
 #include <string_view>
 
 #include "base/execution_status.h"
-#include "base/test_operation.h"
 #include "base/utf8.h"
+#include "compiler/frontend/builtins/test_operation.h"
 #include "runtime/heap/heap.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
@@ -19,7 +19,13 @@
 #include "runtime/value/value_io.h"
 #include "runtime/value/value_operations.h"
 
-namespace vela::runtime {
+namespace vela::testing {
+
+using runtime::AllocatedValue;
+using runtime::Heap;
+using runtime::ObjectKind;
+using runtime::Value;
+using runtime::WriteValue;
 namespace {
 
 enum class TestValueKind : std::uint8_t { Scalar, Array, Map, Set, Future };
@@ -82,4 +88,4 @@ std::expected<Value, ExecutionStatus> InspectTestValue(std::span<const Value> ar
   return AllocatedValue(heap.AllocateString(text));
 }
 
-}  // namespace vela::runtime
+}  // namespace vela::testing

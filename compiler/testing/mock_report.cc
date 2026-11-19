@@ -8,14 +8,14 @@
 #include <utility>
 #include <vector>
 
-#include "base/mock_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
 #include "compiler/testing/result.h"
+#include "compiler/testing/trace_value.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/member_table.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
-#include "runtime/testing/trace_value.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -79,7 +79,7 @@ std::vector<std::string> MockReportReader::Strings(runtime::Value value) {
 }
 
 std::vector<runtime::FutureTraceFrame> MockReportReader::Trace(runtime::Value value) {
-  auto resolved = runtime::ReadTestTrace(value);
+  auto resolved = testing::ReadTestTrace(value);
   if (!resolved) {
     return {};
   }

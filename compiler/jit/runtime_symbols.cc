@@ -12,6 +12,8 @@
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/Support/Error.h>
 
+#include "compiler/native/development_builtin.h"
+#include "compiler/testing/runtime_support.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_async.h"
 #include "runtime/native/native_call.h"
@@ -75,6 +77,7 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeNewCollectionSymbol, &runtime::vela_native_v1_new_collection);
   bind(runtime::kNativeWriteBarrierSymbol, &runtime::vela_native_v1_write_barrier);
   bind(runtime::kNativeBuiltinSymbol, &runtime::vela_native_v1_builtin);
+  bind(native::kDevelopmentBuiltinSymbol, &testing::vela_development_v1_builtin);
   bind(runtime::kNativeNumericParseSymbol, &runtime::vela_native_v1_numeric_parse);
   bind(runtime::kNativeReflectionInvokeSymbol, &runtime::vela_native_v12_reflection_invoke);
   bind(runtime::kNativeConcatSymbol, &runtime::vela_native_v1_concat);

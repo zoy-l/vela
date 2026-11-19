@@ -30,6 +30,7 @@
 #include "compiler/aot/native_reflection_optimizer.h"
 #include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
@@ -155,6 +156,12 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   };
   if (program.native_mode != NativeProgramMode::Closed) {
     return diagnostic("AOT requires a closed native program");
+  }
+  for (const auto& source : program.source_paths) {
+    if (source == frontend::kTestModuleName || source == frontend::kMockModuleName) {
+      return diagnostic("AOT deployment cannot import development module '" + source +
+                        "'; use vela test for script tests");
+    }
   }
   const auto selected = SelectExports(program, options.exports);
   if (!selected) {

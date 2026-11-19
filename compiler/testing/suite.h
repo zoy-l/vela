@@ -16,17 +16,18 @@
 #include <absl/container/flat_hash_set.h>
 #include <vela/handles.h>
 
-#include "base/mock_operation.h"
-#include "base/test_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
+#include "compiler/frontend/builtins/test_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
+#include "compiler/testing/test_bridge.h"
 #include "runtime/async/execution_context.h"
 #include "runtime/async/future.h"
+#include "runtime/isolate/host_data.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_instance.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
 #include "vela/types.h"
 
@@ -45,7 +46,7 @@ struct SuiteOptions final {
 };
 
 // 原生实例由执行线程拥有，生命周期覆盖 Suite；报告只保留已复制的数据。
-class Suite final : public runtime::TestBridge {
+class Suite final : public TestBridge {
  public:
   Suite(runtime::NativeInstance& instance, SuiteOptions options);
   ~Suite() override;
@@ -55,7 +56,7 @@ class Suite final : public runtime::TestBridge {
   Suite& operator=(Suite&&) = delete;
   [[nodiscard]] SuiteResult Run();
   [[nodiscard]] std::optional<std::uint64_t> CurrentTestId() const;
-  std::expected<void, std::string> Register(const runtime::TestRegistration& registration) override;
+  std::expected<void, std::string> Register(const testing::TestRegistration& registration) override;
   void RegisterMockFailure(const runtime::NominalType& type, MockFailureKind kind) override;
   std::expected<runtime::Value, std::string> Control(
       TestControl operation,
@@ -117,11 +118,11 @@ class Suite final : public runtime::TestBridge {
   [[nodiscard]] std::expected<Callback, std::string> Capture(
       runtime::Value callback,
       std::vector<runtime::FutureTraceFrame> trace);
-  std::expected<void, std::string> RegisterNode(const runtime::TestRegistration& registration);
-  std::expected<void, std::string> RegisterHook(const runtime::TestRegistration& registration);
+  std::expected<void, std::string> RegisterNode(const testing::TestRegistration& registration);
+  std::expected<void, std::string> RegisterHook(const testing::TestRegistration& registration);
   static std::expected<void, std::string> ReadMetadata(
       Node& node,
-      const runtime::TestRegistration& registration);
+      const testing::TestRegistration& registration);
   std::expected<void, std::string> Select(Node& node,
                                           const std::string& prefix,
                                           const std::vector<std::string>& inherited_tags);
@@ -188,6 +189,7 @@ class Suite final : public runtime::TestBridge {
   SuiteResult Finish();
 
   runtime::Isolate* isolate_;
+  runtime::HostData bridge_data_;
   runtime::NativeInstance* instance_;
   SuiteOptions options_;
   Node root_;

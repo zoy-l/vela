@@ -844,6 +844,17 @@ class NativeObjectTest(CommandTestCase):
     def command(self, arguments: list[str | Path], expected: int = 0) -> subprocess.CompletedProcess:
         return native_command(self, arguments, expected, cwd=self.directory)
 
+    def test_production_runtime_excludes_development_testing_symbols(self) -> None:
+        runtime = native_test_libraries(self.output)[0]
+        nm = self.tools["cxx"].parent / executable_name("llvm-nm")
+        for selection in ("--defined-only", "--undefined-only"):
+            symbols = self.command([nm, selection, "--extern-only", "--demangle", runtime]).stdout
+            for name in ("vela::testing::", "TestBridge", "ExecuteNativeMock", "ExecuteNativeTest",
+                         "InspectTestValue", "CaptureTestTrace", "ReadTestTrace",
+                         "vela_development_v1_builtin"):
+                with self.subTest(selection=selection, symbol=name):
+                    self.assertNotIn(name, symbols)
+
     def emit(self, name: str, source: str) -> tuple[Path, dict]:
         entry = self.directory / (name + ".vela")
         entry.write_text(source, encoding="utf-8", newline="\n")

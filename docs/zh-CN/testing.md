@@ -623,7 +623,9 @@ M0–M5 是这项扩展的完整规格。只完成同步核心、只提供手写
 
 M0–M5 的生产实现见 [SDK](../../compiler/sdk/mock.vela)、
 [生成器](../../compiler/tooling/mock/mock_generator.cc)、
-[原生桥接](../../runtime/native/native_mock.cc)和[结构化报告](../../compiler/testing/mock_report.cc)。
+[原生桥接](../../compiler/testing/native_mock.cc)和[结构化报告](../../compiler/testing/mock_report.cc)。
+`sdk:test`、`sdk:mock` 及其原生入口属于开发测试工具，不进入生产 runtime SDK。
+生产 AOT 构建在裁剪前拒绝导入这两个模块；开发执行引擎为运行与测试命令安装专用入口。
 运行与测试命令使用同一 JIT/原生契约。源码检查、缓存命中、并发 suite、异步收尾和
 GC 回收都必须在迁移后的 Debug/Release 路径完成验收。
 

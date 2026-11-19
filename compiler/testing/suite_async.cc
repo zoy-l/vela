@@ -1,5 +1,5 @@
 #include "base/execution_status.h"
-#include "base/test_operation.h"
+#include "compiler/frontend/builtins/test_operation.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 

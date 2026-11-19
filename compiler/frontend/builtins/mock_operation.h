@@ -6,7 +6,7 @@
 
 namespace vela {
 
-// sdk:mock 的私有宿主契约；序号与 SDK 声明共同参与编译内容指纹。
+// sdk:mock 的开发工具私有契约；序号与 SDK 声明共同参与编译内容指纹。
 enum class MockOperation : std::uint8_t {
   IsVoid,
   AcceptsReturn,

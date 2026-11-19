@@ -25,7 +25,6 @@ source_set("base") {
     "layout_description.cc",
     "layout_description.h",
     "member.h",
-    "mock_operation.h",
     "native_binding.cc",
     "native_binding.h",
     "native_program_mode.h",
@@ -40,8 +39,6 @@ source_set("base") {
     "source_lines.h",
     "source_location.h",
     "streams.h",
-    "test_operation.h",
-    "test_protocol.h",
     "utf8.cc",
     "utf8.h",
   ]

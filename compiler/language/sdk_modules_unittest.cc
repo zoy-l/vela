@@ -7,11 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/test_operation.h"
+#include "compiler/frontend/builtins/test_operation.h"
 #include "gtest/gtest.h"
 
-#include "base/mock_operation.h"
-#include "base/test_protocol.h"
+#include "compiler/frontend/builtins/mock_operation.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_file.h"
@@ -20,19 +19,21 @@
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/testing/test_bridge.h"
+#include "compiler/testing/test_protocol.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/host_data.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_program_state.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {
 
-struct ProtocolRecorder final : runtime::TestBridge {
+struct ProtocolRecorder final : testing::TestBridge {
   std::expected<void, std::string> Register(
-      const runtime::TestRegistration& registration) override {
+      const testing::TestRegistration& registration) override {
     registrations.push_back(registration.operation);
     return {};
   }
@@ -46,7 +47,7 @@ struct ProtocolRecorder final : runtime::TestBridge {
     controls.push_back(operation);
     return runtime::Value::Integer(1);
   }
-  std::vector<runtime::TestOperation> registrations;
+  std::vector<testing::TestOperation> registrations;
   std::vector<TestControl> controls;
   std::vector<MockFailureKind> failures;
 };
@@ -73,11 +74,10 @@ func main(): void {
                                                 isolate);
   ASSERT_TRUE(program) << program.error();
   ProtocolRecorder recorder;
-  isolate.SetTestBridge(&recorder);
+  runtime::HostData bridge_data(isolate, static_cast<testing::TestBridge&>(recorder));
   const auto result = test::Execute(**program);
-  isolate.SetTestBridge(nullptr);
   ASSERT_TRUE(result.Succeeded()) << result.message;
-  using Operation = runtime::TestOperation;
+  using Operation = testing::TestOperation;
   EXPECT_EQ(recorder.registrations, (std::vector<Operation>{
                                         Operation::Test,
                                         Operation::EnterGroup,
@@ -122,9 +122,8 @@ TEST(SdkModulesTest, MockFailureNamesAndNumbersReachTheirHostCategories) {
   const auto program = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(program) << program.error();
   ProtocolRecorder recorder;
-  isolate.SetTestBridge(&recorder);
+  runtime::HostData bridge_data(isolate, static_cast<testing::TestBridge&>(recorder));
   const auto result = test::Execute(**program);
-  isolate.SetTestBridge(nullptr);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_EQ(recorder.failures, (std::vector(kinds.begin(), kinds.end())));
 }

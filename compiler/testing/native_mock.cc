@@ -1,4 +1,4 @@
-#include "runtime/native/native_mock.h"
+#include "compiler/testing/native_mock.h"
 #include <optional>
 
 #include <array>
@@ -10,21 +10,37 @@
 #include <utility>
 
 #include "base/execution_status.h"
-#include "base/mock_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
+#include "compiler/testing/test_bridge.h"
+#include "compiler/testing/trace_value.h"
 #include "runtime/async/future.h"
 #include "runtime/async/future_operations.h"
 #include "runtime/exceptions/error.h"
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/host_data.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
-#include "runtime/testing/test_bridge.h"
-#include "runtime/testing/trace_value.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
 
-namespace vela::runtime {
+namespace vela::testing {
+
+using runtime::AsFuture;
+using runtime::DecodeOperation;
+using runtime::ErrorMessage;
+using runtime::FutureCompletionStatus;
+using runtime::FutureState;
+using runtime::FutureTraceFrame;
+using runtime::Heap;
+using runtime::InspectNativeCallable;
+using runtime::InvokeNativeCallable;
+using runtime::NativeCallableContract;
+using runtime::NativeExecution;
+using runtime::NativeInstance;
+using runtime::RootRange;
+using runtime::Value;
 namespace {
 
 std::expected<Value, ExecutionStatus> ExpandTrace(NativeExecution& execution,
@@ -201,7 +217,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
     if (!kind || !Heap::IsThrowable(value)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    if (auto* bridge = isolate.test_bridge()) {
+    if (auto* bridge = runtime::HostData::Find<TestBridge>(isolate)) {
       bridge->RegisterMockFailure(Heap::ClassOf(*value.AsObject())->nominal_type(), *kind);
     }
     return Value::Null();
@@ -212,4 +228,4 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
   std::unreachable();
 }
 
-}  // namespace vela::runtime
+}  // namespace vela::testing

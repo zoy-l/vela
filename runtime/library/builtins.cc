@@ -19,7 +19,6 @@
 #include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
 #include "runtime/strings/unicode_operations.h"
-#include "runtime/testing/test_inspection.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
 #include "runtime/value/value_operations.h"
@@ -200,10 +199,6 @@ Result ConvertNumber(Builtin builtin, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
-    case Builtin::TestInspect:
-      return InspectTestValue(arguments, heap);
-    case Builtin::TestSame:
-      return Value::Boolean(IsEqualValue(arguments.front(), arguments[1]));
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble:
       return ConvertNumber(builtin, arguments.front());

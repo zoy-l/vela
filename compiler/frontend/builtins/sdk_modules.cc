@@ -8,8 +8,8 @@
 #include <string_view>
 
 #include "base/builtin.h"
-#include "base/mock_operation.h"
-#include "base/test_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
+#include "compiler/frontend/builtins/test_operation.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/sdk_sources.h"
 

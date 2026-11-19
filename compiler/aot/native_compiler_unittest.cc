@@ -690,6 +690,22 @@ TEST(NativeCompilerTest, DelayedStackRootCleanupRestoresTheHeadOnlyAfterRegistra
   EXPECT_EQ(guard->getSuccessor(1), &*restored);
 }
 
+TEST(NativeCompilerTest, RejectsDevelopmentModulesBeforePruningUnusedFunctions) {
+  for (const auto* const module : {"sdk:test", "sdk:mock"}) {
+    const auto prepared =
+        Prepare("import '" + std::string(module) + "'; export func main(): int { return 42; }");
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    for (const auto mode : {NativeEntryMode::Library, NativeEntryMode::Executable}) {
+      const auto result = Compile(prepared.program, {.exports = {"main"}, .entry_mode = mode});
+      ASSERT_FALSE(result) << module;
+      ASSERT_EQ(result.error().size(), 1U);
+      EXPECT_NE(result.error().front().message.find("cannot import development module"),
+                std::string::npos);
+      EXPECT_NE(result.error().front().message.find(module), std::string::npos);
+    }
+  }
+}
+
 TEST(NativeCompilerTest, EmitsOfflineObjectWithScalarCallsAndControlFlow) {
   const auto prepared = Prepare(R"(
 func twice(value: int): int { return value * 2; }

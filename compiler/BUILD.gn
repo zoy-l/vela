@@ -31,6 +31,13 @@ action("sdk_sources") {
   ]
 }
 
+source_set("sdk_contracts") {
+  sources = [
+    "frontend/builtins/mock_operation.h",
+    "frontend/builtins/test_operation.h",
+  ]
+}
+
 source_set("frontend") {
   include_dirs = [ root_gen_dir ]
   deps = [
@@ -131,6 +138,7 @@ source_set("frontend") {
     "frontend/typing/type_names.h",
   ]
   public_deps = [
+    ":sdk_contracts",
     "//base",
     "//third_party:abseil",
   ]
@@ -282,6 +290,26 @@ source_set("interactive") {
   ]
 }
 
+source_set("testing_runtime") {
+  sources = [
+    "testing/native_mock.cc",
+    "testing/native_mock.h",
+    "testing/native_test.cc",
+    "testing/native_test.h",
+    "testing/runtime_support.cc",
+    "testing/runtime_support.h",
+    "testing/test_bridge.h",
+    "testing/test_inspection.cc",
+    "testing/test_inspection.h",
+    "testing/trace_value.cc",
+    "testing/trace_value.h",
+  ]
+  public_deps = [
+    ":sdk_contracts",
+    "//runtime",
+  ]
+}
+
 source_set("testing") {
   sources = [
     "testing/command.cc",
@@ -298,6 +326,7 @@ source_set("testing") {
     "testing/suite.h",
     "testing/suite_async.cc",
     "testing/suite_report.cc",
+    "testing/test_protocol.h",
   ]
   public_deps = [
     ":jit",
@@ -344,6 +373,7 @@ source_set("native") {
     "native/code_generator.h",
     "native/debug_emitter.cc",
     "native/deoptimization_emitter.cc",
+    "native/development_builtin.h",
     "native/escape_analysis.cc",
     "native/escape_analysis.h",
     "native/escape_dataflow.h",
@@ -437,6 +467,7 @@ source_set("jit") {
   deps = [ ":cache_build_identity" ]
   public_deps = [
     ":native",
+    ":testing_runtime",
     "//runtime",
     "//third_party:llvm_jit",
   ]

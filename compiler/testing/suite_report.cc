@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include "base/mock_operation.h"
+#include "compiler/frontend/builtins/mock_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "runtime/value/object.h"

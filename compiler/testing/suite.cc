@@ -2,7 +2,6 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -18,10 +17,11 @@
 
 #include "base/execution_status.h"
 #include "base/process_exit.h"
-#include "base/test_protocol.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
+#include "compiler/testing/test_bridge.h"
+#include "compiler/testing/test_protocol.h"
 #include "runtime/async/execution_context.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -31,7 +31,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
@@ -152,11 +151,12 @@ constexpr std::size_t kTearDownAll = 3;
 }  // namespace
 
 Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options)
-    : isolate_(&instance.isolate()), instance_(&instance), options_(std::move(options)) {
+    : isolate_(&instance.isolate()),
+      bridge_data_(*isolate_, static_cast<TestBridge&>(*this)),
+      instance_(&instance),
+      options_(std::move(options)) {
   previous_error_handler_ = isolate_->scheduler().SetUnhandledErrorHandler(
       [this](const auto& future, auto value) { Unhandled(future, value); });
-  assert(isolate_->test_bridge() == nullptr);
-  isolate_->SetTestBridge(this);
   scopes_.emplace(0, &root_);
   phases_.emplace(0, TestPhase::Registration);
   for (const auto& tag : options_.settings.tags) {
@@ -171,7 +171,6 @@ Suite::~Suite() {
     isolate_->scheduler().Shutdown();
   }
   isolate_->scheduler().SetUnhandledErrorHandler(std::move(previous_error_handler_));
-  isolate_->SetTestBridge(nullptr);
 }
 
 std::expected<Suite::Callback, std::string> Suite::Capture(
@@ -195,7 +194,7 @@ std::expected<Suite::Callback, std::string> Suite::Capture(
 
 std::expected<void, std::string> Suite::ReadMetadata(
     Node& node,
-    const runtime::TestRegistration& registration) {
+    const testing::TestRegistration& registration) {
   auto tags = ReadTags(registration.tags);
   if (!tags) {
     return std::unexpected(tags.error());
@@ -225,7 +224,7 @@ std::expected<void, std::string> Suite::ReadMetadata(
 }
 
 std::expected<void, std::string> Suite::RegisterNode(
-    const runtime::TestRegistration& registration) {
+    const testing::TestRegistration& registration) {
   auto node = std::make_unique<Node>();
   node->id = next_id_++;
   node->parent = registration_scope_;
@@ -235,7 +234,7 @@ std::expected<void, std::string> Suite::RegisterNode(
   if (!metadata) {
     return std::unexpected(metadata.error());
   }
-  const bool group = registration.operation == runtime::TestOperation::EnterGroup;
+  const bool group = registration.operation == testing::TestOperation::EnterGroup;
   node->kind = group ? NodeKind::Group : NodeKind::Test;
   if (!group) {
     auto callback = Capture(registration.callback, registration.trace);
@@ -254,12 +253,12 @@ std::expected<void, std::string> Suite::RegisterNode(
 }
 
 std::expected<void, std::string> Suite::RegisterHook(
-    const runtime::TestRegistration& registration) {
+    const testing::TestRegistration& registration) {
   auto callback = Capture(registration.callback, registration.trace);
   if (!callback) {
     return std::unexpected(std::move(callback.error()));
   }
-  if (registration.operation == runtime::TestOperation::AddTearDown) {
+  if (registration.operation == testing::TestOperation::AddTearDown) {
     const auto context = ExecutingContext(ScopeUse::Cleanup);
     if (!context) {
       return std::unexpected(context.error());
@@ -269,24 +268,24 @@ std::expected<void, std::string> Suite::RegisterHook(
     return {};
   }
   const auto index = static_cast<std::size_t>(registration.operation) -
-                     static_cast<std::size_t>(runtime::TestOperation::SetUp);
+                     static_cast<std::size_t>(testing::TestOperation::SetUp);
   registration_scope_->hooks.at(index).push_back(std::move(*callback));
   return {};
 }
 
-std::expected<void, std::string> Suite::Register(const runtime::TestRegistration& registration) {
+std::expected<void, std::string> Suite::Register(const testing::TestRegistration& registration) {
   const auto operation = registration.operation;
-  if (operation == runtime::TestOperation::AddTearDown) {
+  if (operation == testing::TestOperation::AddTearDown) {
     return RegisterHook(registration);
   }
   if (state_ != State::Registering) {
     return std::unexpected("test registration is closed");
   }
-  if (operation == runtime::TestOperation::Test ||
-      operation == runtime::TestOperation::EnterGroup) {
+  if (operation == testing::TestOperation::Test ||
+      operation == testing::TestOperation::EnterGroup) {
     return RegisterNode(registration);
   }
-  if (operation == runtime::TestOperation::ExitGroup) {
+  if (operation == testing::TestOperation::ExitGroup) {
     registration_scope_ = registration_scope_->parent;
     return {};
   }

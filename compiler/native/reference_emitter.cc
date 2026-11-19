@@ -25,6 +25,7 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/development_builtin.h"
 #include "compiler/native/map_analysis.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
@@ -494,9 +495,12 @@ llvm::Value* FunctionEmitter::CallRuntimeBuiltin(const ir::Instruction& instruct
     return builder_.CreateCall(invoke,
                                {body_->getArg(0), arguments_, builder_.getInt64(count), result_});
   }
-  auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
-                                            builder_.getPtrTy(), builder_.getInt32Ty(),
-                                            builder_.getPtrTy(), builder_.getPtrTy());
+  const auto symbol = IsDevelopmentBuiltin(static_cast<Builtin>(instruction.index))
+                          ? kDevelopmentBuiltinSymbol
+                          : runtime::kNativeBuiltinSymbol;
+  auto helper =
+      module_.getOrInsertFunction(symbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+                                  builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy());
   return builder_.CreateCall(
       helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_});
 }

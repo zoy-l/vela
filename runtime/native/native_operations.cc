@@ -26,8 +26,6 @@
 #include "runtime/native/native_dynamic.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_json.h"
-#include "runtime/native/native_mock.h"
-#include "runtime/native/native_test.h"
 #include "runtime/regexp/regexp.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -235,12 +233,6 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
     decoded.subspan(index).front() = DecodeNativeValue(input.subspan(index).front());
   }
   auto& heap = execution->isolate().heap();
-  if (builtin == Builtin::TestRegister || builtin == Builtin::TestControl) {
-    return StoreNativeResult(result, ExecuteNativeTest(*execution, builtin, decoded));
-  }
-  if (builtin == Builtin::MockInspect) {
-    return StoreNativeResult(result, ExecuteNativeMock(*execution, decoded));
-  }
   if (builtin == Builtin::Reflection || builtin == Builtin::ReflectionTypeInfo) {
     return StoreNativeResult(result, ExecuteNativeReflection(*execution, builtin, decoded));
   }
