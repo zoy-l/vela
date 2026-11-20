@@ -422,6 +422,15 @@ void Lowerer::RecordParameterValueTypes(Function& function) {
       }
       function.value_types.at(index + signature.hidden_parameters) = type;
     }
+    if (signature.HasDefaults()) {
+      const auto base = signature.hidden_parameters + signature.parameters.size();
+      for (std::size_t index = base; index < function.parameter_count; ++index) {
+        function.value_types[index] = {
+            .kind = frontend::TypeDescriptor::Kind::Bool,
+            .name = frontend::kBoolTypeName,
+        };
+      }
+    }
   }
 }
 
@@ -474,8 +483,9 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
   const auto* constructor = owner != nullptr && source.name == frontend::kConstructorName
                                 ? &model_.classes.at(owner->name)
                                 : nullptr;
-  const auto parameter_base =
-      current_function_->parameter_count - static_cast<std::uint32_t>(source.parameters.size());
+  const auto count = static_cast<std::uint32_t>(source.parameters.size());
+  const auto presence = function_info.HasDefaults() ? count : 0;
+  const auto parameter_base = current_function_->parameter_count - count - presence;
   const auto masks = parameter_base - static_cast<std::uint32_t>(has_receiver || lambda != nullptr);
   if (lambda != nullptr) {
     static_cast<void>(AllocateRegister(source.location));
@@ -495,6 +505,9 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
   for (const frontend::Parameter& parameter : source.parameters) {
     static_cast<void>(AllocateRegister(parameter.location));
   }
+  for (std::uint32_t index = 0; index < presence; ++index) {
+    static_cast<void>(AllocateRegister(source.location));
+  }
   if (constructor != nullptr) {
     // 初始化器只看声明处的全局环境；构造参数与 this 尚未发布到词法作用域。
     LowerConstructorInitializers(*constructor);
@@ -503,17 +516,21 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
     DeclareLocal(frontend::kReceiverName, 0, model_.classes.at(owner->name).type, source.location,
                  source.body.get());
   }
+  if (lambda != nullptr) {
+    LowerCaptures(source, *lambda);
+  }
   // 完整参数窗口建立后，再为可捕获的参数分配共享槽位。
   for (std::size_t index = 0; index < source.parameters.size(); ++index) {
     const auto& parameter = source.parameters.at(index);
-    const auto reg = static_cast<RegisterId>(index) + parameter_base;
-    DeclareLocal(
-        parameter.name, reg,
-        function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type,
-        parameter.location, &parameter);
-  }
-  if (lambda != nullptr) {
-    LowerCaptures(source, *lambda);
+    auto reg = static_cast<RegisterId>(index) + parameter_base;
+    const auto& type =
+        function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type;
+    if (parameter.initializer) {
+      reg = LowerParameterDefault(parameter,
+                                  {.reg = reg, .type = current_function_->value_types.at(reg)},
+                                  parameter_base + count + static_cast<RegisterId>(index), type);
+    }
+    DeclareLocal(parameter.name, reg, type, parameter.location, &parameter);
   }
 }
 
@@ -525,6 +542,7 @@ CallSignature::Parameter Lowerer::DescribeCallParameter(
       .type = RegisterRuntimeType(parameter.type),
       .optional = source.optional_parameters.contains(parameter.name),
       .rest = parameter.rest,
+      .has_default = parameter.has_default,
   };
 }
 
@@ -611,6 +629,9 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
       signature.parameters.push_back(
           {.name = "$provided" + std::to_string(index), .type = integer});
     }
+  }
+  if (signature.HasDefaults()) {
+    function.parameter_count += static_cast<std::uint32_t>(source.parameters.size());
   }
   RecordParameterValueTypes(function);
   return function;
@@ -1404,7 +1425,9 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
     }
   }
   const std::size_t receiver_count = receiver == nullptr ? 0 : 1;
-  const std::size_t count = receiver_count + function.parameters.size();
+  const auto parameters = function.parameters.size();
+  const auto has_defaults = function.HasDefaults();
+  const std::size_t count = receiver_count + parameters + (has_defaults ? parameters : 0);
   const auto base = AllocateRegisterWindow(count, expression.location);
   if (receiver != nullptr) {
     Emit({
@@ -1417,6 +1440,11 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
   const auto first_argument = static_cast<RegisterId>(base + receiver_count);
   InitializeOptionalArguments(function, first_argument, expression.location);
   LowerArguments(expression, first_argument);
+  if (has_defaults) {
+    InitializeArgumentPresence(function, model_.argument_order.at(&expression),
+                               static_cast<RegisterId>(first_argument + parameters),
+                               expression.location);
+  }
   if (opcode == Opcode::Call && (function.intrinsic == Builtin::Reflection ||
                                  function.intrinsic == Builtin::ReflectionTypeInfo)) {
     const auto result = EmitReflectionCall(function, base, expression.location, count);

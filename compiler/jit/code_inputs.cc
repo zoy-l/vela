@@ -94,6 +94,7 @@ void Signature(BinaryWriter& writer, const ir::Function& function, const ir::Pro
       Put(output, parameter.type);
       Put(output, parameter.optional);
       Put(output, parameter.rest);
+      Put(output, parameter.has_default);
       Put(output, program.layouts.types.at(parameter.type));
     });
   }

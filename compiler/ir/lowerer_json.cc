@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -237,6 +238,10 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
     } else {
       arguments.push_back(value.reg);
     }
+  }
+  if (owner.constructor.HasDefaults()) {
+    const auto supplied = std::views::iota(count, function.parameter_count);
+    arguments.insert(arguments.end(), supplied.begin(), supplied.end());
   }
   if (HasInstanceInitialization(owner) || native_mode_ == NativeProgramMode::Reloadable) {
     EmitConstructorInitialization(owner, object, arguments, location);

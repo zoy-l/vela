@@ -387,7 +387,7 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
 void TypeChecker::CheckDefinitions(Program& program) {
   // 模板事实与具体声明事实分开记录；具体特化仍由各自的函数体检查产生执行事实。
   auto concrete = std::exchange(facts_, {});
-  auto concrete_builtins = std::exchange(builtin_function_ids_, {});
+  auto concrete_values = std::exchange(function_value_ids_, {});
   checking_definitions_ = true;
   auto& templates = program.templates;
   for (const auto& alias : templates.aliases) {
@@ -398,13 +398,16 @@ void TypeChecker::CheckDefinitions(Program& program) {
     ValidateTypeParameters(interface.type_parameters);
     for (const auto& method : interface.method_templates) {
       ValidateTypeParameters(method.type_parameters);
-      static_cast<void>(ResolveSignature(method));
+      CheckFunctionBody(method, ResolveSignature(method), nullptr);
     }
     const auto self =
         ResolveType(SelfApplication(interface.name, interface.type_parameters, interface.location),
                     VoidTypePolicy::Forbidden);
     if (self.kind == Type::Kind::Interface) {
       CheckInterfaceAttributes(interface, self);
+    }
+    for (const auto& method : interface.methods) {
+      CheckFunctionBody(method, ResolveSignature(method), nullptr);
     }
   }
   for (const auto& function : templates.functions) {
@@ -443,7 +446,7 @@ void TypeChecker::CheckDefinitions(Program& program) {
   }
   definitions_ = std::exchange(facts_, {});
   facts_ = std::move(concrete);
-  builtin_function_ids_ = std::move(concrete_builtins);
+  function_value_ids_ = std::move(concrete_values);
   checking_definitions_ = false;
   attribute_bindings_.clear();
 }
@@ -503,7 +506,7 @@ TypeChecker::Type TypeChecker::ResolveClassInstantiation(const TypeName& type_na
 
 void TypeChecker::SetConstructorParameters(const Class& owner, InferenceSignature& source) {
   if (owner.constructor_kind == ConstructorKind::Explicit) {
-    source.parameters = owner.constructor->parameters;
+    SetInferenceParameters(owner.constructor->parameters, source);
   } else {
     for (const auto& field : owner.fields) {
       if (owner.IsConstructorField(field)) {

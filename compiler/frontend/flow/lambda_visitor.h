@@ -11,5 +11,6 @@ using LambdaVisitor = absl::FunctionRef<void(const Expression&)>;
 // 按词法前序访问全部匿名函数。
 void VisitLambdas(const Expression& expression, LambdaVisitor visitor);
 void VisitLambdas(const Statement& statement, LambdaVisitor visitor);
+void VisitLambdas(const Function& function, LambdaVisitor visitor);
 
 }  // namespace vela::frontend

@@ -19,6 +19,44 @@
 
 namespace vela::ir {
 
+RegisterId Lowerer::LowerParameterDefault(const frontend::Parameter& parameter,
+                                          LoweredValue input,
+                                          RegisterId supplied,
+                                          const frontend::TypeDescriptor& type) {
+  const auto location = parameter.location;
+  const auto result = AllocateRegister(location);
+  RecordValueType(result, type);
+  const auto missing = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = supplied, .location = location});
+  const auto value = LowerConversion(input, type, location);
+  Emit({.opcode = Opcode::Move, .dst = result, .lhs = value.reg, .location = location});
+  const auto done = current_function_->instructions.size();
+  Emit({.opcode = Opcode::Jump, .location = location});
+  BindJump(missing);
+  const auto initial = LowerExpression(*parameter.initializer);
+  Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
+  BindJump(done);
+  return result;
+}
+
+void Lowerer::InitializeArgumentPresence(const frontend::FunctionDescriptor& signature,
+                                         std::span<const std::uint32_t> supplied,
+                                         RegisterId base,
+                                         frontend::SourceLocation location) {
+  std::vector<bool> present(signature.parameters.size());
+  for (const auto index : supplied) {
+    present[index] = true;
+  }
+  for (std::size_t index = 0; index < present.size(); ++index) {
+    Emit({
+        .opcode = Opcode::LoadBool,
+        .dst = base + static_cast<RegisterId>(index),
+        .immediate = present[index] ? 1 : 0,
+        .location = location,
+    });
+  }
+}
+
 Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLocation location) {
   if (!local.cell) {
     return {.reg = local.reg, .type = local.type};
@@ -41,17 +79,25 @@ frontend::Capture Lowerer::MakeReceiverCapture(const frontend::TypeDescriptor& t
 ClassId Lowerer::CallableClass(std::uint32_t function_id,
                                CallableMode mode,
                                std::span<const frontend::Capture> captures,
-                               const frontend::FunctionDescriptor* virtual_signature) {
-  const auto key = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
+                               const frontend::FunctionDescriptor* callable_signature) {
+  const auto target = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
+  const auto shape = callable_signature == nullptr
+                         ? std::string_view{}
+                         : frontend::MakeFunctionType(*callable_signature).name;
+  const auto key = std::pair(target, shape);
   const auto existing = callable_classes_.find(key);
   if (existing != callable_classes_.end()) {
     return existing->second;
   }
   Class layout;
-  layout.name = "$callable" + std::to_string(key);
+  layout.name = "$callable" + std::to_string(target) + "." + std::string(shape);
   layout.callable = CallableTarget{.function = function_id, .mode = mode};
-  if (virtual_signature != nullptr) {
-    layout.callable_type = DescribeCallSignature(*virtual_signature);
+  if (callable_signature != nullptr) {
+    layout.callable_type = DescribeCallSignature(*callable_signature);
+    for (auto& parameter : layout.callable_type->parameters) {
+      parameter.optional = false;
+      parameter.has_default = false;
+    }
   }
   for (const auto& capture : captures) {
     layout.field_types.push_back(
@@ -68,6 +114,12 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
 
 Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Expression& expression) {
   FunctionValuePlan plan;
+  if (const auto constructor = model_.constructor_values.find(&expression);
+      constructor != model_.constructor_values.end()) {
+    plan.target =
+        function_ids_.at(model_.generated_functions.at(constructor->second).declaration->name);
+    return plan;
+  }
   if (expression.kind == frontend::Expression::Kind::Lambda) {
     const auto index = model_.lambda_indices.at(&expression);
     plan.target = lambda_ids_.at(index);
@@ -113,7 +165,6 @@ Lowerer::FunctionValuePlan Lowerer::ResolveMethodValue(const frontend::Expressio
     plan.target =
         method_selectors_.at(QualifiedMemberKey({.owner = member.owner, .name = member.member}));
     plan.mode = CallableMode::VirtualMethod;
-    plan.virtual_signature = &model_.interfaces.at(member.owner).methods.at(member.member);
   } else {
     const auto& member = model_.instance_members.at(&expression);
     const auto selected = ResolveMethodCall(
@@ -121,7 +172,6 @@ Lowerer::FunctionValuePlan Lowerer::ResolveMethodValue(const frontend::Expressio
     plan.target = selected.index;
     if (selected.opcode == Opcode::CallVirtual) {
       plan.mode = CallableMode::VirtualMethod;
-      plan.virtual_signature = &model_.classes.at(member.owner).methods.at(member.member);
     }
   }
   if (super == model_.super_members.end() && plan.mode == CallableMode::BoundMethod) {
@@ -139,7 +189,9 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   const auto captures =
       receiver ? std::span<const frontend::Capture>(receiver_captures) : plan.captures;
   const auto mode = plan.mode;
-  const auto layout = CallableClass(plan.target, mode, captures, plan.virtual_signature);
+  const auto& signature = model_.function_types.at(
+      frontend::NonNullableTypeName(model_.expression_types.at(&expression)));
+  const auto layout = CallableClass(plan.target, mode, captures, &signature);
   const auto object = AllocateRegister(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {

@@ -328,8 +328,8 @@ const reflection::Member* FunctionEmitter::BoundReflectedMember(
                : nullptr;
   }
   const auto& function = program_.functions[member.target];
-  if (!CanInlineSmallFunction(function) || !IsScalar(function.return_type) ||
-      function.return_type.kind == Kind::Enum ||
+  if (member.signature.HasDefaults() || !CanInlineSmallFunction(function) ||
+      !IsScalar(function.return_type) || function.return_type.kind == Kind::Enum ||
       std::ranges::any_of(member.signature.parameters, &CallSignature::Parameter::rest)) {
     return nullptr;
   }

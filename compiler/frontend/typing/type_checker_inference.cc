@@ -17,6 +17,21 @@
 
 namespace vela::frontend {
 
+void TypeChecker::SetInferenceParameters(std::span<const Parameter> parameters,
+                                         InferenceSignature& signature) {
+  for (const auto& parameter : parameters) {
+    signature.parameters.push_back({
+        .type = parameter.type,
+        .name = parameter.name,
+        .location = parameter.location,
+        .has_default = parameter.initializer != nullptr,
+    });
+    if (parameter.initializer) {
+      signature.optional_parameters.insert(parameter.name);
+    }
+  }
+}
+
 TypeName TypeChecker::DescribeType(const Type& type) const {
   if (type.kind == Type::Kind::Invalid) {
     return {};
@@ -149,7 +164,8 @@ bool TypeChecker::CanInferInvocation(const Expression& expression, const Type* e
         parameter = source->parameters.begin() + static_cast<std::ptrdiff_t>(positional++);
       }
     } else {
-      parameter = std::ranges::find(source->parameters, argument.name, &Parameter::name);
+      parameter = std::ranges::find(source->parameters, argument.name,
+                                    &InferenceSignature::Parameter::name);
     }
     if (parameter != source->parameters.end() && CanCheckExpression(*argument.value, nullptr)) {
       inputs.push_back(parameter->type);
@@ -454,6 +470,7 @@ std::optional<TypeChecker::InferredCall> TypeChecker::InferInvocation(
   result.signature.optional_parameters = source.optional_parameters;
   for (const auto& parameter : source.parameters) {
     result.signature.AddParameter(parameter.name, {});
+    result.signature.parameters.back().has_default = parameter.has_default;
   }
   std::vector<const Expression*> arguments;
   std::vector<TypeName> patterns;
@@ -595,9 +612,11 @@ std::optional<std::vector<TypeName>> TypeChecker::InferFunctionValue(
       .arguments = {},
       .parameter = {},
   };
-  signature.arguments.reserve(source.parameters.size() + 1);
-  for (const auto& parameter : source.parameters) {
-    signature.arguments.push_back(parameter.type);
+  const auto count = context ? function_types_.at(NonNullable(*expected).name).parameters.size()
+                             : source.parameters.size();
+  signature.arguments.reserve(count + 1);
+  for (std::size_t index = 0; index < std::min(count, source.parameters.size()); ++index) {
+    signature.arguments.push_back(source.parameters[index].type);
   }
   signature.arguments.push_back(source.return_type);
   auto created = CreateInference(source, callee.location, nullptr, callee.type_arguments);
@@ -642,6 +661,9 @@ TypeChecker::FunctionInfo TypeChecker::ResolveAppliedSignature(const InferenceSi
         ResolveType(SubstituteTypeName(parameter.type, substitutions), VoidTypePolicy::Forbidden));
   }
   signature.optional_parameters = source.optional_parameters;
+  for (std::size_t index = 0; index < source.parameters.size(); ++index) {
+    signature.parameters[index].has_default = source.parameters[index].has_default;
+  }
   return signature;
 }
 
@@ -680,6 +702,17 @@ TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
     }
     arguments = std::move(*inferred);
   }
+  return CheckGenericApplication(callee, call, expected, source, std::move(arguments),
+                                 checked_arguments);
+}
+
+TypeChecker::Type TypeChecker::CheckGenericApplication(
+    const Expression& callee,
+    const Expression* call,
+    const Type* expected,
+    const InferenceSignature& source,
+    std::vector<TypeName> arguments,
+    std::span<const std::optional<Type>> checked_arguments) {
   for (auto& argument : arguments) {
     const auto type = ResolveType(argument, VoidTypePolicy::Allowed);
     if (!IsValid(type)) {
@@ -690,18 +723,29 @@ TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
   }
   if (checking_definitions_ || std::ranges::any_of(arguments, HasTypeParameters)) {
     const auto signature = ResolveAppliedSignature(source, arguments, callee);
+    if (call == nullptr && specializer_->FunctionTemplate(callee.text) == nullptr) {
+      if (const auto constructor = classes_.find(signature.return_type.name);
+          constructor != classes_.end()) {
+        return CheckConstructorValue(callee, constructor->second, expected);
+      }
+    }
     return call != nullptr ? CheckFunctionCall(signature, *call, checked_arguments)
-                           : FunctionType(signature);
+                           : FunctionValueType(signature, expected);
   }
   const auto name = specializer_->Specialize(callee.text, arguments, callee.location);
   RegisterSpecializations();
   facts_.generic_applications.insert_or_assign(&callee, name);
+  if (call == nullptr) {
+    if (const auto constructor = classes_.find(name); constructor != classes_.end()) {
+      return CheckConstructorValue(callee, constructor->second, expected);
+    }
+  }
   const auto found = functions_.find(name);
   if (found == functions_.end()) {
     return InvalidType();
   }
   return call != nullptr ? CheckFunctionCall(found->second, *call, checked_arguments)
-                         : FunctionType(found->second);
+                         : FunctionValueType(found->second, expected);
 }
 
 }  // namespace vela::frontend

@@ -162,6 +162,12 @@ class TypeChecker final : private InferenceTypeRelations {
   Type InstantiateGeneric(const Expression& callee, const Expression* call, const Type* expected);
   [[nodiscard]] TypeName DescribeType(const Type& type) const;
   struct InferenceSignature final {
+    struct Parameter final {
+      TypeName type;
+      std::string name;
+      SourceLocation location;
+      bool has_default = false;
+    };
     std::vector<TypeParameter> type_parameters;
     std::vector<Parameter> parameters;
     TypeName return_type;
@@ -172,9 +178,17 @@ class TypeChecker final : private InferenceTypeRelations {
     FunctionInfo signature;
     std::vector<std::optional<Type>> arguments;
   };
+  static void SetInferenceParameters(std::span<const Parameter> parameters,
+                                     InferenceSignature& signature);
   FunctionInfo ResolveAppliedSignature(const InferenceSignature& source,
                                        std::span<const TypeName> arguments,
                                        const Expression& callee);
+  Type CheckGenericApplication(const Expression& callee,
+                               const Expression* call,
+                               const Type* expected,
+                               const InferenceSignature& source,
+                               std::vector<TypeName> arguments,
+                               std::span<const std::optional<Type>> checked_arguments);
   const InferenceSignature* GenericSignature(const Expression& callee);
   const InferenceSignature& FunctionInferenceSignature(const Function& function);
   void NormalizeInferenceSignature(InferenceSignature& source);
@@ -338,7 +352,10 @@ class TypeChecker final : private InferenceTypeRelations {
   void CheckFunctionBody(const Function& function,
                          const FunctionInfo& function_info,
                          const ClassInfo* owner);
-  void CheckGeneratedFunction(std::size_t index);
+  void CheckGeneratedFunction(std::size_t index, const ClassInfo* access_owner = nullptr);
+  Type CheckConstructorValue(const Expression& expression,
+                             const ClassInfo& constructor,
+                             const Type* expected);
   void DeclareFunctionParameters(const Function& function,
                                  const FunctionInfo& signature,
                                  BindingKind kind);
@@ -390,6 +407,9 @@ class TypeChecker final : private InferenceTypeRelations {
   Type ResolveGenericType(const TypeName& source);
   Type NullableType(Type type);
   Type FunctionType(const FunctionInfo& signature);
+  Type FunctionValueType(const FunctionInfo& signature, const Type* expected);
+  Type FunctionValueType(const FunctionInfo& signature, const FunctionInfo& context);
+  static void ApplyIntrinsicDefaults(const Function& function, FunctionInfo& info);
   void CaptureLocal(const Expression& expression, const LocalBinding& binding);
   Type CheckCall(const Expression& expression, const Type* expected);
   Type CheckNamedCall(const Expression& expression, const Type* expected);
@@ -626,7 +646,7 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::flat_hash_map<const Expression*, std::vector<PreparedMatchArm>> prepared_matches_;
   absl::flat_hash_map<std::uint32_t, ConstantValue> constant_bindings_;
   absl::flat_hash_map<std::string, std::int64_t> enum_values_;
-  absl::flat_hash_map<std::string, std::size_t> builtin_function_ids_;
+  absl::flat_hash_map<std::string, std::size_t> function_value_ids_;
   absl::node_hash_map<std::string, ClassInfo> classes_;
   absl::node_hash_map<std::string, FunctionInfo> functions_;
   std::vector<absl::flat_hash_map<std::string, LocalBinding>> scopes_;

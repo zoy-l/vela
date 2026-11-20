@@ -51,7 +51,10 @@ void Parameters(std::ostream& output,
     }
     const auto& parameter = parameters.at(index);
     output << parameter.name << ": " << parameter.type.ToString();
-    if (std::ranges::find(optional, parameter.name) != optional.end()) {
+    if (parameter.initializer) {
+      output << (parameter.initializer->kind == frontend::Expression::Kind::NullLiteral ? " = null"
+                                                                                        : " = …");
+    } else if (std::ranges::find(optional, parameter.name) != optional.end()) {
       output << " = null";
     }
   }

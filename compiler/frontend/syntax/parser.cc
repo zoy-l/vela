@@ -1,5 +1,7 @@
 #include "compiler/frontend/syntax/parser.h"
 
+#include <cstddef>
+
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -920,11 +922,57 @@ bool Parser::IsLambda() const {
   if (next == TokenKind::Colon || next == TokenKind::Comma) {
     return true;
   }
+  if (next == TokenKind::Equal) {
+    std::size_t depth = 1;
+    for (auto index = current_; index + 1 < tokens_.size(); ++index) {
+      const auto kind = tokens_[index].kind;
+      if (kind == TokenKind::LeftParen) {
+        ++depth;
+      } else if (kind == TokenKind::RightParen && --depth == 0) {
+        const auto after = tokens_[index + 1].kind;
+        return after == TokenKind::Arrow ||
+               (after == TokenKind::Colon && IsLambdaReturnType(index + 2));
+      }
+    }
+    return false;
+  }
   if (next != TokenKind::RightParen) {
     return false;
   }
   const auto after = tokens_[current_ + 2].kind;
   return after == TokenKind::Arrow || after == TokenKind::Colon;
+}
+
+bool Parser::IsLambdaReturnType(std::size_t begin) const {
+  std::vector<Token> type_tokens;
+  for (auto index = begin; index < tokens_.size(); ++index) {
+    const auto& token = tokens_[index];
+    switch (token.kind) {
+      case TokenKind::Identifier:
+      case TokenKind::Void:
+      case TokenKind::LeftParen:
+      case TokenKind::RightParen:
+      case TokenKind::LeftBracket:
+      case TokenKind::RightBracket:
+      case TokenKind::Less:
+      case TokenKind::Greater:
+      case TokenKind::ShiftRight:
+      case TokenKind::ShiftUnsignedRight:
+      case TokenKind::Question:
+      case TokenKind::Comma:
+      case TokenKind::Dot:
+      case TokenKind::Arrow:
+        type_tokens.push_back(token);
+        break;
+      default: {
+        type_tokens.push_back(
+            {.lexeme = {}, .location = token.location, .kind = TokenKind::EndOfFile});
+        Parser probe(type_tokens, context_);
+        return probe.ParseType().has_value() && probe.Check(TokenKind::Arrow);
+      }
+    }
+  }
+  return false;
 }
 
 std::unique_ptr<Expression> Parser::ParsePrimary() {
@@ -1047,6 +1095,7 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters) {
         .type = {.name = {}, .location = name.location, .arguments = {}, .parameter = {}},
         .name = name.lexeme,
         .location = name.location,
+        .initializer = {},
     });
   } else {
     auto parsed_parameters = ParseParameters(ParameterTyping::Inferred);

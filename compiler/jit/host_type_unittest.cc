@@ -134,6 +134,26 @@ TEST_P(HostTypeReloadTest, AContainerRetainsItsMetadataAfterItsExplicitTypeIsRel
   EXPECT_EQ(isolate.layout_counts(), initial);
 }
 
+TEST_P(HostTypeReloadTest, TypedEntriesKeepDefaultedParametersNonNullableAndAllowOmission) {
+  ASSERT_TRUE(Update("export func answer(value: int = 42): int { return value; }"));
+  auto& isolate = this->isolate();
+  auto omitted = Entry<std::int64_t()>::Bind(isolate.native_dispatch(), "main.vela", "answer");
+  auto supplied =
+      Entry<std::int64_t(std::int64_t)>::Bind(isolate.native_dispatch(), "main.vela", "answer");
+  auto nullable = Entry<std::int64_t(Nullable<std::int64_t>)>::Bind(isolate.native_dispatch(),
+                                                                    "main.vela", "answer");
+  ASSERT_TRUE(omitted);
+  ASSERT_TRUE(supplied);
+  EXPECT_FALSE(nullable);
+  HandleScope scope(isolate);
+  const auto first = omitted->Call(scope);
+  const auto second = supplied->Call(scope, std::int64_t{21});
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  EXPECT_EQ(*first, 42);
+  EXPECT_EQ(*second, 21);
+}
+
 TEST_P(HostTypeReloadTest, TypedNamedEntryUsesCurrentPublicationAndCaptureKeepsItsVersion) {
   auto& isolate = this->isolate();
   ASSERT_TRUE(Update("export func answer(): int { return 41; }"));

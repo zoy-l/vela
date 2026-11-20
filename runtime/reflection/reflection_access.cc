@@ -143,8 +143,10 @@ std::expected<Value, ExecutionStatus> InvokePositionalMember(NativeExecution& ex
   }
   const auto parameters = member.parameters.values();
   const auto hidden = (member.flags & reflection::kStatic) == 0 ? 1U : 0U;
+  const auto has_defaults = execution.instance().call_signature(*target).HasDefaults();
+  const auto presence = has_defaults ? parameters.size() : 0;
   NativeBuffer<NativeValue, kInlineArguments> storage(execution.isolate().heap(),
-                                                      hidden + parameters.size());
+                                                      hidden + parameters.size() + presence);
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
@@ -162,6 +164,7 @@ std::expected<Value, ExecutionStatus> InvokePositionalMember(NativeExecution& ex
     }
     encoded[hidden + index] = EncodeNativeValue(UnboxDynamicValue(original, type));
   }
+  std::ranges::fill(encoded.last(presence), EncodeNativeValue(Value::Boolean(true)));
   // 在进入用户代码前记录版本；调用期间的发布会令缓存立即失效。
   handle.CacheCall(execution.instance(), member, receiver, *target);
   return InvokeNativeTarget(execution, *target, encoded);

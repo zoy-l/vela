@@ -233,6 +233,7 @@ Function AstCloner::CloneFunction(const Function& source) {
         .type = CloneType(parameter.type),
         .name = parameter.name,
         .location = Relocate(parameter.location),
+        .initializer = CloneExpression(parameter.initializer.get()),
     });
     if (transform_ != nullptr) {
       transform_->Declare(parameter.name);

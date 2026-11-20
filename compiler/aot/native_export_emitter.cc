@@ -86,7 +86,7 @@ std::expected<void, std::string> CppDeclaration(std::ostringstream& output,
   std::vector<std::string> parameters;
   for (const auto& parameter : signature.parameters) {
     auto type = layouts.types.at(parameter.type);
-    if (parameter.optional) {
+    if (parameter.optional && !parameter.has_default) {
       type.nullable = true;
     }
     auto logical = native::HostLogicalType(layouts, type, name_space);

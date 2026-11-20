@@ -15,6 +15,23 @@
 namespace vela::tooling {
 namespace {
 
+TEST(SemanticCompletionTest, DefaultsResolveEarlierParametersAndConstructorValuesKeepDefinitions) {
+  const std::string source =
+      "class Counter { value: int = 42; } "
+      "interface Reader { read(first: int = 1, second: int = first): int; } "
+      "func make(factory: () => Counter = Counter): Counter { return factory(); }";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto parameter = source.find("= first") + 2;
+  const auto edits = index.RenameSymbol(parameter, "initial", PositionEncoding::Utf8);
+  ASSERT_TRUE(edits) << edits.error();
+  EXPECT_EQ(edits->size(), 2U);
+  const auto completions = index.Complete(parameter + std::string_view("first").size());
+  EXPECT_NE(std::ranges::find(completions, "first", &Completion::label), completions.end());
+  const auto reference = source.find("= Counter") + 2;
+  EXPECT_TRUE(index.FindDefinition(reference, PositionEncoding::Utf8));
+}
+
 TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutAnImport) {
   const std::string source = "func main(): void { Reflect.typeI; }";
   const frontend::SourceInput input{.path = "main.vela", .text = source};

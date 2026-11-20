@@ -381,7 +381,8 @@ TypeChecker::Type TypeChecker::CheckSuperMember(const Expression& expression,
                                                          .owner = method->second.member_owner,
                                                          .member = expression.text,
                                                      });
-  return method->second.is_getter ? method->second.return_type : FunctionType(method->second);
+  return method->second.is_getter ? method->second.return_type
+                                  : FunctionValueType(method->second, expected);
 }
 
 TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
@@ -405,7 +406,7 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
     facts_.static_members.insert_or_assign(
         &expression,
         MemberReference{.owner = method->second.member_owner, .member = expression.text});
-    return FunctionType(method->second);
+    return FunctionValueType(method->second, expected);
   }
   AddDiagnostic(expression.location, "class access requires a declared static member");
   return InvalidType();
@@ -442,7 +443,7 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
       facts_.interface_members.insert_or_assign(
           &expression,
           MemberReference{.owner = std::string(object.name), .member = expression.text});
-      return FunctionType(method->second);
+      return FunctionValueType(method->second, expected);
     }
   }
   if (object.kind != Type::Kind::Class) {
@@ -475,7 +476,7 @@ TypeChecker::Type TypeChecker::CheckClassMember(const Expression& expression,
       facts_.instance_members.insert_or_assign(
           &expression,
           MemberReference{.owner = method->second.member_owner, .member = expression.text});
-      return FunctionType(method->second);
+      return FunctionValueType(method->second, expected);
     }
     AddDiagnostic(expression.location, "unknown field '" + expression.text + "'");
     return InvalidType();

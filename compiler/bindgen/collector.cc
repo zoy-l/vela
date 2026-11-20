@@ -112,8 +112,8 @@ class Collector final : public clang::DynamicRecursiveASTVisitor {
     if (!declaration->isThisDeclarationADefinition()) {
       return true;
     }
-    if (const auto module = Annotation(*declaration, "vela.module:"); module &&
-        collection_->headers.contains(Location(*declaration).path)) {
+    if (const auto module = Annotation(*declaration, "vela.module:");
+        module && collection_->headers.contains(Location(*declaration).path)) {
       CollectValueModule(*declaration, *module, *compiler_, *collection_);
       return true;
     }
@@ -263,6 +263,7 @@ class Collector final : public clang::DynamicRecursiveASTVisitor {
         .documentation = Documentation(record),
         .source = Location(record),
         .members = {},
+        .enumerators = {},
     };
     for (auto* declaration : record.decls()) {
       if (declaration->isImplicit() || declaration->getAccess() != clang::AS_public ||

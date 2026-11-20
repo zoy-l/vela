@@ -78,6 +78,7 @@ struct FunctionDescriptor final {
     std::string name;
     TypeDescriptor type;
     bool rest = false;
+    bool has_default = false;
   };
   TypeDescriptor return_type;
   std::vector<Parameter> parameters;
@@ -96,6 +97,8 @@ struct FunctionDescriptor final {
   std::string member_owner;
   std::string setter_owner;
   Visibility setter_visibility = Visibility::Public;
+
+  [[nodiscard]] bool HasDefaults() const;
 
   void AddParameter(std::string name,
                     TypeDescriptor type,
@@ -236,6 +239,7 @@ struct NodeFacts {
   absl::flat_hash_map<const Expression*, Builtin> builtin_calls;
   absl::flat_hash_map<const Expression*, AsyncCallDescriptor> async_calls;
   std::vector<GeneratedFunction> generated_functions;
+  absl::flat_hash_map<const Expression*, std::size_t> constructor_values;
   absl::flat_hash_map<const Expression*, std::size_t> builtin_method_values;
   absl::flat_hash_map<const Expression*, ArrayAlgorithm> array_algorithms;
   absl::flat_hash_map<const Statement*, TypeDescriptor> local_types;

@@ -99,6 +99,14 @@ Function indices belong to the program image, including dispatch for Isolate-sha
 such as `DateParts`. Object layouts do not duplicate those tables. Getter and setter visibility and
 implementation ownership remain independent when accessors are inherited or merged.
 
+Script parameter defaults use a trailing presence window in the ordinary native call contract.
+Logical signatures distinguish defaulted parameters from their types, preserving the difference
+between omission and explicit null. The callee evaluates defaults in declaration order before its
+body. Static, virtual, dynamic, reflected, host, and captured-function calls supply the same presence
+information. Contextual function values retain fixed visible arity and the selected code version.
+Constructor values lower through ordinary construction, preserving access, inference, field
+initialization, and reloadable construction barriers.
+
 ### Native host bindings
 
 `NativeFunction::Bind<Function>` derives the host signature and AOT calling convention from the

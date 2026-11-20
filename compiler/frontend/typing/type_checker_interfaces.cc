@@ -25,7 +25,11 @@ bool TypeChecker::MatchesImplementationSignature(const FunctionInfo& implementat
     return false;
   }
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-    if (!IsSameType(implementation.parameters[index].type, signature.parameters[index].type)) {
+    const auto& actual = implementation.parameters[index];
+    const auto& expected = signature.parameters[index];
+    if (!IsSameType(actual.type, expected.type) || actual.has_default != expected.has_default ||
+        implementation.optional_parameters.contains(actual.name) !=
+            signature.optional_parameters.contains(expected.name)) {
       return false;
     }
   }
@@ -66,6 +70,10 @@ bool TypeChecker::IsMatchingGenericSignature(const Function& implementation,
     actual.AddParameter(
         parameter.name,
         ResolveType(SubstituteTypeName(parameter.type, substitutions), VoidTypePolicy::Forbidden));
+    actual.parameters.back().has_default = parameter.initializer != nullptr;
+    if (parameter.initializer) {
+      actual.optional_parameters.insert(parameter.name);
+    }
   }
   return MatchesImplementationSignature(actual, ResolveSignature(signature));
 }

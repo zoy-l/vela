@@ -27,11 +27,16 @@ struct CallSignature final {
     std::uint32_t type = 0;
     bool optional = false;
     bool rest = false;
+    bool has_default = false;
   };
   std::vector<Parameter> parameters;
   std::optional<std::uint32_t> result = std::nullopt;
   std::uint8_t hidden_parameters = 0;
   std::optional<std::uint32_t> receiver = std::nullopt;
+
+  [[nodiscard]] bool HasDefaults() const {
+    return std::ranges::any_of(parameters, &Parameter::has_default);
+  }
 
   void IndexParameters() {
     parameter_name_order.resize(parameters.size());

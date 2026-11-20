@@ -432,28 +432,54 @@ std::optional<std::size_t> SemanticIndex::DeclareLocal(const void* node,
   return symbol;
 }
 
+SemanticIndex::Scope SemanticIndex::FunctionScope(const frontend::Function& function,
+                                                  const Scope& parent) const {
+  const auto source_id = function.location.source_id;
+  const auto& source = sources_[source_id];
+  const auto start = TokenAt(function.location);
+  const auto begin = source.tokens[start].offset;
+  if (function.body != nullptr) {
+    auto scope = Extent(*function.body);
+    scope.begin = begin;
+    scope.depth = parent.depth + 1;
+    return scope;
+  }
+  auto end = start;
+  for (; end < source.tokens.size() - 1; ++end) {
+    if (source.tokens[end].kind == TokenKind::Semicolon) {
+      break;
+    }
+    end = source.closing[end];
+  }
+  return {
+      .source = source_id,
+      .begin = begin,
+      .end = source.tokens[end].offset,
+      .depth = parent.depth + 1,
+  };
+}
+
 void SemanticIndex::VisitFunction(const frontend::Function& function,
                                   const Scope& scope,
                                   const frontend::FunctionDescriptor* signature) {
   MarkTypeParameters(function.type_parameters);
   VisitAttributes(function.attributes, scope);
   VisitType(function.return_type);
-  auto body = function.body ? Extent(*function.body) : scope;
-  body.depth = scope.depth + 1;
+  const auto body = FunctionScope(function, scope);
   for (const auto& parameter : function.parameters) {
     VisitType(parameter.type);
-    if (function.body) {
-      auto detail = DisplaySymbolName(parameter.type.ToString());
-      if (signature != nullptr) {
-        const auto parameter_index = signature->parameter_indices.find(parameter.name);
-        if (parameter_index != signature->parameter_indices.end()) {
-          detail = DisplayType(signature->parameters.at(parameter_index->second).type);
-        }
+    VisitExpression(parameter.initializer.get(), body);
+    auto detail = DisplaySymbolName(parameter.type.ToString());
+    if (signature != nullptr) {
+      const auto parameter_index = signature->parameter_indices.find(parameter.name);
+      if (parameter_index != signature->parameter_indices.end()) {
+        detail = DisplayType(signature->parameters.at(parameter_index->second).type);
       }
-      if (const auto symbol =
-              DeclareLocal(&parameter, parameter.location, std::move(detail), body, body.begin)) {
-        symbols_[*symbol].role = Symbol::Role::Parameter;
-      }
+    }
+    if (const auto symbol =
+            DeclareLocal(&parameter, parameter.location, std::move(detail), body,
+                         sources_[body.source].tokens[TokenAt(parameter.location)].offset)) {
+      symbols_[*symbol].role = Symbol::Role::Parameter;
     }
   }
   VisitStatement(function.body.get(), body);

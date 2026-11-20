@@ -143,6 +143,11 @@ struct VersionedImage final {
     callable_class.name = Text("answer value");
     callable_class.callable_function = 0;
     callable_class.callable_mode = static_cast<std::uint32_t>(CallableMode::Plain);
+    callable_class.callable_type = 0;
+    signatures.front().name = Text("() => int");
+    signatures.front().result = types.front();
+    signatures.front().has_result = 1;
+    image.signatures = Table(signatures);
     image.classes = Table(classes);
     image.source_paths = Table(paths);
     image.source_texts = Table(source);
@@ -152,6 +157,7 @@ struct VersionedImage final {
   std::array<NativeDeclarationDescription, 3> declarations;
   std::array<NativeTypeDescription, 1> types;
   std::array<NativeClassDescription, 1> classes;
+  std::array<NativeSignatureDescription, 1> signatures;
   std::array<SourceLocation, 1> locations;
   std::array<NativeText, 1> paths;
   std::array<NativeText, 1> source;

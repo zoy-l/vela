@@ -14,6 +14,20 @@
 
 ## 函数、函数值与闭包
 
+脚本函数、方法、lambda 和显式构造函数可以声明默认参数：
+
+```vela
+func update(action: (() => void)? = null): void {
+  if (action != null) { action(); }
+}
+func updateDemo(): void {
+  update();
+  update((): void => { print('updated'); });
+}
+```
+
+只有省略实参才会执行默认表达式，显式传入 `null` 不触发默认值。先按源码顺序求值已提供的实参，再按参数声明顺序求值被省略的默认值。默认表达式可以引用前面的参数及其词法环境；实例方法的默认值可以使用 `this`，构造参数的默认值不能访问正在创建的对象。external 声明和 getter/setter 不接受默认参数。接口实现和 override 必须保留参数是否具有默认值的契约；虚方法调用执行实际选中实现的默认表达式。
+
 ```typescript
 func add(left: int, right: int): int {
   return left + right;
@@ -73,7 +87,19 @@ func builtinValues(): void {
 }
 ```
 
-函数值具有固定的位置参数签名。目标函数类型为可选/可变参数内建方法选定合法参数数量，并确定高阶方法的回调与结果类型。没有上下文时，普通固定参数内建方法值采用完整参数列表；可变参数与回调算法方法值需要函数类型上下文。例如，推断得到的 `values.slice` 接受两个下标，而示例中显式标注的 copy 不接受参数。默认值由底层方法在调用时处理，不在绑定时计算。不引入动态分派或第二套可调用 ABI。
+函数值具有固定的位置参数签名。目标函数类型可以省略脚本函数和方法末尾具有默认值的参数，为可选/可变参数内建方法选定合法参数数量，并确定高阶方法的回调与结果类型。没有上下文时，普通固定参数函数值采用完整参数列表；可变参数与回调算法方法值需要函数类型上下文。例如，推断得到的 `values.slice` 接受两个下标，而示例中显式标注的 copy 不接受参数。默认值由底层方法在调用时处理，不在绑定时计算。
+
+类名可以直接作为构造函数值。函数类型上下文决定向普通构造函数提供哪些参数；按字段生成的构造函数把函数值的位置实参映射到对应的构造参数名称，省略参数仍使用普通构造默认值。访问权限和泛型推断遵循直接构造的规则。没有函数类型上下文时，构造函数值采用完整参数列表。
+
+```vela
+class Counter { value: int = 42; }
+func create(factory: () => Counter): Counter { return factory(); }
+func constructorDemo(): void {
+  const counter = create(Counter);
+  const withValue: (int) => Counter = Counter;
+  print(counter.value + withValue(0).value); // 42
+}
+```
 
 ## 泛型函数、类、接口、方法与类型别名
 

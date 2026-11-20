@@ -13,7 +13,7 @@ void WalkExpression(const Expression* expression, LambdaVisitor visitor) {
   }
   if (expression->function) {
     visitor(*expression);
-    WalkStatement(expression->function->body.get(), visitor);
+    VisitLambdas(*expression->function, visitor);
   }
   for (auto* child : ExpressionOperands(*expression)) {
     WalkExpression(child, visitor);
@@ -73,6 +73,12 @@ void VisitLambdas(const Expression& expression, LambdaVisitor visitor) {
 }
 void VisitLambdas(const Statement& statement, LambdaVisitor visitor) {
   WalkStatement(&statement, visitor);
+}
+void VisitLambdas(const Function& function, LambdaVisitor visitor) {
+  for (const auto& parameter : function.parameters) {
+    WalkExpression(parameter.initializer.get(), visitor);
+  }
+  WalkStatement(function.body.get(), visitor);
 }
 
 }  // namespace vela::frontend

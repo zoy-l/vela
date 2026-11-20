@@ -12,6 +12,35 @@ from tools.test_support import CommandTestCase
 class MockCommandTest(CommandTestCase):
     directory_prefix = "vela-mock-"
 
+    def test_default_parameters_keep_values_and_qualified_dependencies(self):
+        self.write("api.vela", """
+export func initial(): int { return 21; }
+export class Box<T> { value: T; }
+export interface Repository {
+  read(value: int = initial()): int;
+  load(value: Box<int>=Box<int>(value: initial())): int;
+}
+""")
+        self.generate()
+        self.invoke("check", "repository.mocks.vela")
+        self.write("defaults_test.vela", """
+import 'sdk:test';
+import 'sdk:mock' as mock;
+import './repository.mocks.vela' as generated;
+func main(): void {
+  test('default argument', (): void => {
+    const repository = generated.MockRepository(session: mock.MockSession());
+    mock.when(repository.calls.read(21)).thenReturn(42);
+    mock.when(repository.calls.load(mock.any)).thenReturn(42);
+    expect(repository.object.read(), 42);
+    expect(repository.object.load(), 42);
+  });
+}
+""")
+        events = self.report_events("defaults_test.vela")
+        self.assertTrue(events[-1]["success"])
+        self.assertEqual(events[-1]["passed"], 1)
+
     def generate(self, *options: str, code: int = 0):
         return self.invoke("mock", "api.vela", "--interface", "Repository",
                            "-o", "repository.mocks.vela", *options, code=code)

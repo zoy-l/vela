@@ -67,6 +67,20 @@ std::int64_t FreezeMapHeap(runtime::NativeContext& context) noexcept {
   return 1;
 }
 
+TEST_P(JitStateTest, ParameterDefaultsFollowPublicationsWhileCapturedMethodsKeepTheirVersion) {
+  const std::string common =
+      "const value = Counter(); const bound: () => int = value.read; "
+      "export func current(): int { return value.read(); } "
+      "export func captured(): int { return bound(); } ";
+  auto update = Update("class Counter { read(value: int = 10): int { return value; } } " + common);
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("captured").Invoke({})->AsInteger(), 10);
+  update = Update("class Counter { read(value: int = 32): int { return value; } } " + common);
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("current").Invoke({})->AsInteger(), 32);
+  EXPECT_EQ(Entry("captured").Invoke({})->AsInteger(), 10);
+}
+
 TEST_P(JitStateTest, MapLiteralAllocationAndInsertionFailuresStopWithoutPublishingPartialMaps) {
   ASSERT_TRUE(isolate_.RegisterNative(runtime::NativeFunction::Bind<FreezeMapHeap>("freeze")));
   const auto update = Update(R"(

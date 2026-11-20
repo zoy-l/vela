@@ -353,6 +353,7 @@ CallSignature DescribeCall(const NativeFunctionDescription& source) {
                                                        .type = parameter.type,
                                                        .optional = parameter.IsOptional(),
                                                        .rest = parameter.IsRest(),
+                                                       .has_default = parameter.HasDefault(),
                                                    };
                                                  }),
       .result = OptionalIndex(source.result_type),

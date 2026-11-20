@@ -304,7 +304,7 @@ std::expected<void, std::string> EmitEntries(std::ostringstream& output,
         return std::unexpected(function.name + '.' + parameter.name +
                                ": entry requires a fixed positional signature");
       }
-      if (parameter.optional) {
+      if (parameter.optional && !parameter.has_default) {
         argument.nullable = true;
       }
       const auto logical = HostLogicalType(program.layouts, argument, name_space);

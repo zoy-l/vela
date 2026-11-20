@@ -112,6 +112,7 @@ std::expected<void, std::string> ReadDependency(const std::string& path, Collect
         .documentation = {},
         .source = {},
         .members = {},
+        .enumerators = {},
     });
   }
   collection.module.dependencies.push_back(std::move(dependency));
@@ -201,8 +202,8 @@ int Collect(const Options& options) {
   Collection collection;
   collection.module.name = options.module.getValue();
   collection.output_directory = options.output.getValue();
-  collection.module.source = PathText(Utf8Path(collection.output_directory) /
-      (collection.module.name + ".vela"));
+  collection.module.source =
+      PathText(Utf8Path(collection.output_directory) / (collection.module.name + ".vela"));
   collection.callbacks.insert(options.callbacks.begin(), options.callbacks.end());
   collection.opaque.insert(options.opaque.begin(), options.opaque.end());
   for (const auto& header : options.headers) {

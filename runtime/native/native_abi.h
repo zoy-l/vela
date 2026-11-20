@@ -31,7 +31,7 @@ struct NativeControlState;
 struct CodeIdentity;
 struct NativeProgramState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 30;
+inline constexpr std::uint32_t kNativeAbiVersion = 31;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr unsigned kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 

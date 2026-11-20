@@ -418,6 +418,7 @@ void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
   BindType(function.return_type);
   for (auto& parameter : function.parameters) {
     BindType(parameter.type);
+    BindExpression(parameter.initializer.get());
     DeclareLocal(parameter.name);
   }
   BindStatement(function.body.get());

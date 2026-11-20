@@ -46,6 +46,7 @@ void CaptureAnalysis::Declare(const std::string& name, const void* node, Binding
 void CaptureAnalysis::Walk(const Function& function) {
   scopes_.emplace_back();
   for (const auto& parameter : function.parameters) {
+    Walk(parameter.initializer.get());
     Declare(parameter.name, &parameter, BindingKind::Mutable);
   }
   Walk(function.body.get());

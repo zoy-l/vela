@@ -49,14 +49,20 @@ Result<void> HostEntry::Check(NativeResolvedDeclaration target) const {
   const auto& expected = *signature_.constraint().signature;
   const auto& types = state.layouts.types;
   if ((function.flags & kNativeExportedFunction) == 0 || actual.hidden_parameters != 0 ||
-      actual.parameters.size() != expected.parameters.size() ||
+      actual.parameters.size() < expected.parameters.size() ||
       actual.result.has_value() != expected.result.has_value()) {
     return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
   }
   for (std::size_t index = 0; index < actual.parameters.size(); ++index) {
     const auto& parameter = actual.parameters[index];
+    if (index >= expected.parameters.size()) {
+      if (!parameter.has_default) {
+        return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
+      }
+      continue;
+    }
     auto type = types[parameter.type];
-    if (parameter.optional) {
+    if (parameter.optional && !parameter.has_default) {
       type.nullable = true;
     }
     if (parameter.rest || type != expected.parameters[index].type) {

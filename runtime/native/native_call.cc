@@ -67,7 +67,8 @@ std::expected<Value, ExecutionStatus> InvokeBoundTarget(NativeExecution& executi
   auto& heap = execution.isolate().heap();
   const auto count = bound.source_indices.size();
   const auto hidden = receiver ? 1U : 0U;
-  const auto append_presence = presence == NativeArgumentPresence::Included;
+  const auto append_presence =
+      presence == NativeArgumentPresence::Included || signature.HasDefaults();
   constexpr std::size_t kInlineArguments = 8;
   NativeBuffer<Value, kInlineArguments> storage(heap,
                                                 hidden + count + (append_presence ? count : 0));
@@ -199,7 +200,7 @@ std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstan
                                                               const NativeCallParameter& parameter,
                                                               Value value) {
   const auto& declared = instance.layouts().types.at(parameter.type);
-  const auto optional = (parameter.flags & kNativeOptionalParameter) != 0;
+  const auto optional = parameter.IsOptional() && !parameter.HasDefault();
   if (const auto* array = declared.array; array != nullptr) {
     // 规范数组布局完整表达容器约束；无需 nominal、enum 或 callable 转换。
     if (value.IsNull() && (declared.nullable || optional)) {
@@ -224,19 +225,27 @@ std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstan
   return UnboxDynamicValue(value, type);
 }
 
+void EncodePresence(std::span<NativeValue> output, std::size_t supplied) {
+  for (std::size_t index = 0; index < output.size(); ++index) {
+    output[index] = EncodeNativeValue(Value::Boolean(index < supplied));
+  }
+}
+
 std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
                                                      const NativeResolvedCallable& callback,
                                                      std::span<const Value> arguments) {
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
-  if (function.parameter_count < arguments.size() + hidden) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
   const auto& instance = execution.instance();
   const auto& types = instance.layouts().types;
   const auto typed = (function.flags & kNativeTypedFunction) != 0;
   const auto parameters = function.parameters.values();
+  const auto has_defaults = function.HasDefaults();
+  const auto logical_count = function.parameter_count - (has_defaults ? parameters.size() : 0);
+  if (arguments.size() + hidden > logical_count) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
   if (!typed && function.parameter_count != arguments.size() + hidden) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -284,7 +293,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     }
     encoded[index + hidden] = EncodeNativeValue(value);
   }
-  for (std::size_t index = arguments.size() + hidden; index < encoded.size(); ++index) {
+  for (std::size_t index = arguments.size() + hidden; index < logical_count; ++index) {
     const auto parameter = parameters[index - function.hidden_parameters];
     auto& value = values[index - arguments.size()];
     if ((parameter.flags & kNativeRestParameter) != 0) {
@@ -298,6 +307,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     }
     encoded[index] = EncodeNativeValue(value);
   }
+  EncodePresence(encoded.subspan(logical_count), arguments.size());
   return InvokeNativeTarget(execution, function, encoded);
 }
 
@@ -473,7 +483,7 @@ std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
   const auto& target = functions.subspan(function).front();
   const auto& parameters = instance.call_signature(function).parameters;
   if ((target.flags & kNativeExportedFunction) == 0 || target.hidden_parameters != 0 ||
-      parameters.size() != input.size()) {
+      parameters.size() < input.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
   return InvokeCallback(execution, {.target = {.function = function}, .function = &target}, input);
@@ -661,7 +671,8 @@ FutureCallbacks NativeFutureCallbacks(const NativeInstance& instance) {
           return std::unexpected(callback.error());
         }
         return FutureCallback{
-            .arity = callback->function->parameter_count - (callback->target.implicit ? 1U : 0U),
+            .arity = static_cast<std::uint32_t>(
+                Heap::ClassOf(*callable.AsObject())->callable_type()->parameters.size()),
             .invoke =
                 [domain, resolved = *callback, callable](std::span<const Value> arguments) {
                   return InvokeFutureCallback(domain, resolved, callable, arguments);
@@ -690,9 +701,25 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
   if (target.implicit) {
     input.front() = EncodeNativeValue(*target.implicit);
   }
-  return origin.image()
-      .function(target.function)
-      .entry(execution, input.subspan(1 - hidden).data(), count + hidden, result);
+  const auto& function = origin.image().function(target.function);
+  const auto supplied = input.subspan(1 - hidden);
+  if (!function.HasDefaults()) {
+    return function.entry(execution, supplied.data(), supplied.size(), result);
+  }
+  constexpr std::size_t kInlineArguments = 8;
+  NativeBuffer<NativeValue, kInlineArguments> completed(execution->isolate().heap(),
+                                                        function.parameter_count);
+  if (!completed.IsAllocated()) {
+    return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
+  }
+  const auto values = completed.values();
+  std::ranges::copy(supplied, values.begin());
+  const auto logical =
+      static_cast<std::size_t>(function.parameter_count - function.parameters.size);
+  std::ranges::fill(values.subspan(supplied.size(), logical - supplied.size()),
+                    EncodeNativeValue(Value::Null()));
+  EncodePresence(values.subspan(logical), count);
+  return function.entry(execution, values.data(), values.size(), result);
 }
 
 extern "C" std::uint8_t vela_native_v1_call_virtual(NativeExecution* execution,

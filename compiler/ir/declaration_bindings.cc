@@ -252,9 +252,7 @@ void DeclarationBinder::BindFunction(const frontend::Function& function, Declara
   BindAttributes(function, identity);
   result_.functions.emplace(
       &function, FunctionIdentity{.declaration = identity, .revision = result_.revision});
-  if (function.body != nullptr) {
-    RegisterLambdas(*function.body, identity);
-  }
+  RegisterLambdas(function, identity);
 }
 
 void DeclarationBinder::BindExpression(const frontend::Expression* expression,

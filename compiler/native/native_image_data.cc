@@ -324,7 +324,8 @@ runtime::NativeTable<runtime::NativeCallParameter> NativeImageBuilder::CallParam
     parameters.push_back({
         .name = Text(parameter.name),
         .type = parameter.type,
-        .flags = ParameterFlags(parameter),
+        .flags = ParameterFlags(parameter) |
+                 (parameter.has_default ? runtime::kNativeDefaultParameter : 0U),
     });
   }
   for (const auto index : defaults) {

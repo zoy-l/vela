@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -183,6 +185,10 @@ struct NativeFunctionDescription final {
   std::uint32_t flags = 0;
   FunctionIdentity identity;
   const NativeFunctionDependencies* dependencies = nullptr;
+
+  [[nodiscard]] bool HasDefaults() const noexcept {
+    return std::ranges::any_of(parameters.values(), &NativeCallParameter::HasDefault);
+  }
 };
 
 struct NativeMemberDescription final {

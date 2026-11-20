@@ -35,6 +35,25 @@ ordinary integer string output remains decimal.
 
 ## Functions, function values, and closures
 
+Script functions, methods, lambdas, and explicit constructors can declare parameter defaults:
+
+```vela
+func update(action: (() => void)? = null): void {
+  if (action != null) { action(); }
+}
+func updateDemo(): void {
+  update();
+  update((): void => { print('updated'); });
+}
+```
+
+Defaults run only for omitted arguments; passing `null` explicitly does not select a default.
+Supplied arguments run in source order first, followed by omitted defaults in parameter order.
+Defaults may reference earlier parameters and their lexical environment. Instance-method defaults
+may use `this`; constructor defaults cannot access the object being built. External declarations
+and accessors do not accept parameter defaults. Interface implementations and overrides preserve
+which parameters have defaults; virtual calls use the selected implementation's default expressions.
+
 ```typescript
 func add(left: int, right: int): int {
   return left + right;
@@ -109,13 +128,29 @@ func builtinValues(): void {
 ```
 
 A function value has a fixed positional signature. A contextual function type
-selects a legal argument count for optional/variadic builtin methods and fixes
+can omit trailing defaulted script parameters, selects a legal argument count for
+optional/variadic builtin methods, and fixes
 callback/result types for higher-order methods. Without such context, an ordinary
 fixed-parameter builtin value uses its complete parameter list; variadic and
 callback algorithm values require a function type context. For example, inferred
 `values.slice` takes two indices, while the annotated copy above takes none.
 Defaults are evaluated by the underlying method at invocation, not at binding.
-No dynamic dispatcher or second callable ABI is introduced.
+
+A class name can be used as a constructor function value. Its contextual function type selects
+the arguments supplied to the ordinary constructor. Generated field constructors map positional
+function arguments to their declared parameter names; omitted arguments retain their defaults.
+Access checks and generic inference follow direct construction. Without a function type context,
+the value uses the constructor's complete parameter list.
+
+```vela
+class Counter { value: int = 42; }
+func create(factory: () => Counter): Counter { return factory(); }
+func constructorDemo(): void {
+  const counter = create(Counter);
+  const withValue: (int) => Counter = Counter;
+  print(counter.value + withValue(0).value); // 42
+}
+```
 
 ## Generic functions, classes, interfaces, methods, and aliases
 

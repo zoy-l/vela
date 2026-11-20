@@ -10,6 +10,10 @@
 
 namespace vela::frontend {
 
+bool FunctionDescriptor::HasDefaults() const {
+  return std::ranges::any_of(parameters, &Parameter::has_default);
+}
+
 void FunctionDescriptor::AddParameter(std::string name,
                                       TypeDescriptor type,
                                       ParameterPresence presence) {

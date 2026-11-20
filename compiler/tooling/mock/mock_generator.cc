@@ -28,7 +28,10 @@
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/lexer.h"
+#include "compiler/frontend/syntax/parser.h"
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/tooling/format/formatter.h"
+#include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
 namespace {
@@ -102,6 +105,20 @@ class MockGenerator final {
                    AdapterKind kind,
                    std::string_view name);
   void Parameters(const frontend::Function& method, AdapterKind kind);
+  struct DefaultReplacement final {
+    std::size_t end;
+    std::string text;
+  };
+  using DefaultReplacements = std::map<std::size_t, DefaultReplacement>;
+  void DefaultValue(const frontend::Parameter& parameter);
+  enum class DefaultNameKind : std::uint8_t { Value, Type };
+  void DefaultName(const std::string& name,
+                   SourceLocation location,
+                   DefaultReplacements& edits,
+                   DefaultNameKind kind = DefaultNameKind::Value);
+  void DefaultNames(const frontend::TypeName& type, DefaultReplacements& edits);
+  void DefaultNames(const frontend::Expression* expression, DefaultReplacements& edits);
+  void DefaultNames(const frontend::Statement* statement, DefaultReplacements& edits);
   void Arguments(const frontend::Function& method);
   [[nodiscard]] std::string Fingerprint(std::span<const frontend::Interface* const> selected) const;
 
@@ -139,6 +156,8 @@ MockGenerator::MockGenerator(const frontend::Program& program, const std::filesy
   collect(program.interfaces);
   collect(program.enums);
   collect(program.aliases);
+  collect(program.functions);
+  collect(program.globals);
   for (const auto& alias : program.aliases) {
     aliases_.emplace(alias.name, &alias);
   }
@@ -380,8 +399,161 @@ void MockGenerator::Parameters(const frontend::Function& method, AdapterKind kin
     }
     body_ << parameter.name << ": "
           << (kind == AdapterKind::Pattern ? "dynamic" : NameType(parameter.type).ToString());
+    if (parameter.initializer && kind == AdapterKind::Implementation) {
+      DefaultValue(parameter);
+    }
   }
   body_ << ')';
+}
+
+void MockGenerator::DefaultName(const std::string& name,
+                                SourceLocation location,
+                                DefaultReplacements& edits,
+                                DefaultNameKind kind) {
+  if (!program_->origins.contains(name)) {
+    return;
+  }
+  const auto& tokens = program_->sources.at(location.source_id).syntax->tokens;
+  const auto index = TokenIndexAt(tokens, location);
+  const auto& token = tokens[index];
+  const auto start = index >= 2 && tokens[index - 1].kind == frontend::TokenKind::Dot
+                         ? tokens[index - 2].offset
+                         : token.offset;
+  const auto& last =
+      kind == DefaultNameKind::Type && tokens[index + 1].kind == frontend::TokenKind::Dot
+          ? tokens[index + 2]
+          : token;
+  edits.insert_or_assign(start, DefaultReplacement{
+                                    .end = last.offset + last.length,
+                                    .text = PublicName(name, location),
+                                });
+}
+
+void MockGenerator::DefaultNames(const frontend::TypeName& type, DefaultReplacements& edits) {
+  DefaultName(type.name, type.location, edits, DefaultNameKind::Type);
+  for (const auto& argument : type.arguments) {
+    DefaultNames(argument, edits);
+  }
+}
+
+void MockGenerator::DefaultNames(const frontend::Expression* expression,
+                                 DefaultReplacements& edits) {
+  if (expression == nullptr) {
+    return;
+  }
+  if (expression->kind == frontend::Expression::Kind::Name) {
+    DefaultName(expression->text, expression->location, edits);
+  }
+  DefaultNames(expression->type, edits);
+  for (const auto& type : expression->type_arguments) {
+    DefaultNames(type, edits);
+  }
+  for (const auto* operand : frontend::ExpressionOperands(*expression)) {
+    DefaultNames(operand, edits);
+  }
+  for (const auto& element : expression->elements) {
+    DefaultNames(element.get(), edits);
+  }
+  for (const auto& entry : expression->entries) {
+    DefaultNames(entry.key.get(), edits);
+    DefaultNames(entry.value.get(), edits);
+  }
+  for (const auto& argument : expression->arguments) {
+    DefaultNames(argument.value.get(), edits);
+  }
+  for (const auto& arm : expression->arms) {
+    DefaultNames(arm.pattern.get(), edits);
+    DefaultNames(arm.value.get(), edits);
+  }
+  if (expression->function) {
+    const auto& function = *expression->function;
+    DefaultNames(function.return_type, edits);
+    for (const auto& parameter : function.parameters) {
+      DefaultNames(parameter.type, edits);
+      DefaultNames(parameter.initializer.get(), edits);
+    }
+    DefaultNames(function.body.get(), edits);
+  }
+}
+
+void MockGenerator::DefaultNames(const frontend::Statement* statement, DefaultReplacements& edits) {
+  if (statement == nullptr) {
+    return;
+  }
+  DefaultNames(statement->type, edits);
+  for (const auto* expression : {
+           statement->expression.get(),
+           statement->condition.get(),
+           statement->increment.get(),
+           statement->iterable.get(),
+       }) {
+    DefaultNames(expression, edits);
+  }
+  for (const auto* child : {
+           statement->initializer.get(),
+           statement->then_branch.get(),
+           statement->else_branch.get(),
+           statement->finally_branch.get(),
+       }) {
+    DefaultNames(child, edits);
+  }
+  for (const auto& child : statement->statements) {
+    DefaultNames(child.get(), edits);
+  }
+  for (const auto& branch : statement->cases) {
+    DefaultNames(branch.label.get(), edits);
+    DefaultNames(branch.body.get(), edits);
+  }
+  for (const auto& caught : statement->catches) {
+    DefaultNames(caught.type, edits);
+    DefaultNames(caught.body.get(), edits);
+  }
+}
+
+void MockGenerator::DefaultValue(const frontend::Parameter& parameter) {
+  using frontend::TokenKind;
+  const auto& source = *program_->sources.at(parameter.location.source_id).syntax;
+  const auto& tokens = source.tokens;
+  const std::string_view text(source.text);
+  const auto is_assignment = [&](const frontend::Token& token) {
+    return token.kind == TokenKind::Equal ||
+           (token.type_closing_length != 0 &&
+            text.substr(token.offset + token.type_closing_length,
+                        token.length - token.type_closing_length) == "=");
+  };
+  auto start = TokenIndexAt(tokens, parameter.location);
+  while (!is_assignment(tokens[start])) {
+    ++start;
+  }
+  ++start;
+  auto end = start;
+  std::vector<TokenKind> closing;
+  for (; end < tokens.size(); ++end) {
+    const auto& token = tokens[end];
+    if (closing.empty() &&
+        (token.kind == TokenKind::Comma || token.kind == TokenKind::RightParen)) {
+      break;
+    }
+    if (token.kind == TokenKind::Less && token.role == frontend::TokenRole::TypeDelimiter) {
+      closing.push_back(TokenKind::Greater);
+    } else if (token.type_closing_length != 0) {
+      for (std::size_t index = 0; index < token.type_closing_length; ++index) {
+        closing.pop_back();
+      }
+    } else {
+      TrackDelimiter(closing, token.kind, ClosingDelimiter(token.kind));
+    }
+  }
+  DefaultReplacements edits;
+  DefaultNames(parameter.initializer.get(), edits);
+  auto cursor = tokens[start].offset;
+  const auto limit = tokens[end - 1].offset + tokens[end - 1].length;
+  body_ << " = ";
+  for (const auto& [offset, edit] : edits) {
+    body_ << text.substr(cursor, offset - cursor) << edit.text;
+    cursor = edit.end;
+  }
+  body_ << text.substr(cursor, limit - cursor);
 }
 
 void MockGenerator::Arguments(const frontend::Function& method) {

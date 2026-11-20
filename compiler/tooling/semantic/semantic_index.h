@@ -184,6 +184,7 @@ class SemanticIndex final {
     std::string context_class;
   };
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
+  [[nodiscard]] Scope FunctionScope(const frontend::Function& function, const Scope& parent) const;
   enum class TokenQuery : std::uint8_t { Containing, Nearest };
   [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset,
                                                   TokenQuery query = TokenQuery::Containing) const;

@@ -1,12 +1,13 @@
 #include "runtime/native/native_json.h"
 
-#include <array>
 #include <expected>
 #include <span>
+#include <string_view>
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/member.h"
+#include "runtime/dynamic/dynamic_call.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/json/json.h"
 #include "runtime/native/native_abi.h"
@@ -50,12 +51,18 @@ std::expected<Value, ExecutionStatus> Convert(NativeExecution& execution,
   auto origin = NativeInstance::Borrow(*selected->state);
   const NativeInstanceScope scope(execution, origin);
   const auto& function = *selected->function;
-  if ((function.flags & kNativeTypedFunction) == 0 || function.parameters.size != 0 ||
-      function.result_type == kNoNativeIndex) {
+  if ((function.flags & kNativeTypedFunction) == 0 || function.result_type == kNoNativeIndex) {
     return invalid();
   }
-  const std::array arguments{EncodeNativeValue(receiver)};
-  return InvokeNativeTarget(execution, selected->target.function, arguments);
+  const auto& signature = origin.call_signature(selected->target.function);
+  const auto bound = BindDynamicArguments(signature, std::span<const std::string_view>{},
+                                          DynamicCallStyle::Method);
+  if (!bound) {
+    return invalid();
+  }
+  return InvokeBoundNativeTarget(execution, selected->target.function, signature, *bound,
+                                 std::span<const Value>{}, receiver,
+                                 NativeArgumentPresence::Absent);
 }
 
 }  // namespace

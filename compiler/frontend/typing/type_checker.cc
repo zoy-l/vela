@@ -80,6 +80,12 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
     specializer.SetExpansionOwner(function.name);
     CheckFunction(function, nullptr);
   }
+  for (const auto& interface : program.interfaces) {
+    const auto& descriptor = interfaces_.at(interface.name);
+    for (const auto& method : interface.methods) {
+      CheckFunctionBody(method, descriptor.methods.at(method.name), nullptr);
+    }
+  }
   for (const Class& class_declaration : program.classes) {
     specializer.SetExpansionOwner(class_declaration.name);
     CheckClassBody(class_declaration, classes_.at(class_declaration.name));
@@ -151,13 +157,7 @@ void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
   });
 }
 
-TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function,
-                                                        const FunctionInfo* context) {
-  FunctionInfo info;
-  info.intrinsic = function.intrinsic;
-  info.intrinsic_operation = function.intrinsic_operation;
-  info.optional_parameters.insert(function.optional_parameters.begin(),
-                                  function.optional_parameters.end());
+void TypeChecker::ApplyIntrinsicDefaults(const Function& function, FunctionInfo& info) {
   if (function.intrinsic == Builtin::IntParse || function.intrinsic == Builtin::IntTryParse) {
     info.optional_parameters.insert("radix");
   } else if (function.intrinsic == Builtin::DateFromUTC) {
@@ -165,6 +165,16 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
   } else if (function.intrinsic && IsByteBuiltin(*function.intrinsic)) {
     info.optional_parameters = BuiltinSignature(*function.intrinsic).optional_parameters;
   }
+}
+
+TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function,
+                                                        const FunctionInfo* context) {
+  FunctionInfo info;
+  info.intrinsic = function.intrinsic;
+  info.intrinsic_operation = function.intrinsic_operation;
+  info.optional_parameters.insert(function.optional_parameters.begin(),
+                                  function.optional_parameters.end());
+  ApplyIntrinsicDefaults(function, info);
   info.visibility = function.visibility;
   info.storage = function.storage;
   info.is_getter = function.is_getter;
@@ -183,6 +193,10 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
   info.parameter_indices.reserve(function.parameters.size());
   for (std::size_t index = 0; index < function.parameters.size(); ++index) {
     const auto& parameter = function.parameters.at(index);
+    if (parameter.initializer &&
+        (!function.native_symbol.empty() || function.is_getter || function.is_setter)) {
+      AddDiagnostic(parameter.location, "default parameters require an ordinary script function");
+    }
     Type type;
     if (parameter.type.kind != TypeName::Kind::Inferred) {
       type = ResolveType(parameter.type, VoidTypePolicy::Forbidden);
@@ -197,7 +211,11 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
              .second) {
       AddDiagnostic(parameter.location, "duplicate parameter '" + parameter.name + "'");
     } else {
-      info.parameters.push_back({.name = parameter.name, .type = type});
+      info.parameters.push_back(
+          {.name = parameter.name, .type = type, .has_default = parameter.initializer != nullptr});
+      if (parameter.initializer) {
+        info.optional_parameters.insert(parameter.name);
+      }
     }
   }
   return info;
@@ -237,6 +255,9 @@ void TypeChecker::CheckFunctionBody(const Function& function,
   }
 
   BeginScope();
+  if (in_constructor_) {
+    DeclareFunctionParameters(function, function_info, BindingKind::Mutable);
+  }
   if (owner != nullptr && function.storage == MemberStorage::Instance) {
     scopes_.back().try_emplace(kReceiverName, LocalBinding{
                                                   .type = owner->type,
@@ -247,7 +268,9 @@ void TypeChecker::CheckFunctionBody(const Function& function,
     // 方法节点在发布泛型方法应用时可能移动；接收者绑定以函数体节点为键。
     facts_.bindings.emplace(function.body.get(), LookupLocal(kReceiverName)->id);
   }
-  DeclareFunctionParameters(function, function_info, BindingKind::Mutable);
+  if (!in_constructor_) {
+    DeclareFunctionParameters(function, function_info, BindingKind::Mutable);
+  }
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
     facts_.control_flow.insert_or_assign(function.body.get(), flow);
@@ -755,11 +778,33 @@ TypeChecker::Type TypeChecker::LookupName(const Expression& expression, const Ty
   if (globals_.contains(expression.text)) {
     return ResolveGlobal(expression.text);
   }
-  if (specializer_->FunctionTemplate(expression.text) != nullptr) {
+  if (specializer_->FunctionTemplate(expression.text) != nullptr ||
+      specializer_->ClassTemplate(expression.text) != nullptr ||
+      specializer_->AliasTemplate(expression.text) != nullptr) {
     return InstantiateGeneric(expression, nullptr, expected);
   }
   if (const auto function = functions_.find(expression.text); function != functions_.end()) {
-    return FunctionType(function->second);
+    return FunctionValueType(function->second, expected);
+  }
+  auto name = std::string_view(expression.text);
+  if (aliases_.contains(name)) {
+    const auto type = ResolveType(
+        {
+            .name = expression.text,
+            .location = expression.location,
+            .kind = TypeName::Kind::Named,
+            .arguments = {},
+            .parameter = {},
+        },
+        VoidTypePolicy::Forbidden);
+    if (type.nullable) {
+      AddDiagnostic(expression.location, "nullable type aliases are not constructible");
+      return InvalidType();
+    }
+    name = type.name;
+  }
+  if (const auto constructor = classes_.find(name); constructor != classes_.end()) {
+    return CheckConstructorValue(expression, constructor->second, expected);
   }
   AddDiagnostic(expression.location, "unknown name '" + expression.text + "'");
   return InvalidType();

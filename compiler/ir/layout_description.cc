@@ -271,16 +271,17 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   }
   const auto& callable = *target;
   const auto& program = *program_;
-  const auto& signature = callable.mode == CallableMode::VirtualMethod
-                              ? type.callable_type
-                              : program.functions.at(callable.function).signature;
+  const auto& signature =
+      type.callable_type ? type.callable_type : program.functions.at(callable.function).signature;
   if (!signature) {
     std::unreachable();
   }
   const auto& call = *signature;
   // 绑定方法的接收者不属于宿主可见参数。其余参数标志直接沿用 lowering 的事实。
-  const auto skipped =
-      callable.mode == CallableMode::BoundMethod && call.hidden_parameters == 0 ? 1U : 0U;
+  const auto skipped = !type.callable_type && callable.mode == CallableMode::BoundMethod &&
+                               call.hidden_parameters == 0
+                           ? 1U
+                           : 0U;
   layout::Signature descriptor{.name = {}, .parameters = {}};
   for (std::size_t index = skipped; index < call.parameters.size(); ++index) {
     const auto& parameter = call.parameters.at(index);

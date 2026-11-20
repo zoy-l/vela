@@ -297,6 +297,7 @@ std::expected<const CallSignature*, ExecutionStatus> ReflectionIndex::PrepareSig
         .type = parameter.type,
         .optional = parameter.IsOptional(),
         .rest = parameter.IsRest(),
+        .has_default = parameter.HasDefault(),
     });
   }
   if (member.type != kNoNativeIndex) {

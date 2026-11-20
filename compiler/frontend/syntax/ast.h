@@ -231,6 +231,7 @@ struct Parameter final {
   TypeName type;
   std::string name;
   SourceLocation location;
+  std::unique_ptr<Expression> initializer;
 };
 
 struct Field final {

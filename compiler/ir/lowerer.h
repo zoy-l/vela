@@ -72,7 +72,6 @@ class Lowerer final {
     CallableMode mode = CallableMode::Plain;
     std::span<const frontend::Capture> captures;
     std::optional<LoweredValue> receiver;
-    const frontend::FunctionDescriptor* virtual_signature = nullptr;
     std::optional<DeclarationId> binding_receiver;
   };
 
@@ -153,6 +152,17 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
+  RegisterId LowerParameterDefault(const frontend::Parameter& parameter,
+                                   LoweredValue input,
+                                   RegisterId supplied,
+                                   const frontend::TypeDescriptor& type);
+  void InitializeArgumentPresence(const frontend::FunctionDescriptor& signature,
+                                  std::span<const std::uint32_t> supplied,
+                                  RegisterId base,
+                                  frontend::SourceLocation location);
+  std::vector<RegisterId> PrepareConstructorArguments(const frontend::FunctionDescriptor& signature,
+                                                      std::span<const std::uint32_t> supplied,
+                                                      frontend::SourceLocation location);
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   struct ConstructorFieldMask final {
@@ -298,7 +308,7 @@ class Lowerer final {
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,
                         std::span<const frontend::Capture> captures,
-                        const frontend::FunctionDescriptor* virtual_signature = nullptr);
+                        const frontend::FunctionDescriptor* callable_signature = nullptr);
 
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
   [[nodiscard]] const Local* FindLocal(std::string_view name) const;
@@ -528,7 +538,7 @@ class Lowerer final {
   ClassMap class_ids_;
   absl::flat_hash_map<std::string_view, bool> instance_initialization_;
   FunctionMap function_ids_;
-  absl::flat_hash_map<std::uint64_t, ClassId> callable_classes_;
+  absl::flat_hash_map<std::pair<std::uint64_t, std::string_view>, ClassId> callable_classes_;
   absl::flat_hash_map<std::string, std::uint32_t> method_selectors_;
   absl::flat_hash_map<std::string, std::uint32_t> global_ids_;
   absl::flat_hash_map<std::string, std::uint32_t> runtime_type_ids_;

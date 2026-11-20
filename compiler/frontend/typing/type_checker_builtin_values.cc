@@ -108,7 +108,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
   auto type = FunctionType(signature);
   const auto key = std::string("$builtin.") + std::string(receiver.name) + "." + expression.text +
                    "." + std::string(type.name);
-  if (const auto found = builtin_function_ids_.find(key); found != builtin_function_ids_.end()) {
+  if (const auto found = function_value_ids_.find(key); found != function_value_ids_.end()) {
     facts_.builtin_method_values.insert_or_assign(&expression, found->second);
     const auto& generated = facts_.generated_functions.at(found->second);
     const auto* returned = generated.declaration->body->statements.front()->expression.get();
@@ -132,6 +132,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
       .type = NamedType(receiver, expression.location),
       .name = "$receiver",
       .location = expression.location,
+      .initializer = {},
   });
   FunctionInfo implementation;
   implementation.return_type = signature.return_type;
@@ -152,6 +153,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
         .type = NamedType(parameter, expression.location),
         .name = name,
         .location = expression.location,
+        .initializer = {},
     });
     implementation.AddParameter(name, parameter);
     call->arguments.push_back(
@@ -175,7 +177,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
   }
 
   const auto index = facts_.generated_functions.size();
-  builtin_function_ids_.emplace(key, index);
+  function_value_ids_.emplace(key, index);
   facts_.builtin_method_values.insert_or_assign(&expression, index);
   facts_.generated_functions.push_back(
       {.declaration = std::move(function), .signature = std::move(implementation)});

@@ -489,22 +489,31 @@ std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
     AddDiagnostic(Peek().location, "expected parameter name");
     return std::nullopt;
   }
+  Parameter parameter{
+      .type = {.name = {}, .location = name->location, .arguments = {}, .parameter = {}},
+      .name = name->lexeme,
+      .location = name->location,
+      .initializer = {},
+  };
   if (!Match(TokenKind::Colon)) {
     if (typing == ParameterTyping::Required) {
       AddDiagnostic(Peek().location, "expected ':' after parameter name");
       return std::nullopt;
     }
-    return Parameter{
-        .type = {.name = {}, .location = name->location, .arguments = {}, .parameter = {}},
-        .name = name->lexeme,
-        .location = name->location,
-    };
+  } else {
+    auto type = ParseType();
+    if (!type) {
+      return std::nullopt;
+    }
+    parameter.type = std::move(*type);
   }
-  auto type = ParseType();
-  if (!type) {
-    return std::nullopt;
+  if (Match(TokenKind::Equal)) {
+    parameter.initializer = ParseExpression();
+    if (!parameter.initializer) {
+      return std::nullopt;
+    }
   }
-  return Parameter{.type = std::move(*type), .name = name->lexeme, .location = name->location};
+  return parameter;
 }
 
 }  // namespace vela::frontend

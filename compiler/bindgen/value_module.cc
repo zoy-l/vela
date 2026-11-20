@@ -51,6 +51,7 @@ class ValueCollector final {
         .source = {},
         .members = {},
         .value_cpp = std::nullopt,
+        .enumerators = {},
     };
     for (const auto* member : declaration.decls()) {
       if (member->isImplicit() || member->getAccess() != clang::AS_public) {
@@ -219,6 +220,7 @@ class ValueCollector final {
         .source = {},
         .members = {},
         .value_cpp = cpp,
+        .enumerators = {},
     };
     if (!standard && !collection_->opaque.contains(record.getQualifiedNameAsString()) &&
         record.hasDefinition()) {
@@ -259,6 +261,7 @@ class ValueCollector final {
           .source = {},
           .members = {},
           .value_cpp = std::nullopt,
+          .enumerators = {},
       };
       for (const auto* value : enumeration.enumerators()) {
         output.enumerators.emplace_back(value->getNameAsString(),

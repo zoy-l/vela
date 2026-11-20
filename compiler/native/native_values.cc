@@ -603,10 +603,12 @@ std::vector<llvm::Value*> UnpackReflectionArguments(Builder& builder,
     std::unreachable();
   }
   const auto hidden = source.signature->hidden_parameters;
-  const auto records = ReflectionRecords(builder, program, inputs, source.parameter_count - hidden);
+  const auto presence = source.signature->HasDefaults() ? source.signature->parameters.size() : 0;
+  const auto count = source.parameter_count - presence;
+  const auto records = ReflectionRecords(builder, program, inputs, count - hidden);
   auto* function = builder.GetInsertBlock()->getParent();
   std::vector<llvm::Value*> arguments{inputs.execution};
-  for (std::size_t index = 0; index < source.parameter_count; ++index) {
+  for (std::size_t index = 0; index < count; ++index) {
     const auto& type = source.value_types[index];
     if (index < hidden) {
       auto* receiver = EncodeValue(builder, inputs.receiver, {.kind = Kind::Class, .name = {}});
@@ -629,6 +631,7 @@ std::vector<llvm::Value*> UnpackReflectionArguments(Builder& builder,
     builder.SetInsertPoint(next);
     arguments.push_back(DecodeValue(builder, record, type));
   }
+  arguments.insert(arguments.end(), presence, builder.getTrue());
   return arguments;
 }
 

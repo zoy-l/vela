@@ -26,7 +26,7 @@ from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX
 class NativeDistributionTest(unittest.TestCase):
     def test_existing_language_corpus_matches_jit(self) -> None:
         categories = [
-            "class", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
+            "class", "constructor_reference", "default_parameter", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
             "builtin_function_value", "string", "regexp", "json", "typed_json", "standard_library", "async_contract",
             "language_basics", "control_flow", "match", "cast", "optimization", "recursion",

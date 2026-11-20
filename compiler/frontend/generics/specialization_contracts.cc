@@ -36,7 +36,12 @@ std::string Specializer::DescribeFunctionContract(const Function& function) {
   const auto owner = function.type_parameters.empty()
                          ? std::string()
                          : function.type_parameters.front().identity.owner;
-  return DescribeTypeContract(ExpandAlias(std::move(signature)), owner, program_.origins);
+  auto contract = DescribeTypeContract(ExpandAlias(std::move(signature)), owner, program_.origins);
+  contract += "|defaults:";
+  for (const auto& parameter : function.parameters) {
+    contract += parameter.initializer ? '1' : '0';
+  }
+  return contract;
 }
 
 DeclarationOrigin::Member Specializer::DescribeMethod(const Function& method,

@@ -148,6 +148,7 @@ class Parser final {
   PostfixStatus ParsePostfixIncrement(std::unique_ptr<Expression>& expression);
   std::unique_ptr<Expression> ParsePrimary();
   [[nodiscard]] bool IsLambda() const;
+  [[nodiscard]] bool IsLambdaReturnType(std::size_t begin) const;
   std::unique_ptr<Expression> ParseArrayLiteral();
   std::unique_ptr<Expression> ParseMapLiteral();
   enum class LambdaParameters : std::uint8_t { Parenthesized, Single };

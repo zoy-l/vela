@@ -322,6 +322,27 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
   return result;
 }
 
+std::vector<RegisterId> Lowerer::PrepareConstructorArguments(
+    const frontend::FunctionDescriptor& signature,
+    std::span<const std::uint32_t> supplied,
+    frontend::SourceLocation location) {
+  const auto count = signature.parameters.size();
+  std::vector<RegisterId> arguments(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    if (signature.parameters[index].has_default) {
+      arguments[index] = EmitTemporary({.opcode = Opcode::LoadNull, .location = location});
+    }
+  }
+  if (signature.HasDefaults()) {
+    const auto presence = AllocateRegisterWindow(count, location);
+    InitializeArgumentPresence(signature, supplied, presence, location);
+    for (std::size_t index = 0; index < count; ++index) {
+      arguments.push_back(presence + static_cast<RegisterId>(index));
+    }
+  }
+  return arguments;
+}
+
 Lowerer::LoweredValue Lowerer::LowerConstructorCall(
     std::span<const frontend::CallArgument> call_arguments,
     std::span<const std::uint32_t> argument_order,
@@ -333,7 +354,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   const auto& signature = info.constructor;
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
   const auto masks = ConstructorMaskCount(info);
-  std::vector<RegisterId> arguments(generated ? 0 : signature.parameters.size());
+  auto arguments = generated ? std::vector<RegisterId>{}
+                             : PrepareConstructorArguments(signature, argument_order, location);
   std::vector<std::uint64_t> provided(masks, 0);
   // 自动构造的实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
