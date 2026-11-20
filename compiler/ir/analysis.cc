@@ -100,7 +100,7 @@ std::uint32_t CallArgumentCount(const Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::CallIndirect:
       return instruction.index;
-    case Opcode::CallInterface:
+    case Opcode::CallVirtual:
       return static_cast<std::uint32_t>(instruction.immediate);
     case Opcode::BuiltinCall:
       return instruction.index == static_cast<std::uint32_t>(Builtin::ReflectionInvoke)
@@ -172,7 +172,7 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
           .use_count = 1,
           .argument_count = CallArgumentCount(instruction),
       };
-    case Opcode::CallInterface:
+    case Opcode::CallVirtual:
     case Opcode::BuiltinCall:
     case Opcode::AsyncCall:
     case Opcode::StringInterpolate:
@@ -693,7 +693,7 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       [[fallthrough]];
     case Opcode::Call:
     case Opcode::CallIndirect:
-    case Opcode::CallInterface:
+    case Opcode::CallVirtual:
     case Opcode::GetGlobal:
     case Opcode::AsyncCall:
       // 全局读取可能执行惰性初始化器，内建操作可能调用 getter/toJson/动态目标。

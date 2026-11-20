@@ -203,6 +203,10 @@ void TypeChecker::ResolveClassMethods(const Class& class_declaration, ClassInfo&
 void TypeChecker::ResolveClassMethod(const Function& method, ClassInfo& info) {
   FunctionInfo method_info = ResolveSignature(method);
   method_info.member_owner = info.type.name;
+  if (method_info.is_setter) {
+    method_info.setter_owner = info.type.name;
+    method_info.setter_visibility = method.visibility;
+  }
   CheckAccessor(method, method_info);
   if (info.fields.contains(method.name) || info.static_fields.contains(method.name)) {
     AddDiagnostic(method.location, "member name is already used by a field");
@@ -239,12 +243,16 @@ void TypeChecker::MergeAccessor(FunctionInfo& existing,
   existing.is_setter = existing.is_setter || incoming.is_setter;
   if (incoming.is_getter) {
     existing.return_type = incoming.return_type;
+    existing.member_owner = incoming.member_owner;
+    existing.visibility = incoming.visibility;
   }
   if (incoming.is_setter && !incoming.parameters.empty()) {
     existing.parameters = incoming.parameters;
     existing.parameter_indices = incoming.parameter_indices;
     existing.setter_parameter_type = incoming.parameters.front().type;
     existing.setter_return_type = incoming.return_type;
+    existing.setter_owner = incoming.setter_owner;
+    existing.setter_visibility = incoming.setter_visibility;
   }
 }
 

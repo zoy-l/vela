@@ -123,8 +123,7 @@ struct NativeDispatchSnapshot final {
   NativeTypeIdentities type_identities;
   absl::flat_hash_map<const NominalType*, const ClassLayout*> classes;
   absl::flat_hash_map<DeclarationId, std::uint32_t> field_initializers;
-  absl::flat_hash_map<std::pair<const NominalType*, DeclarationId>, std::uint32_t>
-      interface_targets;
+  absl::flat_hash_map<std::pair<const NominalType*, DeclarationId>, std::uint32_t> virtual_targets;
 };
 
 std::expected<void, NativePublicationError> NativeDispatchSnapshot::IndexFunctions(
@@ -279,7 +278,7 @@ void NativeDispatchSnapshot::IndexLayouts(const NativeImage& description,
     for (std::size_t selector = 0; selector < targets.size(); ++selector) {
       const auto target = targets[selector];
       if (target != kInvalidFunctionTarget) {
-        interface_targets.emplace(std::pair(nominal, selectors[selector]), target);
+        virtual_targets.emplace(std::pair(nominal, selectors[selector]), target);
       }
     }
   }
@@ -691,14 +690,14 @@ std::expected<HeapObject*, ExecutionStatus> NativeDispatch::BorrowCurrentState()
   return &current_state();
 }
 
-std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::ResolveInterface(
+std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::ResolveVirtual(
     const NominalType& receiver,
     DeclarationId selector) const noexcept {
   if (const auto checked = CheckCurrent(); !checked) {
     return std::unexpected(checked.error());
   }
-  const auto found = current_->interface_targets.find(std::pair(&receiver, selector));
-  if (found == current_->interface_targets.end()) {
+  const auto found = current_->virtual_targets.find(std::pair(&receiver, selector));
+  if (found == current_->virtual_targets.end()) {
     return std::unexpected(ExecutionStatus::TargetDeleted);
   }
   return NativeResolvedDeclaration{.state = current_->state.AsObject(), .function = found->second};

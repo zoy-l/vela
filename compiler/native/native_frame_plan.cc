@@ -25,7 +25,7 @@ std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::CallIndirect:
       return static_cast<std::size_t>(ir::CallArgumentCount(instruction)) + 2;
-    case Opcode::CallInterface:
+    case Opcode::CallVirtual:
     case Opcode::BuiltinCall:
     case Opcode::AsyncCall:
     case Opcode::StringInterpolate:

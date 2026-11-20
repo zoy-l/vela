@@ -7,6 +7,7 @@
 #endif
 
 #define VELA_CLASS(name) VELA_DETAIL_ANNOTATE("vela.class:" name)
+#define VELA_MODULE(name) VELA_DETAIL_ANNOTATE("vela.module:" name)
 #define VELA_NAME(name) VELA_DETAIL_ANNOTATE("vela.name:" name)
 #define VELA_GETTER(name) VELA_DETAIL_ANNOTATE("vela.getter:" name)
 #define VELA_SETTER(name) VELA_DETAIL_ANNOTATE("vela.setter:" name)

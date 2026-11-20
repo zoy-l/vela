@@ -149,6 +149,34 @@ func exceptionalFields(): int {
   catch (error: InitFailure) { collect(); return point.x + error.code; }
   return 0;
 }
+interface DispatchReader { read(): int; }
+class DispatchBase implements DispatchReader {
+  stored: int = 0;
+  read(): int { return 1; }
+  forward(): int { return this.read(); }
+  generic<T>(value: T): int { return 1; }
+  get result(): int { return this.stored; }
+  set result(value: int): void { this.stored = value; }
+}
+class DispatchChild extends DispatchBase {
+  override read(): int { return 14; }
+  override generic<U>(value: U): int { collect(); return 21; }
+  override get result(): int { return super.result + 2; }
+  override set result(value: int): void { super.result = value * 2; }
+}
+func dispatchedCalls(value: DispatchBase, reader: DispatchReader): int {
+  const bound: () => int = value.read;
+  collect();
+  return value.forward() + reader.read() + bound();
+}
+func dispatchedGeneric(value: DispatchBase): int {
+  const bound: (string) => int = value.generic;
+  return value.generic<int>(0) + bound('');
+}
+func dispatchedProperty(value: DispatchBase): int {
+  value.result += 18;
+  return value.result;
+}
 export func calculate(operation: int): int {
   Trace.value = 0;
   if (operation == 0) {
@@ -218,6 +246,9 @@ export func calculate(operation: int): int {
   if (operation == 17) { return borrowedFields(true); }
   if (operation == 18) { return borrowThenPublish(); }
   if (operation == 19) { return heapAndVirtualIdentity(); }
+  if (operation == 20) { const value = DispatchChild(); return dispatchedCalls(value, value); }
+  if (operation == 21) { return dispatchedGeneric(DispatchChild()); }
+  if (operation == 22) { return dispatchedProperty(DispatchChild()); }
   const box = Explicit<string>(initial: 'retained');
   collect();
   return box.value == 'retained' && box.adjustment() == 2 ? 42 : 0;
@@ -249,7 +280,8 @@ using NativeClassTest = CollectingImageTest<CLASS_IMAGE>;
 TEST_F(NativeClassTest, ConstructorsPreserveArgumentsDefaultsPrivateStateGenericsAndSuperUnderGc) {
   NativeExecution execution(*instance);
   ExpectIntegerOperations(CLASS_ENTRY, execution,
-                          {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19});
+                          {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                           20, 21, 22});
 }
 
 TEST_F(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOrKeepRoots) {

@@ -77,7 +77,7 @@ def verify_manifest(path: Path, visiting: set[Path] | None = None) -> dict:
 def configuration(path: Path) -> dict:
     config = read_object(path)
     required = {"module", "headers", "translation_unit", "compilation_database", "output"}
-    if not required <= config.keys() or config.keys() - required - {"dependencies"}:
+    if not required <= config.keys() or config.keys() - required - {"dependencies", "callbacks", "opaque"}:
         raise ValueError("Binding config requires module, headers, translation_unit, "
                          "compilation_database, output, and optional dependencies")
     for name in required - {"headers"}:
@@ -93,6 +93,10 @@ def configuration(path: Path) -> dict:
         config[name] = sorted({(path.parent / value).resolve(strict=True) for value in values})
     for name in ("translation_unit", "compilation_database", "output"):
         config[name] = (path.parent / config[name]).resolve(strict=name != "output")
+    for name in ("callbacks", "opaque"):
+        values = config.setdefault(name, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError(f"Binding config requires {name} to be a list of C++ type names")
     return config
 
 
@@ -133,6 +137,8 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
                  "--resource-dir=" + str(resource.resolve(strict=True)),
                  "--output-directory=" + str(output),
                  *["--header=" + str(path) for path in config["headers"]],
+                 *["--callback=" + name for name in config["callbacks"]],
+                 *["--opaque=" + name for name in config["opaque"]],
                  *["--dependency=" + str(path) for path in config["dependencies"]]]
     result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", check=False)
     if result.returncode:
@@ -165,8 +171,10 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     products[f"{module}.vela"] = f"// Binding generation: {token}\n" + products[f"{module}.vela"]
     encoded = {name: (format_cpp(text, formatter, style) if name.endswith((".h", ".cc"))
                        else text.encode("utf-8")) for name, text in products.items()}
+    # Ninja 使用构建目录内的相对目标；编译数据库固定该目录，避免依赖调用者的 cwd。
+    depfile_target = Path(os.path.relpath(manifest_path, config["compilation_database"].parent))
     encoded[f"{module}.d"] = (
-        depfile_escape(manifest_path) + ": " + " ".join(depfile_escape(path) for path in sorted(inputs))
+        depfile_escape(depfile_target) + ": " + " ".join(depfile_escape(path) for path in sorted(inputs))
         + "\n").encode("utf-8")
     with tempfile.TemporaryDirectory(prefix="vela-binding-fingerprints-") as temporary:
         stage = Path(temporary)
@@ -217,13 +225,15 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("--package-root", type=Path)
     parser.add_argument("--generator", type=Path)
     parser.add_argument("--resource-dir", type=Path)
+    parser.add_argument("--formatter", type=Path)
+    parser.add_argument("--style", type=Path)
     parser.add_argument("--check", action="store_true")
     parsed = parser.parse_args(arguments)
     if parsed.verify_manifest:
         verify_manifest(parsed.verify_manifest)
     else:
-        formatter = None
-        style = None
+        formatter = parsed.formatter
+        style = parsed.style
         if parsed.package_root:
             package = parsed.package_root.resolve(strict=True)
             toolchain = read_object(package / "share/vela/bindgen.json")

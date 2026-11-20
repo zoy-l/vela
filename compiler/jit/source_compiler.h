@@ -16,6 +16,7 @@ struct SourceOptions final {
   frontend::DiagnosticOptions diagnostics;
   CompileOptions compilation;
   std::vector<frontend::ReflectionSelection> reflection;
+  frontend::ModulePaths imports;
 };
 
 struct SourceResult final {

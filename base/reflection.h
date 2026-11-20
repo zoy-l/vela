@@ -78,6 +78,7 @@ inline constexpr std::uint32_t kRegistered = 1;
 inline constexpr std::uint32_t kPrivate = 2;
 inline constexpr std::uint32_t kStatic = 4;
 inline constexpr std::uint32_t kAsync = 8;
+inline constexpr std::uint32_t kVirtual = 16;
 
 // 逻辑签名描述源码调用，不包含接收者、构造 presence 位或机器 ABI 参数。
 struct Member final {

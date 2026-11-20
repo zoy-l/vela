@@ -43,13 +43,19 @@ std::expected<Value, ExecutionStatus> Convert(NativeExecution& execution,
   if (callable == nullptr) {
     return invalid();
   }
-  const auto& function = instance.image().function(callable->function);
+  const auto selected = ResolveNativeMethod(instance, *callable, receiver);
+  if (!selected) {
+    return std::unexpected(selected.error());
+  }
+  auto origin = NativeInstance::Borrow(*selected->state);
+  const NativeInstanceScope scope(execution, origin);
+  const auto& function = *selected->function;
   if ((function.flags & kNativeTypedFunction) == 0 || function.parameters.size != 0 ||
       function.result_type == kNoNativeIndex) {
     return invalid();
   }
   const std::array arguments{EncodeNativeValue(receiver)};
-  return InvokeNativeTarget(execution, callable->function, arguments);
+  return InvokeNativeTarget(execution, selected->target.function, arguments);
 }
 
 }  // namespace

@@ -7,21 +7,28 @@
 源码构建链接 `//compiler:jit`；独立 AOT 宿主使用发行包的运行时库和生成的公共头文件。
 运行时库本身不包含源码编译器。
 
-## 本地第三方库
+## 嵌入 SDK
 
-`python -m tools.vl embed debug` 与 `python -m tools.vl embed release` 分别构建
-`vela_development`、`vela_runtime` 静态库和编译器，输出 `out/<variant>/embedding.json`。
-宿主导入描述中的库和头文件搜索路径，不把 Vela 源码加入自己的构建图。描述借用本地 checkout
-中的头文件，不是可搬移的发行包。
+```sh
+python -m tools.vl embed debug /path/to/debug-sdk
+python -m tools.vl embed release /path/to/release-sdk
+```
 
-宿主必须匹配 OS、CPU、C++ ABI、依赖版本与 Debug/Release 变体。开发库还需要描述中的 LLVM
-库、系统库与 linker；带有 LLVM ThinLTO 的归档必须由匹配的 SDK linker 消费。
-AOT 应用只链接 `runtime_libraries`，运行时不需要编译器或 LLVM。
+每条命令将静态归档、头文件、编译器、链接器、bindgen 与许可证导出到新目录。
+`embedding.json` v4 的产物路径均相对于该目录。搬迁时移动整个 SDK 目录，然后将宿主构建指向新的
+manifest 位置。`<vela/runtime.h>` 提供 `Isolate` 和 `NativeInstance`，
+`<vela/development.h>` 提供 `DevelopmentSession`。
+
+宿主要求匹配 OS、CPU、C++ ABI、依赖版本与 Debug/Release 变体。AOT 宿主链接
+`runtime_libraries`、`runtime_system_libraries` 与 `runtime_frameworks`。
+JIT 和源码热重载增加对应的 `development_*` 链接输入，其中包含 LLVM 库。macOS 和 Linux
+使用包内链接器处理归档中的 LLVM ThinLTO。使用 `bin/vela build --emit=obj` 构建嵌入式 AOT 对象，
+使用 `python bin/vela-bindgen.py --config FILE` 同时生成 C++ 与 Vela 绑定代码。
 macOS 的最低部署版本由 `tools.config.MACOS_DEPLOYMENT_TARGET` 统一提供给库构建与发行探针。
 AOT 清单的 `sources` 字段提供完整导入图，供宿主构建系统生成 depfile。
 
-本地接口不承诺跨版本二进制兼容。修改 Vela 后须一起重建库、宿主绑定与 AOT 对象。
-Windows 还必须对齐 CRT/STL ABI，不能把 `/MT` 归档当作 `/MD` SDK 使用。
+更换 Vela 版本时一起重建库、宿主绑定与 AOT 对象。Windows 需要对齐 SDK 的 CRT 和 STL ABI，
+包括 CRT 的静态或动态链接方式。
 
 ## 编译与执行
 

@@ -156,7 +156,9 @@ reflection::Member Lowerer::DescribeReflectionMethod(
   const auto interface = owner.kind == frontend::TypeDescriptor::Kind::Interface;
   const auto key = interface ? QualifiedMemberKey({.owner = owner.name, .name = source.name})
                              : MethodKey(owner.name, source);
-  const auto target = interface ? interface_method_ids_.at(key) : function_ids_.at(key);
+  const auto selector = method_selectors_.find(key);
+  const auto is_virtual = selector != method_selectors_.end();
+  const auto target = is_virtual ? selector->second : function_ids_.at(key);
   const auto kind = ReflectKind(frontend::ReflectedMethodKind(source));
   const auto declaration = interface ? declarations_->selectors.at(key)
                                      : declarations_->functions.at(&source).declaration;
@@ -165,7 +167,7 @@ reflection::Member Lowerer::DescribeReflectionMethod(
   if (interface) {
     call_signature = DescribeCallSignature(*signature);
   } else {
-    const auto& native_signature = program_.functions.at(target).signature;
+    const auto& native_signature = program_.functions.at(function_ids_.at(key)).signature;
     if (!native_signature) {
       std::unreachable();
     }
@@ -177,7 +179,8 @@ reflection::Member Lowerer::DescribeReflectionMethod(
       .name = frontend::ReflectedMethodName(source),
       .kind = kind,
       .flags = MemberFlags(source.visibility, source.storage) |
-               (source.is_async ? reflection::kAsync : 0U),
+               (source.is_async ? reflection::kAsync : 0U) |
+               (is_virtual ? reflection::kVirtual : 0U),
       .target = target,
       .getter = {},
       .setter = {},
@@ -239,7 +242,7 @@ void Lowerer::DescribeReflectionClass(const frontend::Class& owner) {
             .declaring_type = type,
             .name = method.name,
             .kind = MemberKind::Property,
-            .flags = member.flags,
+            .flags = member.flags & ~reflection::kVirtual,
             .type = method.is_getter ? member.type : member.signature.parameters.front().type,
             .getter = {},
             .setter = {},

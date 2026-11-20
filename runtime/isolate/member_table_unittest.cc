@@ -19,7 +19,6 @@ TEST(MemberTableTest, CanonicalReceiverWinsAcrossNominalLayoutsAndMoves) {
   const ClassLayoutOptions options{
       .callable = {},
       .interfaces = {},
-      .dispatch_targets = {},
       .nominal = nominal,
       .field_declarations = {},
   };

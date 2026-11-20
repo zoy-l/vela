@@ -78,7 +78,6 @@ enum class ClassStorage : std::uint8_t { Inline, Reloadable, Host };
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
   std::vector<const InterfaceType*> interfaces;
-  std::vector<std::uint32_t> dispatch_targets;
   bool is_enum = false;
   bool is_metadata = false;
   bool reflection_identity = false;
@@ -113,9 +112,6 @@ class ClassLayout final {
   [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
     return nominal_->interfaces();
   }
-  [[nodiscard]] std::span<const std::uint32_t> dispatch_targets() const noexcept {
-    return dispatch_targets_;
-  }
   [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
   [[nodiscard]] bool IsEnum() const noexcept { return nominal_->IsEnum(); }
   [[nodiscard]] const TypeSignature* callable_type() const noexcept { return callable_type_; }
@@ -144,7 +140,6 @@ class ClassLayout final {
   bool reflection_identity_ = false;
   std::vector<DeclarationId> field_declarations_;
   absl::flat_hash_map<DeclarationId, std::uint32_t> field_indices_;
-  std::vector<std::uint32_t> dispatch_targets_;
   const TypeSignature* callable_type_ = nullptr;
   const CodeIdentity* code_identity_ = nullptr;
   // 版本布局由 GC 程序状态拥有；实例通过此边追踪其扫描描述的生命周期。

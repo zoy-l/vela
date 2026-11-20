@@ -239,15 +239,14 @@ TEST(NativeDispatchTest, UnpublishedAndClosedDispatchRejectAllLookupBoundaries) 
   NativeGlobalCache cache;
   EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::InvalidEntry);
   EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(dispatch.ResolveInterface(*nominal, kAnswer).error(), ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(dispatch.ResolveVirtual(*nominal, kAnswer).error(), ExecutionStatus::InvalidEntry);
   EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(), ExecutionStatus::InvalidEntry);
   EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),
             ExecutionStatus::InvalidEntry);
   dispatch.Close();
   EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::ExecutionStopped);
   EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(dispatch.ResolveInterface(*nominal, kAnswer).error(),
-            ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(dispatch.ResolveVirtual(*nominal, kAnswer).error(), ExecutionStatus::ExecutionStopped);
   EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(),
             ExecutionStatus::ExecutionStopped);
   EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),

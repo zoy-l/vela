@@ -64,7 +64,7 @@ enum class Opcode : std::uint8_t {
   Print,
   Call,
   CallIndirect,
-  CallInterface,
+  CallVirtual,
   GetGlobal,
   SetGlobal,
   IsType,

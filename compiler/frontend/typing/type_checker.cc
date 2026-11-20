@@ -86,7 +86,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   }
   while (true) {
     CheckPendingSpecializations();
-    DrainInterfaceBindings();
+    DrainMethodBindings();
     if (!DrainBoundChecks() && checked_functions_ == specializer.function_count() &&
         checked_classes_ == specializer.class_count() &&
         checked_methods_ == specializer.method_count()) {
@@ -1009,6 +1009,9 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
     if (!IsAssignable(*expression.operand)) {
       AddDiagnostic(expression.operand->location, "increment operand is not assignable");
     }
+    if (expression.operand->kind == Expression::Kind::Member) {
+      CheckMemberAssignment(*expression.operand);
+    }
   }
   if (expression.operation == TokenKind::Bang) {
     CheckBooleanOperand(*expression.operand, operand, "'!' requires a bool operand");
@@ -1398,8 +1401,10 @@ void TypeChecker::CheckMemberAssignment(const Expression& member) {
     const auto& methods = classes_.at(NonNullable(object->second).name).methods;
     const auto method = methods.find(member.text);
     if (method != methods.end()) {
-      if (method->second.is_setter) {
-        read_only = read_only || !method->second.setter_parameter_type.has_value();
+      const auto& signature = method->second;
+      if (signature.is_setter) {
+        CheckAccess(signature.setter_visibility, signature.setter_owner, member.location);
+        read_only = read_only || !signature.setter_parameter_type.has_value();
       } else {
         read_only = true;
       }

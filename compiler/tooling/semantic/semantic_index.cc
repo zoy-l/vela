@@ -15,6 +15,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/path.h"
 #include "base/source_location.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/builtins/standard_environment.h"
@@ -26,6 +27,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/frontend/typing/type_names.h"
+#include "compiler/project/project_config.h"
 #include "compiler/tooling/documentation/documentation.h"
 #include "compiler/tooling/semantic/semantic_syntax.h"
 #include "compiler/tooling/source_text.h"
@@ -152,14 +154,37 @@ std::string CompletionSource(const frontend::SourceSnapshot& snapshot, std::size
   return text;
 }
 
+namespace {
+
+frontend::ParseResult LoadSemanticProgram(std::string_view path,
+                                          frontend::ModuleCache& modules,
+                                          std::span<const frontend::SourceInput> overlays) {
+  const auto configuration = compiler::LoadSourceConfiguration(Utf8Path(path));
+  if (!configuration) {
+    return {
+        .program = {},
+        .diagnostics = {compiler::ConfigurationDiagnostic(configuration.error())},
+    };
+  }
+  modules.imports = configuration->imports;
+  return frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor);
+}
+
+frontend::ParseResult LoadSemanticProgram(std::string_view path,
+                                          std::span<const frontend::SourceInput> overlays) {
+  frontend::ModuleCache modules;
+  return LoadSemanticProgram(path, modules, overlays);
+}
+
+}  // namespace
+
 SemanticIndex::SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays)
-    : SemanticIndex(frontend::LoadProgram(path, overlays, frontend::SourceLoadMode::Editor)) {}
+    : SemanticIndex(LoadSemanticProgram(path, overlays)) {}
 
 SemanticIndex::SemanticIndex(std::string_view path,
                              frontend::ModuleCache& modules,
                              std::span<const frontend::SourceInput> overlays)
-    : SemanticIndex(
-          frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor)) {}
+    : SemanticIndex(LoadSemanticProgram(path, modules, overlays)) {}
 
 SemanticIndex::SemanticIndex(frontend::ParseResult loaded, frontend::DiagnosticOptions options)
     : program_(std::move(loaded.program)),

@@ -24,7 +24,6 @@ TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKe
                                            {
                                                .callable = {},
                                                .interfaces = {},
-                                               .dispatch_targets = {},
                                                .storage = ClassStorage::Reloadable,
                                                .field_declarations = {{1}, {2}},
                                            });
@@ -67,7 +66,6 @@ TEST(InstanceStorageTest,
                                              {
                                                  .callable = {},
                                                  .interfaces = {},
-                                                 .dispatch_targets = {},
                                                  .nominal = nominal,
                                                  .storage = ClassStorage::Reloadable,
                                                  .field_declarations = {{1}, {2}},
@@ -81,7 +79,6 @@ TEST(InstanceStorageTest,
                                                 {
                                                     .callable = {},
                                                     .interfaces = {},
-                                                    .dispatch_targets = {},
                                                     .nominal = nominal,
                                                     .storage = ClassStorage::Reloadable,
                                                     .field_declarations = {{1}, {}, {3}},
@@ -135,7 +132,6 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
                                              {
                                                  .callable = {},
                                                  .interfaces = {},
-                                                 .dispatch_targets = {},
                                                  .nominal = nominal,
                                                  .storage = ClassStorage::Reloadable,
                                                  .field_declarations = {{1}},
@@ -147,7 +143,6 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
                                                 {
                                                     .callable = {},
                                                     .interfaces = {},
-                                                    .dispatch_targets = {},
                                                     .nominal = nominal,
                                                     .storage = ClassStorage::Reloadable,
                                                     .field_declarations = {{1}, {2}},
@@ -173,7 +168,6 @@ TEST(InstanceStorageTest, MigrationToAShorterLayoutDropsRemovedFields) {
   ClassLayoutOptions options{
       .callable = {},
       .interfaces = {},
-      .dispatch_targets = {},
       .nominal = nominal,
       .storage = ClassStorage::Reloadable,
       .field_declarations = {{1}, {2}},
@@ -205,7 +199,6 @@ TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeCreationAndMiddleRem
                                            {
                                                .callable = {},
                                                .interfaces = {},
-                                               .dispatch_targets = {},
                                                .storage = ClassStorage::Reloadable,
                                                .field_declarations = {},
                                            });
@@ -219,7 +212,6 @@ TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeCreationAndMiddleRem
                                             {
                                                 .callable = {},
                                                 .interfaces = {},
-                                                .dispatch_targets = {},
                                                 .storage = ClassStorage::Reloadable,
                                                 .field_declarations = {},
                                             });

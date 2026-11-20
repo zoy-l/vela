@@ -53,7 +53,7 @@ std::uint32_t ParameterFlags(const Parameter& parameter) {
 
 std::optional<DeclarationId> BindingTarget(const ir::Program& program,
                                            const ir::Instruction& instruction) {
-  if (instruction.opcode == Opcode::CallInterface) {
+  if (instruction.opcode == Opcode::CallVirtual) {
     return program.selector_declarations.at(instruction.index);
   }
   std::optional<FunctionIdentity> function;
@@ -62,7 +62,7 @@ std::optional<DeclarationId> BindingTarget(const ir::Program& program,
   } else if (instruction.opcode == Opcode::NewInstance) {
     const auto& callable = program.classes.at(instruction.index).callable;
     if (callable) {
-      if (callable->mode == CallableMode::InterfaceMethod) {
+      if (callable->mode == CallableMode::VirtualMethod) {
         return program.selector_declarations.at(callable->function);
       }
       function = program.functions.at(callable->function).identity;
@@ -280,7 +280,7 @@ const runtime::NativeFunctionDependencies* NativeImageBuilder::Dependencies(
     }
     if (instruction.opcode == Opcode::NewInstance) {
       const auto callable = program_->classes.at(instruction.index).callable;
-      if (callable && callable->mode != CallableMode::InterfaceMethod &&
+      if (callable && callable->mode != CallableMode::VirtualMethod &&
           program_->functions.at(callable->function).identity.local != 0) {
         versions.push_back(callable->function);
         version_positions.push_back(position);

@@ -314,7 +314,7 @@ const reflection::Member* FunctionEmitter::BoundReflectedMember(
   const auto& receiver = source_.value_types[instruction.lhs + 2];
   const auto& owner = program_.runtime_types[member.declaring_type];
   if (member.kind != (field ? reflection::MemberKind::Field : reflection::MemberKind::Method) ||
-      (member.flags & (reflection::kPrivate | reflection::kStatic)) != 0 ||
+      (member.flags & (reflection::kPrivate | reflection::kStatic | reflection::kVirtual)) != 0 ||
       member.target == kInvalidFunctionTarget || owner.kind != Kind::Class ||
       receiver.kind != Kind::Class || receiver.nullable || receiver.name != owner.name) {
     return nullptr;
@@ -489,7 +489,8 @@ llvm::Value* FunctionEmitter::EmitReflectedCallTarget(const ir::Instruction& ins
     std::size_t instructions = 0;
     for (const auto& member : program_.reflection_members) {
       if (member.kind != reflection::MemberKind::Method ||
-          (member.flags & reflection::kStatic) != 0 || member.target == kInvalidFunctionTarget) {
+          (member.flags & (reflection::kStatic | reflection::kVirtual)) != 0 ||
+          member.target == kInvalidFunctionTarget) {
         continue;
       }
       const auto& owner = program_.runtime_types[member.declaring_type];

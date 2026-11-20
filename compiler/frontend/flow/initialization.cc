@@ -87,6 +87,9 @@ class Initialization final {
     std::size_t control_depth = 0;
   };
   void RequireComplete(const Initialized& initialized, SourceLocation location);
+  void RequireOwnFields(const Initialized& initialized,
+                        SourceLocation location,
+                        std::string_view operation);
   void Error(SourceLocation location, std::string message);
   void Walk(const Expression* expression, Initialized& initialized);
   void WalkSuper(const Expression& expression, Initialized& initialized);
@@ -115,10 +118,16 @@ void Initialization::RequireComplete(const Initialized& initialized, SourceLocat
   if (owner_.base_class && initialized.base != Initialized::Base::Complete) {
     Error(location, "derived constructor must call super(...) before this escapes or returns");
   }
+  RequireOwnFields(initialized, location, "this escapes or the constructor returns");
+}
+
+void Initialization::RequireOwnFields(const Initialized& initialized,
+                                      SourceLocation location,
+                                      std::string_view operation) {
   for (const auto& [field, index] : instance_fields_) {
     if (!initialized.Has(index)) {
-      Error(location, "field '" + field->name +
-                          "' must be initialized before this escapes or the constructor returns");
+      Error(location,
+            "field '" + field->name + "' must be initialized before " + std::string(operation));
     }
   }
 }
@@ -130,6 +139,7 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
   if (initialized.base != Initialized::Base::Pending) {
     Error(expression.location, "super(...) must be called exactly once on each constructor path");
   }
+  RequireOwnFields(initialized, expression.location, "super(...)");
   MarkBaseComplete(initialized);
 }
 
@@ -405,9 +415,6 @@ Diagnostics Initialization::Run() {
     field_indices_.emplace(fields.at(index), index);
   }
   initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
-  if (facts_.base != nullptr && !facts_.has_explicit_super_call) {
-    MarkBaseComplete(initialized);
-  }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
       const auto index = field_indices_.at(field.name);
@@ -416,6 +423,10 @@ Diagnostics Initialization::Run() {
         initialized.Insert(index);
       }
     }
+  }
+  if (facts_.base != nullptr && !facts_.has_explicit_super_call) {
+    RequireOwnFields(initialized, owner_.location, "implicit super()");
+    MarkBaseComplete(initialized);
   }
   if (owner_.constructor) {
     const auto exits = Walk(*owner_.constructor->body, std::move(initialized));

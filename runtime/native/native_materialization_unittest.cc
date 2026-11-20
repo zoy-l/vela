@@ -34,7 +34,6 @@ TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndR
                                            {
                                                .callable = {},
                                                .interfaces = {},
-                                               .dispatch_targets = {},
                                                .storage = ClassStorage::Reloadable,
                                                .field_declarations = {{1}, {2}, {3}, {4}},
                                            });

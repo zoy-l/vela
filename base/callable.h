@@ -11,7 +11,7 @@
 
 namespace vela {
 
-enum class CallableMode : std::uint8_t { Plain, Closure, BoundMethod, InterfaceMethod };
+enum class CallableMode : std::uint8_t { Plain, Closure, BoundMethod, VirtualMethod };
 
 inline constexpr std::uint32_t kInvalidFunctionTarget = std::numeric_limits<std::uint32_t>::max();
 

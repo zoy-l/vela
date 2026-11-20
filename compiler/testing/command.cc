@@ -190,7 +190,8 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
                          const TestCommandOptions& command,
                          std::uint64_t identity,
                          SessionReporter& reporter,
-                         std::unique_ptr<compiler::jit::Compiler>& compiler) {
+                         std::unique_ptr<compiler::jit::Compiler>& compiler,
+                         const SuiteHostFactory& create_host) {
   SuiteResult result;
   const auto file = PathText(path.lexically_proximate(configuration.root));
   ReportEvent event(ReportEventType::Suite, identity);
@@ -226,6 +227,7 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   }
   compiler::jit::SourceOptions compilation;
   compilation.diagnostics = configuration.diagnostics;
+  compilation.imports = configuration.imports;
   compilation.compilation.code_cache = configuration.root / ".cache/vela/native/test";
   const auto source_path = PathText(path);
   const auto compiled = compiler::jit::CompileFile(*compiler, source_path, compilation);
@@ -275,6 +277,23 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
                    },
                    1);
     return result;
+  }
+  std::unique_ptr<SuiteHost> host;
+  if (create_host) {
+    auto created = create_host(isolate);
+    if (!created) {
+      PublishFailure(reporter, result, identity, file,
+                     {
+                         .phase = TestPhase::Registration,
+                         .category = "HostSetupError",
+                         .message = created.error(),
+                         .trace = {},
+                         .difference = std::nullopt,
+                     },
+                     kRuntimeErrorExitCode);
+      return result;
+    }
+    host = std::move(*created);
   }
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   if (!instance) {
@@ -368,7 +387,9 @@ int RunDirectSuite(runtime::NativeInstance& instance,
   return Complete(std::span(&result, 1), reporter, RunMode::Execute);
 }
 
-int TestCommand(std::span<const std::string_view> arguments, CommandStreams streams) {
+int TestCommand(std::span<const std::string_view> arguments,
+                CommandStreams streams,
+                const SuiteHostFactory& create_host) {
   auto& output = streams.output.get();
   auto& errors = streams.errors.get();
   auto command = ParseTestCommandOptions(arguments);
@@ -426,7 +447,7 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
           return;
         }
         results.at(index) = CompileSuite(paths->at(index), *configuration, settings, *command,
-                                         index + 1, reporter, compiler);
+                                         index + 1, reporter, compiler, create_host);
       }
     });
   }

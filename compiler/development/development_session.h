@@ -17,6 +17,7 @@
 #include "base/execution_status.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
@@ -120,6 +121,7 @@ class DevelopmentCandidate final {
 
 struct DevelopmentOptions final {
   frontend::DiagnosticOptions diagnostics;
+  frontend::ModulePaths imports;
   std::vector<frontend::ReflectionSelection> reflection;
   std::size_t gc_threshold = runtime::kDefaultGcThreshold;
   std::string entry = "main";

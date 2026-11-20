@@ -3,6 +3,7 @@
 #include <expected>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -60,12 +61,12 @@ void PrintUsage(std::ostream& output) {
       << "Commands:\n"
       << "  --help       Show this message\n"
       << "  --version    Show the compiler version\n"
-      << "  check FILE   Parse and statically check a Vela source file\n"
+      << "  check FILE [--config=FILE]   Parse and statically check a Vela source file\n"
       << "  run FILE     Compile native code with a local cache and run main\n"
       << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
       << "  mock API_FILE --interface NAME -o OUTPUT [--check]   Generate interface mocks\n"
       << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
-      << "  build FILE [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
+      << "  build FILE [--config=FILE] [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
       << "  build --verify-manifest=FILE   Verify a native library and its header\n"
       << "  fmt [--write|--check] FILE   Format Vela source\n"
       << "  doc FILE OUTPUT   Generate exported API Markdown\n"
@@ -79,14 +80,18 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   vela::frontend::WriteDiagnostics(std::cerr, diagnostics, path);
 }
 
-int CheckFile(std::string_view path_text) {
+int CheckFile(std::string_view path_text,
+              const std::optional<std::filesystem::path>& config = std::nullopt) {
   const std::string path(path_text);
-  const auto options = vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr);
+  const auto options =
+      vela::compiler::ReadSourceConfiguration(vela::Utf8Path(path), std::cerr, config);
   if (!options) {
     return options.error().exit_code;
   }
-  const vela::frontend::CheckResult result =
-      vela::frontend::CheckFile(path, {}, options->diagnostics);
+  const vela::frontend::CheckResult result = vela::frontend::CheckParsed(
+      vela::frontend::LoadProgram(path, {}, vela::frontend::SourceLoadMode::Compilation, {},
+                                  options->imports),
+      options->diagnostics);
   PrintDiagnostics(path, result.diagnostics);
   if (!result.Succeeded()) {
     return kSourceErrorExitCode;
@@ -110,6 +115,7 @@ int RunFile(std::string_view path, ExecutionMode mode) {
   }
   vela::compiler::jit::SourceOptions options;
   options.diagnostics = configuration->diagnostics;
+  options.imports = configuration->imports;
   options.compilation.code_cache = ".cache/vela/native/run";
   if (mode == ExecutionMode::Debug) {
     options.compilation.debugging = vela::compiler::native::NativeDebugging::Instructions;
@@ -165,7 +171,8 @@ int DocumentFile(std::string_view path, const std::filesystem::path& output) {
   if (!options) {
     return options.error().exit_code;
   }
-  const auto documentation = vela::tooling::GenerateDocumentation(path, options->diagnostics);
+  const auto documentation =
+      vela::tooling::GenerateDocumentation(path, options->diagnostics, options->imports);
   PrintDiagnostics(path, documentation.diagnostics);
   if (!documentation.Succeeded()) {
     return kSourceErrorExitCode;
@@ -212,8 +219,10 @@ int HostHeaderCommand(std::span<char*> arguments) {
   if (!options) {
     return options.error().exit_code;
   }
-  const auto prepared =
-      vela::ir::PrepareParsed(vela::frontend::LoadProgram(path), options->diagnostics);
+  const auto prepared = vela::ir::PrepareParsed(
+      vela::frontend::LoadProgram(path, {}, vela::frontend::SourceLoadMode::Compilation, {},
+                                  options->imports),
+      options->diagnostics);
   PrintDiagnostics(path, prepared.diagnostics);
   if (!prepared.Succeeded()) {
     return kSourceErrorExitCode;
@@ -258,6 +267,12 @@ int ReplCommand(std::span<char*> arguments) {
 }
 
 int CheckCommand(std::span<char*> arguments) {
+  if (arguments.size() == 2 && std::string_view(arguments[1]).starts_with("--config=")) {
+    return CheckFile(
+        arguments.front(),
+        vela::Utf8Path(
+            std::string_view(arguments[1]).substr(std::string_view("--config=").size())));
+  }
   if (arguments.size() != 1) {
     std::cerr << "vela: check requires exactly one source file\n";
     PrintUsage(std::cerr);

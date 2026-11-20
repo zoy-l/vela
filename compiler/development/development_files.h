@@ -30,7 +30,7 @@ namespace vela::compiler {
 // 显式 reset 的捕获与编译线程的轮询共享同一事务锁。
 class DevelopmentFiles final {
  public:
-  explicit DevelopmentFiles(std::string entry);
+  explicit DevelopmentFiles(std::string entry, frontend::ModulePaths imports = {});
   [[nodiscard]] std::expected<SourceUpdate, frontend::Diagnostics> Capture(
       const CompiledSourceSnapshot& previous);
   [[nodiscard]] std::expected<void, frontend::Diagnostics> StartWatching();

@@ -39,6 +39,7 @@ source_set("runtime") {
   include_dirs = [ root_gen_dir ]
   public_deps = [
     "//base",
+    "//include:bindings",
     "//third_party:abseil",
   ]
   sources = [
@@ -49,9 +50,11 @@ source_set("runtime") {
     "//include/vela/error.h",
     "//include/vela/handles.h",
     "//include/vela/host.h",
+    "//include/vela/native_values.h",
     "//include/vela/objects.h",
     "//include/vela/reflection.h",
     "//include/vela/regexp.h",
+    "//include/vela/runtime.h",
     "//include/vela/strings.h",
     "//include/vela/type.h",
     "//include/vela/types.h",
@@ -249,7 +252,6 @@ source_set("runtime") {
     "strings/string.h",
     "strings/unicode_operations.cc",
     "strings/unicode_operations.h",
-    "value/callable.cc",
     "value/callable.h",
     "value/host_object.cc",
     "value/host_object.h",

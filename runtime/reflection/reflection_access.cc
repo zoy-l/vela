@@ -10,6 +10,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/callable.h"
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/reflection.h"
@@ -27,7 +28,6 @@
 #include "runtime/native/native_program_state.h"
 #include "runtime/reflection/reflection_handle.h"
 #include "runtime/reflection/reflection_index.h"
-#include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
@@ -74,17 +74,13 @@ std::expected<std::uint32_t, ExecutionStatus> CallableTarget(NativeExecution& ex
                                                              const NativeReflectionMember& member,
                                                              Value receiver) {
   const auto& instance = execution.instance();
-  const auto owner = instance.program().reflection->TypeAt(member.declaring_type);
-  if (owner.constraint.interface == nullptr) {
+  if ((member.flags & reflection::kVirtual) == 0) {
     return member.target;
   }
-  const auto& layout = *Heap::ClassOf(*receiver.AsObject());
-  if (const auto* dispatch = instance.dispatch()) {
-    const auto resolved = dispatch->ResolveInterface(layout.nominal_type(), member.declaration);
-    return resolved ? std::expected<std::uint32_t, ExecutionStatus>(resolved->function)
-                    : std::unexpected(resolved.error());
-  }
-  return ResolveInterfaceTarget(member.target, receiver, instance.image().functions.size);
+  const auto resolved = ResolveNativeMethod(
+      instance, {.function = member.target, .mode = CallableMode::VirtualMethod}, receiver);
+  return resolved ? std::expected<std::uint32_t, ExecutionStatus>(resolved->target.function)
+                  : std::unexpected(resolved.error());
 }
 
 enum class ReflectedAccess : std::uint8_t { Value, Callable };

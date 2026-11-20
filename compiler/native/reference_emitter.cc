@@ -151,7 +151,9 @@ void FunctionEmitter::PackArguments(ir::RegisterId first,
 
 void FunctionEmitter::CompleteCall(llvm::Value* status, ir::RegisterId result) {
   CheckStatus(status);
-  Unpack(result);
+  if (source_.value_types.at(result).kind != Kind::Void) {
+    Unpack(result);
+  }
 }
 
 void FunctionEmitter::StoreRoots(std::size_t index) {
@@ -633,14 +635,14 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
           helper, {context, callable, arguments_, builder_.getInt64(count), result_});
       break;
     }
-    case Opcode::CallInterface: {
+    case Opcode::CallVirtual: {
       const auto count = static_cast<std::size_t>(instruction.immediate);
       PackArguments(instruction.lhs, count);
       if (program_.native_mode == NativeProgramMode::Reloadable) {
         const auto selector = program_.selector_declarations.at(instruction.index);
-        auto helper = module_.getOrInsertFunction(runtime::kNativeCallInterfaceV3Symbol,
-                                                  status_type, pointer, builder_.getInt64Ty(),
-                                                  pointer, builder_.getInt64Ty(), pointer);
+        auto helper = module_.getOrInsertFunction(runtime::kNativeCallVirtualV3Symbol, status_type,
+                                                  pointer, builder_.getInt64Ty(), pointer,
+                                                  builder_.getInt64Ty(), pointer);
         status = builder_.CreateCall(helper, {
                                                  context,
                                                  builder_.getInt64(selector.value),
@@ -651,7 +653,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
         break;
       }
       auto helper =
-          module_.getOrInsertFunction(runtime::kNativeCallInterfaceV1Symbol, status_type, pointer,
+          module_.getOrInsertFunction(runtime::kNativeCallVirtualV1Symbol, status_type, pointer,
                                       word, pointer, builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(helper,
                                    {context, index, arguments_, builder_.getInt64(count), result_});

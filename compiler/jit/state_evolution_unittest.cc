@@ -167,6 +167,91 @@ TEST_P(JitStateTest, ParentExpansionAndReorderingKeepIdentitySlotsAndOldReaders)
   EXPECT_EQ(Entry("read").Invoke(arguments)->AsInteger(), 49);
 }
 
+TEST_P(JitStateTest, ClassCallsFollowAddedAndRemovedOverridesWhileMethodValuesKeepVersions) {
+  const std::string base =
+      "class Base { read(): int { return 40; } "
+      "forward(): int { return this.read(); } } ";
+  const std::string entries =
+      "export func make(): Base { return Child(); } "
+      "export func call(value: Base): int { return value.forward(); } "
+      "export func bind(value: Base): () => int { return value.read; } "
+      "export func invoke(callback: () => int): int { return callback(); } ";
+  auto update = Update(base + "class Child extends Base {} " + entries);
+  ASSERT_TRUE(update) << update.error();
+  const auto receiver = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(receiver);
+  const std::array arguments{receiver->value()};
+  const auto old_call = Entry("call").Capture();
+  ASSERT_TRUE(old_call);
+  const auto old_bound = runtime::HostRoot::Create(isolate_, *Entry("bind").Invoke(arguments));
+  ASSERT_TRUE(old_bound);
+  update =
+      Update(base + "class Child extends Base { override read(): int { return 42; } } " + entries);
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(old_call->Invoke(arguments)->AsInteger(), 42);
+  EXPECT_EQ(Entry("call").Invoke(arguments)->AsInteger(), 42);
+  const std::array old_callback{old_bound->value()};
+  EXPECT_EQ(Entry("invoke").Invoke(old_callback)->AsInteger(), 40);
+  const auto new_bound = runtime::HostRoot::Create(isolate_, *Entry("bind").Invoke(arguments));
+  ASSERT_TRUE(new_bound);
+  update = Update(base + "class Child extends Base {} " + entries);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(old_call->Invoke(arguments)->AsInteger(), 40);
+  const std::array new_callback{new_bound->value()};
+  EXPECT_EQ(Entry("invoke").Invoke(new_callback)->AsInteger(), 42);
+}
+
+TEST_P(JitStateTest, RetainedClassSelectorsRestoreGenericOverrideSpecializations) {
+  const std::string entries =
+      "export func make(): Base<int> { return Child<int>(); } "
+      "export func call(value: Base<int>): int { "
+      "const bound: (string) => int = value.read; return value.read<int>(0) + bound(''); } ";
+  auto update = Update(
+      "class Base<T> { read<U>(value: U): int { return 0; } } "
+      "class Child<T> extends Base<T> { override read<V>(value: V): int { return 21; } } " +
+      entries);
+  ASSERT_TRUE(update) << update.error();
+  const auto receiver = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(receiver);
+  const std::array arguments{receiver->value()};
+  const auto old_call = Entry("call").Capture();
+  ASSERT_TRUE(old_call);
+  EXPECT_EQ(old_call->Invoke(arguments)->AsInteger(), 42);
+  update = Update(
+      "class Base<A> { read<B>(value: B): int { return 0; } } "
+      "class Child<C> extends Base<C> { override read<D>(value: D): int { return 22; } } "
+      "export func make(): Base<int> { return Child<int>(); }");
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(old_call->Invoke(arguments)->AsInteger(), 44);
+}
+
+TEST_P(JitStateTest, SuspendedVirtualMethodsKeepTheirSelectedImplementationVersion) {
+  const std::string prefix =
+      "const gate = Completer<int>(); "
+      "class Base { async read(): Future<int> { await gate.future; return 0; } } ";
+  const std::string entries =
+      "export func start(): Future<int> { const value: Base = Child(); return value.read(); } "
+      "export func release(): void { gate.complete(0); } ";
+  auto update = Update(prefix +
+                       "class Child extends Base { override async read(): Future<int> { "
+                       "await gate.future; return 40; } } " +
+                       entries);
+  ASSERT_TRUE(update) << update.error();
+  const auto pending = runtime::HostRoot::Create(isolate_, *Entry("start").Invoke({}));
+  ASSERT_TRUE(pending);
+  update = Update(prefix +
+                  "class Child extends Base { override async read(): Future<int> { "
+                  "await gate.future; return 42; } } " +
+                  entries);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  ASSERT_TRUE(Entry("release").Invoke({}));
+  EXPECT_TRUE(test::CompletesWithInteger(isolate_, pending->value(), 40));
+  EXPECT_TRUE(test::CompletesWithInteger(isolate_, *Entry("start").Invoke({}), 42));
+}
+
 TEST_P(JitStateTest, NewFieldsAreLazyPerObjectAndFirstWritesSkipTheirDefaults) {
   const std::string common =
       "let calls = 0; func initial(): int { calls++; return 7; } "
@@ -640,7 +725,6 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
       {
           .callable = {},
           .interfaces = {},
-          .dispatch_targets = {},
           .nominal = nominal,
           .storage = runtime::ClassStorage::Reloadable,
           .field_declarations = {original->field_declarations().front(), {}},
@@ -742,22 +826,23 @@ TEST_P(JitStateTest, RetainedCallsRejectInstanceToStaticBindingChanges) {
   ASSERT_TRUE(update) << update.error();
 }
 
-TEST_P(JitStateTest, AddingAnOverrideRejectsRetainedCallsThatWouldChangeTheirStaticTarget) {
+TEST_P(JitStateTest, AddingAnOverrideUpdatesRetainedCallsWithADerivedStaticReceiver) {
   const std::string common = "class Base { read(): int { return 42; } } ";
   auto update = Update(common +
                        "class Child extends Base {} "
+                       "export func make(): Child { return Child(); } "
                        "export func call(value: Child): int { return value.read(); }");
   ASSERT_TRUE(update) << update.error();
   std::optional<runtime::NativeVersionEntry> caller = *Entry("call").Capture();
+  const auto receiver = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
+  ASSERT_TRUE(receiver);
+  const std::array arguments{receiver->value()};
   const std::string changed = common +
                               "class Child extends Base { override read(): int { return 100; } } "
                               "export func call(value: Child): int { return value.read(); }";
   update = Update(changed);
-  ASSERT_FALSE(update);
-  EXPECT_NE(update.error().find("another declaration"), std::string::npos);
-  caller.reset();
-  update = Update(changed);
   ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(caller->Invoke(arguments)->AsInteger(), 100);
 }
 
 TEST_P(JitStateTest, SuperDependenciesUseTheLexicalParentIncludingItsInheritedMethods) {

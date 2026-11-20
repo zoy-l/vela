@@ -148,7 +148,7 @@ void CompilationTime(benchmark::State& state, Compilation mode) {
     runtime::Isolate isolate;
     const auto populated = compiler::jit::CompileFile(
         **compiler, path,
-        {.diagnostics = {}, .compilation = {.code_cache = cache}, .reflection = {}});
+        {.diagnostics = {}, .compilation = {.code_cache = cache}, .reflection = {}, .imports = {}});
     if (!populated.Succeeded()) {
       state.SkipWithError(frontend::DiagnosticsText(populated.diagnostics));
       return;

@@ -120,7 +120,16 @@ void DeclarationIds::FinishUpdate() {
     if (record.seen == update_) {
       continue;
     }
-    auto retained = is_active(record.definition) && is_active(record.key.owner);
+    const auto owner = record.key.owner;
+    const auto owner_active = is_active(owner);
+    // 方法选择器随所属成员保留；不可达泛型应用无需重新生成方法体或派发表。
+    bool method_selector = false;
+    if (record.key.kind == DeclarationKind::Selector && owner_active) {
+      const auto kind = records_.at(static_cast<std::size_t>(owner.value)).key.kind;
+      method_selector = kind == DeclarationKind::Method || kind == DeclarationKind::Getter ||
+                        kind == DeclarationKind::Setter;
+    }
+    auto retained = owner_active && (method_selector || is_active(record.definition));
     for (const auto& argument : record.key.arguments) {
       retained = retained && has_active_arguments(has_active_arguments, argument);
     }

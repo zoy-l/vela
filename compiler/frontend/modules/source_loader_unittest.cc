@@ -16,6 +16,29 @@ namespace {
 
 class SourceCaptureTest : public vela::test::DirectoryTest {};
 
+TEST_F(SourceCaptureTest, ExplicitImportsResolveIdenticallyInDiskAndCapturedMemoryGraphs) {
+  ASSERT_NO_FATAL_FAILURE(Write("main.vela", "import 'ui'; export func read(): int { return answer(); }"));
+  ASSERT_NO_FATAL_FAILURE(Write("generated.vela", "export func answer(): int { return 42; }"));
+  const auto entry = PathText(directory() / "main.vela");
+  const auto dependency = PathText(directory() / "generated.vela");
+  const ModulePaths imports{{"ui", dependency}};
+  const auto disk = LoadProgram(entry, {}, SourceLoadMode::Compilation, {}, imports);
+  ASSERT_FALSE(HasErrors(disk.diagnostics)) << DiagnosticsText(disk.diagnostics);
+  ModuleCache cache;
+  cache.imports = imports;
+  const std::array roots{entry};
+  const auto captured = CaptureSourceFiles(roots, cache, {});
+  ASSERT_TRUE(captured.diagnostics.empty()) << DiagnosticsText(captured.diagnostics);
+  ASSERT_EQ(captured.sources.size(), 2U);
+  const std::array memory{
+      SourceInput{.path = entry, .text = captured.sources[0].text},
+      SourceInput{.path = dependency, .text = captured.sources[1].text},
+  };
+  const auto loaded = LoadSources(memory, entry, {}, imports);
+  EXPECT_FALSE(HasErrors(loaded.diagnostics)) << DiagnosticsText(loaded.diagnostics);
+  EXPECT_EQ(ResolveImportPath(directory() / "nested/main.vela", "ui", imports), directory() / "generated.vela");
+}
+
 TEST_F(SourceCaptureTest, AcceptedGeneratedDependenciesRetainTheirVerifiedSnapshot) {
   ASSERT_NO_FATAL_FAILURE(Write("main.vela", "import 'generated.vela';\n"));
   const auto entry = PathText(directory() / "main.vela");

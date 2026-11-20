@@ -77,6 +77,9 @@ struct NativeResolvedCallable final {
   const NativeFunctionDescription* function = nullptr;
 };
 
+[[nodiscard]] std::expected<NativeResolvedCallable, ExecutionStatus>
+ResolveNativeMethod(const NativeInstance& caller, CallableTarget method, Value receiver);
+
 [[nodiscard]] std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
     const NativeInstance& caller,
     Value callable);
@@ -148,20 +151,20 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
                                                      NativeValue* arguments,
                                                      std::uint64_t count,
                                                      NativeValue* result);
-extern "C" std::uint8_t vela_native_v1_call_interface(NativeExecution* execution,
-                                                      std::uint32_t selector,
-                                                      const NativeValue* arguments,
-                                                      std::uint64_t count,
-                                                      NativeValue* result);
+extern "C" std::uint8_t vela_native_v1_call_virtual(NativeExecution* execution,
+                                                    std::uint32_t selector,
+                                                    const NativeValue* arguments,
+                                                    std::uint64_t count,
+                                                    NativeValue* result);
 extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* execution,
                                                         std::uint64_t declaration,
                                                         const NativeValue* arguments,
                                                         std::uint64_t count,
                                                         NativeValue* result);
-extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution,
-                                                      std::uint64_t selector,
-                                                      const NativeValue* arguments,
-                                                      std::uint64_t count,
-                                                      NativeValue* result);
+extern "C" std::uint8_t vela_native_v3_call_virtual(NativeExecution* execution,
+                                                    std::uint64_t selector,
+                                                    const NativeValue* arguments,
+                                                    std::uint64_t count,
+                                                    NativeValue* result);
 
 }  // namespace vela::runtime

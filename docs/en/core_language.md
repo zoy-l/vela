@@ -196,9 +196,29 @@ func interfaceDemo(): void {
 
 `implements` must be declared; matching method names alone do not implement an
 interface. Signatures must agree without numeric conversion. Using an object
-as an interface preserves its identity and numeric representation. Concrete
-calls remain statically resolved; interface calls need runtime dispatch.
-Method values bind their receiver.
+as an interface preserves its identity and numeric representation. Ordinary public
+instance methods dispatch to the most specific implementation for the actual receiver,
+whether the receiver's static type is a class or an interface. The static type controls
+member visibility and signature checking. Calls through `this` inside a base method,
+generic instance methods, and explicit getters/setters follow the same rule. Overrides
+require `override` and must preserve the signature contract. `super.method()` explicitly
+selects an implementation along the lexical parent chain while retaining the current
+receiver. Private methods, static methods, constructors, and top-level functions do not
+participate in instance virtual dispatch. An `is` test refines static type information
+without changing dispatch. Extracted method values bind their receiver and the
+implementation selected when the value is created.
+
+```typescript
+class Component {
+  build(): int { return 0; }
+  render(): int { return this.build(); }
+}
+class Button extends Component {
+  override build(): int { return 42; }
+}
+func renderComponent(value: Component): int { return value.render(); }
+// renderComponent(Button()) returns 42: the base method calls Button.build().
+```
 
 ## Normal enums and exhaustive match expressions
 
@@ -368,6 +388,13 @@ the derived constructor may omit `super()`. The base constructor then runs
 implicitly before the derived constructor body. Omitting `super(...)` when the
 base has a required parameter is a compile-time error.
 
+A derived class must initialize its own instance fields before entering the base
+constructor, because a virtual call from that constructor can select a derived
+implementation. Field defaults and generated constructor arguments initialize those
+fields before this boundary. An explicit constructor must assign its own fields before
+calling `super(...)`; fields initialized in its body therefore require an explicit
+`super(...)` call after those assignments.
+
 ## Static members
 
 ```typescript
@@ -525,10 +552,11 @@ frames and physical-stack protection. Call-depth or stack exhaustion reports
 `StackOverflow`; ordinary caught/returned errors allow another call.
 Mutable captures use shared GC cells, constant captures use values, and method
 values keep their receiver alive. Bound functions and closures currently
-allocate GC objects. Interface calls use precomputed selector tables;
-concrete calls remain direct. Selectors are assigned only to referenced interface
-methods, in source order. Building class metadata visits each class's declared
-implementations rather than scanning all interfaces for every class.
+allocate GC objects. Class and interface virtual calls share precomputed selector
+tables. Selector identities distinguish declaring members and getter/setter kinds;
+each receiver type maps them to its implementations. Closed AOT retains implementations
+needed by reachable selectors and receivers. A proven unique target or exact receiver
+type allows a direct-call optimization without changing polymorphic behavior.
 
 Program metadata is validated at compilation/loading, then shared immutably.
 Layout tables are shared across functions. The owning Isolate must outlive

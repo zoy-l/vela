@@ -187,14 +187,16 @@ TEST(ControlFlowTest, IntersectsConstructorFieldsAcrossBitmapWords) {
         source += "this.field" + std::to_string(field) + " = 42;";
       }
     }
-    source += "} } }";
+    source += "} super(); } }";
     const auto checked = CheckTestSource(source);
     if (omitted < 0) {
       EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
     } else {
-      ASSERT_EQ(checked.diagnostics.size(), 1U);
-      EXPECT_TRUE(checked.diagnostics.front().message.contains(
-          "field 'field" + std::to_string(omitted) + "' must be initialized"));
+      ASSERT_EQ(checked.diagnostics.size(), 2U);
+      for (const auto& diagnostic : checked.diagnostics) {
+        EXPECT_TRUE(diagnostic.message.contains("field 'field" + std::to_string(omitted) +
+                                                "' must be initialized"));
+      }
     }
   }
 }

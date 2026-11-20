@@ -40,8 +40,8 @@ class NativeStorageTest : public testing::TestWithParam<NativeCodeTier> {};
 TEST_P(NativeStorageTest, IsolatesScalarCallResultsWhilePreservingGcAndFailurePrefixes) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled =
-      CompileSource(**compiler, R"(
+  const auto compiled = CompileSource(
+      **compiler, R"(
 external func text(): string;
 func increment(value: int): int { return value + 1; }
 func flip(value: bool): bool { return !value; }
@@ -65,7 +65,7 @@ export func prefix(initial: int): int {
 }
 export func fail(): int { return increment(9223372036854775807); }
 )",
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&CollectText>("text")));
@@ -107,9 +107,9 @@ TEST_P(NativeStorageTest, IsolatesScalarResultsInFramesWithExternalStorage) {
       "return combined.length + count + retained.length; }";
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled =
-      CompileSource(**compiler, source,
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+  const auto compiled = CompileSource(
+      **compiler, source,
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   EXPECT_TRUE(std::ranges::any_of(compiled.code.function_metrics, [](const auto& metrics) {
     return metrics.frame_bytes > native::kMaximumNativeStackBytes;
@@ -131,8 +131,8 @@ TEST_P(NativeStorageTest, IsolatesScalarResultsInFramesWithExternalStorage) {
 TEST_P(NativeStorageTest, WordRotationsRetainWideInputsShiftCountsAndCheckedFailures) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled =
-      CompileSource(**compiler, R"(
+  const auto compiled = CompileSource(
+      **compiler, R"(
 func rotate(value: int, bits: int): int {
   return ((value >>> bits) | (value << (32 - bits))) & 4294967295;
 }
@@ -145,7 +145,7 @@ export func iterate(seed: int, count: int): int {
 }
 export func checked(value: int): int { return rotate((value + 1) & 4294967295, 7); }
 )",
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
@@ -219,8 +219,8 @@ export func checked(value: int): int { return rotate((value + 1) & 4294967295, 7
 TEST_P(NativeStorageTest, ParallelFieldUpdatesRetainAliasingAndStrictFloatingPointResults) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled =
-      CompileSource(**compiler, R"(
+  const auto compiled = CompileSource(
+      **compiler, R"(
 class Particle { x: double; y: double; z: double; vx: double; vy: double; vz: double; }
 func update(points: Particle[]): void {
   for (const point in points) {
@@ -240,7 +240,7 @@ export func run(): double {
   return Math.isNaN(edge.y) && Math.isNaN(edge.z) ? edge.x : 1.0;
 }
 )",
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
@@ -258,8 +258,8 @@ export func run(): double {
 TEST_P(NativeStorageTest, FieldUpdatesKeepHostVisibleKindsAndGcReferencesAfterConstruction) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);
-  const auto compiled =
-      CompileSource(**compiler, R"(
+  const auto compiled = CompileSource(
+      **compiler, R"(
 external func text(): string;
 class Fields {
   scalar: double;
@@ -280,7 +280,7 @@ export func run(): Fields {
   const fields = Fields(1.0); fields.update(); text(); return fields;
 }
 )",
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&CollectText>("text")));

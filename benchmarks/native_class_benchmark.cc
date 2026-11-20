@@ -215,7 +215,8 @@ const Prepared& Prepare(Mode mode) {
     const auto options = CompileOptions(mode);
     if (mode == Mode::Baseline || mode == Mode::Optimized) {
       auto compiled = compiler::jit::CompileFile(
-          **compiler, kWorkloadPath, {.diagnostics = {}, .compilation = options, .reflection = {}});
+          **compiler, kWorkloadPath,
+          {.diagnostics = {}, .compilation = options, .reflection = {}, .imports = {}});
       if (compiled.Succeeded()) {
         if (const auto saved = SaveInspection(compiled.code, options); !saved) {
           result.error = saved.error();

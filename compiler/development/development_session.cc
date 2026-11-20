@@ -158,7 +158,10 @@ DevelopmentSession::DevelopmentSession(std::string entry,
       bindings_(std::move(bindings)),
       options_(std::move(options)),
       compiler_(std::move(compiler)),
-      sources_(std::make_shared<SourceSession>(entry_, options_.diagnostics, options_.reflection)),
+      sources_(std::make_shared<SourceSession>(entry_,
+                                               options_.diagnostics,
+                                               options_.reflection,
+                                               options_.imports)),
       isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold)),
       endpoint_(isolate_->native_control().endpoint()) {
   isolate_->native_control().SetDebugger(options_.debugger);
@@ -238,8 +241,8 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   const auto started = Clock::now();
   std::unique_ptr<SourceSession> replacement;
   if (operation == DevelopmentOperation::Reload) {
-    replacement =
-        std::make_unique<SourceSession>(entry_, options_.diagnostics, options_.reflection);
+    replacement = std::make_unique<SourceSession>(entry_, options_.diagnostics, options_.reflection,
+                                                  options_.imports);
   }
   auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update))
                             : base.sources->Prepare(update, retained);

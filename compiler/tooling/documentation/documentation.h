@@ -6,6 +6,7 @@
 
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
@@ -27,6 +28,7 @@ struct DocumentationResult final {
 
 // 从入口未绑定语法树生成文档，完整模块图静态检查通过后交付；不执行脚本。
 [[nodiscard]] DocumentationResult GenerateDocumentation(std::string_view entry,
-                                                        frontend::DiagnosticOptions options = {});
+                                                        frontend::DiagnosticOptions options = {},
+                                                        const frontend::ModulePaths& imports = {});
 
 }  // namespace vela::tooling

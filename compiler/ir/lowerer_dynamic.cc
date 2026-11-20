@@ -52,7 +52,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
     }
     const auto& owner = signature.member_owner;
     if (signature.is_getter || signature.is_setter) {
-      RegisterClassProperty(receiver, *FindClass(owner), name);
+      RegisterClassProperty(receiver, descriptor, name);
       continue;
     }
     const auto key = MethodKey(owner, DeclarationKind::Method, name);
@@ -61,7 +61,12 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
       continue;
     }
     const std::array captures{MakeReceiverCapture(descriptor.type)};
-    const auto wrapper = CallableClass(target->second, CallableMode::BoundMethod, captures);
+    const auto selector = method_selectors_.find(key);
+    const auto is_virtual = selector != method_selectors_.end();
+    const auto wrapper =
+        CallableClass(is_virtual ? selector->second : target->second,
+                      is_virtual ? CallableMode::VirtualMethod : CallableMode::BoundMethod,
+                      captures, is_virtual ? &signature : nullptr);
     program_.members.push_back(
         {.receiver_type = receiver, .name = name, .kind = MemberKind::Method, .target = wrapper});
   }
@@ -76,16 +81,14 @@ void Lowerer::RegisterClassProperty(std::uint32_t receiver,
       .kind = MemberKind::Property,
       .target = kInvalidFunctionTarget,
   };
-  for (const auto& method : owner.declaration->methods) {
-    if (method.name != name || method.visibility != frontend::Visibility::Public) {
-      continue;
-    }
-    const auto key = MethodKey(owner.type.name, method);
-    if (method.is_getter) {
-      property.target = function_ids_.at(key);
-    } else if (method.is_setter) {
-      property.setter = function_ids_.at(key);
-    }
+  const auto& method = owner.methods.at(name);
+  if (method.is_getter && method.visibility == frontend::Visibility::Public) {
+    property.target =
+        function_ids_.at(MethodKey(method.member_owner, DeclarationKind::Getter, name));
+  }
+  if (method.is_setter && method.setter_visibility == frontend::Visibility::Public) {
+    property.setter =
+        function_ids_.at(MethodKey(method.setter_owner, DeclarationKind::Setter, name));
   }
   if (property.target != kInvalidFunctionTarget || property.setter) {
     program_.members.push_back(std::move(property));

@@ -39,6 +39,7 @@ struct BuildArguments final {
   std::string_view source;
   std::string_view output;
   NativeOutputKind kind = NativeOutputKind::Executable;
+  std::optional<std::filesystem::path> configuration;
   std::filesystem::path support_path = DefaultTargetSupportPath();
 };
 
@@ -55,6 +56,8 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
       result.options.exports.emplace_back(argument.substr(kExportOption.size()));
     } else if (argument.starts_with(kTargetSupportOption)) {
       result.support_path = Utf8Path(argument.substr(kTargetSupportOption.size()));
+    } else if (argument.starts_with("--config=")) {
+      result.configuration = Utf8Path(argument.substr(std::string_view("--config=").size()));
     } else if (!argument.starts_with('-') && result.source.empty()) {
       result.source = argument;
     } else {
@@ -102,11 +105,13 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
     }
     target_support = &support.emplace(std::move(*loaded));
   }
-  const auto configuration = ReadSourceConfiguration(Utf8Path(arguments.source), errors);
+  const auto configuration =
+      ReadSourceConfiguration(Utf8Path(arguments.source), errors, arguments.configuration);
   if (!configuration) {
     return configuration.error().exit_code;
   }
-  auto parsed = frontend::LoadProgram(arguments.source);
+  auto parsed = frontend::LoadProgram(arguments.source, {}, frontend::SourceLoadMode::Compilation,
+                                      {}, configuration->imports);
   BinaryWriter identity;
   for (const auto& file : parsed.program.sources) {
     identity.Write(file.path);

@@ -224,7 +224,6 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
       class_options_.empty() ? ClassLayoutOptions{} : class_options_.subspan(index).front();
   options.callable = description.callable;
   options.interfaces = std::move(interfaces);
-  options.dispatch_targets = description.dispatch_targets;
   options.is_enum = description.kind == layout::Class::Kind::Enum;
   options.is_metadata = description.kind == layout::Class::Kind::Metadata ||
                         description.kind == layout::Class::Kind::ReflectionIdentity;

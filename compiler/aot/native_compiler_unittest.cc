@@ -38,6 +38,7 @@
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_reflection_optimizer.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -367,7 +368,7 @@ export func repeated(value: int): int {
 }
 
 TEST(NativeCompilerTest, BorrowedReceiversKeepTheirEntryWhenScalarFieldLeavesExist) {
-  const auto prepared = Prepare(R"(
+  auto prepared = Prepare(R"(
 class Counter {
   value: int;
   next(): int { this.value++; return this.value; }
@@ -378,6 +379,7 @@ export func calculate(initial: int): int {
 }
 )");
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  DevirtualizeNativeCalls(prepared.program);
   const auto& program = prepared.program;
   const auto& functions = program.functions;
   const auto caller = std::ranges::find(functions, "calculate", &ir::Function::name);
@@ -432,6 +434,7 @@ export func unbound(method: MethodInfo<Counter>, object: Counter, value: int): d
 )");
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   auto& program = prepared.program;
+  DevirtualizeNativeCalls(program);
   BindNativeReflectedMembers(program);
   const auto generated = GenerateForTest(program, "reflected_results", NativeCodePlacement::Linked);
   ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());

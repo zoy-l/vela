@@ -12,6 +12,251 @@
 namespace vela::compiler {
 namespace {
 
+class ClassDispatchTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(ClassDispatchTest, SelectsActualReceiverImplementationsUnderGcPressure) {
+  test::ExpectRunAnswer(GetParam());
+}
+
+INSTANTIATE_TEST_SUITE_P(CallsPropertiesAndMethodValues,
+                         ClassDispatchTest,
+                         testing::Values(
+                             R"(
+interface Reader { read(): int; }
+class Base implements Reader {
+  read(): int { return 1; }
+  twice(): int { return this.read() + this.read(); }
+}
+class Child extends Base { override read(): int { return 14; } }
+func use(value: Base, reader: Reader): int { return value.twice() + reader.read(); }
+func main(): int { const child = Child(); return use(child, child); }
+)",
+                             R"(
+class Root {
+  read(): int { return 1; }
+  twice(): int { return this.read() + this.read(); }
+}
+class Middle extends Root { override read(): int { return 20; } }
+class Leaf extends Middle {
+  override read(): int { const parent: () => int = super.read; return parent() + 1; }
+}
+func use(value: Root): int { return value.twice(); }
+func main(): int { return use(Leaf()); }
+)",
+                             R"(
+let calls = 0;
+class Base { read(): int { return 0; } }
+class Child extends Base { override read(): int { return 42; } }
+func make(): Base { calls++; return Child(); }
+func main(): int {
+  const bound: () => int = make().read;
+  for (let index = 0; index < 50; index++) { const garbage = 'item:${index}'; }
+  return calls == 1 ? bound() : 0;
+}
+)",
+                             R"(
+let calls = 0;
+func argument(): int { calls++; return 21; }
+interface Reader { read(value: int): int; }
+class Base implements Reader { read(value: int): int { return 0; } }
+class Child extends Base { override read(value: int): int { return value; } }
+func use(value: Base?, reader: Reader?): int {
+  const first = value?.read(argument()) ?? 0;
+  const second = reader?.read(argument()) ?? 0;
+  return first + second;
+}
+func main(): int {
+  if (use(null, null) != 0 || calls != 0) { return 0; }
+  const child = Child();
+  const result = use(child, child);
+  return calls == 2 ? result : 0;
+}
+)",
+                             R"(
+class Base {
+  stored: int = 0;
+  get value(): int { return this.stored; }
+  set value(next: int): void { this.stored = next; }
+}
+class Child extends Base {
+  override get value(): int { return this.stored + 2; }
+  override set value(next: int): void { this.stored = next * 2; }
+}
+func use(value: Base): int { value.value += 18; return value.value; }
+func main(): int { return use(Child()); }
+)",
+                             R"(
+class Base {
+  stored: int = 0;
+  get value(): int { return this.stored + 1; }
+  set value(next: int): void { this.stored = next; }
+}
+class WithGetter extends Base { override get value(): int { return this.stored + 2; } }
+class WithSetter extends WithGetter {
+  override set value(next: int): void { this.stored = next * 2; }
+}
+func use(value: Base): int { value.value = 20; return value.value; }
+func main(): int {
+  const value = WithSetter();
+  value.value = 1;
+  if (value.value != 4) { return 0; }
+  return use(value);
+}
+)",
+                             R"(
+class Base {
+  stored: int = 0;
+  get value(): int { return this.stored; }
+  set value(next: int): void { this.stored = next; }
+}
+class Child extends Base {
+  override get value(): int { return super.value + 2; }
+  override set value(next: int): void { super.value = next * 2; }
+}
+func use(value: Base): int {
+  value.value++;
+  return value.value == 8 ? 42 : 0;
+}
+func main(): int { return use(Child()); }
+)",
+                             R"(
+class Base { read<T>(value: T): int { return 1; } }
+class Child extends Base { override read<U>(value: U): int { return 21; } }
+func use(value: Base): int {
+  const bound: (int) => int = value.read;
+  return value.read<int>(0) + bound(1);
+}
+func main(): int { return use(Child()); }
+)",
+                             R"(
+class Base<T> { read<U>(value: U): int { return 1; } }
+class Child<T> extends Base<T> {
+  override read<V>(value: V): int { return 21; }
+}
+func use<T extends Base<int>>(value: T): int {
+  const bound: (string) => int = value.read;
+  return value.read<int>(0) + bound('value');
+}
+func call(value: Base<int>): int { return use<Base<int>>(value); }
+func main(): int { return call(Child<int>()); }
+)",
+                             R"(
+class Base { read(): int { return 1; } }
+class Child extends Base { override read(): int { return 14; } }
+func use(value: Base): int {
+  const before: () => int = value.read;
+  if (value is Child) { return before() + value.read() + (value as Base).read(); }
+  return 0;
+}
+func main(): int { return use(Child()); }
+)",
+                             R"(
+interface Writer { write(): void; }
+class Base implements Writer {
+  stored: int = 0;
+  write(): void { this.stored = 1; }
+}
+class Child extends Base { override write(): void { this.stored = 42; } }
+func use(value: Base, writer: Writer): int {
+  value.write();
+  if (value.stored != 42) { return 0; }
+  value.stored = 0;
+  const bound: () => void = writer.write;
+  bound();
+  return value.stored;
+}
+func main(): int { const value = Child(); return use(value, value); }
+)",
+                             R"(
+class Base { read(): int { return 0; } }
+class Child extends Base { override read(): int { return 21; } }
+func main(): int {
+  const value: dynamic = Child();
+  const bound = value.read;
+  return (value.read() + bound()) as int;
+}
+)",
+                             R"(
+class Base { toJson(): int[] { return [0]; } }
+class Child extends Base { override toJson(): int[] { return [40, 2]; } }
+func encode(value: Base): string { return JSON.stringify(value); }
+func main(): int { return encode(Child()) == '[40,2]' ? 42 : 0; }
+)",
+                             R"(
+let observed = 0;
+class Base {
+  constructor { observed = this.read(); }
+  read(): int { return 0; }
+}
+class Child extends Base {
+  value: int;
+  constructor(value: int) { this.value = value; super(); }
+  override read(): int { return this.value; }
+}
+func main(): int { const value = Child(42); return observed; }
+)",
+                             R"(
+enum Choice { first, second }
+class Base { read(value: Choice): Choice { return Choice.first; } }
+class Child extends Base { override read(value: Choice): Choice { return value; } }
+func use(value: Base): int {
+  const bound: (Choice) => Choice = value.read;
+  return bound(Choice.second) == Choice.second ? 42 : 0;
+}
+func main(): int { return use(Child()); }
+)"));
+
+TEST(ClassDispatchAsyncTest, AsyncMethodsAndBoundCallbacksUseTheActualReceiver) {
+  test::ExpectFutureAnswer(R"(
+class Base { async read(): Future<int> { await 0; return 0; } }
+class Child extends Base { override async read(): Future<int> { await 0; return 21; } }
+async func use(value: Base): Future<int> {
+  const bound: () => Future<int> = value.read;
+  return (await value.read()) + (await bound());
+}
+async func main(): Future<int> { return await use(Child()); }
+)",
+                           test::kExpectedAnswer);
+}
+
+TEST(ClassDispatchTest, DynamicPropertiesRespectEachAccessorVisibilityAndInheritedOwner) {
+  test::ExpectRunAnswer(R"(
+class Base {
+  stored: int = 21;
+  private set value(next: int): void { this.stored = next; }
+  get value(): int { return this.stored; }
+}
+class Child extends Base { override get value(): int { return super.value; } }
+class WriteOnly {
+  stored: int = 0;
+  private get value(): int { return this.stored; }
+  set value(next: int): void { this.stored = next; }
+}
+func main(): int {
+  const reader: dynamic = Child();
+  const writer: dynamic = WriteOnly();
+  writer.value = 21;
+  let caught = 0;
+  try { reader.value = 0; } catch (error: Error) { if (error.code == 'TypeError') { caught++; } }
+  try { const value = writer.value; }
+  catch (error: Error) { if (error.code == 'TypeError') { caught++; } }
+  return caught == 2 ? (reader.value + writer.stored) as int : 0;
+}
+)");
+}
+
+TEST(ClassDispatchTest, StaticWritesCheckSetterVisibilityForEveryMutation) {
+  for (const auto* mutation : {"value.amount = 1;", "value.amount += 1;", "value.amount++;"}) {
+    test::ExpectRejectedCheck(std::string(R"(
+class Counter {
+  stored: int = 0;
+  get amount(): int { return this.stored; }
+  private set amount(next: int): void { this.stored = next; }
+}
+func main(): void { const value = Counter();
+)") + mutation + " }");
+  }
+}
 class ClassConstructionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(ClassConstructionTest, InitializesFieldsAndExecutesConstructorUnderGcPressure) {
@@ -199,8 +444,8 @@ class Counter {
 class BonusCounter extends Counter {
   bonus: int;
   constructor(value: int, bonus: int) {
-    super(value: value);
     this.bonus = bonus;
+    super(value: value);
   }
 }
 func main(): int {
@@ -263,6 +508,13 @@ INSTANTIATE_TEST_SUITE_P(
     ConstructionAndVisibility,
     ClassContractErrorTest,
     testing::Values(
+        ClassError{"class A extends B {} class B extends A {}", "class inheritance cycle"},
+        ClassError{"class A {} class B extends A { value: int; "
+                   "constructor() { super(); this.value = 42; } }",
+                   "initialized before super"},
+        ClassError{"class A {} class B extends A { value: int; "
+                   "constructor() { this.value = 42; } }",
+                   "initialized before implicit super"},
         ClassError{"class A { x: int; constructor(initial: int) { this.x = initial; } } "
                    "func main(): A { return A(x: 42); }",
                    "unknown named argument 'x'"},

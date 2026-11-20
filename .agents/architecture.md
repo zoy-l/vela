@@ -85,6 +85,20 @@ do not retain the view across migration or a safepoint that can publish a migrat
 migrations register their field blocks as roots until commit or discard. Commit replaces the layout
 and complete field block before releasing the previous storage.
 
+### Instance dispatch
+
+Frontend inheritance resolution supplies virtual implementation bindings for public script
+instance methods and each accessor. Generic method applications materialize every applicable
+override through the same worklist used for interface implementations. Class and interface
+calls share selector-indexed Typed IR, callable metadata, and runtime target tables; lexical
+`super`, private, static, constructor, intrinsic, and immutable host entries remain direct.
+Reflection uses the same selector contract. Closed AOT traces reachable selector/receiver pairs
+and devirtualizes only proven targets. Reloadable calls resolve stable selectors against the
+current publication, while extracted method values retain the selected implementation version.
+Function indices belong to the program image, including dispatch for Isolate-shared fixed layouts
+such as `DateParts`. Object layouts do not duplicate those tables. Getter and setter visibility and
+implementation ownership remain independent when accessors are inherited or merged.
+
 ### Native host bindings
 
 `NativeFunction::Bind<Function>` derives the host signature and AOT calling convention from the

@@ -17,6 +17,9 @@ struct Collection final {
   std::set<std::string> headers;
   // 依赖模块用 C++ 规范名称映射到公开类型键；本模块的类型由 AST 建立。
   std::map<std::string, std::string> dependencies;
+  std::set<std::string> callbacks;
+  std::set<std::string> opaque;
+  std::string output_directory;
 };
 
 class CollectorFactory final : public clang::tooling::FrontendActionFactory {

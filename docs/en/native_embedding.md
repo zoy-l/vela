@@ -8,25 +8,30 @@ same runtime. Source builds link `//compiler:jit`; standalone AOT hosts use the
 distribution's runtime library and generated public header. The runtime alone
 does not include a source compiler.
 
-## Local third-party libraries
+## Embedding SDK
 
-`python -m tools.vl embed debug` and `python -m tools.vl embed release` build independent
-`vela_development` and `vela_runtime` static archives plus the compiler, then write
-`out/<variant>/embedding.json`. A native host imports those libraries and include paths rather
-than adding Vela sources to its own build graph. The local description borrows headers from the
-checkout; it is not a relocatable distribution package.
+```sh
+python -m tools.vl embed debug /path/to/debug-sdk
+python -m tools.vl embed release /path/to/release-sdk
+```
 
-Use the matching OS, CPU, C++ ABI, dependency versions and Debug/Release variant. Development
-libraries additionally require the described LLVM libraries, system libraries and linker. The
-pinned linker must consume archives containing that LLVM version's ThinLTO. AOT applications
-link only `runtime_libraries`; they do not need compiler or LLVM libraries at runtime.
+Each command exports static archives, headers, the compiler, the linker, bindgen and licenses to a
+new directory. All artifact paths in `embedding.json` version 4 are relative to that directory.
+Move the entire SDK directory and point the host build to its manifest. Use `<vela/runtime.h>` for
+`Isolate` and `NativeInstance` and `<vela/development.h>` for `DevelopmentSession`.
+
+Match the host OS, CPU, C++ ABI, dependency versions and Debug/Release variant. Link AOT hosts
+with `runtime_libraries`, `runtime_system_libraries` and `runtime_frameworks`. Add the corresponding
+`development_*` inputs for JIT and source reload. Development archives include LLVM as link
+inputs. On macOS and Linux use the packaged linker to consume any LLVM ThinLTO in the archives.
+Use `bin/vela build --emit=obj` for embeddable AOT objects and
+`python bin/vela-bindgen.py --config FILE` to generate both C++ and Vela binding files.
 The macOS deployment target is defined by `tools.config.MACOS_DEPLOYMENT_TARGET` and is shared
 by library compilation and package probes. AOT library manifests expose `sources` so build
 systems can track the complete imported source graph with depfiles.
 
-The local interface does not promise cross-version binary compatibility. Rebuild the libraries,
-host bindings and AOT objects together after changing Vela. Windows hosts must also match Vela's
-CRT/STL ABI; `/MT` archives cannot be treated as an `/MD` SDK.
+Rebuild the libraries, host bindings and AOT objects together when changing Vela versions.
+Windows hosts must match the SDK's CRT and STL ABI, including static or dynamic CRT linkage.
 
 ## Compile and execute
 

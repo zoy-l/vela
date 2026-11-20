@@ -298,6 +298,10 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
     const auto identity = Method(declaration, kind, method, definition);
     result_.named_functions.emplace(MethodKey(owner.name, kind, method.name), identity);
     BindFunction(method, identity);
+    if (method.IsVirtualMethod()) {
+      result_.selectors.emplace(MethodKey(owner.name, kind, method.name),
+                                Member(identity, DeclarationKind::Selector, ""));
+    }
     if (method.is_getter || method.is_setter) {
       fields.properties.try_emplace(method.name, member(DeclarationKind::Property, method.name));
     }

@@ -435,8 +435,9 @@ std::string DocumentationComment(std::string_view source,
 }
 
 DocumentationResult GenerateDocumentation(std::string_view entry,
-                                          frontend::DiagnosticOptions options) {
-  auto graph = frontend::LoadModuleGraph(entry);
+                                          frontend::DiagnosticOptions options,
+                                          const frontend::ModulePaths& imports) {
+  auto graph = frontend::LoadModuleGraph(entry, imports);
   if (!graph.diagnostics.empty()) {
     return {.markdown = {}, .diagnostics = std::move(graph.diagnostics)};
   }

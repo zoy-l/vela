@@ -184,7 +184,7 @@ void InstructionLayouts(BinaryWriter& writer,
     case Opcode::SetGlobal:
       Put(writer, program.global_declarations.at(instruction.index).value);
       break;
-    case Opcode::CallInterface:
+    case Opcode::CallVirtual:
       Put(writer, program.selector_declarations.at(instruction.index).value);
       break;
     default:

@@ -416,7 +416,7 @@ std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& f
     const auto target = source.opcode == Opcode::NewInstance
                             ? program.classes[source.index].callable
                             : std::nullopt;
-    if (!target) {
+    if (!target || target->mode == CallableMode::VirtualMethod) {
       continue;
     }
     const auto& callee = program.functions.at(target->function);

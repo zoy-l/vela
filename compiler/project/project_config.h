@@ -10,6 +10,7 @@
 
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/testing/settings.h"
 
 namespace vela::compiler {
@@ -32,6 +33,7 @@ struct ProjectConfiguration final {
   std::filesystem::path root;
   std::optional<testing::Settings> test;
   frontend::DiagnosticOptions diagnostics;
+  frontend::ModulePaths imports;
 };
 
 enum class ConfigurationRequirement : std::uint8_t { Required, Optional };
@@ -45,10 +47,12 @@ enum class ConfigurationRequirement : std::uint8_t { Required, Optional };
     ConfigurationRequirement requirement = ConfigurationRequirement::Required);
 
 [[nodiscard]] std::expected<ProjectConfiguration, ConfigurationError> LoadSourceConfiguration(
-    const std::filesystem::path& source);
+    const std::filesystem::path& source,
+    const std::optional<std::filesystem::path>& explicit_file = std::nullopt);
 [[nodiscard]] std::expected<ProjectConfiguration, ConfigurationError> ReadSourceConfiguration(
     const std::filesystem::path& source,
-    std::ostream& errors);
+    std::ostream& errors,
+    const std::optional<std::filesystem::path>& explicit_file = std::nullopt);
 [[nodiscard]] frontend::Diagnostic ConfigurationDiagnostic(const ConfigurationError& error);
 
 }  // namespace vela::compiler

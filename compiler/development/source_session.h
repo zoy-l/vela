@@ -99,7 +99,8 @@ class SourceSession final {
  public:
   explicit SourceSession(const std::string& entry,
                          frontend::DiagnosticOptions options = {},
-                         std::vector<frontend::ReflectionSelection> reflection = {});
+                         std::vector<frontend::ReflectionSelection> reflection = {},
+                         frontend::ModulePaths imports = {});
   [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
   // retained 必须来自本会话的已提交声明身份；候选继承同一单调增长的身份表。
   [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <llvm/Support/JSON.h>
@@ -56,6 +57,7 @@ struct Member final {
   bool context = false;
   bool fallible = false;
   bool is_const = false;
+  std::optional<std::string> implementation = std::nullopt;
 };
 
 struct Class final {
@@ -65,6 +67,8 @@ struct Class final {
   std::string documentation;
   Source source;
   std::vector<Member> members;
+  std::optional<std::string> value_cpp = std::nullopt;
+  std::vector<std::pair<std::string, std::string>> enumerators;
 };
 
 struct Module final {
@@ -72,6 +76,7 @@ struct Module final {
   std::string target;
   std::string clang_version;
   std::string directory;
+  std::string source;
   std::vector<std::string> arguments;
   std::map<std::string, std::string> input_fingerprints;
   std::vector<Class> classes;

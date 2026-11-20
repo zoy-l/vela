@@ -7,6 +7,7 @@
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/member.h"
 #include "base/native_program_mode.h"
 #include "base/reflection.h"
 #include "compiler/frontend/modules/declaration_ids.h"
@@ -121,6 +122,7 @@ class Counter extends Base {
       return member.declaring_type == type->type && member.kind == reflection::MemberKind::Property;
     });
     ASSERT_NE(property, members.end());
+    EXPECT_EQ(property->flags & reflection::kVirtual, 0U);
     EXPECT_NE(property->declaration, property->getter);
     EXPECT_NE(property->getter, property->setter);
     EXPECT_NE(property->flags & reflection::kRegistered, 0U);
@@ -129,6 +131,14 @@ class Counter extends Base {
     ASSERT_NE(setter, members.end());
     EXPECT_EQ(setter->flags & reflection::kRegistered, 0U);
     EXPECT_NE(setter->flags & reflection::kPrivate, 0U);
+    const auto& dynamic_members = program.members;
+    const auto dynamic_property = std::ranges::find_if(dynamic_members, [&](const auto& member) {
+      return member.receiver_type == type->type && member.kind == MemberKind::Property &&
+             member.name == "amount";
+    });
+    ASSERT_NE(dynamic_property, dynamic_members.end());
+    EXPECT_NE(dynamic_property->target, kInvalidFunctionTarget);
+    EXPECT_FALSE(dynamic_property->setter);
     const auto constructor = std::ranges::find_if(members, [&](const auto& member) {
       return member.declaring_type == type->type &&
              member.kind == reflection::MemberKind::Constructor;

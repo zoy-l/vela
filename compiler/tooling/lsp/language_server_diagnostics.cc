@@ -19,7 +19,6 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/syntax/parser.h"
 #include "compiler/project/project_config.h"
 #include "compiler/tooling/lsp/file_uri.h"
 #include "compiler/tooling/semantic/semantic_index.h"
@@ -105,15 +104,14 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
     CollectDiagnostics(index.diagnostics(), index.source_files(), path);
     return;
   }
-  auto loaded = frontend::LoadProgram(path, *modules_, overlays_, frontend::SourceLoadMode::Editor);
   const auto options = compiler::LoadSourceConfiguration(Utf8Path(path));
   if (!options) {
-    if (loaded.diagnostics.empty()) {
-      loaded.diagnostics.push_back(compiler::ConfigurationDiagnostic(options.error()));
-    }
-    CollectDiagnostics(loaded.diagnostics, loaded.program.sources, path);
+    const frontend::Diagnostics diagnostics{compiler::ConfigurationDiagnostic(options.error())};
+    CollectDiagnostics(diagnostics, {}, path);
     return;
   }
+  modules_->imports = options->imports;
+  auto loaded = frontend::LoadProgram(path, *modules_, overlays_, frontend::SourceLoadMode::Editor);
   const auto& index =
       indices_->try_emplace(std::string(uri), std::move(loaded), options->diagnostics)
           .first->second;

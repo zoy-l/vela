@@ -144,7 +144,7 @@ LoweringResult Lowerer::Lower() && {
   }
   LowerExposedConstructors();
   LowerJSONDecodePlans();
-  for (const auto& [name, selector] : interface_method_ids_) {
+  for (const auto& [name, selector] : method_selectors_) {
     if (program_.selector_declarations.size() <= selector) {
       program_.selector_declarations.resize(static_cast<std::size_t>(selector) + 1);
     }
@@ -221,18 +221,26 @@ void Lowerer::AddDiagnostic(frontend::SourceLocation location, std::string messa
   });
 }
 
-void Lowerer::BuildInterfaceSelectors() {
+void Lowerer::BuildMethodSelectors() {
   for (const auto& interface : source_.interfaces) {
     for (const auto& method : interface.methods) {
       const auto key = QualifiedMemberKey({.owner = interface.name, .name = method.name});
-      const auto selector = static_cast<std::uint32_t>(interface_method_ids_.size());
-      interface_method_ids_.emplace(key, selector);
+      const auto selector = static_cast<std::uint32_t>(method_selectors_.size());
+      method_selectors_.emplace(key, selector);
+    }
+  }
+  for (const auto& owner : source_.classes) {
+    for (const auto& method : owner.methods) {
+      if (method.IsVirtualMethod()) {
+        const auto selector = static_cast<std::uint32_t>(method_selectors_.size());
+        method_selectors_.emplace(MethodKey(owner.name, method), selector);
+      }
     }
   }
 }
 
 void Lowerer::BuildClassTable() {
-  BuildInterfaceSelectors();
+  BuildMethodSelectors();
   const auto first_class = program_.classes.size();
   for (const frontend::Class& source_class : source_.classes) {
     const auto class_id = static_cast<ClassId>(program_.classes.size());
@@ -253,8 +261,8 @@ void Lowerer::BuildClassTable() {
       const auto& signature = descriptor.methods.at(method.name);
       const std::array captures{MakeReceiverCapture(descriptor.type)};
       const auto wrapper = CallableClass(
-          interface_method_ids_.at(QualifiedMemberKey({.owner = source.name, .name = method.name})),
-          CallableMode::InterfaceMethod, captures, &signature);
+          method_selectors_.at(QualifiedMemberKey({.owner = source.name, .name = method.name})),
+          CallableMode::VirtualMethod, captures, &signature);
       program_.members.push_back({
           .receiver_type = receiver,
           .name = method.name,
@@ -290,21 +298,19 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
   if (source_path == "builtin:DateParts") {
     output_class.kind = Class::Kind::DateParts;
   }
-  if (!class_info.interfaces.empty()) {
-    output_class.dispatch_targets.resize(interface_method_ids_.size(), kInvalidFunctionTarget);
-  }
+  output_class.dispatch_targets.resize(method_selectors_.size(), kInvalidFunctionTarget);
   for (const auto& name : class_info.interfaces) {
     const auto& interface = model_.interfaces.at(name);
     output_class.interfaces.push_back(interface.index);
   }
   // 语义层使用集合查询实现关系；输出按运行时编号规范化，避免哈希顺序改变原生缓存键。
   std::ranges::sort(output_class.interfaces);
-  for (const auto& [signature, target] : class_info.interface_targets) {
-    const auto selected = interface_method_ids_.find(
-        QualifiedMemberKey({.owner = signature.first, .name = signature.second}));
-    if (selected != interface_method_ids_.end()) {
+  for (const auto& [signature, target] : class_info.virtual_targets) {
+    const auto& [owner, name, kind] = signature;
+    const auto selected = method_selectors_.find(MethodKey(owner, kind, name));
+    if (selected != method_selectors_.end()) {
       output_class.dispatch_targets.at(selected->second) =
-          function_ids_.at(QualifiedMemberKey({.owner = target.owner, .name = target.member}));
+          function_ids_.at(MethodKey(target.owner, kind, target.member));
     }
   }
   const auto& declarations = declarations_->classes.at(source_class.name);
@@ -1002,14 +1008,15 @@ Lowerer::LoweredValue Lowerer::LowerMemberAssignment(const frontend::Expression&
     });
     return value;
   }
-  const LoweredValue object = SnapshotBefore(LowerExpression(*left.object), right);
-  const auto& class_info = model_.classes.at(object.type.name);
+  const LoweredValue object = SnapshotBefore(LowerMemberReceiver(left), right);
+  const auto& class_info = MemberClass(left, object.type);
   const auto method = class_info.methods.find(left.text);
   if (method != class_info.methods.end() && method->second.is_setter) {
     const auto value = LowerExpression(right);
-    const auto& method_owner = method->second.member_owner;
-    EmitSetterCall(function_ids_.at(MethodKey(method_owner, DeclarationKind::Setter, left.text)),
-                   object, value.reg, left.location);
+    const auto& method_owner = method->second.setter_owner;
+    EmitSetterCall(
+        ResolveMethodCall(left, MethodKey(method_owner, DeclarationKind::Setter, left.text)),
+        object, value.reg, left.location);
     return {.reg = value.reg, .type = method->second.setter_parameter_type.value_or(value.type)};
   }
   const auto& field = class_info.fields.at(left.text);
@@ -1048,10 +1055,7 @@ std::optional<Lowerer::LoweredValue> Lowerer::LowerSuperGetter(
       if (signature.is_getter) {
         const auto* receiver = FindLocal(frontend::kReceiverName);
         if (receiver != nullptr) {
-          const LoweredValue receiver_value{.reg = receiver->reg, .type = receiver->type};
-          const std::string key =
-              MethodKey(member->second.owner, DeclarationKind::Getter, member->second.member);
-          return LowerInvocation(expression, signature, function_ids_.at(key), &receiver_value);
+          return LowerGetter(expression, ReadLocal(*receiver, expression.location));
         }
       }
     }
@@ -1138,9 +1142,8 @@ Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& exp
 Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expression,
                                            const LoweredValue& object) {
   const auto location = expression.location;
-  const auto type = model_.types.at(object.type.name);
-  const auto owner = frontend::NonNullableTypeName(type);
-  const auto& method_owner = model_.classes.at(owner).methods.at(expression.text).member_owner;
+  const auto& signature = MemberClass(expression, object.type).methods.at(expression.text);
+  const auto& method_owner = signature.member_owner;
   std::optional<std::size_t> null_jump;
   if (expression.null_safe) {
     null_jump = BeginNullSafe(object.reg, location);
@@ -1148,22 +1151,24 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
   const auto base = AllocateRegister(location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = location});
   const auto& result_type = model_.expression_types.at(&expression);
-  const auto& signature = model_.classes.at(method_owner).methods.at(expression.text);
   if (signature.intrinsic == Builtin::Reflection) {
     const auto result = EmitReflectionCall(signature, base, location, 1);
     FinishNullSafe(null_jump, result, location);
     return {.reg = result, .type = result_type};
   }
   const std::string method_key = MethodKey(method_owner, DeclarationKind::Getter, expression.text);
+  const auto target = ResolveMethodCall(expression, method_key);
   const auto result = AllocateRegister(location);
   RecordValueType(result, result_type);
   Emit({
-      .opcode = Opcode::Call,
+      .opcode = target.opcode,
       .dst = result,
       .lhs = base,
-      .index = function_ids_.at(method_key),
+      .immediate = 1,
+      .index = target.index,
       .location = location,
-      .binding_receiver = ReceiverDeclaration(object.type),
+      .binding_receiver =
+          target.opcode == Opcode::Call ? ReceiverDeclaration(object.type) : std::nullopt,
   });
   FinishNullSafe(null_jump, result, location);
   return {.reg = result, .type = result_type};
@@ -1259,23 +1264,50 @@ Lowerer::LoweredValue Lowerer::LowerNamedCall(const frontend::Expression& expres
   return LowerInvocation(expression, model_.functions.at(name), function_ids_.at(name), nullptr);
 }
 
+Lowerer::MethodCallTarget Lowerer::ResolveMethodCall(const frontend::Expression& member,
+                                                     const std::string& key) const {
+  const auto selector = method_selectors_.find(key);
+  if (selector != method_selectors_.end() && !model_.super_members.contains(&member)) {
+    return {.opcode = Opcode::CallVirtual, .index = selector->second};
+  }
+  return {.opcode = Opcode::Call, .index = function_ids_.at(key)};
+}
+
+Lowerer::LoweredValue Lowerer::LowerMemberReceiver(const frontend::Expression& member) {
+  return model_.super_members.contains(&member)
+             ? ReadLocal(*FindLocal(frontend::kReceiverName), member.location)
+             : LowerExpression(*member.object);
+}
+
+const frontend::ClassDescriptor& Lowerer::MemberClass(
+    const frontend::Expression& member,
+    const frontend::TypeDescriptor& receiver) const {
+  const auto& owner = model_.classes.at(frontend::NonNullableTypeName(receiver));
+  if (!model_.super_members.contains(&member)) {
+    return owner;
+  }
+  const auto& parent = owner.base_class;
+  if (!parent) {
+    std::unreachable();
+  }
+  return model_.classes.at(*parent);
+}
+
 Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expression) {
   const auto& callee = *expression.callee;
   const auto super = model_.super_members.find(&callee);
   const auto& target =
       super == model_.super_members.end() ? model_.instance_members.at(&expression) : super->second;
-  const auto receiver = super == model_.super_members.end()
-                            ? LowerExpression(*callee.object)
-                            : ReadLocal(*FindLocal(frontend::kReceiverName), callee.location);
+  const auto receiver = LowerMemberReceiver(callee);
   const auto& method = model_.classes.at(target.owner).methods.at(target.member);
   const auto kind = MethodDeclarationKind(method);
   const auto method_key = MethodKey(target.owner, kind, target.member);
-  const auto method_id = function_ids_.at(method_key);
+  const auto selected = ResolveMethodCall(callee, method_key);
   if (!callee.null_safe) {
-    return LowerInvocation(expression, method, method_id, &receiver);
+    return LowerInvocation(expression, method, selected.index, &receiver, selected.opcode);
   }
   const auto null_jump = BeginNullSafe(receiver.reg, expression.location);
-  auto result = LowerInvocation(expression, method, method_id, &receiver);
+  auto result = LowerInvocation(expression, method, selected.index, &receiver, selected.opcode);
   FinishNullSafe(null_jump, result.reg, expression.location);
   result.type = model_.expression_types.at(&expression);
   return result;
@@ -1720,7 +1752,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Member) {
-    auto receiver = LowerExpression(*target.object);
+    auto receiver = LowerMemberReceiver(target);
     receiver.reg =
         EmitTemporary({.opcode = Opcode::Move, .lhs = receiver.reg, .location = target.location});
     if (receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
@@ -1734,14 +1766,14 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
       destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
       return destination;
     }
-    const auto& owner = model_.classes.at(receiver.type.name);
+    const auto& owner = MemberClass(target, receiver.type);
     const auto field = owner.fields.find(target.text);
     destination.receiver = receiver;
     if (field == owner.fields.end()) {
       const auto& method = owner.methods.at(target.text);
       destination.kind = MutationTarget::Kind::Setter;
-      destination.slot =
-          function_ids_.at(MethodKey(method.member_owner, DeclarationKind::Setter, target.text));
+      destination.method = ResolveMethodCall(
+          target, MethodKey(method.setter_owner, DeclarationKind::Setter, target.text));
       destination.value = LowerGetter(target, receiver);
       return destination;
     }
@@ -1779,21 +1811,32 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
   std::unreachable();
 }
 
-void Lowerer::EmitSetterCall(std::uint32_t target,
+void Lowerer::EmitSetterCall(MethodCallTarget target,
                              const LoweredValue& receiver,
                              RegisterId value,
                              frontend::SourceLocation location) {
-  const auto base = AllocateRegisterWindow(2, location);
-  Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
-  Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = value, .location = location});
+  const std::array arguments{receiver.reg, value};
+  const auto base = AllocateRegisterWindow(arguments.size(), location);
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = static_cast<RegisterId>(base + index),
+        .lhs = arguments[index],
+        .location = location,
+    });
+  }
   const auto ignored = AllocateRegister(location);
+  RecordValueType(ignored,
+                  {.kind = frontend::TypeDescriptor::Kind::Void, .name = frontend::kVoidTypeName});
   Emit({
-      .opcode = Opcode::Call,
+      .opcode = target.opcode,
       .dst = ignored,
       .lhs = base,
-      .index = target,
+      .immediate = static_cast<std::int64_t>(arguments.size()),
+      .index = target.index,
       .location = location,
-      .binding_receiver = ReceiverDeclaration(receiver.type),
+      .binding_receiver =
+          target.opcode == Opcode::Call ? ReceiverDeclaration(receiver.type) : std::nullopt,
   });
 }
 
@@ -1811,7 +1854,7 @@ void Lowerer::StoreMutationTarget(const MutationTarget& destination,
       });
       return;
     case MutationTarget::Kind::Setter:
-      EmitSetterCall(destination.slot, receiver, value, location);
+      EmitSetterCall(destination.method, receiver, value, location);
       return;
     case MutationTarget::Kind::Local:
       Emit({

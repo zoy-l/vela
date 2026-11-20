@@ -324,55 +324,68 @@ void TypeChecker::RegisterMethodApplications() {
     if (specializer_->method_owner_kind(index) == DeclarationKind::Interface) {
       auto& interface = interfaces_.at(owner);
       interface.methods.try_emplace(method.name, std::move(signature));
-      interface_method_applications_.at(owner).emplace(method.name, &method);
-      const auto implementers = interface_implementers_.find(owner);
-      if (implementers != interface_implementers_.end()) {
-        for (const auto& implementation : implementers->second) {
-          QueueInterfaceBinding(classes_.at(implementation), owner, method);
-        }
-      }
     } else {
       classes_.at(owner).methods.try_emplace(method.name, std::move(signature));
       CollectCapturedMutableDeclarations(method, captured_declarations_);
     }
+    if (!method.IsVirtualMethod()) {
+      continue;
+    }
+    method_applications_[owner].emplace(method.name, &method);
+    const auto implementers = dispatch_implementers_.find(owner);
+    if (implementers != dispatch_implementers_.end()) {
+      for (const auto& implementation : implementers->second) {
+        QueueMethodBinding(classes_.at(implementation), owner, method);
+      }
+    }
   }
 }
 
-void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
-                                        const std::string& interface,
-                                        const Function& method) {
+void TypeChecker::RegisterDispatchImplementer(ClassInfo& owner, const std::string& contract) {
+  if (registered_implementers_.emplace(contract, owner.type.name).second) {
+    dispatch_implementers_[contract].emplace_back(owner.type.name);
+  }
+  for (const auto& [name, method] : method_applications_[contract]) {
+    static_cast<void>(name);
+    QueueMethodBinding(owner, contract, *method);
+  }
+}
+
+void TypeChecker::QueueMethodBinding(const ClassInfo& owner,
+                                     const std::string& contract,
+                                     const Function& method) {
   const auto& application = method.application;
   if (!application) {
     std::unreachable();
   }
-  const auto interface_name = interfaces_.at(interface).type.name;
-  if (!queued_interface_bindings_.emplace(owner.type.name, interface_name, method.name).second) {
+  const auto contract_name = types_.at(contract).name;
+  if (!queued_method_bindings_.emplace(owner.type.name, contract_name, method.name).second) {
     return;
   }
-  interface_bindings_.push_back({
+  method_bindings_.push_back({
       .owner = owner.type.name,
-      .interface = interface_name,
+      .contract = contract_name,
       .method = method.name,
       .application = &*application,
       .location = method.location,
   });
 }
 
-void TypeChecker::DrainInterfaceBindings() {
-  while (!interface_bindings_.empty()) {
-    auto binding = interface_bindings_.back();
-    interface_bindings_.pop_back();
+void TypeChecker::DrainMethodBindings() {
+  while (!method_bindings_.empty()) {
+    auto binding = method_bindings_.back();
+    method_bindings_.pop_back();
     auto& owner = classes_.at(binding.owner);
     const auto& application = *binding.application;
-    const auto implementation =
-        interface_method_templates_.at({owner.type.name, binding.interface, application.name});
+    const auto implementation = owner.method_templates.at(application.name);
     const auto target = MaterializeMethod(implementation, application.arguments, binding.location);
     if (!target) {
       AddDiagnostic(target.error().location, target.error().message);
       continue;
     }
-    owner.interface_targets.insert_or_assign(
-        std::pair{std::string(binding.interface), std::string(binding.method)}, *target);
+    owner.virtual_targets.insert_or_assign(
+        {std::string(binding.contract), std::string(binding.method), DeclarationKind::Method},
+        *target);
   }
 }
 

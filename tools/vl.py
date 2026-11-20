@@ -35,7 +35,7 @@ def print_help() -> None:
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")
     print("  editor      Package the VS Code extension")
-    print("  embed       Build local embedding libraries and describe their link contract")
+    print("  embed       Export a relocatable embedding SDK")
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
     print("  llvm sync   Acquire the pinned LLVM toolchain and development SDK")

@@ -327,6 +327,11 @@ struct Function final {
   bool is_getter = false;
   bool is_setter = false;
   std::vector<Attribute> attributes;
+
+  [[nodiscard]] bool IsVirtualMethod() const {
+    return storage == MemberStorage::Instance && visibility == Visibility::Public &&
+           native_symbol.empty() && !intrinsic;
+  }
 };
 
 struct Enum final {

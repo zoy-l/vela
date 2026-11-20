@@ -332,7 +332,7 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto address = FieldAddress(ByteAddress(object, sizeof(runtime::HeapObject)),
                                     *builder_.getInt32(instruction.index), kind_offset);
   EmitFieldAccess(instruction, object, address);
-  if (!reading && program_.native_mode == NativeProgramMode::Reloadable && instruction.index == 0 &&
+  if (!reading && instruction.index == 0 &&
       source_.value_types.at(instruction.dst).kind == Kind::Function) {
     auto helper =
         module_.getOrInsertFunction(runtime::kNativeCaptureReceiverSymbol, builder_.getInt8Ty(),

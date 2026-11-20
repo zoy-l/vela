@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/declaration.h"
 #include "compiler/frontend/syntax/ast.h"
 
 namespace vela::frontend {
@@ -17,6 +18,8 @@ bool TypeChecker::MatchesImplementationSignature(const FunctionInfo& implementat
                                                  const FunctionInfo& signature) {
   if (implementation.visibility != Visibility::Public ||
       implementation.storage != MemberStorage::Instance ||
+      implementation.is_getter != signature.is_getter ||
+      implementation.is_setter != signature.is_setter ||
       !IsSameType(implementation.return_type, signature.return_type) ||
       implementation.parameters.size() != signature.parameters.size()) {
     return false;
@@ -84,10 +87,11 @@ void TypeChecker::CheckImplementations(const Program& program) {
 
 void TypeChecker::CheckClassImplementation(const Class& source) {
   const auto found = classes_.find(source.name);
-  if (found == classes_.end()) {
+  if (found == classes_.end() || !merged_classes_.contains(source.name)) {
     return;
   }
   auto& owner = found->second;
+  RegisterClassDispatch(owner);
   absl::flat_hash_map<std::string, std::string> applications;
   for (const auto& name : owner.interfaces) {
     const auto type = DescribeType(types_.at(name));
@@ -103,7 +107,7 @@ void TypeChecker::CheckClassImplementation(const Class& source) {
 void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::string& name) {
   const auto& source = *owner.declaration;
   const auto& interface = interfaces_.at(name);
-  const auto& applications = interface_method_applications_.at(name);
+  const auto& applications = method_applications_.at(name);
   bool valid = true;
   for (const auto& [method_name, signature] : interface.methods) {
     if (applications.contains(method_name)) {
@@ -123,8 +127,8 @@ void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::stri
                     "interface method implementation does not match '" + qualified_name + "'");
       valid = false;
     } else {
-      owner.interface_targets.insert_or_assign(
-          {name, method_name},
+      owner.virtual_targets.insert_or_assign(
+          {name, method_name, DeclarationKind::Method},
           MemberReference{.owner = method->second.member_owner, .member = method_name});
     }
   }
@@ -142,20 +146,39 @@ void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::stri
           implementation->second.declaration->location,
           "generic interface method implementation does not match '" + qualified_name + "'");
       valid = false;
-    } else {
-      interface_method_templates_.insert_or_assign(
-          {owner.type.name, interface.type.name, method_name}, implementation->second);
     }
   }
   if (!valid || owner.type.is_abstract) {
     return;
   }
-  if (registered_implementers_.emplace(name, source.name).second) {
-    interface_implementers_.try_emplace(name).first->second.push_back(source.name);
+  RegisterDispatchImplementer(owner, name);
+}
+
+void TypeChecker::RegisterClassDispatch(ClassInfo& owner) {
+  if (owner.type.is_abstract || !owner.declaration->native_key.empty()) {
+    return;
   }
-  for (const auto& [method_name, method] : applications) {
-    static_cast<void>(method_name);
-    QueueInterfaceBinding(owner, name, *method);
+  const auto* ancestor = &owner;
+  while (ancestor != nullptr) {
+    RegisterDispatchImplementer(owner, std::string(ancestor->type.name));
+    for (const auto& method : ancestor->declaration->methods) {
+      if (!method.IsVirtualMethod() || method.application) {
+        continue;
+      }
+      const auto& implementation = owner.methods.at(method.name);
+      auto kind = DeclarationKind::Method;
+      if (method.is_getter) {
+        kind = DeclarationKind::Getter;
+      } else if (method.is_setter) {
+        kind = DeclarationKind::Setter;
+      }
+      const auto& target =
+          method.is_setter ? implementation.setter_owner : implementation.member_owner;
+      owner.virtual_targets.insert_or_assign(
+          {std::string(ancestor->type.name), method.name, kind},
+          MemberReference{.owner = target, .member = method.name});
+    }
+    ancestor = ancestor->base_class ? &classes_.at(*ancestor->base_class) : nullptr;
   }
 }
 
@@ -179,9 +202,11 @@ void TypeChecker::MergeBaseClass(std::string_view name) {
   if (info.base_class) {
     MergeBaseClass(*info.base_class);
     const auto base = classes_.find(*info.base_class);
-    if (base != classes_.end() && !visiting_classes_.contains(*info.base_class)) {
-      MergeInheritedMembers(info, base->second);
+    if (base == classes_.end() || !merged_classes_.contains(*info.base_class)) {
+      visiting_classes_.erase(name);
+      return;
     }
+    MergeInheritedMembers(info, base->second);
   }
   CheckOverrides(info);
   visiting_classes_.erase(name);
@@ -199,8 +224,20 @@ void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) 
   info.field_order = base.field_order;
   info.field_order.insert(info.field_order.end(), own_fields.begin(), own_fields.end());
   for (const auto& [method_name, method] : base.methods) {
-    if (!info.methods.contains(method_name)) {
+    const auto found = info.methods.find(method_name);
+    if (found == info.methods.end()) {
       info.methods.emplace(method_name, method);
+    } else if ((found->second.is_getter || found->second.is_setter) &&
+               (method.is_getter || method.is_setter)) {
+      auto& implementation = found->second;
+      if (method.is_getter && !implementation.is_getter) {
+        MergeAccessor(implementation, AccessorSignature(method, DeclarationKind::Getter),
+                      info.declaration->location);
+      }
+      if (method.is_setter && !implementation.is_setter) {
+        MergeAccessor(implementation, AccessorSignature(method, DeclarationKind::Setter),
+                      info.declaration->location);
+      }
     }
   }
   for (const auto& [method_name, method] : base.method_templates) {
@@ -211,30 +248,58 @@ void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) 
   }
 }
 
-void TypeChecker::CheckOverrides(const ClassInfo& info) {
-  const auto base = info.base_class ? classes_.find(*info.base_class) : classes_.end();
-  for (const auto& method : info.declaration->methods) {
-    if (base != classes_.end() && base->second.method_templates.contains(method.name)) {
-      AddDiagnostic(method.location, "generic base method requires a generic override");
-      continue;
-    }
-    if (base == classes_.end() || !base->second.methods.contains(method.name)) {
-      if (method.is_override) {
-        AddDiagnostic(method.location, "override method does not override a base method");
-      }
-      continue;
-    }
-    if (!method.is_override) {
-      AddDiagnostic(method.location, "base method override requires 'override'");
-      continue;
-    }
-    const auto implementation = ResolveSignature(method);
-    const auto& signature = base->second.methods.at(method.name);
-    if (!MatchesImplementationSignature(implementation, signature)) {
-      AddDiagnostic(method.location, "override method signature does not match base method");
-    }
+TypeChecker::FunctionInfo TypeChecker::AccessorSignature(const FunctionInfo& method,
+                                                         DeclarationKind kind) {
+  auto result = method;
+  result.is_getter = kind == DeclarationKind::Getter;
+  result.is_setter = kind == DeclarationKind::Setter;
+  if (result.is_getter) {
+    result.parameters.clear();
+    result.parameter_indices.clear();
+  } else {
+    result.return_type = method.setter_return_type.value_or(method.return_type);
+    result.member_owner = method.setter_owner;
+    result.visibility = method.setter_visibility;
   }
-  CheckGenericOverrides(info, base == classes_.end() ? nullptr : &base->second);
+  return result;
+}
+
+void TypeChecker::CheckOverrides(const ClassInfo& info) {
+  const auto* base = info.base_class ? &classes_.at(*info.base_class) : nullptr;
+  for (const auto& method : info.declaration->methods) {
+    CheckOverride(method, base);
+  }
+  CheckGenericOverrides(info, base);
+}
+
+void TypeChecker::CheckOverride(const Function& method, const ClassInfo* base) {
+  if (base != nullptr && base->method_templates.contains(method.name)) {
+    AddDiagnostic(method.location, "generic base method requires a generic override");
+    return;
+  }
+  if (base == nullptr || !base->methods.contains(method.name)) {
+    if (method.is_override) {
+      AddDiagnostic(method.location, "override method does not override a base method");
+    }
+    return;
+  }
+  if (!method.is_override) {
+    AddDiagnostic(method.location, "base method override requires 'override'");
+    return;
+  }
+  const auto implementation = ResolveSignature(method);
+  auto signature = base->methods.at(method.name);
+  if (method.is_getter || method.is_setter) {
+    if ((method.is_getter && !signature.is_getter) || (method.is_setter && !signature.is_setter)) {
+      AddDiagnostic(method.location, "override accessor does not override a base accessor");
+      return;
+    }
+    signature = AccessorSignature(
+        signature, method.is_getter ? DeclarationKind::Getter : DeclarationKind::Setter);
+  }
+  if (!MatchesImplementationSignature(implementation, signature)) {
+    AddDiagnostic(method.location, "override method signature does not match base method");
+  }
 }
 
 void TypeChecker::CheckGenericOverrides(const ClassInfo& info, const ClassInfo* base) {

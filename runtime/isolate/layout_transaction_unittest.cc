@@ -74,7 +74,6 @@ TEST(LayoutTransactionTest, RollbackClearsFixedLayoutOnAnExistingNominal) {
                                                    {
                                                        .callable = {},
                                                        .interfaces = {},
-                                                       .dispatch_targets = {},
                                                        .nominal = nominal,
                                                        .field_declarations = {},
                                                    });
@@ -86,7 +85,6 @@ TEST(LayoutTransactionTest, RollbackClearsFixedLayoutOnAnExistingNominal) {
                                                       {
                                                           .callable = {},
                                                           .interfaces = {},
-                                                          .dispatch_targets = {},
                                                           .nominal = nominal,
                                                           .field_declarations = {},
                                                       });

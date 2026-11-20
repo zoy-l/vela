@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 import hashlib
 import json
 import os
@@ -46,14 +47,15 @@ def copy_file(source: Path, package: Path, relative: str, role: str, source_name
             "source": source_name, "license": license_name, "redistribution": "bundled"}
 
 
-def runtime_headers(output: Path) -> list[Path]:
-    """Select runtime headers from the production GN dependency graph."""
+def describe_targets(output: Path) -> dict:
     described = command([toolchain_tools()["gn"], "desc", output, "//*", "--format=json"],
                         directory=ROOT)
-    targets = json.loads(described.stdout)
-    pending = ["//runtime:vela_runtime"]
+    return json.loads(described.stdout)
+
+
+def target_closure(targets: dict, root: str) -> Iterator[dict]:
+    pending = [root]
     visited = set()
-    headers = set()
     while pending:
         label = pending.pop()
         if label in visited:
@@ -62,10 +64,50 @@ def runtime_headers(output: Path) -> list[Path]:
         target = targets[label]
         pending.extend(target.get("deps", []))
         pending.extend(target.get("public_deps", []))
+        yield target
+
+
+def sdk_headers(targets: dict, root: str) -> list[Path]:
+    headers = set()
+    for target in target_closure(targets, root):
         for source in target.get("sources", []):
-            if source.startswith(("//base/", "//runtime/")) and Path(source).suffix == ".h":
-                headers.add(ROOT / source.removeprefix("//"))
+            if source.startswith(("//include/vela/", "//base/", "//runtime/", "//compiler/")):
+                path = Path(source.removeprefix("//"))
+                if path.suffix == ".h":
+                    headers.add(path)
     return sorted(headers)
+
+
+def package_headers(targets: dict, root: str, package: Path) -> None:
+    headers = sdk_headers(targets, root)
+    for path in headers:
+        relative = path if path.parts[0] == "include" else Path("include") / path
+        copy_file(ROOT / path, package, relative.as_posix(), "header", "Vela", "MIT")
+    abseil = ROOT / "third_party/abseil-cpp"
+    for path in (abseil / "absl").rglob("*"):
+        if path.is_file() and path.suffix in {".h", ".inc"}:
+            relative = (Path("include") / path.relative_to(abseil)).as_posix()
+            copy_file(path, package, relative, "header", "Abseil", "Apache-2.0")
+    # The development file watcher exposes the efsw declarations on POSIX.
+    if Path("base/directory_watcher.h") in headers:
+        copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", package,
+                  "include/efsw/efsw.hpp", "header", "efsw", "MIT")
+
+
+def package_licenses(package: Path) -> None:
+    for name, path in {
+        "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
+        "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
+        "efsw": ROOT / "third_party/efsw/LICENSE",
+        "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
+        "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
+        "yyjson": ROOT / "third_party/yyjson/LICENSE",
+        "xxhash": ROOT / "third_party/xxhash/LICENSE",
+        "unicode": ROOT / "third_party/unicode_data/LICENSE",
+        "zlib": ROOT / "third_party/zlib/LICENSE",
+        "zstd": ROOT / "third_party/zstd/LICENSE",
+    }.items():
+        copy_file(path, package, "share/vela/licenses/" + name + ".txt", "license", name, "included")
 
 
 def load_support_specification(path: Path, target: str) -> dict:
@@ -122,7 +164,7 @@ def verify_package(package: Path, workspace: Path, sdk_environment: dict[str, st
                            + executed.stdout + executed.stderr)
 
 
-def package_bindgen(executable: Path, package: Path) -> None:
+def package_bindgen(executable: Path, package: Path) -> str:
     resource = clang_resource_directory()
     paths = {
         "generator": "bin/" + executable_name("vela_bindgen"),
@@ -130,12 +172,13 @@ def package_bindgen(executable: Path, package: Path) -> None:
         "style": "share/vela/bindings.clang-format",
         "resource_dir": "share/vela/clang/" + resource.name,
     }
+    entry = "bin/vela-bindgen.py"
     inputs = {
         paths["generator"]: executable,
         paths["formatter"]: toolchain_tools()["clang_format"],
         paths["style"]: ROOT / ".clang-format",
         "tools/bindgen.py": ROOT / "tools/bindgen.py",
-        "bin/vela-bindgen.py": ROOT / "tools/bindgen_entry.py",
+        entry: ROOT / "tools/bindgen_entry.py",
     }
     for path in resource.rglob("*"):
         if path.is_file():
@@ -149,6 +192,7 @@ def package_bindgen(executable: Path, package: Path) -> None:
                 "files": {name: digest(package / name) for name in inputs}}
     (package / "share/vela/bindgen.json").write_text(json.dumps(manifest, indent=2) + "\n",
                                                    encoding="utf-8", newline="\n")
+    return entry
 
 
 def windows_support(runtime: Path) -> tuple[dict, dict[str, str]]:
@@ -337,33 +381,9 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                     (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
                     (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
                 files.append(copy_file(source, destination, relative, role, owner, license_name))
-            # GN 的生产依赖闭包决定头文件范围，测试专用头不进入运行时 SDK。
-            for header in runtime_headers(executable.parent):
-                relative = (Path("include") / header.relative_to(ROOT)).as_posix()
-                copy_file(header, destination, relative, "header", "Vela", "MIT")
-            for header in (ROOT / "include/vela").rglob("*.h"):
-                relative = header.relative_to(ROOT / "include").as_posix()
-                copy_file(header, destination, "include/" + relative, "header", "Vela", "MIT")
+            package_headers(describe_targets(executable.parent), "//runtime:vela_runtime", destination)
             package_bindgen(executable.parent / executable_name("vela_bindgen"), destination)
-            for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
-                if header.is_file() and header.suffix in {".h", ".inc"}:
-                    relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()
-                    copy_file(header, destination, "include/" + relative, "header", "Abseil", "Apache-2.0")
-            copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", destination,
-                      "include/efsw/efsw.hpp", "header", "efsw", "MIT")
-            for name, path in {
-                "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
-                "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
-                "efsw": ROOT / "third_party/efsw/LICENSE",
-                "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
-                "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
-                "yyjson": ROOT / "third_party/yyjson/LICENSE",
-                "xxhash": ROOT / "third_party/xxhash/LICENSE",
-                "unicode": ROOT / "third_party/unicode_data/LICENSE",
-                "zlib": ROOT / "third_party/zlib/LICENSE",
-                "zstd": ROOT / "third_party/zstd/LICENSE",
-            }.items():
-                copy_file(path, destination, "share/vela/licenses/" + name + ".txt", "license", name, "included")
+            package_licenses(destination)
             support.update({"format_version": 1, "target": target, "runtime_abi": identity["runtime_abi"],
                             "toolchain_build": identity["toolchain_build"], "llvm_version": llvm_version,
                             "package_root": "../..", "runtime": runtime_relative,

@@ -120,7 +120,11 @@ std::expected<std::string, std::string> ReadSourceText(const std::filesystem::pa
 
 std::expected<std::filesystem::path, std::string> DiskImportPath(
     const std::filesystem::path& importer,
-    std::string_view imported) {
+    std::string_view imported,
+    const ModulePaths& imports) {
+  if (const auto found = imports.find(imported); found != imports.end()) {
+    return Utf8Path(found->second);
+  }
   const auto path = Utf8Path(imported);
   if (imported.contains(':') && !path.is_absolute()) {
     return std::unexpected("unsupported module import scheme");
@@ -280,7 +284,7 @@ void SourceCapture::LoadImports(std::size_t index) {
       }
       continue;
     }
-    const auto dependency = DiskImportPath(importer, imported.path);
+    const auto dependency = DiskImportPath(importer, imported.path, cache_->imports);
     if (!dependency) {
       Error(location, path, dependency.error());
       return;
@@ -488,7 +492,7 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
       dependencies.push_back(*dependency);
       continue;
     }
-    const auto imported_path = DiskImportPath(importer, imported.path);
+    const auto imported_path = DiskImportPath(importer, imported.path, cache_->imports);
     if (!imported_path) {
       Error(imported.location, path, imported_path.error());
       break;
@@ -684,8 +688,9 @@ CapturedSources CapturePreparedSourceFiles(std::string_view path,
   return SourceCapture(cache, accepted).RunPrepared(path, std::move(source));
 }
 
-ModuleGraph LoadModuleGraph(std::string_view path) {
+ModuleGraph LoadModuleGraph(std::string_view path, const ModulePaths& imports) {
   ModuleCache cache;
+  cache.imports = imports;
   return ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Transfer).Run(path);
 }
 
@@ -710,7 +715,11 @@ ParseResult BindModuleGraph(ModuleGraph graph,
 }
 
 std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
-                                        std::filesystem::path imported) {
+                                        std::filesystem::path imported,
+                                        const ModulePaths& imports) {
+  if (const auto found = imports.find(PathText(imported)); found != imports.end()) {
+    return Utf8Path(found->second);
+  }
   if (!imported.has_extension()) {
     imported.replace_extension(".vela");
   }
@@ -720,8 +729,10 @@ std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
 ParseResult LoadProgram(std::string_view path,
                         std::span<const SourceInput> overlays,
                         SourceLoadMode mode,
-                        std::span<const ReflectionSelection> reflection) {
+                        std::span<const ReflectionSelection> reflection,
+                        const ModulePaths& imports) {
   ModuleCache cache;
+  cache.imports = imports;
   return BindModuleGraph(ModuleLoader(SourceOrigin::Files, overlays, cache,
                                       SyntaxRetention::Transfer, mode, reflection)
                              .Run(path),
@@ -739,8 +750,10 @@ ParseResult LoadProgram(std::string_view path,
 
 ParseResult LoadSources(std::span<const SourceInput> sources,
                         std::string_view entry,
-                        std::span<const ReflectionSelection> reflection) {
+                        std::span<const ReflectionSelection> reflection,
+                        const ModulePaths& imports) {
   ModuleCache cache;
+  cache.imports = imports;
   return BindModuleGraph(ModuleLoader(SourceOrigin::Memory, sources, cache,
                                       SyntaxRetention::Transfer, SourceLoadMode::Compilation,
                                       reflection)

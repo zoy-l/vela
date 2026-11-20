@@ -188,9 +188,9 @@ class NativeClassJitTest : public ::testing::TestWithParam<NativeCodeTier> {};
 TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCallsAndBoundMethods) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler.has_value());
-  const auto compiled =
-      CompileSource(**compiler, kSource,
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+  const auto compiled = CompileSource(
+      **compiler, kSource,
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(RegisterCounter(isolate).has_value());
@@ -213,9 +213,9 @@ TEST_P(NativeClassJitTest, ExecutesOwnedConstructionMembersPropertiesDynamicCall
 TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublication) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler.has_value());
-  const auto compiled =
-      CompileSource(**compiler, kSource,
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+  const auto compiled = CompileSource(
+      **compiler, kSource,
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate missing;
   const auto absent = runtime::NativeInstance::Instantiate(missing, compiled.code.image);
@@ -226,9 +226,9 @@ TEST_P(NativeClassJitTest, RejectsMissingTypesAndParameterNameDriftBeforePublica
   const auto parameter = source.find("add(delta: int)");
   ASSERT_NE(parameter, std::string::npos);
   source.replace(parameter, std::string_view("add(delta: int)").size(), "add(amount: int)");
-  const auto changed =
-      CompileSource(**compiler, source,
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+  const auto changed = CompileSource(
+      **compiler, source,
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(changed.Succeeded()) << frontend::DiagnosticsText(changed.diagnostics);
   runtime::Isolate isolate;
   ASSERT_TRUE(RegisterCounter(isolate).has_value());
@@ -244,9 +244,9 @@ TEST_P(NativeClassJitTest, RejectsDriftInUnusedMembersAsPartOfTheWholeClassContr
   const auto method = source.find("  text(text: string): string;");
   ASSERT_NE(method, std::string::npos);
   source.insert(method, "  unused(value: bool): bool;\n");
-  const auto compiled =
-      CompileSource(**compiler, source,
-                    {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}});
+  const auto compiled = CompileSource(
+      **compiler, source,
+      {.diagnostics = {}, .compilation = {.tier = GetParam()}, .reflection = {}, .imports = {}});
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   runtime::Isolate isolate;
   ASSERT_TRUE(RegisterCounter(isolate));

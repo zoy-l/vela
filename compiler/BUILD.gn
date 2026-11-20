@@ -312,6 +312,7 @@ source_set("testing_runtime") {
 
 source_set("testing") {
   sources = [
+    "//include/vela/testing.h",
     "testing/command.cc",
     "testing/command.h",
     "testing/command_options.cc",
@@ -482,6 +483,7 @@ source_set("jit") {
 
 source_set("development") {
   sources = [
+    "//include/vela/development.h",
     "development/development_files.cc",
     "development/development_files.h",
     "development/development_repl.cc",
@@ -507,7 +509,10 @@ source_set("development") {
 # 嵌入宿主只链接库，不把编译器源码加入宿主构建图。
 static_library("vela_development") {
   complete_static_lib = true
-  deps = [ ":development" ]
+  deps = [
+    ":development",
+    ":testing",
+  ]
 }
 
 source_set("development_tools") {

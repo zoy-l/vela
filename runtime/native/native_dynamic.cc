@@ -120,7 +120,9 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       const auto& wrapper = *layouts.classes.at(member.target);
       const auto* const target = wrapper.callable();
       if (resolving && instance.dispatch() == nullptr) {
-        return CreatePlan(execution, receiver, target->function);
+        const auto selected = ResolveNativeMethod(instance, *target, receiver);
+        return selected ? CreatePlan(execution, receiver, selected->target.function)
+                        : std::unexpected(selected.error());
       }
       const auto callable = AllocateNativeCallable(execution, wrapper, std::span(&receiver, 1));
       if (!callable) {

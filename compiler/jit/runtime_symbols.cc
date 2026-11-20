@@ -54,9 +54,9 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeResumeReturnSymbol, &runtime::vela_native_v1_resume_return);
   bind(runtime::kNativeResumeOutcomeSymbol, &runtime::vela_native_v1_resume_outcome);
   bind(runtime::kNativeCallIndirectSymbol, &runtime::vela_native_v1_call_indirect);
-  bind(runtime::kNativeCallInterfaceV1Symbol, &runtime::vela_native_v1_call_interface);
+  bind(runtime::kNativeCallVirtualV1Symbol, &runtime::vela_native_v1_call_virtual);
   bind(runtime::kNativeCallDeclarationSymbol, &runtime::vela_native_v3_call_declaration);
-  bind(runtime::kNativeCallInterfaceV3Symbol, &runtime::vela_native_v3_call_interface);
+  bind(runtime::kNativeCallVirtualV3Symbol, &runtime::vela_native_v3_call_virtual);
   bind(runtime::kNativeCaptureReceiverSymbol, &runtime::vela_native_v3_capture_receiver);
   bind(runtime::kNativeLoadGlobalSymbol, &runtime::vela_native_v10_load_global);
   bind(runtime::kNativeStoreGlobalSymbol, &runtime::vela_native_v10_store_global);

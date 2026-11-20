@@ -325,7 +325,7 @@ func seed(): int { calls++; return 40; }
 class Base { base: int = seed(); }
 export class Counter extends Base {
   value: int;
-  constructor(value: int) { this.value = value + this.base; }
+  constructor(value: int) { this.value = value; super(); this.value += this.base; }
 }
 class Secret { private constructor() {} }
 export func count(): int { return calls; }

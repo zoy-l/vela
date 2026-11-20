@@ -155,6 +155,11 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     return ReportFsError(errors, error);
   }
   frontend::ModuleCache cache;
+  const auto configuration = compiler::ReadSourceConfiguration(Utf8Path(options->input), errors);
+  if (!configuration) {
+    return configuration.error().exit_code;
+  }
+  cache.imports = configuration->imports;
   auto parsed = frontend::LoadProgram(options->input, cache, {});
   if (!parsed.diagnostics.empty()) {
     frontend::WriteDiagnostics(errors, parsed.diagnostics);
@@ -180,10 +185,6 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     }
   }
   // 同一个不可变模块缓存分别提供检查用 AST 和保留公开别名的生成用 AST。
-  const auto configuration = compiler::ReadSourceConfiguration(Utf8Path(options->input), errors);
-  if (!configuration) {
-    return configuration.error().exit_code;
-  }
   const auto checked = frontend::CheckParsed(frontend::LoadProgram(options->input, cache, {}),
                                              configuration->diagnostics);
   frontend::WriteDiagnostics(errors, checked.diagnostics);

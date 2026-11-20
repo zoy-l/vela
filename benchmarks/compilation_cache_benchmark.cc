@@ -56,18 +56,26 @@ void ContentCacheHit(benchmark::State& state, std::string_view filename) {
     return;
   }
   {
-    const auto initial = compiler::jit::CompileFile(
-        **compiler, path,
-        {.diagnostics = {}, .compilation = {.code_cache = directory}, .reflection = {}});
+    const auto initial = compiler::jit::CompileFile(**compiler, path,
+                                                    {
+                                                        .diagnostics = {},
+                                                        .compilation = {.code_cache = directory},
+                                                        .reflection = {},
+                                                        .imports = {},
+                                                    });
     if (!initial.Succeeded()) {
       state.SkipWithError("cannot populate cache");
       return;
     }
   }
   for (auto iteration : state) {
-    auto loaded = compiler::jit::CompileFile(
-        **compiler, path,
-        {.diagnostics = {}, .compilation = {.code_cache = directory}, .reflection = {}});
+    auto loaded = compiler::jit::CompileFile(**compiler, path,
+                                             {
+                                                 .diagnostics = {},
+                                                 .compilation = {.code_cache = directory},
+                                                 .reflection = {},
+                                                 .imports = {},
+                                             });
     if (!loaded.Succeeded() || loaded.code.cache != compiler::jit::CodeCacheStatus::Hit) {
       state.SkipWithError("expected compilation cache hit");
       break;

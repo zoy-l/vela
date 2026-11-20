@@ -866,7 +866,7 @@ export func answer(): int {
   const declared = base.findMethod('read');
   const interfaceMethod = Reflect.typeInfo<Reader>().findMethod('read');
   if (declared == null || interfaceMethod == null) { return -8; }
-  if (declared.invoke(object, CallArguments()) != 1) { return -9; }
+  if (declared.invoke(object, CallArguments()) != 2) { return -9; }
   if (interfaceMethod.invoke(object, CallArguments()) != 2) { return -10; }
   return 42;
 }

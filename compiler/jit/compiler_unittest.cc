@@ -1704,8 +1704,11 @@ export func run(values: int[]): int {
 )",
                                     NativeCodeTier::Optimized, test::IRPreservation::Preserve);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-  // 只有 run 含循环；检查完整流水线仍能越过含安全点和失败出口的全局解析冷入口。
-  EXPECT_NE(compiled->llvm_ir.find("poll.chunk"), std::string::npos);
+  // 直接字段路径仍分块轮询；虚方法路径保留可选择子类实现的运行时调用边界。
+  const std::string_view expected = GetParam() == "sum += object.add(values[index]);"
+                                        ? "vela_native_v3_call_virtual"
+                                        : "poll.chunk";
+  EXPECT_NE(compiled->llvm_ir.find(expected), std::string::npos);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   auto& dispatch = isolate.native_dispatch();

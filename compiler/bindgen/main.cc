@@ -51,6 +51,8 @@ struct Options final {
   llvm::cl::list<std::string> headers{"header", llvm::cl::OneOrMore, llvm::cl::cat(category)};
   llvm::cl::list<std::string> dependencies{"dependency", llvm::cl::ZeroOrMore,
                                            llvm::cl::cat(category)};
+  llvm::cl::list<std::string> callbacks{"callback", llvm::cl::ZeroOrMore, llvm::cl::cat(category)};
+  llvm::cl::list<std::string> opaque{"opaque", llvm::cl::ZeroOrMore, llvm::cl::cat(category)};
 };
 
 class SelectedDatabase final : public clang::tooling::CompilationDatabase {
@@ -198,6 +200,11 @@ int Collect(const Options& options) {
   }
   Collection collection;
   collection.module.name = options.module.getValue();
+  collection.output_directory = options.output.getValue();
+  collection.module.source = PathText(Utf8Path(collection.output_directory) /
+      (collection.module.name + ".vela"));
+  collection.callbacks.insert(options.callbacks.begin(), options.callbacks.end());
+  collection.opaque.insert(options.opaque.begin(), options.opaque.end());
   for (const auto& header : options.headers) {
     llvm::SmallString<0> path;
     if (const auto failure = llvm::sys::fs::real_path(header, path)) {

@@ -109,8 +109,14 @@ bool IsWaiting(DevelopmentStatus status) {
 
 class DevelopmentConsole final {
  public:
-  DevelopmentConsole(std::string entry, Streams streams, compiler::jit::CompileOptions compilation)
-      : files_(std::move(entry)), streams_(streams), compilation_(std::move(compilation)) {}
+  DevelopmentConsole(std::string entry,
+                     Streams streams,
+                     compiler::jit::CompileOptions compilation,
+                     compiler::ProjectConfiguration configuration)
+      : files_(std::move(entry), configuration.imports),
+        streams_(streams),
+        compilation_(std::move(compilation)),
+        configuration_(std::move(configuration)) {}
   int Run();
 
  private:
@@ -136,6 +142,7 @@ class DevelopmentConsole final {
   compiler::DevelopmentFiles files_;
   Streams streams_;
   compiler::jit::CompileOptions compilation_;
+  compiler::ProjectConfiguration configuration_;
   std::unique_ptr<DevelopmentSession> session_;
   std::unique_ptr<DevelopmentDebugger> debugger_;
   std::unique_ptr<compiler::DevelopmentRepl> repl_;
@@ -399,10 +406,11 @@ void DevelopmentConsole::Command(const std::string& command) {
   }
   if (command == ".hot" || command == ".reload" || command.starts_with(kLoadCommand)) {
     const auto previous = session_->snapshot();
-    auto update =
-        command.starts_with(kLoadCommand)
-            ? compiler::DevelopmentFiles(command.substr(kLoadCommand.size())).Capture(*previous)
-            : files_.Capture(*previous);
+    auto update = command.starts_with(kLoadCommand)
+                      ? compiler::DevelopmentFiles(command.substr(kLoadCommand.size()),
+                                                   configuration_.imports)
+                            .Capture(*previous)
+                      : files_.Capture(*previous);
     if (!update) {
       PostDiagnostics(std::move(update.error()));
       return;
@@ -497,12 +505,8 @@ int DevelopmentConsole::Run() {
     return kSourceErrorExitCode;
   }
   compiler::DevelopmentOptions options;
-  const auto configuration =
-      compiler::ReadSourceConfiguration(Utf8Path(files_.entry()), streams_.errors.get());
-  if (!configuration) {
-    return configuration.error().exit_code;
-  }
-  options.diagnostics = configuration->diagnostics;
+  options.diagnostics = configuration_.diagnostics;
+  options.imports = configuration_.imports;
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
   options.progress = [this](const DevelopmentResult& result) {
@@ -590,7 +594,13 @@ void DevelopmentConsole::PollPaused() {
 int RunDevelopmentConsole(std::string entry,
                           Streams streams,
                           compiler::jit::CompileOptions compilation) {
-  return DevelopmentConsole(std::move(entry), streams, std::move(compilation)).Run();
+  auto configuration = compiler::ReadSourceConfiguration(Utf8Path(entry), streams.errors.get());
+  if (!configuration) {
+    return configuration.error().exit_code;
+  }
+  return DevelopmentConsole(std::move(entry), streams, std::move(compilation),
+                            std::move(*configuration))
+      .Run();
 }
 
 }  // namespace vela::tooling

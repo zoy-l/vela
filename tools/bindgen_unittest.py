@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import chdir
 import os
 from pathlib import Path
 import subprocess
@@ -126,6 +127,30 @@ class VELA_CLASS("app.Derived") Derived : public Base {
         derived, = model["classes"]
         method, = derived["members"]
         self.assertEqual((method["name"], method["kind"]), ("Ping", "method"))
+
+    def test_value_module_derives_fields_enums_defaults_and_template_signatures(self) -> None:
+        model = json.loads(self.collect('''#include <optional>
+#include <vector>
+namespace app {
+enum class Mode { first = 3, second = 9 };
+struct Props { int count = 7; std::optional<float> width; Mode mode = Mode::second; };
+template<class T> T Echo(T props) { return props; }
+struct VELA_MODULE("app.Api") Api {
+  static constexpr auto Echo = &app::Echo<Props>;
+};
+}
+''').stdout)
+        types = {item["name"]: item for item in model["classes"]}
+        props = types["Props"]
+        fields = {(item["kind"], item["name"]): item for item in props["members"]}
+        self.assertEqual(fields[("get", "count")]["result"]["kind"], "int")
+        self.assertTrue(fields[("get", "width")]["result"]["nullable"])
+        script = model["products"]["app.vela"]
+        self.assertIn("export enum Mode", script)
+        self.assertIn("static Echo(props: Props): Props", script)
+        self.assertIn("std::in_place", model["products"]["app_bindings.cc"])
+        self.assertIn("app::Mode::second", model["products"]["app_bindings.h"])
+        self.assertIn("receiver.value->count", model["products"]["app_bindings.cc"])
 
     def test_no_implicit_constructor_and_overloads_require_distinct_names(self) -> None:
         result = self.collect("""class VELA_CLASS("app.Counter") Counter {
@@ -360,8 +385,11 @@ class VELA_CLASS("app.Counter") Counter final { public:
         self.assertEqual(verify_manifest(manifest)["registration"], "vela::bindings::module_app::Register")
         self.assertIn("export external class Counter", (output / "app.vela").read_text())
         self.assertIn("static_cast<NativeThunk", (output / "app_bindings.cc").read_text())
+        self.assertTrue((output / "app.d").read_text(encoding="utf-8").startswith(
+            "generated/app/app.bindings.json: "))
         before = {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
-        generate(config, self.collector, self.resource, check=True)
+        with chdir(output):
+            generate(config, self.collector, self.resource, check=True)
         generate(config, self.collector, self.resource)
         self.assertEqual(before, {path.name: (path.read_bytes(), path.stat().st_mtime_ns)
                                   for path in output.iterdir()})
@@ -486,8 +514,13 @@ class VELA_CLASS("app.Counter") Counter final {
 };
 }
 ''', encoding="utf-8", newline="\n")
+        # The host may have its own top-level tools package on the Python search path.
+        host_python = self.directory / "host_python"
+        (host_python / "tools").mkdir(parents=True)
+        (host_python / "tools" / "__init__.py").touch()
         generated = subprocess.run([sys.executable, str(package / "bin/vela-bindgen.py"),
                                     "--config", str(self.binding_config())], cwd=self.directory,
+                                   env=dict(os.environ, PYTHONPATH=str(host_python)),
                                    capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
         manifest = self.directory / "generated/app/app.bindings.json"

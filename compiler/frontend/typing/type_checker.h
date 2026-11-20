@@ -19,6 +19,7 @@
 
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
+#include "base/declaration.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/generics/specialization.h"
@@ -197,10 +198,12 @@ class TypeChecker final : private InferenceTypeRelations {
                                                SourceLocation location,
                                                std::string_view count_error);
   void RegisterMethodApplications();
-  void QueueInterfaceBinding(const ClassInfo& owner,
-                             const std::string& interface,
-                             const Function& method);
-  void DrainInterfaceBindings();
+  void QueueMethodBinding(const ClassInfo& owner,
+                          const std::string& contract,
+                          const Function& method);
+  void DrainMethodBindings();
+  void RegisterDispatchImplementer(ClassInfo& owner, const std::string& contract);
+  void RegisterClassDispatch(ClassInfo& owner);
   void RestoreMethodSpecializations(std::span<const GenericSpecialization> retained);
   void CheckReflectionSelections(const Program& program);
   void CheckAttributes(const Program& program);
@@ -325,8 +328,10 @@ class TypeChecker final : private InferenceTypeRelations {
                                                            const FunctionInfo& signature);
   [[nodiscard]] bool IsMatchingGenericSignature(const Function& implementation,
                                                 const Function& signature);
-  static void MergeInheritedMembers(ClassInfo& info, const ClassInfo& base);
+  void MergeInheritedMembers(ClassInfo& info, const ClassInfo& base);
+  static FunctionInfo AccessorSignature(const FunctionInfo& method, DeclarationKind kind);
   void CheckOverrides(const ClassInfo& info);
+  void CheckOverride(const Function& method, const ClassInfo* base);
   void CheckGenericOverrides(const ClassInfo& info, const ClassInfo* base);
   void MergeBaseClass(std::string_view name);
   void CheckFunction(const Function& function, const ClassInfo* owner);
@@ -635,27 +640,24 @@ class TypeChecker final : private InferenceTypeRelations {
   bool in_async_function_ = false;
   bool checking_definitions_ = false;
   // 名称借用规范类型名和已由 method applications 保活的 AST，覆盖整个检查过程。
-  struct InterfaceBinding final {
+  struct MethodBinding final {
     std::string_view owner;
-    std::string_view interface;
+    std::string_view contract;
     std::string_view method;
     const Function::Application* application;
     SourceLocation location;
   };
-  std::vector<InterfaceBinding> interface_bindings_;
+  std::vector<MethodBinding> method_bindings_;
   absl::flat_hash_set<std::tuple<std::string_view, std::string_view, std::string_view>>
-      queued_interface_bindings_;
-  absl::flat_hash_map<std::string, std::vector<std::string>> interface_implementers_;
+      queued_method_bindings_;
+  absl::flat_hash_map<std::string, std::vector<std::string>> dispatch_implementers_;
   absl::flat_hash_set<std::pair<std::string, std::string>> registered_implementers_;
   absl::flat_hash_map<std::string, GlobalDescriptor> globals_;
   absl::flat_hash_set<std::string> checking_globals_;
   absl::flat_hash_set<std::string> checked_globals_;
   absl::node_hash_map<std::string, InterfaceDescriptor> interfaces_;
-  absl::flat_hash_map<std::tuple<std::string_view, std::string_view, std::string_view>,
-                      MethodTemplate>
-      interface_method_templates_;
   absl::node_hash_map<std::string, absl::flat_hash_map<std::string, const Function*>>
-      interface_method_applications_;
+      method_applications_;
   absl::flat_hash_set<std::string> explicit_super_constructors_;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments_;
   absl::flat_hash_map<std::string, std::size_t> enum_sizes_;

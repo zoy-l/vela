@@ -26,7 +26,7 @@ inline constexpr std::string_view kNativeNumericParseSymbol = "vela_native_v1_nu
 inline constexpr std::string_view kNativeReflectionInvokeSymbol =
     "vela_native_v12_reflection_invoke";
 inline constexpr std::string_view kNativeCallIndirectSymbol = "vela_native_v1_call_indirect";
-inline constexpr std::string_view kNativeCallInterfaceV1Symbol = "vela_native_v1_call_interface";
+inline constexpr std::string_view kNativeCallVirtualV1Symbol = "vela_native_v1_call_virtual";
 inline constexpr std::string_view kNativeCatchSymbol = "vela_native_v1_catch";
 inline constexpr std::string_view kNativeCompareStringsSymbol = "vela_native_v2_compare_strings";
 inline constexpr std::string_view kNativeConcatSymbol = "vela_native_v1_concat";
@@ -62,7 +62,7 @@ inline constexpr std::string_view kNativeInitializeGlobalSymbol =
     "vela_native_v2_initialize_global";
 inline constexpr std::string_view kNativeLeafFailureSymbol = "vela_native_v2_leaf_failure";
 inline constexpr std::string_view kNativeCallDeclarationSymbol = "vela_native_v3_call_declaration";
-inline constexpr std::string_view kNativeCallInterfaceV3Symbol = "vela_native_v3_call_interface";
+inline constexpr std::string_view kNativeCallVirtualV3Symbol = "vela_native_v3_call_virtual";
 inline constexpr std::string_view kNativeCaptureReceiverSymbol = "vela_native_v3_capture_receiver";
 inline constexpr std::string_view kNativeLoadFieldSymbol = "vela_native_v3_load_field";
 inline constexpr std::string_view kNativeSafepointSymbol = "vela_native_v3_safepoint";

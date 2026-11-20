@@ -42,11 +42,12 @@ bool IsDiskSource(const CompiledSourceSnapshot& source, const std::string& path)
 
 void InsertDiskImports(const std::string& path,
                        const frontend::Program& syntax,
+                       const frontend::ModulePaths& imports,
                        absl::flat_hash_set<std::string>& paths) {
   const auto module = Utf8Path(path);
   for (const auto& imported : syntax.imports) {
     if (!imported.path.starts_with(frontend::kSdkSourcePrefix)) {
-      paths.insert(PathText(frontend::ResolveImportPath(module, Utf8Path(imported.path))));
+      paths.insert(PathText(frontend::ResolveImportPath(module, Utf8Path(imported.path), imports)));
     }
   }
 }
@@ -95,8 +96,10 @@ std::expected<absl::flat_hash_map<std::string, std::string>, frontend::Diagnosti
 
 }  // namespace
 
-DevelopmentFiles::DevelopmentFiles(std::string entry)
-    : entry_(std::move(entry)), accepted_(std::make_shared<const CompiledSourceSnapshot>()) {}
+DevelopmentFiles::DevelopmentFiles(std::string entry, frontend::ModulePaths imports)
+    : entry_(std::move(entry)), accepted_(std::make_shared<const CompiledSourceSnapshot>()) {
+  cache_.imports = std::move(imports);
+}
 
 std::string DevelopmentFiles::entry() const {
   const std::scoped_lock lock(mutex_);
@@ -256,7 +259,7 @@ frontend::Diagnostics DevelopmentFiles::AdoptSource(const CompiledSourceSnapshot
   }
   const auto syntax = snapshot.modules.sources.find(path);
   if (snapshot.sources.contains(path) && syntax != snapshot.modules.sources.end()) {
-    InsertDiskImports(path, syntax->second->program, paths);
+    InsertDiskImports(path, syntax->second->program, cache_.imports, paths);
   }
   auto& previous = accepted_sources_.try_emplace(path).first->second;
   frontend::Diagnostics diagnostics;
@@ -401,7 +404,7 @@ std::expected<DevelopmentFiles::GraphTracking, frontend::Diagnostics> Developmen
     if (syntax == cache_.sources.end()) {
       continue;
     }
-    InsertDiskImports(source.path, syntax->second->program, paths);
+    InsertDiskImports(source.path, syntax->second->program, cache_.imports, paths);
   }
   for (const auto& resolution : graph.file_resolutions) {
     if (resolution.requested_path != resolution.canonical_path) {

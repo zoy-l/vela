@@ -54,9 +54,9 @@ struct InstructionEffects final {
          instruction.index == static_cast<std::uint32_t>(builtin);
 }
 
-enum class ClassFunctionKind : std::uint8_t { Constructor, Entry, FieldInitializer };
+enum class ClassFunctionKind : std::uint8_t { Constructor, Entry, VirtualEntry, FieldInitializer };
 
-// 只枚举实际函数编号；接口 callable 的 function 字段是 selector，不是函数目标。
+// 只枚举实际函数编号；虚方法 callable 的 function 字段是 selector，不是函数目标。
 template <typename Visitor>
 void ForEachClassFunction(const Class& type, const Visitor& visitor) {
   const auto visit = [&](std::uint32_t target, ClassFunctionKind kind) {
@@ -65,11 +65,11 @@ void ForEachClassFunction(const Class& type, const Visitor& visitor) {
     }
   };
   visit(type.constructor, ClassFunctionKind::Constructor);
-  if (type.callable && type.callable->mode != CallableMode::InterfaceMethod) {
+  if (type.callable && type.callable->mode != CallableMode::VirtualMethod) {
     visit(type.callable->function, ClassFunctionKind::Entry);
   }
   for (const auto target : type.dispatch_targets) {
-    visit(target, ClassFunctionKind::Entry);
+    visit(target, ClassFunctionKind::VirtualEntry);
   }
   for (const auto& field : type.fields) {
     visit(field.initializer, ClassFunctionKind::FieldInitializer);

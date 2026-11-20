@@ -148,6 +148,20 @@ class ProjectConfigurationFileTest : public test::DirectoryTest {
   }
 };
 
+TEST(ProjectConfigurationTest, ResolvesModulePathsAgainstTheConfigurationFile) {
+  const auto config = ParseProjectConfiguration("project/vela.json",
+      R"({"imports":{"ui":"generated/ui.vela","tools":"../tools/api.vela"}})");
+  ASSERT_TRUE(config) << config.error().message;
+  EXPECT_EQ(config->imports.at("ui"), "project/generated/ui.vela");
+  EXPECT_EQ(config->imports.at("tools"), "tools/api.vela");
+  for (const auto* source : {
+      R"({"imports":null})", R"({"imports":{"ui":1}})", R"({"imports":{"ui":""}})",
+      R"({"imports":{"sdk:test":"api.vela"}})", R"({"imports":{"ui":"a\u0000b"}})",
+  }) {
+    EXPECT_FALSE(ParseProjectConfiguration("vela.json", source));
+  }
+}
+
 TEST_F(ProjectConfigurationFileTest, FindsNearestConfigAndPublishesAnOwnedSnapshot) {
   Write("vela.json", R"({"test":{"concurrency":1}})");
   Write("project/vela.json", R"({"test":{"concurrency":2}})");

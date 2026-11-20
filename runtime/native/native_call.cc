@@ -114,6 +114,25 @@ NativeCallDomain Domain(const NativeInstance& instance) {
   };
 }
 
+std::expected<std::uint32_t, ExecutionStatus>
+ResolveClosedVirtualTarget(const NativeInstance& instance, std::uint32_t selector, Value receiver) {
+  const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
+  if (layout == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  // DateParts 等固定布局跨程序共享；函数编号只属于当前映像，不能存入对象布局。
+  const auto& state = instance.program();
+  const auto found = state.class_indices.find(&layout->nominal_type());
+  if (found == state.class_indices.end()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto targets = instance.image().classes.values()[found->second].dispatch_targets.values();
+  if (selector >= targets.size() || targets[selector] == kInvalidFunctionTarget) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return targets[selector];
+}
+
 std::uint8_t InvokeResolvedDeclaration(NativeExecution* execution,
                                        const NativeResolvedDeclaration& target,
                                        const NativeValue* arguments,
@@ -141,31 +160,22 @@ std::expected<NativeResolvedCallable, ExecutionStatus> ResolveCallableInDomain(
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto functions = state.image->functions.values();
-  std::expected<ResolvedCallable, ExecutionStatus> target;
-  if (state.dispatch == nullptr) {
-    target = ResolveCallable(callable, *state.code_identity, functions.size());
-  } else {
-    ResolvedCallable selected{.function = Heap::NativeFunctionIndex(*object)};
-    switch (Heap::ClassOf(*object)->callable()->mode) {
-      case CallableMode::Plain:
-        break;
-      case CallableMode::Closure:
-        selected.implicit = callable;
-        break;
-      case CallableMode::BoundMethod:
-      case CallableMode::InterfaceMethod:
-        selected.implicit = Heap::LoadField(*object, 0);
-        break;
-    }
-    target = selected;
-  }
-  if (!target) {
-    return std::unexpected(target.error());
+  ResolvedCallable target{.function = Heap::NativeFunctionIndex(*object)};
+  switch (Heap::ClassOf(*object)->callable()->mode) {
+    case CallableMode::Plain:
+      break;
+    case CallableMode::Closure:
+      target.implicit = callable;
+      break;
+    case CallableMode::BoundMethod:
+    case CallableMode::VirtualMethod:
+      target.implicit = Heap::LoadField(*object, 0);
+      break;
   }
   return NativeResolvedCallable{
       .state = environment,
-      .target = *target,
-      .function = &functions.subspan(target->function).front(),
+      .target = target,
+      .function = &functions.subspan(target.function).front(),
   };
 }
 
@@ -311,22 +321,17 @@ Future InvokeFutureCallback(const NativeCallDomain& domain,
 std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& execution,
                                                            HeapObject& callable) {
   const auto target = *Heap::ClassOf(callable)->callable();
-  auto& source = Heap::NativeProgram(*Heap::NativeEnvironment(callable));
-  if (source.dispatch == nullptr || target.mode != CallableMode::InterfaceMethod) {
+  if (target.mode != CallableMode::VirtualMethod) {
     return {};
   }
   const auto receiver = Heap::LoadField(callable, 0);
-  const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
-  if (layout == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto selector =
-      source.image->selector_declarations.values().subspan(target.function).front();
-  const auto selected = source.dispatch->ResolveInterface(layout->nominal_type(), selector);
+  const auto origin = NativeInstance::Borrow(*Heap::NativeEnvironment(callable));
+  const auto selected = ResolveNativeMethod(origin, target, receiver);
   if (!selected) {
     return std::unexpected(selected.error());
   }
-  execution.isolate().heap().SetNativeEnvironment(callable, *selected->state, selected->function);
+  execution.isolate().heap().SetNativeEnvironment(callable, *selected->state,
+                                                  selected->target.function);
   return {};
 }
 
@@ -363,7 +368,7 @@ std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
   };
   const auto& state = Heap::NativeProgram(*selected.state);
   if (state.dispatch != nullptr && target.mode != CallableMode::Closure &&
-      target.mode != CallableMode::InterfaceMethod) {
+      target.mode != CallableMode::VirtualMethod) {
     const auto identity = state.image->function(target.function).identity;
     if (identity.local == 0) {
       const auto current = state.dispatch->Resolve(identity.declaration);
@@ -379,7 +384,7 @@ std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   heap.SetNativeEnvironment(*object, *selected.state, selected.function);
-  if (target.mode == CallableMode::InterfaceMethod && !captures.empty()) {
+  if (target.mode == CallableMode::VirtualMethod && !captures.empty()) {
     const auto captured = CaptureNativeReceiver(execution, *object);
     if (!captured) {
       return std::unexpected(captured.error());
@@ -392,6 +397,39 @@ extern "C" std::uint8_t vela_native_v3_capture_receiver(NativeExecution* executi
                                                         HeapObject* callable) {
   const auto captured = CaptureNativeReceiver(*execution, *callable);
   return ToNativeStatus(captured);
+}
+
+std::expected<NativeResolvedCallable, ExecutionStatus>
+ResolveNativeMethod(const NativeInstance& caller, CallableTarget method, Value receiver) {
+  NativeResolvedDeclaration selected{
+      .state = caller.state().front().AsObject(),
+      .function = method.function,
+  };
+  if (method.mode == CallableMode::VirtualMethod) {
+    if (const auto* dispatch = caller.dispatch()) {
+      const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
+      if (layout == nullptr) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      const auto selector = caller.image().selector_declarations.values()[method.function];
+      const auto target = dispatch->ResolveVirtual(layout->nominal_type(), selector);
+      if (!target) {
+        return std::unexpected(target.error());
+      }
+      selected = *target;
+    } else {
+      const auto target = ResolveClosedVirtualTarget(caller, method.function, receiver);
+      if (!target) {
+        return std::unexpected(target.error());
+      }
+      selected.function = *target;
+    }
+  }
+  return NativeResolvedCallable{
+      .state = selected.state,
+      .target = {.function = selected.function, .implicit = receiver},
+      .function = &Heap::NativeProgram(*selected.state).image->function(selected.function),
+  };
 }
 
 std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
@@ -657,18 +695,17 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
       .entry(execution, input.subspan(1 - hidden).data(), count + hidden, result);
 }
 
-extern "C" std::uint8_t vela_native_v1_call_interface(NativeExecution* execution,
-                                                      std::uint32_t selector,
-                                                      const NativeValue* arguments,
-                                                      std::uint64_t count,
-                                                      NativeValue* result) {
-  const auto functions = execution->instance().image().functions.values();
-  const auto target =
-      ResolveInterfaceTarget(selector, DecodeNativeValue(*arguments), functions.size());
+extern "C" std::uint8_t vela_native_v1_call_virtual(NativeExecution* execution,
+                                                    std::uint32_t selector,
+                                                    const NativeValue* arguments,
+                                                    std::uint64_t count,
+                                                    NativeValue* result) {
+  const auto& instance = execution->instance();
+  const auto target = ResolveClosedVirtualTarget(instance, selector, DecodeNativeValue(*arguments));
   if (!target) {
     return static_cast<std::uint8_t>(target.error());
   }
-  return functions.subspan(*target).front().entry(execution, arguments, count, result);
+  return instance.image().function(*target).entry(execution, arguments, count, result);
 }
 
 extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* execution,
@@ -691,23 +728,23 @@ extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* executi
   return InvokeResolvedDeclaration(execution, *target, arguments, count, result);
 }
 
-extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution,
-                                                      std::uint64_t selector,
-                                                      const NativeValue* arguments,
-                                                      std::uint64_t count,
-                                                      NativeValue* result) {
+extern "C" std::uint8_t vela_native_v3_call_virtual(NativeExecution* execution,
+                                                    std::uint64_t selector,
+                                                    const NativeValue* arguments,
+                                                    std::uint64_t count,
+                                                    NativeValue* result) {
   const auto receiver = DecodeNativeValue(*arguments);
   const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
   if (layout == nullptr) {
     return static_cast<std::uint8_t>(ExecutionStatus::TypeError);
   }
   auto& dispatch = *execution->instance().dispatch();
-  const auto target = dispatch.ResolveInterface(layout->nominal_type(), DeclarationId{selector});
+  const auto target = dispatch.ResolveVirtual(layout->nominal_type(), DeclarationId{selector});
   if (!target) {
     const auto status = target.error();
     return static_cast<std::uint8_t>(
         status == ExecutionStatus::TargetDeleted
-            ? execution->HandleFailure(status, "interface selector " + std::to_string(selector) +
+            ? execution->HandleFailure(status, "virtual selector " + std::to_string(selector) +
                                                    " was deleted in revision " +
                                                    std::to_string(dispatch.revision()))
             : status);

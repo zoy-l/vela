@@ -234,6 +234,9 @@ std::expected<void, std::string> CollectScriptType(
     }
   }
   for (const auto& [key, nominal] : type.layouts.nominals) {
+    if (names.contains(key)) {
+      continue;
+    }
     const auto [entry, inserted] = script_imports.try_emplace(nominal.module);
     if (inserted) {
       entry->second = DependencyAlias("scriptDependency", script_imports.size(), identifiers);
@@ -285,6 +288,14 @@ std::string RenderScript(const Module& module,
   }
   for (const auto& type : module.classes) {
     Documentation(output, type.documentation);
+    if (!type.enumerators.empty()) {
+      output << "export enum " << type.name << " {";
+      for (const auto& [name, unused] : type.enumerators) {
+        output << name << ',';
+      }
+      output << "}\n";
+      continue;
+    }
     output << "export external class " << type.name << " = "
            << frontend::QuoteStringLiteral(type.key) << " {\n";
     const auto constructor =
@@ -309,6 +320,18 @@ std::expected<std::string, std::string> EmitScript(Module& module,
   TypeNames names;
   std::set<std::string> identifiers;
   ImportNativeDependencies(module, output_directory, imports, names, identifiers);
+  for (const auto& type : module.classes) {
+    if (!type.enumerators.empty()) {
+      layout::Program layouts;
+      layout::Nominal nominal{
+          .module = PathText(Utf8Path(output_directory) / (module.name + ".vela")),
+          .name = type.name,
+          .arguments = {},
+          .exported = true,
+      };
+      names.emplace(layout::NominalKey(layouts, nominal), type.name);
+    }
+  }
   const auto imported =
       ImportScriptDependencies(module, output_directory, imports, names, identifiers);
   if (!imported) {
@@ -342,7 +365,8 @@ std::string EmitHeader(const Module& module, const std::set<std::string>& header
   std::ostringstream output;
   output << "#pragma once\n#include <expected>\n#include <string_view>\n"
             "#include \"runtime/isolate/isolate.h\"\n"
-            "#include \"runtime/native/native_host_type.h\"\n";
+            "#include \"runtime/native/native_host_type.h\"\n"
+            "#include <vela/native_values.h>\n";
   for (const auto& header : headers) {
     output << "#include " << Quote(PathText(Utf8Path(header)), '"') << '\n';
   }
@@ -351,8 +375,36 @@ std::string EmitHeader(const Module& module, const std::set<std::string>& header
   }
   output << "namespace vela::runtime {\n";
   for (const auto& type : module.classes) {
+    if (!type.enumerators.empty()) {
+      continue;
+    }
     output << "template <> struct NativeClassTraits<::" << type.cpp << "> final {\n"
            << "static constexpr std::string_view kKey = " << Quote(type.key, '"') << ";\n};\n";
+  }
+  output << "}\nnamespace vela {\n";
+  for (const auto& type : module.classes) {
+    if (type.enumerators.empty()) {
+      continue;
+    }
+    output << "template <> struct ScriptTypeTraits<::" << type.cpp << "> {\n"
+           << "static constexpr auto kKind = ScriptTypeKind::Enum;\n"
+           << "static constexpr std::string_view kModule = "
+           << Quote(module.source, '"') << ";\n"
+           << "static constexpr std::string_view kName = " << Quote(type.name, '"') << ";\n"
+           << "using Arguments = std::tuple<>; };\n";
+  }
+  output << "}\nnamespace vela::bindings {\n";
+  for (const auto& type : module.classes) {
+    if (type.enumerators.empty()) {
+      continue;
+    }
+    output << "template <> struct EnumValues<::" << type.cpp << "> {\n"
+           << "static constexpr std::array<std::pair<std::string_view, ::" << type.cpp << ">, "
+           << type.enumerators.size() << "> values{{";
+    for (const auto& [name, value] : type.enumerators) {
+      output << '{' << Quote(name, '"') << ", ::" << value << "},";
+    }
+    output << "}}; };\n";
   }
   output << "}\nnamespace " << RegistrationNamespace(module.name) << " {\n"
          << "std::expected<void, runtime::NativeRegistrationError> Register(runtime::Isolate& "
@@ -365,6 +417,12 @@ void EmitThunk(std::ostream& output,
                const Class& type,
                const Member& member,
                const std::string& name) {
+  if (member.implementation) {
+    auto implementation = *member.implementation;
+    implementation.replace(implementation.find("$name"), std::string_view("$name").size(), name);
+    output << implementation;
+    return;
+  }
   const bool constructor = member.kind == MemberKind::Constructor;
   const bool receiver = HasNativeReceiver(member.kind);
   if (!constructor) {
@@ -430,6 +488,9 @@ std::string EmitCpp(const Module& module) {
             "std::vector<runtime::NativeClass> classes;\n";
   index = 0;
   for (const auto& type : module.classes) {
+    if (!type.enumerators.empty()) {
+      continue;
+    }
     output << "{\nstd::vector<runtime::NativeClassMember> members;\n";
     for (const auto& member : type.members) {
       const auto kind = static_cast<unsigned>(member.kind);
@@ -442,8 +503,9 @@ std::string EmitCpp(const Module& module) {
       }
       const auto target = "NativeThunk" + std::to_string(index++);
       output << "}, .function = runtime::NativeFunction::Bind<"
-             << (member.kind == MemberKind::Static ? target + "Target" : "&" + target) << ">("
-             << Quote(member.key, '"') << ")});\n";
+             << (member.kind == MemberKind::Static && !member.implementation ? target + "Target"
+                                                                               : "&" + target)
+             << ">(" << Quote(member.key, '"') << ")});\n";
     }
     output << "auto type = runtime::NativeClass::Define<::" << type.cpp
            << ">(std::move(members));\ntype.contract = " << Quote(PublicContract(type), '"')

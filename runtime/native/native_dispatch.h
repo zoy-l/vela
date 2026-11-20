@@ -176,7 +176,7 @@ class NativeDispatch final {
   // 返回的目标只借用当前快照；调用方必须在下一个可提交边界之前保根其 state。
   [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> Resolve(
       DeclarationId declaration) const noexcept;
-  [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> ResolveInterface(
+  [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> ResolveVirtual(
       const NominalType& receiver,
       DeclarationId selector) const noexcept;
   [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(NativeExecution& execution,

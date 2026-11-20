@@ -313,7 +313,7 @@ bool TypeChecker::DrainBoundChecks() {
 void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
   InterfaceDescriptor interface;
   interface.declaration = &source;
-  interface_method_applications_.try_emplace(source.name);
+  method_applications_.try_emplace(source.name);
   interface.type = {
       .kind = Type::Kind::Interface,
       .name = InternTypeName(source.name),
@@ -552,9 +552,7 @@ void TypeChecker::RegisterSpecializations() {
   }
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
-    if (source.base_class) {
-      MergeBaseClass(source.name);
-    }
+    MergeBaseClass(source.name);
     CheckClassImplementation(source);
   }
   while (registered_functions_ < specializer_->function_count()) {

@@ -1,4 +1,5 @@
 #include "compiler/aot/reachability.h"
+#include "compiler/aot/native_call_optimizer.h"
 
 #include <algorithm>
 #include <array>
@@ -7,10 +8,12 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <gtest/gtest.h>
 
 #include "base/callable.h"
+#include "base/opcode.h"
 #include "base/reflection.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
@@ -33,6 +36,63 @@ void PruneMain(ir::Program& program) {
   }
   std::optional<std::uint32_t> main;
   PruneNativeProgram(program, main);
+}
+
+TEST(ReachabilityTest, VirtualSelectorsRetainOverridesAndDevirtualizeOnlyProvenTargets) {
+  auto prepared = ir::test::Prepare(R"(
+class Base {
+  read(): int { return 1; }
+  unused(): int { return 0; }
+}
+class Child extends Base { override read(): int { return 42; } }
+class Solo { read(): int { return 42; } }
+func polymorphic(value: Base): int { return value.read(); }
+func exact(): int { const value: Base = Child(); return value.read(); }
+func unique(value: Solo): int { return value.read(); }
+export func main(): int { return polymorphic(Base()) + exact() + unique(Solo()); }
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  auto& program = prepared.program;
+  std::optional<std::uint32_t> main;
+  PruneNativeProgram(program, main);
+  EXPECT_FALSE(std::ranges::any_of(
+      program.functions, [](const auto& function) { return function.name == "Base.unused"; }));
+  DevirtualizeNativeCalls(program);
+  const auto polymorphic = std::ranges::find(program.functions, "polymorphic", &ir::Function::name);
+  ASSERT_NE(polymorphic, program.functions.end());
+  EXPECT_TRUE(std::ranges::any_of(polymorphic->instructions, [](const auto& instruction) {
+    return instruction.opcode == Opcode::CallVirtual;
+  }));
+  for (const auto& [caller, target] :
+       {std::pair{"exact", "Child.read"}, std::pair{"unique", "Solo.read"}}) {
+    const auto function = std::ranges::find(program.functions, caller, &ir::Function::name);
+    ASSERT_NE(function, program.functions.end());
+    EXPECT_TRUE(std::ranges::any_of(function->instructions, [&](const auto& instruction) {
+      return instruction.opcode == Opcode::Call &&
+             program.functions.at(instruction.index).name == target;
+    }));
+  }
+}
+
+TEST(ReachabilityTest, InternalClassesDoNotRetainUnreachableDynamicMemberTables) {
+  auto prepared = ir::test::Prepare(R"(
+class Counter {
+  stored: int = 42;
+  get value(): int { return this.stored; }
+  set value(next: int): void { this.stored = next; }
+  unused(): int { return 0; }
+}
+export func main(): int { return Counter().value; }
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  auto& program = prepared.program;
+  PruneMain(program);
+  EXPECT_FALSE(std::ranges::any_of(program.members, [&](const auto& member) {
+    return program.runtime_types.at(member.receiver_type).name == "Counter";
+  }));
+  EXPECT_FALSE(std::ranges::any_of(program.functions, [](const auto& function) {
+    return function.name == "Counter.$set.value" || function.name == "Counter.unused";
+  }));
 }
 
 TEST(ReachabilityTest, ReflectionRetainsSelectedPublicCodeAndRemapsTargets) {
@@ -87,7 +147,10 @@ export func main(): int { return 1; }
   const auto add = std::ranges::find(program.reflection_members, "add", &reflection::Member::name);
   ASSERT_NE(add, program.reflection_members.end());
   ASSERT_NE(add->target, kInvalidFunctionTarget);
-  EXPECT_EQ(program.functions.at(add->target).name, "Counter.add");
+  EXPECT_NE(add->flags & reflection::kVirtual, 0U);
+  const auto owner = program.layouts.types.at(add->declaring_type).index;
+  const auto target = program.classes.at(owner).dispatch_targets.at(add->target);
+  EXPECT_EQ(program.functions.at(target).name, "Counter.add");
   const auto secret =
       std::ranges::find(program.reflection_members, "secret", &reflection::Member::name);
   ASSERT_NE(secret, program.reflection_members.end());

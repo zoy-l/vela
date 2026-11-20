@@ -50,6 +50,9 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Include Abseil headers with angle brackets, such as `#include <absl/container/flat_hash_map.h>`.
   Prefer Abseil flat hash containers for hash-based lookup; account for pointer and reference
   invalidation on rehash when choosing storage and lifetimes.
+- In `include/vela/native_values.h`, retain `vela/objects.h` with `IWYU pragma: keep`:
+  the dependent enum codec instantiates `Type<T>::Member`, whose definition is provided there.
+  This exception covers that deferred template dependency only.
 
 ## APIs and expressions
 

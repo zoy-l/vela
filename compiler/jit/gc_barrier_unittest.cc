@@ -72,7 +72,8 @@ export func readGlobal(owner: Holder): int {
   const auto [mode, tier] = configuration;
   if (mode == NativeProgramMode::Closed) {
     const auto compiled = CompileSource(
-        **compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}});
+        **compiler, source,
+        {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}, .imports = {}});
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     auto created = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
     ASSERT_TRUE(created);

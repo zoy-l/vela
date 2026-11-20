@@ -167,7 +167,6 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
     // 名义身份由本 Isolate 创建；仅在它的第一个固定布局建立时绑定分配描述。
     nominal->fixed_layout_ = result;
   }
-  result->dispatch_targets_ = std::move(options.dispatch_targets);
   result->callable_type_ = options.callable_type;
   class_layouts_.push_back(std::move(layout));
   return result;

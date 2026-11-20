@@ -271,7 +271,7 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   }
   const auto& callable = *target;
   const auto& program = *program_;
-  const auto& signature = callable.mode == CallableMode::InterfaceMethod
+  const auto& signature = callable.mode == CallableMode::VirtualMethod
                               ? type.callable_type
                               : program.functions.at(callable.function).signature;
   if (!signature) {

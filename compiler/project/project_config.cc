@@ -483,7 +483,7 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
   if (!indexed) {
     return std::unexpected(indexed.error());
   }
-  constexpr auto kSections = std::to_array<std::string_view>({"test", "diagnostics"});
+  constexpr auto kSections = std::to_array<std::string_view>({"test", "diagnostics", "imports"});
   const auto fields = reader.Fields(root, {}, kSections);
   if (!fields) {
     return std::unexpected(fields.error());
@@ -493,12 +493,35 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
       .root = file.parent_path(),
       .test = std::nullopt,
       .diagnostics = {},
+      .imports = {},
   };
   const auto diagnostics = ReadDiagnosticOptions(reader, GetJsonField(root, "diagnostics"));
   if (!diagnostics) {
     return std::unexpected(diagnostics.error());
   }
   result.diagnostics = *diagnostics;
+  if (const auto* imports = GetJsonField(root, "imports")) {
+    if (!yyjson_is_obj(imports)) {
+      return std::unexpected(reader.Error(imports, "imports", "must be an object"));
+    }
+    auto iterator = yyjson_obj_iter_with(imports);
+    while (auto* key = yyjson_obj_iter_next(&iterator)) {
+      const auto name = GetJsonString(key);
+      if (name.empty() || name.starts_with("sdk:") || name.starts_with("builtin:") ||
+          name.contains('\0')) {
+        return std::unexpected(reader.Error(key, "imports", "invalid or reserved module name"));
+      }
+      auto value = reader.String(yyjson_obj_iter_get_val(key), "imports." + std::string(name));
+      if (!value) {
+        return std::unexpected(value.error());
+      }
+      if (value->contains('\0')) {
+        return std::unexpected(
+            reader.Error(key, "imports." + std::string(name), "module path contains a null byte"));
+      }
+      result.imports.emplace(name, PathText((result.root / Utf8Path(*value)).lexically_normal()));
+    }
+  }
   if (const auto* test = GetJsonField(root, "test")) {
     auto settings = ReadTestSettings(reader, test);
     if (!settings) {
@@ -543,6 +566,7 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
               .root = working,
               .test = std::nullopt,
               .diagnostics = {},
+              .imports = {},
           };
         }
         return std::unexpected(ConfigurationError{
@@ -570,21 +594,23 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
 }
 
 std::expected<ProjectConfiguration, ConfigurationError> LoadSourceConfiguration(
-    const std::filesystem::path& source) {
+    const std::filesystem::path& source,
+    const std::optional<std::filesystem::path>& explicit_file) {
   std::error_code error;
   const auto absolute = std::filesystem::absolute(source, error);
   if (error) {
     return std::unexpected(
         ConfigurationError::FileError(source, error.message(), kIoErrorExitCode));
   }
-  return LoadProjectConfiguration(absolute.parent_path(), std::nullopt,
+  return LoadProjectConfiguration(absolute.parent_path(), explicit_file,
                                   ConfigurationRequirement::Optional);
 }
 
 std::expected<ProjectConfiguration, ConfigurationError> ReadSourceConfiguration(
     const std::filesystem::path& source,
-    std::ostream& errors) {
-  auto configuration = LoadSourceConfiguration(source);
+    std::ostream& errors,
+    const std::optional<std::filesystem::path>& explicit_file) {
+  auto configuration = LoadSourceConfiguration(source, explicit_file);
   if (!configuration) {
     frontend::WriteDiagnostic(errors, ConfigurationDiagnostic(configuration.error()));
   }

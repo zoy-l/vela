@@ -34,8 +34,8 @@ class BonusCounter extends Counter implements Measurable, Named {
   bonus: int;
 
   constructor(value: int, bonus: int) {
-    super(value);
     this.bonus = bonus;
+    super(value);
   }
 
   override measure(): int {

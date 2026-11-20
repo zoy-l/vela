@@ -13,6 +13,8 @@ executable("vela_bindgen") {
     "model.h",
     "type_mapper.cc",
     "type_mapper.h",
+    "value_module.cc",
+    "value_module.h",
   ]
   deps = [
     "//compiler:frontend",

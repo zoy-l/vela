@@ -35,6 +35,7 @@ enum class NodeKind : std::uint8_t {
   Collection,
   Signature,
   Interface,
+  Selector,
   JSONPlan,
 };
 
@@ -81,6 +82,7 @@ class Reachability final {
   absl::flat_hash_map<std::string_view, Node> names_;
   std::vector<std::vector<std::size_t>> members_;
   std::vector<std::vector<std::uint32_t>> implementations_;
+  std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>> virtual_implementations_;
   absl::flat_hash_set<Node> reached_;
   std::vector<Node> pending_;
   bool dynamic_ = false;
@@ -89,7 +91,8 @@ class Reachability final {
 Reachability::Reachability(const ir::Program& program)
     : program_(program),
       members_(program.runtime_types.size()),
-      implementations_(program.layouts.interfaces.size()) {
+      implementations_(program.layouts.interfaces.size()),
+      virtual_implementations_(program.selector_declarations.size()) {
   const auto add = [&](const auto& values, NodeKind kind) {
     for (std::size_t index = 0; index < values.size(); ++index) {
       const auto& name = values.at(index).name;
@@ -103,6 +106,15 @@ Reachability::Reachability(const ir::Program& program)
   add(program.layouts.arrays, NodeKind::Array);
   add(program.layouts.collections, NodeKind::Collection);
   add(program.layouts.signatures, NodeKind::Signature);
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    const auto& targets = program.classes[index].dispatch_targets;
+    for (std::size_t selector = 0; selector < targets.size(); ++selector) {
+      const auto target = targets[selector];
+      if (target != kInvalidFunctionTarget) {
+        virtual_implementations_[selector].emplace_back(static_cast<std::uint32_t>(index), target);
+      }
+    }
+  }
   for (std::size_t index = 0; index < program.members.size(); ++index) {
     const auto& member = program.members.at(index);
     members_.at(member.receiver_type).push_back(index);
@@ -131,7 +143,7 @@ void Reachability::MarkDynamic() {
   dynamic_ = true;
   // dynamic 宿主输入可携带任意已描述类型；保留其成员闭包，不能只追踪直接 Call。
   for (std::size_t index = 0; index < program_.runtime_types.size(); ++index) {
-    Mark(NodeKind::Type, static_cast<std::uint32_t>(index));
+    Mark(NodeKind::Type, static_cast<std::uint32_t>(index), TypeExposure::Host);
   }
   for (std::size_t index = 0; index < program_.classes.size(); ++index) {
     Mark(NodeKind::Class, static_cast<std::uint32_t>(index));
@@ -185,6 +197,9 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
       case Opcode::Call:
         Mark(NodeKind::Function, instruction.index);
         break;
+      case Opcode::CallVirtual:
+        Mark(NodeKind::Selector, instruction.index);
+        break;
       case Opcode::NewInstance:
         Mark(NodeKind::Class, instruction.index);
         break;
@@ -219,10 +234,22 @@ void Reachability::VisitClass(std::uint32_t index, TypeExposure exposure) {
   const auto& source = program_.classes.at(index);
   ir::ForEachClassFunction(source, [&](std::uint32_t target, ir::ClassFunctionKind kind) {
     if (kind != ir::ClassFunctionKind::FieldInitializer &&
+        kind != ir::ClassFunctionKind::VirtualEntry &&
         (kind != ir::ClassFunctionKind::Constructor || exposure == TypeExposure::Host)) {
       Mark(NodeKind::Function, target, exposure);
     }
   });
+  if (source.callable && source.callable->mode == CallableMode::VirtualMethod) {
+    Mark(NodeKind::Selector, source.callable->function, exposure);
+  }
+  for (std::size_t selector = 0; selector < source.dispatch_targets.size(); ++selector) {
+    const auto target = source.dispatch_targets[selector];
+    if (target != kInvalidFunctionTarget &&
+        reached_.contains(
+            {.kind = NodeKind::Selector, .index = static_cast<std::uint32_t>(selector)})) {
+      Mark(NodeKind::Function, target, exposure);
+    }
+  }
   for (const auto& type : source.field_types) {
     VisitSource(type, exposure);
   }
@@ -250,8 +277,10 @@ void Reachability::VisitMember(const MemberDefinition& member, TypeExposure expo
 
 void Reachability::VisitType(std::uint32_t index, TypeExposure exposure) {
   VisitLayout(program_.layouts.types.at(index), exposure);
-  for (const auto member : members_.at(index)) {
-    VisitMember(program_.members.at(member), exposure);
+  if (exposure == TypeExposure::Host || dynamic_) {
+    for (const auto member : members_.at(index)) {
+      VisitMember(program_.members.at(member), exposure);
+    }
   }
 }
 
@@ -324,6 +353,15 @@ void Reachability::Visit(Node node) {
         Mark(NodeKind::Class, target, node.exposure);
       }
       break;
+    case NodeKind::Selector:
+      for (const auto& [owner, target] : virtual_implementations_.at(node.index)) {
+        if (reached_.contains({.kind = NodeKind::Class, .index = owner})) {
+          const auto host = reached_.contains(
+              {.kind = NodeKind::Class, .index = owner, .exposure = TypeExposure::Host});
+          Mark(NodeKind::Function, target, host ? TypeExposure::Host : node.exposure);
+        }
+      }
+      break;
     case NodeKind::JSONPlan: {
       const auto& plan = program_.json_decode_plans.at(node.index);
       Mark(NodeKind::Type, plan.type);
@@ -366,7 +404,7 @@ void Reachability::RemapClass(T& type,
     std::ranges::fill(type.dispatch_targets, kInvalidFunctionTarget);
     return;
   }
-  if (type.callable && type.callable->mode != CallableMode::InterfaceMethod) {
+  if (type.callable && type.callable->mode != CallableMode::VirtualMethod) {
     const auto target = type.callable->function;
     type.callable->function = mapping[target];
   }
@@ -408,7 +446,7 @@ std::vector<std::uint32_t> Reachability::PruneJSONPlans(
 void RemapReflectedTargets(ir::Program& program, std::span<const std::uint32_t> mapping) {
   for (auto& member : program.reflection_members) {
     if (member.target != kInvalidFunctionTarget && reflection::IsCallable(member.kind) &&
-        program.layouts.types.at(member.declaring_type).kind != layout::Type::Kind::Interface) {
+        (member.flags & reflection::kVirtual) == 0) {
       member.target = mapping[member.target];
     }
   }
@@ -453,7 +491,8 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
     RemapClass(program.layouts.classes.at(index), static_cast<std::uint32_t>(index), mapping);
   }
   std::erase_if(program.members, [&](const MemberDefinition& member) {
-    return !reached_.contains({.kind = NodeKind::Type, .index = member.receiver_type});
+    return !reached_.contains(
+        {.kind = NodeKind::Type, .index = member.receiver_type, .exposure = TypeExposure::Host});
   });
   for (auto& member : program.members) {
     if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
@@ -488,10 +527,16 @@ void PruneNativeProgram(ir::Program& program, std::optional<std::uint32_t>& main
     }
     if (reflection::IsCallable(member.kind)) {
       const auto& owner = program.layouts.types.at(member.declaring_type);
+      if ((member.flags & reflection::kVirtual) != 0) {
+        reachability.Mark(NodeKind::Selector, member.target);
+      }
       if (owner.kind == layout::Type::Kind::Interface) {
         reachability.Mark(NodeKind::Interface, owner.index);
       } else {
-        reachability.Mark(NodeKind::Function, member.target);
+        reachability.Mark(NodeKind::Class, owner.index);
+        if ((member.flags & reflection::kVirtual) == 0) {
+          reachability.Mark(NodeKind::Function, member.target);
+        }
       }
     }
   }

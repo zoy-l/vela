@@ -11,7 +11,7 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 from tools.config import ROOT, executable_name
-from tools.package import (copy_file, create_package, load_support_specification, runtime_headers,
+from tools.package import (copy_file, create_package, load_support_specification, sdk_headers,
                            verify_package)
 from tools.test_support import CommandTestCase, NATIVE_PACKAGE_AVAILABLE, create_native_package
 
@@ -34,11 +34,8 @@ class SupportSpecificationTest(unittest.TestCase):
                 "public_deps": ["//runtime:runtime"],
             },
         }
-        with patch("tools.package.command") as described, \
-                patch("tools.package.toolchain_tools", return_value={"gn": Path("gn")}):
-            described.return_value.stdout = json.dumps(targets)
-            self.assertEqual(runtime_headers(ROOT / "out/release"),
-                             [ROOT / "base/builtin.h", ROOT / "runtime/isolate/isolate.h"])
+        self.assertEqual(sdk_headers(targets, "//runtime:vela_runtime"),
+                         [Path("base/builtin.h"), Path("runtime/isolate/isolate.h")])
 
     def test_packaged_files_are_writable_without_changing_cached_sources(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-support-") as temporary:

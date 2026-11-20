@@ -43,15 +43,15 @@ SourceResult CompileModules(Compiler& compiler,
                             std::span<const frontend::SourceInput> sources,
                             std::string_view entry,
                             const SourceOptions& options) {
-  return CompileParsed(compiler, frontend::LoadSources(sources, entry, options.reflection),
+  return CompileParsed(compiler, frontend::LoadSources(sources, entry, options.reflection, options.imports),
                        options);
 }
 
 SourceResult CompileFile(Compiler& compiler, std::string_view path, const SourceOptions& options) {
-  return CompileParsed(
-      compiler,
-      frontend::LoadProgram(path, {}, frontend::SourceLoadMode::Compilation, options.reflection),
-      options);
+  return CompileParsed(compiler,
+                       frontend::LoadProgram(path, {}, frontend::SourceLoadMode::Compilation,
+                                             options.reflection, options.imports),
+                       options);
 }
 
 }  // namespace vela::compiler::jit

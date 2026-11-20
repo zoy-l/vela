@@ -72,9 +72,20 @@ class Lowerer final {
     CallableMode mode = CallableMode::Plain;
     std::span<const frontend::Capture> captures;
     std::optional<LoweredValue> receiver;
-    const frontend::FunctionDescriptor* interface_signature = nullptr;
+    const frontend::FunctionDescriptor* virtual_signature = nullptr;
     std::optional<DeclarationId> binding_receiver;
   };
+
+  struct MethodCallTarget final {
+    Opcode opcode = Opcode::Call;
+    std::uint32_t index = 0;
+  };
+  [[nodiscard]] MethodCallTarget ResolveMethodCall(const frontend::Expression& member,
+                                                   const std::string& key) const;
+  [[nodiscard]] LoweredValue LowerMemberReceiver(const frontend::Expression& member);
+  [[nodiscard]] const frontend::ClassDescriptor& MemberClass(
+      const frontend::Expression& member,
+      const frontend::TypeDescriptor& receiver) const;
 
   using ClassMap = absl::flat_hash_map<std::string, ClassId>;
   using FunctionMap = absl::flat_hash_map<std::string, std::uint32_t>;
@@ -99,7 +110,7 @@ class Lowerer final {
   [[nodiscard]] Class BuildClass(const frontend::Class& source_class,
                                  const frontend::ClassDescriptor& class_info);
   void BuildNativeClassContracts();
-  void BuildInterfaceSelectors();
+  void BuildMethodSelectors();
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name);
   void AddGlobalId(const std::string& name, InitializerKind kind);
@@ -249,6 +260,7 @@ class Lowerer final {
   [[nodiscard]] std::uint32_t AddSyncFutureFunction(const frontend::TypeDescriptor& return_type,
                                                     const frontend::TypeDescriptor& callback_type);
   [[nodiscard]] FunctionValuePlan ResolveFunctionValue(const frontend::Expression& expression);
+  [[nodiscard]] FunctionValuePlan ResolveMethodValue(const frontend::Expression& expression);
   LoweredValue LowerFunctionValue(const frontend::Expression& expression);
   LoweredValue LowerIndirectCall(const frontend::Expression& expression);
   LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
@@ -286,7 +298,7 @@ class Lowerer final {
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,
                         std::span<const frontend::Capture> captures,
-                        const frontend::FunctionDescriptor* interface_signature = nullptr);
+                        const frontend::FunctionDescriptor* virtual_signature = nullptr);
 
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
   [[nodiscard]] const Local* FindLocal(std::string_view name) const;
@@ -450,13 +462,14 @@ class Lowerer final {
     LoweredValue value;
     LoweredValue receiver;
     std::uint32_t slot = 0;
+    MethodCallTarget method;
     RegisterId index = 0;
   };
   [[nodiscard]] MutationTarget LowerMutationTarget(const frontend::Expression& target);
   void StoreMutationTarget(const MutationTarget& destination,
                            RegisterId value,
                            frontend::SourceLocation location);
-  void EmitSetterCall(std::uint32_t target,
+  void EmitSetterCall(MethodCallTarget target,
                       const LoweredValue& receiver,
                       RegisterId value,
                       frontend::SourceLocation location);
@@ -516,7 +529,7 @@ class Lowerer final {
   absl::flat_hash_map<std::string_view, bool> instance_initialization_;
   FunctionMap function_ids_;
   absl::flat_hash_map<std::uint64_t, ClassId> callable_classes_;
-  absl::flat_hash_map<std::string, std::uint32_t> interface_method_ids_;
+  absl::flat_hash_map<std::string, std::uint32_t> method_selectors_;
   absl::flat_hash_map<std::string, std::uint32_t> global_ids_;
   absl::flat_hash_map<std::string, std::uint32_t> runtime_type_ids_;
   absl::flat_hash_map<std::uint32_t, RegisterId> binding_registers_;

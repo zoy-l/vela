@@ -225,12 +225,14 @@ SourceCandidate::SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> b
 
 SourceSession::SourceSession(const std::string& entry,
                              frontend::DiagnosticOptions options,
-                             std::vector<frontend::ReflectionSelection> reflection)
+                             std::vector<frontend::ReflectionSelection> reflection,
+                             frontend::ModulePaths imports)
     : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
   initial->session = identity_;
   initial->roots.push_back(NormalizePath(entry));
   initial->reflection = std::move(reflection);
+  initial->modules.imports = std::move(imports);
   current_ = std::move(initial);
 }
 

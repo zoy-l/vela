@@ -39,7 +39,8 @@ class RecursiveCallTest
     const auto [mode, tier] = GetParam();
     if (mode == NativeProgramMode::Closed) {
       const auto compiled = CompileSource(
-          **compiler, source, {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}});
+          **compiler, source,
+          {.diagnostics = {}, .compilation = {.tier = tier}, .reflection = {}, .imports = {}});
       ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
       auto instance = runtime::NativeInstance::Instantiate(isolate_, compiled.code.image);
       ASSERT_TRUE(instance);

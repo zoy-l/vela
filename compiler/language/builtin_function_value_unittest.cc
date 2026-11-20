@@ -3,6 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/execution_expectations.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -249,6 +250,28 @@ func main(): int {
   if (calls == 1) { return copy()[0]; }
   return 0;
 })"));
+
+TEST(BuiltinFunctionValueTest, SharedRuntimeLayoutsResolveSelectorsInTheirOwnProgram) {
+  runtime::Isolate isolate(1);
+  const auto first = test::CompileSource(R"(
+class Counter { read(): int { return 1; } }
+func main(): int { return Date.toUTC(42).millisecond; }
+)",
+                                         isolate);
+  ASSERT_TRUE(first.Succeeded());
+  const auto second = test::CompileSource(R"(
+class Counter {
+  first(): int { return 1; }
+  second(): int { return 2; }
+}
+func main(): int { return Date.toUTC(1042).millisecond; }
+)",
+                                          isolate);
+  ASSERT_TRUE(second.Succeeded());
+  test::ExpectAnswer(*first.instance);
+  test::ExpectAnswer(*second.instance);
+  test::ExpectAnswer(*first.instance);
+}
 
 class InvalidBuiltinFunctionValueTest : public testing::TestWithParam<std::string_view> {};
 

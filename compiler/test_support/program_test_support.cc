@@ -60,8 +60,9 @@ InstanceResult CompileSource(std::string_view source,
                              runtime::Isolate& isolate,
                              frontend::DiagnosticOptions options) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileModules(std::span(&input, 1), input.path, isolate,
-                        {.diagnostics = options, .compilation = {}, .reflection = {}});
+  return CompileModules(
+      std::span(&input, 1), input.path, isolate,
+      {.diagnostics = options, .compilation = {}, .reflection = {}, .imports = {}});
 }
 
 InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& isolate) {
@@ -71,6 +72,7 @@ InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& iso
                            .diagnostics = {},
                            .compilation = {.debugging = native::NativeDebugging::Instructions},
                            .reflection = {},
+                           .imports = {},
                        });
 }
 
@@ -84,8 +86,9 @@ InstanceResult CompileModules(std::span<const frontend::SourceInput> sources,
 InstanceResult CompileFile(std::string_view path,
                            runtime::Isolate& isolate,
                            frontend::DiagnosticOptions options) {
-  return CompileParsed(frontend::LoadProgram(path), isolate,
-                       {.diagnostics = options, .compilation = {}, .reflection = {}});
+  return CompileParsed(
+      frontend::LoadProgram(path), isolate,
+      {.diagnostics = options, .compilation = {}, .reflection = {}, .imports = {}});
 }
 
 std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanSource(

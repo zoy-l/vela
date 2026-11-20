@@ -3,17 +3,74 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "base/callable.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 
 namespace vela::compiler::aot {
 namespace {
+
+std::vector<std::optional<std::uint32_t>> UniqueVirtualTargets(const ir::Program& program) {
+  std::vector<std::optional<std::uint32_t>> targets(program.selector_declarations.size());
+  std::vector<std::uint8_t> polymorphic(targets.size());
+  for (const auto& type : program.classes) {
+    for (std::size_t selector = 0; selector < type.dispatch_targets.size(); ++selector) {
+      const auto target = type.dispatch_targets[selector];
+      if (target == kInvalidFunctionTarget || polymorphic[selector] != 0) {
+        continue;
+      }
+      auto& selected = targets[selector];
+      if (selected && *selected != target) {
+        selected.reset();
+        polymorphic[selector] = 1;
+      } else {
+        selected = target;
+      }
+    }
+  }
+  return targets;
+}
+
+void DevirtualizeInstanceCalls(ir::Function& function,
+                               const ir::Program& program,
+                               std::span<const std::optional<std::uint32_t>> unique) {
+  if (std::ranges::none_of(function.instructions, [](const auto& instruction) {
+        return instruction.opcode == Opcode::CallVirtual;
+      })) {
+    return;
+  }
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, program.functions);
+  const auto flow = ir::AnalyzeRegisterFlow(function, accesses);
+  for (auto& instruction : function.instructions) {
+    if (instruction.opcode != Opcode::CallVirtual) {
+      continue;
+    }
+    auto selected = unique[instruction.index];
+    const auto definition = flow.OriginDefinition(instruction.lhs);
+    if (definition) {
+      const auto& source = function.instructions[*definition];
+      if (source.opcode == Opcode::NewInstance) {
+        const auto target = program.classes[source.index].dispatch_targets.at(instruction.index);
+        if (target != kInvalidFunctionTarget) {
+          selected = target;
+        }
+      }
+    }
+    if (selected) {
+      instruction.opcode = Opcode::Call;
+      instruction.index = *selected;
+    }
+  }
+}
 
 void BindClosureArguments(ir::Function& function,
                           const ir::Function& callee,
@@ -40,7 +97,20 @@ void BindClosureArguments(ir::Function& function,
 }  // namespace
 
 void DevirtualizeNativeCalls(ir::Program& program) {
+  if (program.native_mode != NativeProgramMode::Closed) {
+    return;
+  }
+  const auto unique = UniqueVirtualTargets(program);
+  for (auto& member : program.reflection_members) {
+    if ((member.flags & reflection::kVirtual) != 0) {
+      if (const auto target = unique[member.target]) {
+        member.target = *target;
+        member.flags &= ~reflection::kVirtual;
+      }
+    }
+  }
   for (auto& function : program.functions) {
+    DevirtualizeInstanceCalls(function, program, unique);
     const auto targets = native::FindDirectCalls(function, program);
     if (std::ranges::none_of(targets, [](const auto& target) { return target.has_value(); })) {
       continue;

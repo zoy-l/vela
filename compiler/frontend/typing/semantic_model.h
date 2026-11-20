@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
+#include <tuple>
 #include <variant>
 #include <vector>
 
@@ -17,6 +17,7 @@
 #include "base/array_algorithm.h"
 #include "base/async_operation.h"
 #include "base/builtin.h"
+#include "base/declaration.h"
 #include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
@@ -93,6 +94,8 @@ struct FunctionDescriptor final {
   std::optional<TypeDescriptor> setter_return_type;
   // 所属执行声明；继承签名保留原始所有者，调用与接口实现不再重新搜索 AST。
   std::string member_owner;
+  std::string setter_owner;
+  Visibility setter_visibility = Visibility::Public;
 
   void AddParameter(std::string name,
                     TypeDescriptor type,
@@ -147,7 +150,8 @@ struct ClassDescriptor final {
   const Class* declaration = nullptr;
   absl::flat_hash_map<std::string, Field> static_fields;
   absl::flat_hash_set<std::string> interfaces;
-  absl::flat_hash_map<std::pair<std::string, std::string>, MemberReference> interface_targets;
+  absl::flat_hash_map<std::tuple<std::string, std::string, DeclarationKind>, MemberReference>
+      virtual_targets;
 };
 
 struct InterfaceDescriptor final {

@@ -41,6 +41,7 @@
 #include "base/native_binding.h"
 #include "compiler/bindgen/model.h"
 #include "compiler/bindgen/type_mapper.h"
+#include "compiler/bindgen/value_module.h"
 #include "compiler/frontend/syntax/names.h"
 #include "compiler/frontend/typing/type_names.h"
 
@@ -82,7 +83,8 @@ class Collector final : public clang::DynamicRecursiveASTVisitor {
       }
       ++count;
       const bool valid =
-          (llvm::isa<clang::CXXRecordDecl>(declaration) && text.starts_with("vela.class:")) ||
+          (llvm::isa<clang::CXXRecordDecl>(declaration) &&
+           (text.starts_with("vela.class:") || text.starts_with("vela.module:"))) ||
           (llvm::isa<clang::CXXMethodDecl>(declaration) &&
            (text.starts_with("vela.name:") || text.starts_with("vela.getter:") ||
             text.starts_with("vela.setter:") || text == "vela.ignore")) ||
@@ -108,6 +110,11 @@ class Collector final : public clang::DynamicRecursiveASTVisitor {
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl* declaration) override {
     if (!declaration->isThisDeclarationADefinition()) {
+      return true;
+    }
+    if (const auto module = Annotation(*declaration, "vela.module:"); module &&
+        collection_->headers.contains(Location(*declaration).path)) {
+      CollectValueModule(*declaration, *module, *compiler_, *collection_);
       return true;
     }
     const auto key = Annotation(*declaration, "vela.class:");

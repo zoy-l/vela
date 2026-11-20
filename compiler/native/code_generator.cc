@@ -162,7 +162,7 @@ bool HasVersionAssumptions(const ir::Function& function, const ir::Program& prog
     switch (instruction.opcode) {
       case Opcode::NewInstance:
       case Opcode::CallIndirect:
-      case Opcode::CallInterface:
+      case Opcode::CallVirtual:
         return true;
       case Opcode::GetField:
       case Opcode::SetField:

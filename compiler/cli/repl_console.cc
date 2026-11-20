@@ -113,6 +113,7 @@ int RunRepl(const std::filesystem::path& directory, Streams streams) {
   }
   compiler::DevelopmentOptions development;
   development.diagnostics = options->diagnostics;
+  development.imports = options->imports;
   const auto entry = PathText(directory / "__vela_repl_host__.vela");
   auto created = compiler::DevelopmentSession::Create(entry, {}, std::move(development));
   if (!created) {

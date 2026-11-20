@@ -687,7 +687,7 @@ func main(): int {
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
   const auto& before = first->snapshot().program;
-  ASSERT_EQ(before.selector_declarations.size(), 1U);
+  ASSERT_FALSE(before.selector_declarations.empty());
   const auto selector = before.selector_declarations.front();
   const auto* owner = Class(before, "Implementation<int>");
   ASSERT_NE(owner, nullptr);
@@ -701,14 +701,18 @@ func main(): int {
       retained);
   ASSERT_TRUE(next);
   const auto& after = next->snapshot().program;
-  ASSERT_EQ(after.selector_declarations.size(), 1U);
-  EXPECT_EQ(after.selector_declarations.front(), selector);
+  ASSERT_EQ(after.selector_declarations.size(), before.selector_declarations.size());
   const auto* implementation = Function(after, "Implementation<int>.map<string>");
   ASSERT_NE(implementation, nullptr);
   const auto* current_owner = Class(after, "Implementation<int>");
   ASSERT_NE(current_owner, nullptr);
-  ASSERT_EQ(current_owner->dispatch_targets.size(), 1U);
-  EXPECT_NE(current_owner->dispatch_targets.front(), kInvalidFunctionTarget);
+  ASSERT_EQ(current_owner->dispatch_targets.size(), after.selector_declarations.size());
+  for (const auto identity : before.selector_declarations) {
+    const auto found = std::ranges::find(after.selector_declarations, identity);
+    ASSERT_NE(found, after.selector_declarations.end());
+    const auto index = static_cast<std::size_t>(found - after.selector_declarations.begin());
+    EXPECT_NE(current_owner->dispatch_targets[index], kInvalidFunctionTarget);
+  }
 }
 
 TEST(SourceSessionTest, AcceptedSyntaxIsReusedAndDeletedModulesCannotBeLoadedFromTheCache) {
