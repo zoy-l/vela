@@ -1,4 +1,5 @@
 #include "compiler/aot/native_compiler.h"
+#include "compiler/native/compile_options.h"
 
 #include <chrono>
 #include <cstddef>

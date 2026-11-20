@@ -23,7 +23,7 @@
 #include "benchmarks/aot_native/entries.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"

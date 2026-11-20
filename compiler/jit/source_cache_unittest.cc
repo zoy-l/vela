@@ -7,7 +7,7 @@
 #include <system_error>
 
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_cache_status.h"
 #include "compiler/jit/compiler.h"
 #include "gtest/gtest.h"
 

@@ -1,4 +1,6 @@
 #include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_cache_status.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -27,7 +29,6 @@
 #include "base/file.h"
 #include "base/fingerprint.h"
 #include "compiler/cache_build_identity.h"
-#include "compiler/native/code_generator.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::jit {

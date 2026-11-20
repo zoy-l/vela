@@ -56,10 +56,12 @@ config("vela_defaults") {
       cflags += [
         "-isysroot",
         vela_sysroot,
+        "-mmacosx-version-min=$vela_macos_deployment_target",
       ]
       ldflags += [
         "-isysroot",
         vela_sysroot,
+        "-mmacosx-version-min=$vela_macos_deployment_target",
       ]
     }
     if (vela_build_config == "debug") {

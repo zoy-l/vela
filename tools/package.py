@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 
-from tools.config import BUILD_VARIANTS, ROOT, configure, executable_name, static_library_name, toolchain_tools
+from tools.config import BUILD_VARIANTS, MACOS_DEPLOYMENT_TARGET, ROOT, configure, executable_name, static_library_name, toolchain_tools
 from tools.llvm import sdk_directory, sdk_specification
 from tools.clang_sdk import resource_directory as clang_resource_directory
 
@@ -231,9 +231,11 @@ def macos_support(runtime: Path, package: Path) -> tuple[dict, dict[str, str]]:
         source = work / "main.cc"
         source.write_text("int main() { return 0; }\n", encoding="utf-8", newline="\n")
         obj, application = work / "main.o", work / "main"
-        command([tools["cxx"], "-c", source, "-o", obj, "-isysroot", sdk])
+        command([tools["cxx"], "-c", source, "-o", obj, "-isysroot", sdk,
+                 f"-mmacosx-version-min={MACOS_DEPLOYMENT_TARGET}"])
         driver = command([tools["cxx"], "-###", "-stdlib=libc++", "-fuse-ld=lld",
                           "--ld-path=" + str(tools["linker"]), "-isysroot", sdk,
+                          f"-mmacosx-version-min={MACOS_DEPLOYMENT_TARGET}",
                           "-framework", "CoreFoundation", obj, runtime, "-o", application])
         invocation = shlex.split(driver.stderr.splitlines()[-1])[1:]
         platform = invocation.index("-platform_version")

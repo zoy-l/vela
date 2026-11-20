@@ -1,3 +1,4 @@
+#include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "runtime/native/native_symbols.h"
@@ -24,7 +25,6 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/native/development_builtin.h"
 #include "compiler/native/map_analysis.h"
 #include "compiler/native/memory_regions.h"

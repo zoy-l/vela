@@ -371,6 +371,7 @@ source_set("native") {
     "native/call_targets.h",
     "native/code_generator.cc",
     "native/code_generator.h",
+    "native/compile_options.h",
     "native/debug_emitter.cc",
     "native/deoptimization_emitter.cc",
     "native/development_builtin.h",
@@ -448,6 +449,7 @@ source_set("jit") {
   sources = [
     "jit/code_cache.cc",
     "jit/code_cache.h",
+    "jit/code_cache_status.h",
     "jit/code_inputs.cc",
     "jit/code_inputs.h",
     "jit/code_resources.cc",
@@ -500,6 +502,12 @@ source_set("development") {
     ":source_session",
     "//base:directory_watcher",
   ]
+}
+
+# 嵌入宿主只链接库，不把编译器源码加入宿主构建图。
+static_library("vela_development") {
+  complete_static_lib = true
+  deps = [ ":development" ]
 }
 
 source_set("development_tools") {

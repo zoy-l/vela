@@ -10,6 +10,7 @@ declare_args() {
   vela_linker = ""
   vela_strip = ""
   vela_sysroot = ""
+  vela_macos_deployment_target = ""
   vela_python = ""
   vela_llvm_root = ""
   vela_llvm_rtti = ""
@@ -34,3 +35,5 @@ assert(vela_cc != "" && vela_cxx != "" && vela_archiver != "" &&
        "vl config must provide the host tool paths")
 assert(target_os != "mac" || vela_sysroot != "",
        "vl config must provide the Xcode SDK")
+assert(target_os != "mac" || vela_macos_deployment_target != "",
+       "vl config must provide the macOS deployment target")

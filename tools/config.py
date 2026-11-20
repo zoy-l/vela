@@ -159,6 +159,9 @@ def compiler_build_identity() -> str:
     return digest.hexdigest()
 
 
+MACOS_DEPLOYMENT_TARGET = "26.0"
+
+
 def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     from tools.clang_sdk import link_configuration as clang_link_configuration
     from tools.llvm import link_configuration
@@ -190,6 +193,7 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     args.update(clang_link_configuration())
     if platform.system() == "Darwin":
         args["vela_sysroot"] = tools["sysroot"].as_posix()
+        args["vela_macos_deployment_target"] = MACOS_DEPLOYMENT_TARGET
     encoded_args = " ".join(
         f"{key}={gn_value(value)}" for key, value in args.items()
     )

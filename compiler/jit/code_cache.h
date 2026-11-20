@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -10,15 +9,14 @@
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/MemoryBufferRef.h>
 
-#include "compiler/native/code_generator.h"
+#include "compiler/jit/code_cache_status.h"
+#include "compiler/native/compile_options.h"
 
 namespace llvm {
 class Module;
 }
 
 namespace vela::compiler::jit {
-
-enum class CodeCacheStatus : std::uint8_t { Disabled, Miss, Hit, Invalid };
 
 struct CachedObject final {
   CodeCacheStatus status = CodeCacheStatus::Miss;

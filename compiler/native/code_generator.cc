@@ -1,4 +1,5 @@
 #include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <array>

@@ -12,6 +12,7 @@
 
 #include <absl/container/flat_hash_set.h>
 #include <benchmark/benchmark.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/Regex.h>
 
 #include "base/execution_status.h"

@@ -1,3 +1,4 @@
+#include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
@@ -13,7 +14,6 @@
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_async.h"
 #include "runtime/value/value.h"

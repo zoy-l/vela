@@ -8,6 +8,26 @@ same runtime. Source builds link `//compiler:jit`; standalone AOT hosts use the
 distribution's runtime library and generated public header. The runtime alone
 does not include a source compiler.
 
+## Local third-party libraries
+
+`python -m tools.vl embed debug` and `python -m tools.vl embed release` build independent
+`vela_development` and `vela_runtime` static archives plus the compiler, then write
+`out/<variant>/embedding.json`. A native host imports those libraries and include paths rather
+than adding Vela sources to its own build graph. The local description borrows headers from the
+checkout; it is not a relocatable distribution package.
+
+Use the matching OS, CPU, C++ ABI, dependency versions and Debug/Release variant. Development
+libraries additionally require the described LLVM libraries, system libraries and linker. The
+pinned linker must consume archives containing that LLVM version's ThinLTO. AOT applications
+link only `runtime_libraries`; they do not need compiler or LLVM libraries at runtime.
+The macOS deployment target is defined by `tools.config.MACOS_DEPLOYMENT_TARGET` and is shared
+by library compilation and package probes. AOT library manifests expose `sources` so build
+systems can track the complete imported source graph with depfiles.
+
+The local interface does not promise cross-version binary compatibility. Rebuild the libraries,
+host bindings and AOT objects together after changing Vela. Windows hosts must also match Vela's
+CRT/STL ABI; `/MT` archives cannot be treated as an `/MD` SDK.
+
 ## Compile and execute
 
 This example returns `42` through a typed host binding:

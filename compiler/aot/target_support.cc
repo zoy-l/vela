@@ -1,4 +1,5 @@
 #include "compiler/aot/target_support.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <array>
@@ -28,7 +29,6 @@
 #include "base/json.h"
 #include "base/path.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/native/code_generator.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::aot {

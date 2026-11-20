@@ -1,4 +1,5 @@
 #include "compiler/native/native_roots.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +18,6 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/native/global_analysis.h"
 #include "compiler/test_support/preparation_test_support.h"
 

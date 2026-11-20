@@ -10,18 +10,20 @@
 #include <string>
 #include <vector>
 
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
-
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
-#include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_cache_status.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/native/native_image.h"
+
+namespace llvm::orc {
+class LLJIT;
+}
 
 namespace vela::compiler::jit {
 

@@ -1,4 +1,5 @@
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -8,7 +9,6 @@
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/test_support/preparation_test_support.h"
 
 namespace vela::compiler::native {

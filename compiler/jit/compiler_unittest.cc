@@ -1,4 +1,5 @@
 #include "compiler/jit/compiler.h"
+#include "compiler/native/compile_options.h"
 
 #include <algorithm>
 #include <array>
@@ -31,7 +32,6 @@
 #include "compiler/jit/code_inputs.h"
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/test_support.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"

@@ -15,11 +15,12 @@
 #include <benchmark/benchmark.h>
 
 #include "base/native_program_mode.h"
+#include "benchmarks/jit_benchmark.h"
 #include "compiler/development/development_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/test_support/checkpoint_publication.h"
-#include "benchmarks/jit_benchmark.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"

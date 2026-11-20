@@ -29,7 +29,7 @@
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/engine.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/escape_analysis.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"

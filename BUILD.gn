@@ -10,6 +10,14 @@ group("default") {
   ]
 }
 
+group("embedding") {
+  deps = [
+    "//compiler:vela",
+    "//compiler:vela_development",
+    "//runtime:vela_runtime",
+  ]
+}
+
 group("tests") {
   testonly = true
   deps = [

@@ -1,4 +1,5 @@
 #include "base/native_program_mode.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
@@ -29,7 +30,6 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/array_analysis.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"

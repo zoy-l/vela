@@ -1,4 +1,6 @@
 #include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_cache_status.h"
+#include "compiler/native/compile_options.h"
 
 #include <cstdint>
 #include <expected>
@@ -22,7 +24,6 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
-#include "compiler/native/code_generator.h"
 #include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/reflection_test_support.h"

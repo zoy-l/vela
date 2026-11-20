@@ -20,7 +20,7 @@
 #include "benchmarks/source.h"
 #include "benchmarks/temporary_directory.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_cache_status.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
 #include "compiler/testing/result.h"

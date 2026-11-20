@@ -1,4 +1,5 @@
 #include "compiler/jit/engine.h"
+#include "compiler/native/compile_options.h"
 
 #include <memory>
 #include <utility>

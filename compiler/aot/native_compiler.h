@@ -9,7 +9,7 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 

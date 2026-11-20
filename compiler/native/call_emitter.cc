@@ -17,7 +17,7 @@
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/invariant_call_optimizer.h"

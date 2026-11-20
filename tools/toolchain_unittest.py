@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.config import (ROOT, executable_name, gn_value, static_library_name, target_cpu,
+from tools.config import (MACOS_DEPLOYMENT_TARGET, ROOT, executable_name, gn_value, static_library_name, target_cpu,
                           target_os, toolchain_tools)
 from tools.lint import check_source, header_contexts
 
@@ -201,6 +201,7 @@ executable("sample") {
                     }
                     if sys.platform == "darwin":
                         args["vela_sysroot"] = tools["sysroot"].as_posix()
+                        args["vela_macos_deployment_target"] = MACOS_DEPLOYMENT_TARGET
                     encoded_args = " ".join(f"{key}={gn_value(value)}" for key, value in args.items())
                     commands = [
                         [tools["gn"], "gen", output, f"--root={root}", f"--args={encoded_args}"],

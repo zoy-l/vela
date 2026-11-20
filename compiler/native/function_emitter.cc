@@ -6,7 +6,7 @@
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/call_targets.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/global_analysis.h"

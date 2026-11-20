@@ -6,13 +6,13 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
+#include "compiler/native/compile_options.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
@@ -26,21 +26,7 @@ class TargetMachine;
 class Function;
 }  // namespace llvm
 
-namespace vela::compiler {
-
-enum class NativeOptimization : std::uint8_t { None, Release };
-enum class NativeCodePlacement : std::uint8_t { Linked, Dynamic };
-
-[[nodiscard]] constexpr bool IsClosedLinkedProgram(NativeProgramMode mode,
-                                                   NativeCodePlacement placement) {
-  return mode == NativeProgramMode::Closed && placement == NativeCodePlacement::Linked;
-}
-
-[[nodiscard]] constexpr std::string_view NativeOptimizationName(NativeOptimization optimization) {
-  return optimization == NativeOptimization::Release ? "O3" : "O0";
-}
-
-namespace native {
+namespace vela::compiler::native {
 
 class NativeImageData;
 
@@ -99,5 +85,4 @@ struct NativeModule final {
 [[nodiscard]] std::expected<std::unique_ptr<llvm::MemoryBuffer>, std::string> EmitObject(
     NativeModule& generated);
 
-}  // namespace native
-}  // namespace vela::compiler
+}  // namespace vela::compiler::native

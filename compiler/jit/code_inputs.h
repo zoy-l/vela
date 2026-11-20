@@ -7,8 +7,11 @@
 #include "base/fingerprint.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/call_targets.h"
 #include "compiler/native/field_access.h"
+
+namespace vela::compiler::native {
+struct NativeCallPlan;
+}
 
 namespace vela::compiler::jit {
 

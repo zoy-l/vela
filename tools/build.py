@@ -10,7 +10,7 @@ import sys
 from tools.config import BUILD_VARIANTS, add_compiler_wrapper_argument, configure, toolchain_tools
 
 
-ROOT_TARGETS = {"default", "tests", "benchmarks"}
+ROOT_TARGETS = {"default", "tests", "benchmarks", "embedding"}
 
 
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:

@@ -16,7 +16,7 @@
 #include "base/opcode.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
+#include "compiler/native/compile_options.h"
 
 namespace llvm {
 class Type;

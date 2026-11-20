@@ -1,4 +1,5 @@
 #include "compiler/aot/artifact_publication.h"
+#include "compiler/native/compile_options.h"
 
 #include <array>
 #include <cstddef>
@@ -22,7 +23,6 @@
 #include "compiler/aot/native_compiler.h"
 #include "compiler/aot/target_support.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/code_generator.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::aot {
@@ -225,6 +225,11 @@ class Manifest final {
     }
     Add(root, "files", files);
     const auto& program = artifact.program;
+    auto* sources = Array();
+    for (const auto& path : program.source_paths) {
+      Append(sources, Text(path));
+    }
+    Add(root, "sources", sources);
     DescribeFunctions(program, artifact);
     DescribeTypes(program);
     auto* libraries = Array();
