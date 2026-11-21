@@ -26,13 +26,26 @@ struct HandleScope::Block final {
 };
 
 HandleScope::HandleScope(runtime::Isolate& isolate) noexcept
-    : isolate_(&isolate),
-      inline_roots_(isolate.heap(), inline_values_.data(), inline_values_.size()) {
+    : isolate_(&isolate), inline_roots_(isolate.heap(), inline_values_.data(), 0) {
   assert(isolate.scheduler().IsOwnerThread());
 }
 
 HandleScope::~HandleScope() {
   assert(isolate_->scheduler().IsOwnerThread());
+  if (blocks_ != nullptr) [[unlikely]] {
+    ReleaseBlocks();
+  }
+}
+
+std::expected<runtime::Value*, ExecutionStatus> HandleScope::Store(runtime::Value value) noexcept {
+  auto& heap = isolate_->heap();
+  if (heap.IsCollecting() && value.IsReference()) {
+    heap.WriteRootBarrier(std::span(&value, 1));
+  }
+  return StoreRooted(value);
+}
+
+void HandleScope::ReleaseBlocks() noexcept {
   auto& heap = isolate_->heap();
   auto* block = blocks_;
   while (block != nullptr) {
@@ -43,25 +56,21 @@ HandleScope::~HandleScope() {
   }
 }
 
-std::expected<runtime::Value*, ExecutionStatus> HandleScope::Store(runtime::Value value) noexcept {
+std::expected<runtime::Value*, ExecutionStatus> HandleScope::StoreOverflow(
+    runtime::Value value) noexcept {
   auto& heap = isolate_->heap();
-  runtime::Value* slot = nullptr;
-  if (inline_count_ < kInlineCapacity) {
-    slot = &inline_values_[inline_count_++];
-  } else {
-    if (blocks_ == nullptr || blocks_->count == Block::kCapacity) {
-      const runtime::RootRange source_root(heap, &value, 1, std::nullopt);
-      auto* memory = heap.AllocateNative(sizeof(Block));
-      if (memory == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      blocks_ = std::construct_at(static_cast<Block*>(memory), heap, blocks_);
+  if (blocks_ == nullptr || blocks_->count == Block::kCapacity) {
+    const runtime::RootRange source_root(heap, &value, 1, std::nullopt);
+    auto* memory = heap.AllocateNative(sizeof(Block));
+    if (memory == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
     }
-    slot = &blocks_->values[blocks_->count++];
+    blocks_ = std::construct_at(static_cast<Block*>(memory), heap, blocks_);
   }
-  *slot = value;
-  heap.WriteRootBarrier(std::span(slot, 1));
-  return slot;
+  auto& slot = blocks_->values[blocks_->count++];
+  slot = value;
+  heap.WriteRootBarrier(std::span(&slot, 1));
+  return &slot;
 }
 
 }  // namespace vela

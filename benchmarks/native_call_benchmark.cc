@@ -8,6 +8,7 @@
 #include "benchmark/benchmark.h"
 
 #include "base/native_program_mode.h"
+#include "benchmarks/jit_benchmark.h"
 #include "benchmarks/native_call/entries.h"
 #include "benchmarks/native_call_kernels.h"
 #include "compiler/frontend/diagnostic.h"
@@ -22,8 +23,6 @@
 namespace vela::benchmarks {
 namespace {
 
-using native_call::kBorrowedResult;
-using native_call::kBorrowedText;
 using native_call::Workload;
 
 enum class CallPath : std::uint8_t { Direct, Indirect };
@@ -40,6 +39,8 @@ constexpr auto Kernel() {
     return NativeInteger;
   } else if constexpr (Case == Workload::Double) {
     return NativeDouble;
+  } else if constexpr (Case == Workload::Boolean) {
+    return NativeBoolean;
   } else {
     return NativeStringBorrow;
   }
@@ -49,12 +50,15 @@ template <Workload Case>
 using Sum = std::conditional_t<Case == Workload::Double, double, std::int64_t>;
 
 template <Workload Case>
-Sum<Case> Expected(std::int64_t count) {
+Sum<Case> Expected(std::int64_t count, std::string_view text) {
   if constexpr (Case == Workload::Double) {
     return (static_cast<double>(count * (count - 1)) / kArithmeticSeriesDivisor) +
            (static_cast<double>(count) * kNativeDoubleIncrement);
   } else if constexpr (Case == Workload::StringBorrow) {
-    return count * kBorrowedResult;
+    return count *
+           (static_cast<std::int64_t>(text.size()) + static_cast<unsigned char>(text.front()));
+  } else if constexpr (Case == Workload::Boolean) {
+    return count / 2;
   } else {
     return count * (count + 1) / 2;
   }
@@ -66,7 +70,7 @@ void ReportCalls(benchmark::State& state, std::int64_t count) {
 }
 
 template <Workload Case, CallPath Path>
-void Cpp(benchmark::State& state) {
+void Cpp(benchmark::State& state, native_call::Case problem) {
   runtime::Isolate isolate;
   runtime::NativeContext context(isolate);
   auto target = Kernel<Case>();
@@ -82,7 +86,7 @@ void Cpp(benchmark::State& state) {
     }
   };
   const auto count = state.range(0);
-  const auto expected = Expected<Case>(count);
+  const auto expected = Expected<Case>(count, problem.text);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
     Sum<Case> sum = 0;
@@ -94,8 +98,10 @@ void Cpp(benchmark::State& state) {
         sum += invoke(index);
       } else if constexpr (Case == Workload::Double) {
         sum += invoke(static_cast<double>(index));
+      } else if constexpr (Case == Workload::Boolean) {
+        sum += static_cast<std::int64_t>(invoke((index & 1) == 0));
       } else {
-        sum += invoke(kBorrowedText);
+        sum += invoke(problem.text);
       }
     }
     benchmark::DoNotOptimize(sum);
@@ -108,26 +114,65 @@ void Cpp(benchmark::State& state) {
 }
 
 template <Workload Case>
-bool IsExpected(const runtime::ExecutionResult& result, Sum<Case> expected) {
-  if (!result.Succeeded()) {
-    return false;
-  }
+bool IsExpected(runtime::Value result, Sum<Case> expected) {
   if constexpr (Case == Workload::Double) {
-    return result.value.IsDouble() && result.value.AsDouble() == expected;
+    return result.IsDouble() && result.AsDouble() == expected;
   } else {
-    return result.value.IsInteger() && result.value.AsInteger() == expected;
+    return result.IsInteger() && result.AsInteger() == expected;
   }
+}
+
+std::expected<void, std::string> RegisterNativeKernels(runtime::Isolate& isolate) {
+  if (isolate.RegisterNative(runtime::NativeFunction::Bind<NativeEmpty>("callbench.empty")) &&
+      isolate.RegisterNative(runtime::NativeFunction::Bind<NativeInteger>("callbench.integer")) &&
+      isolate.RegisterNative(runtime::NativeFunction::Bind<NativeDouble>("callbench.double")) &&
+      isolate.RegisterNative(runtime::NativeFunction::Bind<NativeBoolean>("callbench.boolean")) &&
+      isolate.RegisterNative(
+          runtime::NativeFunction::Bind<NativeStringBorrow>("callbench.string_borrow"))) {
+    return {};
+  }
+  return std::unexpected("Cannot register native benchmark function");
+}
+
+template <Workload Case>
+void Reloadable(benchmark::State& state, native_call::Case problem) {
+  runtime::Isolate registrations;
+  if (const auto registered = RegisterNativeKernels(registrations); !registered) {
+    state.SkipWithError(registered.error());
+    return;
+  }
+  static JitWorkload workload(std::string(native_call::kSource), NativeCodeTier::Optimized);
+  auto setup = LoadJitWorkload(workload, registrations.FreezeBindings());
+  if (!setup) {
+    state.SkipWithError(setup.error());
+    return;
+  }
+  const auto count = state.range(0);
+  const auto expected = Expected<Case>(count, problem.text);
+  const auto invoke = [&] { return InvokeJitWorkload(*setup, problem.native); };
+  const auto warmup = invoke();
+  if (!warmup || !IsExpected<Case>(*warmup, expected)) {
+    state.SkipWithError("Reloadable native-call warm-up failed");
+    return;
+  }
+  setup->isolate->heap().Collect();
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    auto result = invoke();
+    benchmark::DoNotOptimize(result);
+    if (!result || !IsExpected<Case>(*result, expected)) {
+      state.SkipWithError("Reloadable native-call execution failed or checksum mismatched");
+      return;
+    }
+  }
+  ReportCalls(state, count);
 }
 
 template <Workload Case, Execution Mode>
 void Script(benchmark::State& state, native_call::Case problem, ScriptPath path) {
   runtime::Isolate isolate;
-  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<NativeEmpty>("callbench.empty")) ||
-      !isolate.RegisterNative(runtime::NativeFunction::Bind<NativeInteger>("callbench.integer")) ||
-      !isolate.RegisterNative(runtime::NativeFunction::Bind<NativeDouble>("callbench.double")) ||
-      !isolate.RegisterNative(
-          runtime::NativeFunction::Bind<NativeStringBorrow>("callbench.string_borrow"))) {
-    state.SkipWithError("Cannot register native benchmark function");
+  if (const auto registered = RegisterNativeKernels(isolate); !registered) {
+    state.SkipWithError(registered.error());
     return;
   }
   const auto count = state.range(0);
@@ -163,8 +208,9 @@ void Script(benchmark::State& state, native_call::Case problem, ScriptPath path)
     return;
   }
   const auto function = *entry;
-  const auto expected = Expected<Case>(count);
-  if (!IsExpected<Case>(runtime::ExecuteNativeFunction(*instance, function), expected)) {
+  const auto expected = Expected<Case>(count, problem.text);
+  const auto warmup = runtime::ExecuteNativeFunction(*instance, function);
+  if (!warmup.Succeeded() || !IsExpected<Case>(warmup.value, expected)) {
     state.SkipWithError("Native-call warm-up failed or checksum mismatched");
     return;
   }
@@ -177,7 +223,7 @@ void Script(benchmark::State& state, native_call::Case problem, ScriptPath path)
     benchmark::DoNotOptimize(iteration);
     auto result = runtime::ExecuteNativeFunction(*instance, function);
     benchmark::DoNotOptimize(result);
-    if (!IsExpected<Case>(result, expected)) {
+    if (!result.Succeeded() || !IsExpected<Case>(result.value, expected)) {
       state.SkipWithError("Native-call execution failed or checksum mismatched");
       return;
     }
@@ -209,15 +255,20 @@ template <Workload Case>
 void Register(const native_call::Case& problem) {
   const auto suffix = std::string(problem.name);
   const auto count = problem.count;
-  benchmark::RegisterBenchmark("native/cpp/" + suffix, Cpp<Case, CallPath::Direct>)
+  benchmark::RegisterBenchmark("native/cpp/" + suffix, Cpp<Case, CallPath::Direct>, problem)
       ->Arg(count)
       ->UseRealTime();
-  benchmark::RegisterBenchmark("native/cpp_indirect/" + suffix, Cpp<Case, CallPath::Indirect>)
+  benchmark::RegisterBenchmark("native/cpp_indirect/" + suffix, Cpp<Case, CallPath::Indirect>,
+                               problem)
       ->Arg(count)
       ->UseRealTime();
   RegisterScript<Case, Execution::JitBaseline>(problem, "baseline");
   RegisterScript<Case, Execution::JitOptimized>(problem, "optimized");
   RegisterScript<Case, Execution::Aot>(problem, "aot");
+  benchmark::RegisterBenchmark("interop/forward/reload_optimized/" + suffix, Reloadable<Case>,
+                               problem)
+      ->Arg(count)
+      ->UseRealTime();
 }
 
 int RegisterNativeCalls() {
@@ -231,6 +282,9 @@ int RegisterNativeCalls() {
         break;
       case Workload::Double:
         Register<Workload::Double>(problem);
+        break;
+      case Workload::Boolean:
+        Register<Workload::Boolean>(problem);
         break;
       case Workload::StringBorrow:
         Register<Workload::StringBorrow>(problem);

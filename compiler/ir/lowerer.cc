@@ -151,10 +151,10 @@ LoweringResult Lowerer::Lower() && {
     program_.selector_declarations.at(selector) = declarations_->selectors.at(name);
   }
   if (!model_.captured_mutables.empty()) {
-    class_ids_.emplace("$Cell", static_cast<ClassId>(program_.classes.size()));
+    class_ids_.emplace(kCaptureCellName, static_cast<ClassId>(program_.classes.size()));
     program_.classes.push_back({
-        .name = "$Cell",
-        .field_types = {{.kind = frontend::TypeDescriptor::Kind::Class, .name = "$Cell"}},
+        .name = kCaptureCellName,
+        .field_types = {{.kind = frontend::TypeDescriptor::Kind::Class, .name = kCaptureCellName}},
         .callable = std::nullopt,
         .interfaces = {},
         .dispatch_targets = {},
@@ -457,7 +457,7 @@ void Lowerer::LowerCaptures(const frontend::Function& source,
     RecordValueType(reg,
                     capture.kind == frontend::BindingKind::Mutable
                         ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
-                                                   .name = "$Cell",}
+                                                   .name = kCaptureCellName,}
                         : capture.type);
     Emit({
         .opcode = Opcode::GetField,
@@ -1639,7 +1639,7 @@ void Lowerer::DeclareLocal(std::string_view name,
     Emit({
         .opcode = Opcode::NewInstance,
         .dst = boxed,
-        .index = class_ids_.at("$Cell"),
+        .index = class_ids_.at(kCaptureCellName),
         .location = location,
     });
     Emit({.opcode = Opcode::SetField, .dst = boxed, .lhs = reg, .location = location});
@@ -1758,7 +1758,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
           .reg = local->reg,
           .type = local->cell
                       ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
-                                                 .name = "$Cell",}
+                                                 .name = kCaptureCellName,}
                       : local->type,
       };
       destination.value = ReadLocal(*local, target.location);

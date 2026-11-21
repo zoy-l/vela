@@ -49,6 +49,7 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_deoptimization.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
@@ -104,7 +105,8 @@ llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
 }
 
 bool FunctionEmitter::HasRangeProof(std::span<const std::uint8_t> proofs) const {
-  if (proofs.empty()) {
+  // 宿主任意整数不受脚本调用点推导出的范围约束。
+  if (kind_ == NativeEntryKind::IntegerCallback || proofs.empty()) {
     return false;
   }
   const auto origin = origins_[instruction_index_];
@@ -322,6 +324,10 @@ llvm::Value* FunctionEmitter::EmitLeafFailure(LeafFailure failure) {
 }
 
 void FunctionEmitter::Fail(llvm::Value* status) {
+  if (kind_ == NativeEntryKind::IntegerCallback) {
+    ReturnIntegerCallback(builder_.getInt64(0), status);
+    return;
+  }
   if (kind_ == NativeEntryKind::HostLeaf) {
     RecordHostFailure(builder_, builder_.getInt32(1), TracePosition());
     Finish(status);
@@ -539,6 +545,14 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
     case Opcode::Return: {
       if (source_.is_async) {
         EmitAsyncReturn(instruction);
+        break;
+      }
+      if (kind_ == NativeEntryKind::IntegerCallback) {
+        auto* requests = LoadNativeRequests(builder_, body_->getArg(1));
+        Check(builder_.CreateICmpEQ(requests, builder_.getInt8(0)), ExecutionStatus::InvalidEntry);
+        auto* value = Convert(builder_, Load(instruction.dst),
+                              source_.value_types.at(instruction.dst), source_.return_type);
+        ReturnIntegerCallback(value, Status(builder_, ExecutionStatus::Returned));
         break;
       }
       if (source_.return_type.kind != Kind::Void) {
@@ -759,7 +773,53 @@ void FunctionEmitter::InitializeRecords() {
   }
 }
 
+void FunctionEmitter::ReturnIntegerCallback(llvm::Value* value, llvm::Value* status) {
+  auto* result = builder_.CreateZExt(value, builder_.getInt128Ty());
+  auto* wide_status = builder_.CreateZExt(status, builder_.getInt128Ty());
+  result = builder_.CreateOr(result,
+                             builder_.CreateShl(wide_status, runtime::kIntegerCallbackResultBits));
+  builder_.CreateRet(builder_.CreateBitCast(result, body_->getReturnType()));
+}
+
+std::expected<void, std::string> FunctionEmitter::EmitIntegerCallback() {
+  auto& context = module_.getContext();
+  builder_.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", body_));
+  auto* position = builder_.CreateIntrinsic(llvm::Intrinsic::stacksave, {builder_.getPtrTy()}, {});
+  auto* word = builder_.getInt64Ty();
+  auto* control = body_->getArg(1);
+  auto* limit = builder_.CreateLoad(
+      word, ByteAddress(control, offsetof(runtime::NativeControlState, callback_stack_limit)));
+  auto* active = builder_.CreateLoad(
+      builder_.getPtrTy(),
+      ByteAddress(control, offsetof(runtime::NativeControlState, host_execution)));
+  Check(builder_.CreateIsNull(active), ExecutionStatus::InvalidEntry);
+  Check(builder_.CreateICmpUGT(builder_.CreatePtrToInt(position, word), limit),
+        ExecutionStatus::StackOverflow);
+  slots_.resize(source_.register_count);
+  for (std::size_t index = 0; index < slots_.size(); ++index) {
+    const auto& type = source_.value_types[index];
+    if (type.kind != Kind::Invalid) {
+      slots_[index] = builder_.CreateAlloca(ValueType(context, type));
+    }
+  }
+  builder_.CreateStore(body_->getArg(0), slots_[source_.parameter_count - 1]);
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    instruction_index_ = index;
+    if (auto emitted = EmitInstruction(source_.instructions[index]); !emitted) {
+      return emitted;
+    }
+    if (source_.instructions[index].opcode == Opcode::Return) {
+      return {};
+    }
+  }
+  Fail(Status(builder_, ExecutionStatus::InvalidEntry));
+  return {};
+}
+
 std::expected<void, std::string> FunctionEmitter::Emit() {
+  if (kind_ == NativeEntryKind::IntegerCallback) {
+    return EmitIntegerCallback();
+  }
   auto& context = module_.getContext();
   if (roots_.bounded_polls && ir::CanAnalyzeSynchronousFunction(source_)) {
     body_->addFnAttr(kNativeArrayReductionCandidateAttribute);
@@ -1056,6 +1116,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
           .kind = NativeEntryKind::Leaf,
           .tier = NativeCodeTier::Baseline,
       },
+      EntryBody{.function = function.integer_callback,
+                .kind = NativeEntryKind::IntegerCallback,
+                .tier = NativeCodeTier::Baseline},
       EntryBody{.function = function.host_leaf, .kind = NativeEntryKind::HostLeaf, .tier = tier},
       EntryBody{.function = function.resume, .kind = NativeEntryKind::Resume, .tier = tier},
       EntryBody{
@@ -1070,8 +1133,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
       },
   };
   for (const auto& entry : entries) {
-    if (entry.function == nullptr ||
-        (entry.kind == NativeEntryKind::HostLeaf && !entry.function->empty())) {
+    if (entry.function == nullptr || ((entry.kind == NativeEntryKind::HostLeaf ||
+                                       entry.kind == NativeEntryKind::IntegerCallback) &&
+                                      !entry.function->empty())) {
       continue;
     }
     FunctionEmitter emitter(module, program, calls, image, function_index, escape, generated, roots,

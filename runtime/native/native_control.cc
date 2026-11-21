@@ -1,4 +1,5 @@
 #include "runtime/native/native_control.h"
+#include "runtime/native/native_stack.h"
 
 #include <atomic>
 #include <cstdint>
@@ -54,6 +55,9 @@ std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
 
 NativeControl::NativeControl(std::weak_ptr<std::counting_semaphore<>> wakeup)
     : queue_(std::make_shared<NativeSafepointQueue>()), state_{.requests = &queue_->requests} {
+  if (const auto limit = CurrentNativeStackLimit()) {
+    state_.callback_stack_limit = *limit;
+  }
   queue_->wakeup = std::move(wakeup);
 }
 

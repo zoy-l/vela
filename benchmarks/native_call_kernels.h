@@ -14,6 +14,7 @@ inline constexpr double kNativeDoubleIncrement = 0.5;
 void NativeEmpty(runtime::NativeContext& context) noexcept;
 std::int64_t NativeInteger(runtime::NativeContext& context, std::int64_t value) noexcept;
 double NativeDouble(runtime::NativeContext& context, double value) noexcept;
+bool NativeBoolean(runtime::NativeContext& context, bool value) noexcept;
 std::int64_t NativeStringBorrow(runtime::NativeContext& context, std::string_view text) noexcept;
 
 }  // namespace vela::benchmarks

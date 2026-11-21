@@ -31,7 +31,7 @@ struct NativeControlState;
 struct CodeIdentity;
 struct NativeProgramState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 31;
+inline constexpr std::uint32_t kNativeAbiVersion = 32;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr unsigned kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
@@ -246,7 +246,8 @@ class NativeExecution final {
   NativeControlState* control_state_;
   const GcBarrierState* barrier_state_;
   NativeStackRoots** stack_roots_;
-  NativeTraceFrame* current_frame_ = nullptr;
+  // 入栈和出栈成对写入帧指针与深度；对齐后生成的成对存储不会跨越对齐边界。
+  alignas(kNativeFrameAlignment) NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   std::size_t base_frame_count_ = 0;
   std::uintptr_t stack_limit_ = 0;

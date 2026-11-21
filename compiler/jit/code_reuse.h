@@ -35,6 +35,7 @@ struct CodeReuseCache final {
     runtime::NativeEntry entry = nullptr;
     runtime::NativeReflectionEntry reflection_entry = nullptr;
     runtime::NativeTypedEntry typed_entry = nullptr;
+    runtime::NativeIntegerCallback integer_callback = nullptr;
     std::vector<std::size_t> body_dependencies;
   };
   std::mutex mutex;

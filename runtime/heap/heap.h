@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -20,6 +22,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/host_index.h"
 #include "runtime/heap/host_memory.h"
+#include "runtime/heap/intrusive_link_internal.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/value/host_object.h"
 #include "runtime/value/object.h"
@@ -47,6 +50,8 @@ struct NativeStackRoots final {
   NativeStackRoots* previous = nullptr;
 };
 
+struct NativeFunctionDescription;
+
 class RootRange final {
  public:
   explicit RootRange(
@@ -72,6 +77,8 @@ class RootRange final {
   RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
+  // 加入连续存储中刚构造的下一个槽；已发布的槽必须保持地址稳定。
+  void AppendRootedValue([[maybe_unused]] const Value& value) noexcept;
   // 借用准备中的字段块；必须先 Detach 再释放或替换该块。
   void Attach(Heap& heap, const InstanceStorage& fields) noexcept;
   void Detach() noexcept;
@@ -200,6 +207,10 @@ class Heap final {
                             HeapObject& state,
                             std::uint32_t function) noexcept;
   [[nodiscard]] static HeapObject* NativeEnvironment(const HeapObject& callable) noexcept;
+  [[nodiscard]] static const NativeFunctionDescription* CallableFunction(
+      const HeapObject& callable) noexcept {
+    return std::bit_cast<const NativeFunctionDescription*>(callable.type_metadata);
+  }
   [[nodiscard]] static std::uint32_t NativeFunctionIndex(const HeapObject& callable) noexcept;
   [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
   [[nodiscard]] static Future* GetFuture(HeapObject& object) noexcept;
@@ -610,6 +621,47 @@ HeapObject* Heap::AllocateNativeObject(ObjectKind kind, T payload) noexcept {
   }
   return AllocateObject(kind, sizeof(HeapObject),
                         [&owned](HeapObject& object) { object.native_payload = owned.release(); });
+}
+
+inline RootRange::RootRange(Heap& heap,
+                            const Value* values,
+                            std::size_t count,
+                            std::optional<ExternalResourceKind> resource_kind) noexcept
+    : heap_(&heap), data_(values), count_(count), resource_kind_(resource_kind) {
+  heap.RegisterRoot(*this);
+}
+
+inline RootRange::~RootRange() {
+  Detach();
+}
+
+inline void RootRange::Detach() noexcept {
+  if (heap_ == nullptr) {
+    return;
+  }
+  vela::runtime::Heap::UnregisterRoot(*this);
+  heap_ = nullptr;
+}
+
+inline void Heap::RegisterRoot(RootRange& root) noexcept {
+  if (root.resource_kind_) {
+    root.identity_ = next_root_identity_++;
+  }
+  internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
+  if (root.count_ != 0 && IsCollecting()) {
+    MarkRoot(root);
+    DrainGrayIfSweeping();
+  }
+}
+
+inline void Heap::UnregisterRoot(RootRange& root) noexcept {
+  internal::UnlinkIntrusive(root, &RootRange::next_, &RootRange::previous_link_);
+}
+
+inline void RootRange::AppendRootedValue([[maybe_unused]] const Value& value) noexcept {
+  assert(heap_ != nullptr && kind_ == Kind::Values);
+  assert(&value == &std::span(static_cast<const Value*>(data_), count_ + 1).back());
+  ++count_;
 }
 
 }  // namespace vela::runtime

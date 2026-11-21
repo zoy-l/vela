@@ -159,6 +159,7 @@ source_set("runtime") {
     "native/host_builtin.cc",
     "native/host_builtin.h",
     "native/host_bytes.cc",
+    "native/host_callback.h",
     "native/host_collection.cc",
     "native/host_collection.h",
     "native/host_entry.cc",

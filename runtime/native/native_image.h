@@ -12,6 +12,7 @@
 #include "base/json_decode.h"
 #include "base/native_program_mode.h"
 #include "base/source_location.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_abi.h"
 
 namespace vela::runtime {
@@ -31,6 +32,8 @@ inline constexpr std::uint32_t kNativeGeneratedConstructor = 16;
 inline constexpr std::uint32_t kNativePrivateFunction = 32;
 // 反射缓存仅在接收者与该版本的规范物理布局相同时使用这个入口。
 inline constexpr std::uint32_t kNativeReflectionReceiverLayout = 64;
+inline constexpr std::uint32_t kNativeInlineScalarCallback = 1U << 7U;
+inline constexpr std::uint32_t kNativeScalarCallbackReadsCell = 1U << 8U;
 inline constexpr std::uint32_t kNativePrivateField = 1;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
@@ -178,11 +181,14 @@ struct NativeFunctionDescription final {
   // 可重载 JIT 在发布前绑定；仅优化层的当前版本跨分量调用读取此槽。
   NativeTypedEntry typed_entry = nullptr;
   NativeHostEntrySelector host_entry_selector = nullptr;
+  NativeIntegerCallback integer_callback = nullptr;
+  std::uint64_t scalar_operand = 0;
   std::uint32_t parameter_count = 0;
   std::uint32_t result_type = kNoNativeIndex;
   std::uint32_t hidden_parameters = 0;
   std::uint32_t receiver_type = kNoNativeIndex;
   std::uint32_t flags = 0;
+  std::uint32_t scalar_capture = kNoNativeIndex;
   FunctionIdentity identity;
   const NativeFunctionDependencies* dependencies = nullptr;
 

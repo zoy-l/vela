@@ -289,6 +289,9 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           pointer_,
           pointer_,
           pointer_,
+          pointer_,
+          wide_,
+          word_,
           word_,
           word_,
           word_,
@@ -306,11 +309,14 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeFunctionDescription, reflection_entry),
           offsetof(NativeFunctionDescription, typed_entry),
           offsetof(NativeFunctionDescription, host_entry_selector),
+          offsetof(NativeFunctionDescription, integer_callback),
+          offsetof(NativeFunctionDescription, scalar_operand),
           offsetof(NativeFunctionDescription, parameter_count),
           offsetof(NativeFunctionDescription, result_type),
           offsetof(NativeFunctionDescription, hidden_parameters),
           offsetof(NativeFunctionDescription, receiver_type),
           offsetof(NativeFunctionDescription, flags),
+          offsetof(NativeFunctionDescription, scalar_capture),
           offsetof(NativeFunctionDescription, identity),
           offsetof(NativeFunctionDescription, dependencies),
       });
@@ -648,24 +654,29 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
           location_, {Word(location.line), Word(location.column), Word(location.source_id)}));
     }
     constants.push_back(Record(
-        function_, {
-                       Text(function.name.text()),
-                       Text(function.native_symbol.text()),
-                       CallParameters(function.parameters.values()),
-                       Table(location_, locations),
-                       entry,
-                       entries.reflection[index],
-                       llvm::Constant::getNullValue(pointer_),
-                       entries.host[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
-                                                      : entries.host[index],
-                       Word(function.parameter_count),
-                       Word(function.result_type),
-                       Word(function.hidden_parameters),
-                       Word(function.receiver_type),
-                       Word(function.flags),
-                       Identity(function.identity),
-                       Dependencies(function.dependencies),
-                   }));
+        function_,
+        {
+            Text(function.name.text()),
+            Text(function.native_symbol.text()),
+            CallParameters(function.parameters.values()),
+            Table(location_, locations),
+            entry,
+            entries.reflection[index],
+            llvm::Constant::getNullValue(pointer_),
+            entries.host[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
+                                           : entries.host[index],
+            entries.integer_callbacks[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
+                                                        : entries.integer_callbacks[index],
+            Wide(function.scalar_operand),
+            Word(function.parameter_count),
+            Word(function.result_type),
+            Word(function.hidden_parameters),
+            Word(function.receiver_type),
+            Word(function.flags),
+            Word(function.scalar_capture),
+            Identity(function.identity),
+            Dependencies(function.dependencies),
+        }));
   }
   return Table(function_, constants);
 }

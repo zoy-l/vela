@@ -15,6 +15,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/Alignment.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/ModRef.h>
 #include <llvm/TargetParser/Triple.h>
@@ -120,6 +121,12 @@ void FunctionEmitter::BorrowHostExecution() {
     } else if (ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
       return;
     }
+  }
+  const auto& target = module_.getTargetTriple();
+  if (target.isOSDarwin() && target.isAArch64()) {
+    // 宿主调用循环会部分展开。固定函数起点，让连续间接调用的取指布局不受链接顺序影响。
+    constexpr unsigned kHostCallerAlignment = 64;
+    body_->setAlignment(llvm::Align(kHostCallerAlignment));
   }
   // 宿主调用和惰性全局初始化都沿用当前执行，嵌套借用在返回前恢复 host_execution。
   // 其余指令只做纯计算或直接失败退出，因此整个函数可共享同一次执行借用。

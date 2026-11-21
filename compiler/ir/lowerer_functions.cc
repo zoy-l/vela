@@ -103,7 +103,7 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
     layout.field_types.push_back(
         capture.kind == frontend::BindingKind::Mutable
             ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
-                                       .name = "$Cell",}
+                                       .name = kCaptureCellName,}
             : capture.type);
   }
   const auto layout_id = static_cast<ClassId>(program_.classes.size());

@@ -23,7 +23,7 @@ LABELS = {"cpp": "C++", "jit": "Vela JIT", "luajit_interp": "Lua interpreter",
           "luajit": "LuaJIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
     r"^native/(cpp|cpp_indirect|baseline|optimized|aot|baseline_control|optimized_control|aot_control)/"
-    r"(empty|integer|double|string_borrow)/(\d+)/real_time$")
+    r"(empty|integer|double|boolean|string_borrow(?:_\d+)?)/(\d+)/real_time$")
 TEMPORARY_OBJECT_CASE = re.compile(
     r"^(?:aot/(native)|hot/steady/(baseline|optimized))/temporaryObjects/(\d+)/real_time$")
 NATIVE_BASELINES = {

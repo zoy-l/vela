@@ -86,9 +86,17 @@ export func calculate(operation: int): int {
     return error.code == 'DivisionByZero' && box.next == child ? child.number : 0;
   }
 }
+
+export func savedCallbacks(): ((int) => int)[] {
+  let delta = 1;
+  const read = (n: int): int => n + delta;
+  const write = (n: int): int => { delta = n; return delta; };
+  return [read, write];
+}
 """
 
 HOST_TESTS = r'''
+#include <vela/host.h>
 #include "runtime/native/native_call.h"
 extern "C" const NativeImage* CALLBACK_IMAGE() noexcept;
 using NativeCallbackTest = CollectingImageTest<CALLBACK_IMAGE>;
@@ -96,6 +104,33 @@ using NativeCallbackTest = CollectingImageTest<CALLBACK_IMAGE>;
 TEST_F(NativeCallbackTest, StableSnapshotsAndMutatingCallbacksKeepTheirContractsUnderGc) {
   NativeExecution execution(*instance);
   ExpectIntegerOperations(CALLBACK_ENTRY, execution, {0, 1, 2, 3, 9, 10});
+}
+
+TEST_F(NativeCallbackTest, SavedScalarCallbackReadsLiveCaptureAndPreservesFailure) {
+  using Callback = vela::Function<std::int64_t(std::int64_t)>;
+  const auto factory = vela::Entry<vela::Array<Callback>()>::Bind(*instance, "savedCallbacks");
+  ASSERT_TRUE(factory);
+  vela::Persistent<Callback> saved;
+  {
+    vela::HandleScope registration(isolate);
+    const auto pair = factory->Call(registration);
+    ASSERT_TRUE(pair);
+    const auto reader = pair->Get(registration, 0);
+    const auto writer = pair->Get(registration, 1);
+    ASSERT_TRUE(reader);
+    ASSERT_TRUE(writer);
+    auto saved_reader = reader->Persist();
+    ASSERT_TRUE(saved_reader);
+    EXPECT_EQ(saved_reader->Call(std::int64_t{41}), 42);
+    EXPECT_EQ(writer->Call(registration, std::int64_t{7}), 7);
+    saved = std::move(*saved_reader);
+  }
+  isolate.heap().Collect();
+  EXPECT_EQ(saved.Call(std::int64_t{35}), 42);
+  const auto failure = saved.Call(std::numeric_limits<std::int64_t>::max());
+  ASSERT_FALSE(failure);
+  EXPECT_EQ(failure.error().status, ExecutionStatus::IntegerOverflow);
+  EXPECT_FALSE(failure.error().stack_trace.empty());
 }
 
 TEST_F(NativeCallbackTest, NullPresenceReassignmentAndMutableCapturesUseTheirCurrentValues) {

@@ -600,15 +600,28 @@ void NativeImageData::RequireReflectionReceiverLayout(std::size_t function) {
   functions_[function].flags |= runtime::kNativeReflectionReceiverLayout;
 }
 
+void NativeImageData::BindInlineScalarCallback(std::size_t function,
+                                               runtime::NativeInlineScalarOperand operand) {
+  auto& description = functions_[function];
+  description.flags |= runtime::kNativeInlineScalarCallback;
+  if (operand.from_cell) {
+    description.flags |= runtime::kNativeScalarCallbackReadsCell;
+  }
+  description.scalar_operand = operand.bits;
+  description.scalar_capture = operand.capture;
+}
+
 void NativeImageData::BindEntries(
     std::span<const runtime::NativeEntry> entries,
     std::span<const runtime::NativeReflectionEntry> reflection_entries,
-    std::span<const runtime::NativeTypedEntry> typed_entries) {
+    std::span<const runtime::NativeTypedEntry> typed_entries,
+    std::span<const runtime::NativeIntegerCallback> callbacks) {
   for (std::size_t index = 0; index < functions_.size(); ++index) {
     auto& function = functions_.at(index);
     function.entry = entries[index];
     function.reflection_entry = reflection_entries[index];
     function.typed_entry = typed_entries[index];
+    function.integer_callback = callbacks[index];
   }
 }
 

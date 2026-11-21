@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <semaphore>
@@ -11,6 +12,7 @@
 #include <absl/functional/any_invocable.h>
 
 #include "base/execution_status.h"
+#include "runtime/native/native_stack.h"
 
 namespace vela::runtime {
 
@@ -29,10 +31,23 @@ struct NativeSafepointQueue final {
 
 // 请求地址随队列固定；借用深度只由 Isolate 线程读写，生成代码与运行时共用这一状态。
 struct NativeControlState final {
+  static constexpr auto kUnknownStackLimit = std::numeric_limits<std::uintptr_t>::max();
+
   const std::atomic<std::uint8_t>* requests = nullptr;
   std::uint64_t host_borrows = 0;
   NativeExecution* host_execution = nullptr;
   std::uint64_t initializations = 0;
+  std::uintptr_t callback_stack_limit = kUnknownStackLimit;
+
+  [[nodiscard]] std::expected<std::uintptr_t, ExecutionStatus> StackLimit() const noexcept {
+#if !defined(_WIN32)
+    // POSIX Isolate 固定在创建线程，其原生栈边界在 Isolate 生命周期内不变。
+    if (callback_stack_limit != kUnknownStackLimit) [[likely]] {
+      return callback_stack_limit;
+    }
+#endif
+    return CurrentNativeStackLimit();
+  }
 };
 
 // 跨线程只拥有队列控制状态；关闭后投递不会访问已退休的 Isolate。

@@ -47,4 +47,18 @@ Result<HostValue<typename internal::FunctionType<U>::Return>> Local<T>::Call(
   return internal::HostFunctionCall<U>::Call(scope, *this, std::forward<Args>(arguments)...);
 }
 
+template <class T>
+template <class U, class... Args>
+  requires(std::is_same_v<U, T> && requires { typename internal::FunctionType<U>::Return; } &&
+           !internal::HostValueType<typename internal::FunctionType<U>::Return>::kManaged)
+Result<HostValue<typename internal::FunctionType<U>::Return>> Persistent<T>::Call(
+    Args&&... arguments) const {
+  if constexpr (internal::kIsScalarCallback<T>) {
+    if (const auto result = callback_.Try(arguments...)) [[likely]] {
+      return *result;
+    }
+  }
+  return internal::HostFunctionCall<T>::InvokePersistent(root_, std::forward<Args>(arguments)...);
+}
+
 }  // namespace vela

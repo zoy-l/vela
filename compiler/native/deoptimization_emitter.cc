@@ -31,6 +31,8 @@ llvm::Function* FunctionEmitter::SelectBody(const GeneratedFunction& function,
       return function.body;
     case NativeEntryKind::ScalarField:
       return function.scalar_field_body;
+    case NativeEntryKind::IntegerCallback:
+      return function.integer_callback;
     case NativeEntryKind::Resume:
       return function.resume;
     case NativeEntryKind::RecoverInitial:

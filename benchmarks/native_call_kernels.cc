@@ -23,6 +23,10 @@ namespace vela::benchmarks {
   return value + kNativeDoubleIncrement;
 }
 
+[[clang::noinline]] bool NativeBoolean(runtime::NativeContext& /*context*/, bool value) noexcept {
+  return !value;
+}
+
 [[clang::noinline]] std::int64_t NativeStringBorrow(runtime::NativeContext& /*context*/,
                                                     std::string_view text) noexcept {
   return static_cast<std::int64_t>(text.size()) + static_cast<unsigned char>(text.front());

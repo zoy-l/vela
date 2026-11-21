@@ -25,8 +25,10 @@ class NativeImageData final {
   }
   void BindEntries(std::span<const runtime::NativeEntry> entries,
                    std::span<const runtime::NativeReflectionEntry> reflection_entries,
-                   std::span<const runtime::NativeTypedEntry> typed_entries);
+                   std::span<const runtime::NativeTypedEntry> typed_entries,
+                   std::span<const runtime::NativeIntegerCallback> callbacks);
   void RequireReflectionReceiverLayout(std::size_t function);
+  void BindInlineScalarCallback(std::size_t function, runtime::NativeInlineScalarOperand operand);
 
  private:
   friend class NativeImageBuilder;

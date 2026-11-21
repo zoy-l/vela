@@ -33,6 +33,7 @@
 #include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native/host_callback.h"
 
 namespace llvm {
 class Function;
@@ -49,6 +50,7 @@ struct GeneratedFunction final {
   llvm::Function* entry = nullptr;
   llvm::Function* reflection_entry = nullptr;
   llvm::Function* scalar_field_body = nullptr;
+  llvm::Function* integer_callback = nullptr;
   llvm::Function* resume = nullptr;
   llvm::Function* baseline_body = nullptr;
   llvm::Function* baseline_resume = nullptr;
@@ -64,6 +66,7 @@ struct GeneratedFunction final {
   llvm::Function* host_entry_selector = nullptr;
   bool budgeted_recursion = false;
   bool square_root = false;
+  std::optional<runtime::NativeInlineScalarOperand> inline_scalar;
   [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
     return tier == NativeCodeTier::Optimized && recovery != nullptr;
   }
@@ -72,6 +75,7 @@ struct GeneratedFunction final {
 enum class NativeEntryKind : std::uint8_t {
   Initial,
   ScalarField,
+  IntegerCallback,
   Resume,
   RecoverInitial,
   RecoverResume,
@@ -372,6 +376,8 @@ class FunctionEmitter final {
   void InitializeRecords();
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
+  std::expected<void, std::string> EmitIntegerCallback();
+  void ReturnIntegerCallback(llvm::Value* value, llvm::Value* status);
   void PrepareFrame();
   template <typename Address>
   void BindFrameSlots(const Address& address);

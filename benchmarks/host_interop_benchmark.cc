@@ -2,6 +2,8 @@
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -14,6 +16,7 @@
 
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/host_interop/entries.h"
+#include "benchmarks/jit_benchmark.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
@@ -41,10 +44,12 @@ enum class Path : std::uint8_t { Typed, Runtime, Wrapper };
 enum class StringOperation : std::uint8_t { Borrow, Copy };
 enum class Element : std::uint8_t { Scalar, Reference };
 enum class Call : std::uint8_t { Scalar, Reentry };
+enum class SavedCall : std::uint8_t { Localize, Direct };
 constexpr std::int64_t kExpected = 42;
 constexpr std::int64_t kInput = kExpected - 1;
 using Integers = Array<std::int64_t>;
 using Callback = Function<std::int64_t(std::int64_t)>;
+constexpr auto kIncrement = [](std::int64_t value) noexcept { return value + 1; };
 
 template <class T>
 struct EntryResult;
@@ -67,13 +72,20 @@ Result<std::int64_t> Reenter(runtime::NativeContext& context,
   return callback.Call(context.handles(), value);
 }
 
-std::unique_ptr<runtime::NativeInstance> Instantiate(benchmark::State& state,
-                                                     runtime::Isolate& isolate,
-                                                     Mode mode) {
+std::expected<void, std::string> RegisterHost(runtime::Isolate& isolate) {
   if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Step>("interop.step")) ||
       !isolate.RegisterNative(runtime::NativeFunction::Bind<Echo>("interop.echo")) ||
       !isolate.RegisterNative(runtime::NativeFunction::Bind<Reenter>("interop.bounce"))) {
-    state.SkipWithError("host registration failed");
+    return std::unexpected("host registration failed");
+  }
+  return {};
+}
+
+std::unique_ptr<runtime::NativeInstance> Instantiate(benchmark::State& state,
+                                                     runtime::Isolate& isolate,
+                                                     Mode mode) {
+  if (const auto registered = RegisterHost(isolate); !registered) {
+    state.SkipWithError(registered.error());
     return nullptr;
   }
   std::shared_ptr<const runtime::NativeImage> image;
@@ -99,8 +111,11 @@ std::unique_ptr<runtime::NativeInstance> Instantiate(benchmark::State& state,
   return std::move(*instance);
 }
 
-template <class Action>
-void Measure(benchmark::State& state, runtime::Isolate& isolate, Action action) {
+template <class Action, class Expected = std::int64_t>
+void Measure(benchmark::State& state,
+             runtime::Isolate& isolate,
+             Action action,
+             Expected expected = kExpected) {
   auto& heap = isolate.heap();
   CollectHeapBaseline(state, heap);
   const auto baseline_bytes = heap.allocated_bytes();
@@ -109,10 +124,17 @@ void Measure(benchmark::State& state, runtime::Isolate& isolate, Action action) 
   const auto baseline_roots = roots.size();
   const auto baseline_blockers = isolate.ReloadBlockers().size();
   heap.ResetAllocationStatistics();
+  const auto invoke = [&] {
+    if constexpr (std::is_invocable_v<Action&>) {
+      return action();
+    } else {
+      HandleScope scope(isolate);
+      return action(scope);
+    }
+  };
   for (auto iteration : state) {
-    HandleScope scope(isolate);
-    auto result = action(scope);
-    if (!result || *result != kExpected) {
+    auto result = invoke();
+    if (!result || *result != expected) {
       state.SkipWithError(result ? "interop checksum mismatch" : result.error().message);
       break;
     }
@@ -433,6 +455,162 @@ void Callbacks(benchmark::State& state) {
   });
 }
 
+template <class Callable, class... Params, class... Args>
+Result<Persistent<Callable>> SaveForEvents(const Entry<Callable(Params...)>& factory,
+                                           Args&&... arguments) {
+  HandleScope registration(factory.isolate());
+  auto created = factory.Call(registration, std::forward<Args>(arguments)...);
+  if (!created) {
+    return std::unexpected(std::move(created.error()));
+  }
+  return created->Persist();
+}
+
+void MeasurePersistentCallback(benchmark::State& state,
+                               const Entry<Callback()>& factory,
+                               SavedCall path) {
+  auto saved = SaveForEvents(factory);
+  if (!saved) {
+    state.SkipWithError(saved.error().message);
+    return;
+  }
+  if (path == SavedCall::Direct) {
+    Measure(state, factory.isolate(), [&] { return saved->Call(std::int64_t{kInput}); });
+    return;
+  }
+  Measure(state, factory.isolate(), [&](HandleScope& event) -> Result<std::int64_t> {
+    auto local = saved->ToLocal(event);
+    if (!local) {
+      return std::unexpected(std::move(local.error()));
+    }
+    return local->Call(event, std::int64_t{kInput});
+  });
+}
+
+void AotPersistentCallback(benchmark::State& state, SavedCall path) {
+  runtime::Isolate isolate;
+  const auto instance = Instantiate(state, isolate, Mode::Aot);
+  if (!instance) {
+    return;
+  }
+  const auto factory = Entry<Callback()>::Bind(*instance, "callback");
+  if (!factory) {
+    state.SkipWithError(factory.error().message);
+    return;
+  }
+  MeasurePersistentCallback(state, *factory, path);
+}
+
+std::expected<JitSetup, std::string> PrepareReloadable() {
+  runtime::Isolate registrations;
+  if (const auto registered = RegisterHost(registrations); !registered) {
+    return std::unexpected(registered.error());
+  }
+  static JitWorkload workload(std::string{kSource}, NativeCodeTier::Optimized);
+  return LoadJitWorkload(workload, registrations.FreezeBindings());
+}
+
+void OptimizedPersistentCallback(benchmark::State& state, SavedCall path) {
+  auto setup = PrepareReloadable();
+  if (!setup) {
+    state.SkipWithError(setup.error());
+    return;
+  }
+  auto factory =
+      Entry<Callback()>::Bind(setup->isolate->native_dispatch(), setup->program->entry, "callback");
+  if (!factory) {
+    state.SkipWithError(factory.error().message);
+    return;
+  }
+  MeasurePersistentCallback(state, *factory, path);
+}
+
+void CppSavedCallback(benchmark::State& state) {
+  std::function<std::int64_t(std::int64_t)> saved = kIncrement;
+  benchmark::DoNotOptimize(saved);
+  for (auto iteration : state) {
+    auto result = saved(kInput);
+    benchmark::DoNotOptimize(result);
+    if (result != kExpected) {
+      state.SkipWithError("C++ callback checksum mismatch");
+      break;
+    }
+  }
+}
+
+template <class T, class... Params>
+void MeasureScalarCallback(benchmark::State& state,
+                           const Result<Entry<Function<T(T)>(Params...)>>& entry,
+                           T input,
+                           T expected,
+                           Params... captures) {
+  if (!entry) {
+    state.SkipWithError(entry.error().message);
+    return;
+  }
+  auto saved = SaveForEvents(*entry, captures...);
+  if (!saved) {
+    state.SkipWithError(saved.error().message);
+    return;
+  }
+  Measure(state, entry->isolate(), [&] { return saved->Call(input); }, expected);
+}
+
+template <class T, class Kernel, class... Params>
+void RegisterScalarCallback(std::string_view label,
+                            std::string_view factory,
+                            T input,
+                            T expected,
+                            Kernel kernel,
+                            Params... captures) {
+  using Factory = Entry<Function<T(T)>(Params...)>;
+  const std::string suffix = "/saved_callback/" + std::string(label);
+  benchmark::RegisterBenchmark("interop/cpp" + suffix, [=](benchmark::State& state) {
+    std::function<T(T)> callback = kernel;
+    benchmark::DoNotOptimize(callback);
+    for (auto iteration : state) {
+      auto result = callback(input);
+      benchmark::DoNotOptimize(result);
+      if (result != expected) {
+        state.SkipWithError("C++ callback checksum mismatch");
+        break;
+      }
+    }
+  });
+  benchmark::RegisterBenchmark("interop/aot" + suffix, [=](benchmark::State& state) {
+    runtime::Isolate isolate;
+    const auto instance = Instantiate(state, isolate, Mode::Aot);
+    if (instance != nullptr) {
+      MeasureScalarCallback(state, Factory::Bind(*instance, factory), input, expected, captures...);
+    }
+  });
+  benchmark::RegisterBenchmark("interop/reload_optimized" + suffix, [=](benchmark::State& state) {
+    auto setup = PrepareReloadable();
+    if (!setup) {
+      state.SkipWithError(setup.error());
+      return;
+    }
+    MeasureScalarCallback(
+        state, Factory::Bind(setup->isolate->native_dispatch(), setup->program->entry, factory),
+        input, expected, captures...);
+  });
+}
+
+void RegisterScalarCallbacks() {
+  constexpr std::int64_t kNegative = -123;
+  constexpr std::int64_t kMaximum = std::numeric_limits<std::int64_t>::max();
+  constexpr std::int64_t kOffset = 7;
+  RegisterScalarCallback("integer_negative", "callback", kNegative, kNegative + 1, kIncrement);
+  RegisterScalarCallback("integer_max", "callback", kMaximum - 1, kMaximum, kIncrement);
+  RegisterScalarCallback(
+      "integer_capture", "offsetCallback", kInput, kInput + kOffset,
+      [offset = kOffset](std::int64_t value) { return value + offset; }, kOffset);
+  RegisterScalarCallback("double", "floatingCallback", -2.25, -1.75,
+                         [](double value) { return value + 0.5; });
+  RegisterScalarCallback("boolean", "booleanCallback", true, false,
+                         [](bool value) { return !value; });
+}
+
 template <Mode Execution, Path Boundary>
 void Objects(benchmark::State& state) {
   runtime::Isolate isolate;
@@ -548,6 +726,16 @@ void RegisterValues(std::string_view path) {
   RegisterEntries<Mode::Aot, Path::Typed>("aot", "typed");
   RegisterEntries<Mode::Aot, Path::Runtime>("aot", "runtime");
   RegisterEntries<Mode::Aot, Path::Wrapper>("aot", "wrapper");
+  benchmark::RegisterBenchmark("interop/cpp/std_function/callback", CppSavedCallback);
+  benchmark::RegisterBenchmark("interop/aot/typed/persistent_callback", AotPersistentCallback,
+                               SavedCall::Localize);
+  benchmark::RegisterBenchmark("interop/reload_optimized/typed/persistent_callback",
+                               OptimizedPersistentCallback, SavedCall::Localize);
+  benchmark::RegisterBenchmark("interop/aot/typed/saved_callback", AotPersistentCallback,
+                               SavedCall::Direct);
+  benchmark::RegisterBenchmark("interop/reload_optimized/typed/saved_callback",
+                               OptimizedPersistentCallback, SavedCall::Direct);
+  RegisterScalarCallbacks();
   RegisterValues<Path::Typed>("typed");
   RegisterValues<Path::Runtime>("runtime");
   benchmark::RegisterBenchmark("interop/type/cold", ColdTypeResolution);

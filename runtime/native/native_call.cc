@@ -27,7 +27,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
-#include "runtime/native/native_stack.h"
 #include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -231,9 +230,12 @@ void EncodePresence(std::span<NativeValue> output, std::size_t supplied) {
   }
 }
 
-std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
-                                                     const NativeResolvedCallable& callback,
-                                                     std::span<const Value> arguments) {
+}  // namespace
+
+std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
+    NativeExecution& execution,
+    const NativeResolvedCallable& callback,
+    std::span<const Value> arguments) {
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
@@ -252,6 +254,33 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   if (function.parameter_count == 0) {
     // 数量检查已排除实参和隐式接收者；没有需要编码、补缺省或保根的输入。
     return InvokeNativeTarget(execution, function, {});
+  }
+  const auto encode = [&](std::size_t index) -> std::expected<NativeValue, ExecutionStatus> {
+    auto value = arguments[index];
+    if (typed) {
+      const auto parameter = parameters[index + hidden - function.hidden_parameters];
+      const auto converted = ConvertCallbackArgument(instance, parameter, value);
+      if (!converted) {
+        return std::unexpected(converted.error());
+      }
+      value = *converted;
+    }
+    return EncodeNativeValue(value);
+  };
+  if (arguments.size() == 1 && function.parameter_count == hidden + 1) {
+    const auto argument = arguments.front();
+    // 调用方保活闭包及其接收者；单个标量实参不需要根槽，也没有待填充的参数。
+    if (!argument.IsReference()) {
+      const auto encoded = encode(0);
+      if (!encoded) {
+        return std::unexpected(encoded.error());
+      }
+      if (target.implicit) {
+        const std::array input{EncodeNativeValue(*target.implicit), *encoded};
+        return InvokeNativeTarget(execution, function, input);
+      }
+      return InvokeNativeTarget(execution, function, std::span(&*encoded, 1));
+    }
   }
   auto& heap = execution.isolate().heap();
   const NativeArgumentRoots arguments_root(heap, arguments);
@@ -282,16 +311,11 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     encoded.front() = EncodeNativeValue(*target.implicit);
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    auto value = arguments[index];
-    if (typed) {
-      const auto parameter = parameters[index + hidden - function.hidden_parameters];
-      const auto converted = ConvertCallbackArgument(instance, parameter, value);
-      if (!converted) {
-        return std::unexpected(converted.error());
-      }
-      value = *converted;
+    const auto argument = encode(index);
+    if (!argument) {
+      return std::unexpected(argument.error());
     }
-    encoded[index + hidden] = EncodeNativeValue(value);
+    encoded[index + hidden] = *argument;
   }
   for (std::size_t index = arguments.size() + hidden; index < logical_count; ++index) {
     const auto parameter = parameters[index - function.hidden_parameters];
@@ -311,6 +335,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   return InvokeNativeTarget(execution, function, encoded);
 }
 
+namespace {
 Future InvokeFutureCallback(const NativeCallDomain& domain,
                             const NativeResolvedCallable& callback,
                             Value callable,
@@ -319,7 +344,7 @@ Future InvokeFutureCallback(const NativeCallDomain& domain,
   const RootRange callable_root(isolate.heap(), &callable, 1, std::nullopt);
   auto instance = NativeInstance::Borrow(*callback.state);
   NativeExecution execution(instance);
-  const auto invoked = InvokeCallback(execution, callback, arguments);
+  const auto invoked = InvokeResolvedNativeCallable(execution, callback, arguments);
   if (invoked) {
     return RootFutureValue(isolate, *invoked);
   }
@@ -486,7 +511,8 @@ std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
       parameters.size() < input.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  return InvokeCallback(execution, {.target = {.function = function}, .function = &target}, input);
+  return InvokeResolvedNativeCallable(
+      execution, {.target = {.function = function}, .function = &target}, input);
 }
 
 namespace {
@@ -603,9 +629,9 @@ std::expected<Value, ExecutionStatus> CompleteInvocation(
   }
   auto* object = value.AsObject();
   if (host != nullptr) {
-    const auto limit = CurrentNativeStackLimit();
-    NativeHostContext context(instance.program(), isolate.native_control().state(),
-                              parent == nullptr ? 0 : parent->frame_count(), limit);
+    auto& control = isolate.native_control().state();
+    NativeHostContext context(instance.program(), control,
+                              parent == nullptr ? 0 : parent->frame_count(), control.StackLimit());
     NativeValue output;
     const auto status = host(&context, object, &output);
     if (status == ToNativeStatus(ExecutionStatus::Returned)) {
@@ -632,8 +658,12 @@ std::expected<Value, ExecutionStatus> CompleteInvocation(
   if (description.hidden_parameters != 0) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  return InvokeCallback(execution, {.target = {.function = function}, .function = &description},
-                        arguments);
+  if (description.parameter_count == 0 && arguments.empty()) {
+    // 无参数的命名入口已验证目标，无需构造闭包调用描述。
+    return InvokeNativeTarget(execution, description, {});
+  }
+  return InvokeResolvedNativeCallable(
+      execution, {.target = {.function = function}, .function = &description}, arguments);
 }
 
 std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& execution,
@@ -647,7 +677,7 @@ std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& exec
   }
   auto origin = NativeInstance::Borrow(*callback->state);
   const NativeInstanceScope scope(execution, origin);
-  return InvokeCallback(execution, *callback, arguments);
+  return InvokeResolvedNativeCallable(execution, *callback, arguments);
 }
 
 std::expected<Value, ExecutionStatus> internal::BoxNativeEnumResult(const NativeInstance& instance,

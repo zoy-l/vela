@@ -18,7 +18,6 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_materialization.h"
-#include "runtime/native/native_stack.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -64,7 +63,7 @@ NativeFrame::~NativeFrame() {
       barrier_state_(&isolate().heap().barrier_state()),
       stack_roots_(isolate().heap().native_stack_roots_head()),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
-  const auto limit = CurrentNativeStackLimit();
+  const auto limit = control_state_->StackLimit();
   if (parent != nullptr) {
     current_frame_ = parent->current_frame_;
     frame_count_ = parent->frame_count_;

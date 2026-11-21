@@ -84,6 +84,12 @@ ResolveNativeMethod(const NativeInstance& caller, CallableTarget method, Value r
     const NativeInstance& caller,
     Value callable);
 
+// 调用者已保根函数值并进入其捕获版本。
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
+    NativeExecution& execution,
+    const NativeResolvedCallable& callback,
+    std::span<const Value> arguments);
+
 // 借用 callable 所保活版本的签名；调用者必须在使用期间保根 callable。
 struct NativeCallableContract final {
   const CallSignature* signature = nullptr;

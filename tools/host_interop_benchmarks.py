@@ -11,7 +11,9 @@ from aot_benchmarks import compile_workloads, native_image_declaration
 
 def generate(compiler: Path, source: Path, output: Path) -> None:
     manifest = compile_workloads(compiler, source,
-                                 ["scalar", "local", "callback", "object", "reentry"], output)
+                                 ["scalar", "local", "callback", "offsetCallback",
+                                  "floatingCallback", "booleanCallback", "object", "reentry"],
+                                 output)
     module = manifest["instantiate"].removesuffix("_instantiate")
     interface = "workload.obj.h" if compiler.suffix == ".exe" else "workload.o.h"
     header = ["#pragma once", "#include <string_view>",

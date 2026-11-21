@@ -20,6 +20,8 @@
 
 namespace vela::ir {
 
+inline constexpr char kCaptureCellName[] = "$Cell";
+
 using RegisterId = std::uint32_t;
 using ClassId = std::uint32_t;
 using FieldId = std::uint32_t;

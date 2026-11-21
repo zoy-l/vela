@@ -67,6 +67,9 @@ void Heap::SetNativeEnvironment(HeapObject& callable,
   callable.native_payload = &state;
   // Instance 不使用容器长度；原生函数值以此保存创建时选定版本内的函数编号。
   callable.length = function;
+  const auto targets = NativeProgram(state).image->functions.values();
+  // 虚方法在捕获接收者前暂存选择器；完成捕获时写入所选版本。
+  callable.SetTypeMetadata(function < targets.size() ? &targets[function] : nullptr);
   WriteBarrier(callable, Value::Object(&state));
 }
 

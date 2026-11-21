@@ -229,6 +229,7 @@ struct FunctionEntrySymbols final {
   std::string boxed;
   std::string reflection;
   std::string typed;
+  std::string integer_callback;
 };
 
 std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& generated,
@@ -237,11 +238,14 @@ std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& gener
   for (std::size_t index = 0; index < generated.entry_functions.size(); ++index) {
     const auto* entry = generated.entry_functions[index];
     const auto reused = !reuse_plan.reused.empty() && reuse_plan.reused[index] != 0;
+    const auto* callback = generated.integer_callbacks[index];
     entry_symbols.push_back({
         .boxed = reused ? std::string() : entry->getName().str(),
         .reflection =
             reused ? std::string() : generated.reflection_functions[index]->getName().str(),
         .typed = reused ? std::string() : generated.typed_functions[index]->getName().str(),
+        .integer_callback =
+            reused || callback == nullptr ? std::string() : callback->getName().str(),
     });
   }
   return entry_symbols;
@@ -278,6 +282,9 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
       requested.insert(interned.Get(symbol.boxed));
       requested.insert(interned.Get(symbol.reflection));
       requested.insert(interned.Get(symbol.typed));
+      if (!symbol.integer_callback.empty()) {
+        requested.insert(interned.Get(symbol.integer_callback));
+      }
     }
   }
   if (image_data == nullptr) {
@@ -304,6 +311,7 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
   std::vector<runtime::NativeEntry> addresses;
   std::vector<runtime::NativeReflectionEntry> reflection_addresses;
   std::vector<runtime::NativeTypedEntry> typed_addresses;
+  std::vector<runtime::NativeIntegerCallback> callbacks;
   for (std::size_t index = 0; index < entry_symbols.size(); ++index) {
     const auto& symbol = entry_symbols[index];
     addresses.push_back(symbol.boxed.empty() ? reuse->sources[index].entry
@@ -319,8 +327,17 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
                                                    : resolved.find(interned.Get(symbol.typed))
                                                          ->second.getAddress()
                                                          .toPtr<runtime::NativeTypedEntry>());
+    runtime::NativeIntegerCallback callback = nullptr;
+    if (symbol.boxed.empty()) {
+      callback = reuse->sources[index].integer_callback;
+    } else if (!symbol.integer_callback.empty()) {
+      callback = resolved.find(interned.Get(symbol.integer_callback))
+                     ->second.getAddress()
+                     .toPtr<runtime::NativeIntegerCallback>();
+    }
+    callbacks.push_back(callback);
   }
-  image_data.BindEntries(addresses, reflection_addresses, typed_addresses);
+  image_data.BindEntries(addresses, reflection_addresses, typed_addresses, callbacks);
   return image_data.image();
 }
 
@@ -365,6 +382,7 @@ void UpdateSourceCache(CodeReuseCache& reuse,
         .entry = function.entry,
         .reflection_entry = function.reflection_entry,
         .typed_entry = function.typed_entry,
+        .integer_callback = function.integer_callback,
         .body_dependencies = std::move(generated.body_dependencies[index]),
     });
   }

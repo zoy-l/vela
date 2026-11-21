@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -73,6 +75,7 @@
 #include "compiler/native/recursive_inliner.h"
 #include "compiler/native/repeated_field_optimizer.h"
 #include "compiler/native/target_version_emitter.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
@@ -390,6 +393,209 @@ InliningPlan PlanInlining(const ir::Function& function,
   return {.enabled = small && leaf != LeafKind::Guarded, .leaf = leaf};
 }
 
+bool HasScalarCallbackSignature(const ir::Function& function) {
+  const auto& signature = function.signature;
+  const auto& result = function.return_type;
+  if (!ir::CanAnalyzeSynchronousFunction(function) || !signature ||
+      signature->parameters.size() != 1 || signature->hidden_parameters > 1 ||
+      function.parameter_count != 1U + signature->hidden_parameters ||
+      function.register_count > kMaximumInlineInstructions ||
+      function.instructions.size() > kMaximumInlineInstructions || result.nullable ||
+      (result.kind != Kind::Int && result.kind != Kind::Double && result.kind != Kind::Bool)) {
+    return false;
+  }
+  const auto& parameter = signature->parameters.front();
+  const auto& argument = function.value_types[signature->hidden_parameters];
+  return !parameter.optional && !parameter.rest && !parameter.has_default &&
+         argument.kind == result.kind && !argument.nullable;
+}
+
+bool IsIntegerCallback(const ir::Function& function) {
+  if (function.return_type.kind != Kind::Int || !HasScalarCallbackSignature(function)) {
+    return false;
+  }
+  // 只接受原有标量发射器处理的直线 IR。失败前不会写入脚本状态，可进入普通异常边界。
+  return std::ranges::all_of(function.instructions, [](const auto& instruction) {
+    if (instruction.construction || instruction.completes_construction || instruction.handler) {
+      return false;
+    }
+    switch (instruction.opcode) {
+      case Opcode::LoadInt:
+      case Opcode::Move:
+      case Opcode::AddInt:
+      case Opcode::SubInt:
+      case Opcode::MulInt:
+      case Opcode::DivInt:
+      case Opcode::ModInt:
+      case Opcode::NegInt:
+      case Opcode::BitNotInt:
+      case Opcode::BitAndInt:
+      case Opcode::BitOrInt:
+      case Opcode::BitXorInt:
+      case Opcode::ShiftLeftInt:
+      case Opcode::ShiftRightInt:
+      case Opcode::ShiftUnsignedRightInt:
+      case Opcode::Return:
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+bool IsCaptureCell(const SourceType& type) {
+  return type.kind == Kind::Class && type.name == ir::kCaptureCellName && !type.nullable;
+}
+
+std::optional<runtime::NativeInlineScalarOperand> ScalarCapture(
+    std::span<const ir::Instruction> instructions,
+    const ir::RegisterFlow& flow,
+    const ir::Instruction& source) {
+  if (flow.origins[source.lhs] == 0) {
+    return runtime::NativeInlineScalarOperand{.capture = source.index};
+  }
+  const auto receiver = flow.OriginDefinition(source.lhs);
+  if (!receiver || source.index != 0) {
+    return std::nullopt;
+  }
+  const auto& binding = instructions[*receiver];
+  if (binding.opcode != Opcode::GetField || flow.origins[binding.lhs] != 0) {
+    return std::nullopt;
+  }
+  return runtime::NativeInlineScalarOperand{.capture = binding.index, .from_cell = true};
+}
+
+bool IsScalarCallbackCapture(const ir::Function& function, const ir::Instruction& instruction) {
+  // Lambda 首参是捕获环境。仅借用直接保存的整数，或编译器创建且不会迁移的 Cell 字段。
+  if (function.return_type.kind != Kind::Int || function.parameter_count != 2 ||
+      instruction.field_declaration || function.value_types.front().kind != Kind::Function) {
+    return false;
+  }
+  const auto& receiver = function.value_types[instruction.lhs];
+  const auto& target = function.value_types[instruction.dst];
+  const auto integer = target.kind == Kind::Int && !target.nullable;
+  return (instruction.lhs == 0 && (integer || IsCaptureCell(target))) ||
+         (IsCaptureCell(receiver) && instruction.index == 0 && integer);
+}
+
+struct ScalarCallbackBody final {
+  const ir::Instruction* operation = nullptr;
+};
+
+std::optional<ScalarCallbackBody> AnalyzeScalarCallbackBody(const ir::Function& function) {
+  const auto& instructions = function.instructions;
+  if (instructions.empty() || instructions.back().opcode != Opcode::Return) {
+    return std::nullopt;
+  }
+  const auto kind = function.return_type.kind;
+  ScalarCallbackBody body;
+  for (const auto& instruction : std::span(instructions).first(instructions.size() - 1)) {
+    if (instruction.handler || instruction.construction || instruction.completes_construction) {
+      return std::nullopt;
+    }
+    if (instruction.opcode == Opcode::GetField && IsScalarCallbackCapture(function, instruction)) {
+      continue;
+    }
+    switch (instruction.opcode) {
+      case Opcode::LoadInt:
+      case Opcode::LoadDouble:
+      case Opcode::LoadBool:
+        break;
+      case Opcode::Move: {
+        const auto& source = function.value_types[instruction.lhs];
+        if (source.kind != kind || source.nullable) {
+          return std::nullopt;
+        }
+        break;
+      }
+      case Opcode::AddInt:
+      case Opcode::SubInt:
+      case Opcode::AddDouble:
+      case Opcode::NotBool:
+        if (body.operation != nullptr) {
+          return std::nullopt;
+        }
+        body.operation = &instruction;
+        break;
+      default:
+        return std::nullopt;
+    }
+    const auto& target = function.value_types.at(instruction.dst);
+    if (target.kind != kind || target.nullable) {
+      return std::nullopt;
+    }
+  }
+  return body;
+}
+
+std::optional<runtime::NativeInlineScalarOperand> ResolveScalarCallbackOperand(
+    const ir::Function& function,
+    const ir::RegisterFlow& flow,
+    const ir::Instruction& operation,
+    ir::RegisterId parameter) {
+  const auto left = flow.origins[operation.lhs];
+  if (operation.opcode == Opcode::NotBool) {
+    if (left == parameter) {
+      return runtime::NativeInlineScalarOperand{.bits = 1};
+    }
+    return std::nullopt;
+  }
+  const auto right = flow.origins[operation.rhs];
+  if (left != parameter && !(operation.opcode == Opcode::AddInt && right == parameter)) {
+    return std::nullopt;
+  }
+  const auto operand = flow.OriginDefinition(left == parameter ? operation.rhs : operation.lhs);
+  if (!operand) {
+    return std::nullopt;
+  }
+  const auto& instructions = function.instructions;
+  const auto& source = instructions[*operand];
+  if (source.opcode == Opcode::LoadDouble && operation.opcode == Opcode::AddDouble) {
+    return runtime::NativeInlineScalarOperand{
+        .bits = std::bit_cast<std::uint64_t>(function.doubles.at(source.index))};
+  }
+  if (source.opcode == Opcode::GetField && operation.opcode == Opcode::AddInt) {
+    return ScalarCapture(instructions, flow, source);
+  }
+  if (source.opcode != Opcode::LoadInt) {
+    return std::nullopt;
+  }
+  auto addend = source.immediate;
+  if (operation.opcode == Opcode::SubInt) {
+    if (addend == std::numeric_limits<std::int64_t>::min()) {
+      return std::nullopt;
+    }
+    addend = -addend;
+  }
+  return runtime::NativeInlineScalarOperand{.bits = std::bit_cast<std::uint64_t>(addend)};
+}
+
+std::optional<runtime::NativeInlineScalarOperand> ScalarCallbackOperand(
+    const ir::Function& function) {
+  if (!HasScalarCallbackSignature(function)) {
+    return std::nullopt;
+  }
+  const auto body = AnalyzeScalarCallbackBody(function);
+  if (!body) {
+    return std::nullopt;
+  }
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, {});
+  const auto flow = ir::AnalyzeRegisterFlow(function, accesses);
+  const auto output = flow.origins[function.instructions.back().dst];
+  const auto parameter = static_cast<ir::RegisterId>(function.parameter_count - 1);
+  const auto* operation = body->operation;
+  if (operation == nullptr) {
+    if (function.return_type.kind != Kind::Double && output == parameter) {
+      return runtime::NativeInlineScalarOperand{};
+    }
+    return std::nullopt;
+  }
+  if (output != operation->dst) {
+    return std::nullopt;
+  }
+  return ResolveScalarCallbackOperand(function, flow, *operation, parameter);
+}
+
 void AddLeafEntry(llvm::Module& module,
                   const std::string& prefix,
                   const ir::Function& source,
@@ -456,13 +662,17 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
   optimized.reserve(count);
   borrowable.resize(count);
   auto& context = module.getContext();
+  const auto bind_scalars =
+      debugging == NativeDebugging::Safepoints &&
+      (program.native_mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized);
   for (std::size_t index = 0; index < count; ++index) {
+    const auto& function = program.functions.at(index);
+    const auto operand = bind_scalars ? ScalarCallbackOperand(function) : std::nullopt;
     if (needed[index] == 0) {
-      generated.emplace_back();
-      optimized.emplace_back();
+      generated.push_back({.inline_scalar = operand});
+      optimized.push_back({.inline_scalar = operand});
       continue;
     }
-    const auto& function = program.functions.at(index);
     const auto body_type = BodySignature(module, function);
     if (!body_type) {
       return std::unexpected(MakeDiagnostics(program, body_type.error(), &function));
@@ -494,6 +704,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         .reflection_entry = reflection,
         .resume = resume,
         .square_root = IsSquareRootImport(function, program.layouts),
+        .inline_scalar = operand,
     };
     auto current = baseline;
     // 仅可重载映像存在版本失效；封闭映像的调用目标和字段布局在实例期内固定。
@@ -508,6 +719,18 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       baseline.leaf = current.leaf;
       baseline.leaf_guard = current.leaf_guard;
       baseline.budgeted_recursion = current.budgeted_recursion;
+    }
+    if (inlining.leaf == LeafKind::Bounded && !operand && IsIntegerCallback(function)) {
+      auto* integer = llvm::Type::getInt64Ty(context);
+      const auto& target = module.getTargetTriple();
+      llvm::Type* result = llvm::Type::getInt128Ty(context);
+      if (target.isOSWindows() && target.getArch() == llvm::Triple::x86_64) {
+        result = llvm::FixedVectorType::get(integer, 2);
+      }
+      auto* signature = llvm::FunctionType::get(result, {integer, pointer}, false);
+      current.integer_callback = llvm::Function::Create(
+          signature, llvm::GlobalValue::InternalLinkage, symbol("_integer_callback_"), module);
+      baseline.integer_callback = current.integer_callback;
     }
     if (inlining.enabled) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -616,6 +839,7 @@ std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
       optimized.host_entry,
       optimized.host_wide_entry,
       optimized.host_entry_selector,
+      optimized.integer_callback,
       specialized == nullptr ? nullptr : specialized->body,
       specialized == nullptr ? nullptr : specialized->leaf,
       specialized == nullptr ? nullptr : specialized->leaf_guard,
@@ -726,6 +950,11 @@ void BindDynamicEntries(NativeModule& output,
   for (const auto& function : functions) {
     auto* typed = function.body;
     output.typed_functions.push_back(typed);
+    auto* callback = function.integer_callback;
+    output.integer_callbacks.push_back(callback);
+    if (callback != nullptr) {
+      callback->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    }
     auto* reflection = function.reflection_entry;
     output.reflection_functions.push_back(reflection);
     if (reflection != nullptr) {
@@ -796,17 +1025,25 @@ std::expected<llvm::Constant*, std::string> EmitModuleImage(
   std::vector<llvm::Function*> entries;
   std::vector<llvm::Function*> reflection_entries;
   std::vector<llvm::Function*> host_entries;
+  std::vector<llvm::Function*> callbacks;
   const auto count = generated.size();
   entries.reserve(count);
   reflection_entries.reserve(count);
   host_entries.reserve(count);
+  callbacks.reserve(count);
   for (const auto& function : generated) {
     entries.push_back(function.entry);
     reflection_entries.push_back(function.reflection_entry);
     host_entries.push_back(function.host_entry_selector);
+    callbacks.push_back(function.integer_callback);
   }
   auto description = DescribeNativeImage(program);
   RequireReflectionReceiverLayouts(program, optimized, debugging, tier, *description);
+  for (std::size_t index = 0; index < generated.size(); ++index) {
+    if (const auto operand = generated[index].inline_scalar) {
+      description->BindInlineScalarCallback(index, *operand);
+    }
+  }
   llvm::Constant* image =
       llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context));
   if (placement == NativeCodePlacement::Dynamic &&
@@ -814,9 +1051,12 @@ std::expected<llvm::Constant*, std::string> EmitModuleImage(
     output.image_data = std::move(description);
     BindDynamicEntries(output, entries, optimized);
   } else {
-    const auto emitted = EmitNativeImage(
-        module, *description->image(),
-        {.external = entries, .reflection = reflection_entries, .host = host_entries}, module_name);
+    const auto emitted = EmitNativeImage(module, *description->image(),
+                                         {.external = entries,
+                                          .reflection = reflection_entries,
+                                          .host = host_entries,
+                                          .integer_callbacks = callbacks},
+                                         module_name);
     if (!emitted) {
       return std::unexpected(emitted.error());
     }

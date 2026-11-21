@@ -19,6 +19,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/handle_access.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -183,9 +184,6 @@ Result<HostReceivedValue<T, Operation>> ReceiveHostValue(HandleScope& scope,
   }
 }
 
-template <class T>
-struct HostFunctionCall;
-
 template <class R, class... Args>
 struct HostFunctionCall<Function<R(Args...)>> final {
   template <class... Actual>
@@ -198,12 +196,43 @@ struct HostFunctionCall<Function<R(Args...)>> final {
     if (&scope.isolate() != &callable.isolate()) {
       return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
+    if constexpr (kIsScalarCallback<Function<R(Args...)>>) {
+      auto target = callable.callback_;
+      if (target.control == nullptr) {
+        target = BoundScalarCallback::Bind(scope.isolate(), HandleAccess::Read(callable));
+      }
+      if (const auto result = target.Try(arguments...)) {
+        return *result;
+      }
+    }
+    return Invoke(scope, HandleAccess::Read(callable), std::forward<Actual>(arguments)...);
+  }
+
+  template <class... Actual>
+  [[clang::noinline]] static Result<HostValue<R>> InvokePersistent(const runtime::HostRoot& root,
+                                                                   Actual... arguments) {
+    if (root.IsEmpty()) {
+      return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
+    }
+    // 重入宿主期间原 Persistent 可以被重置；持有同一根直至完整调用返回。
+    const auto retained = root;
+    HandleScope scope(retained.isolate());
+    return Invoke(scope, retained.value(), std::move(arguments)...);
+  }
+
+  template <class... Actual>
+  [[clang::noinline]] static Result<HostValue<R>> Invoke(HandleScope& scope,
+                                                         runtime::Value callable,
+                                                         Actual&&... arguments) {
+    static_assert(
+        std::is_same_v<std::tuple<std::remove_cvref_t<Actual>...>, std::tuple<HostValue<Args>...>>,
+        "callback arguments must match the declared Vela types exactly");
     auto values = EncodeHostArguments<Args...>(scope, std::forward<Actual>(arguments)...);
     if (!values) {
       return std::unexpected(std::move(values.error()));
     }
     return ReceiveHostValue<R>(scope, [&](runtime::Value& output) {
-      return InvokeHostCallable(scope, HandleAccess::Read(callable), *values, output);
+      return InvokeHostCallable(scope, callable, *values, output);
     });
   }
 };

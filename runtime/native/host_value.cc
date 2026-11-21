@@ -1,5 +1,9 @@
 #include "runtime/native/host_value.h"
 
+#include <atomic>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <string_view>
@@ -9,6 +13,7 @@
 #include <vela/handles.h>
 
 #include "base/execution_status.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
@@ -16,6 +21,7 @@
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_context.h"
+#include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -75,22 +81,56 @@ Result<void> CastHostValue(HandleScope& scope,
   return {};
 }
 
+const std::byte* InlineScalarOperand(const runtime::HeapObject& object,
+                                     const runtime::NativeFunctionDescription& function) {
+  const auto index = function.scalar_capture;
+  if (index == runtime::kNoNativeIndex) {
+    return std::as_bytes(std::span(&function.scalar_operand, 1)).data();
+  }
+  if ((function.flags & runtime::kNativeScalarCallbackReadsCell) != 0) {
+    const auto& cell = *runtime::Heap::LoadField(object, index).AsObject();
+    assert(cell.layout->storage() == runtime::ClassStorage::Inline);
+    return runtime::ObjectFieldStorage(cell).data();
+  }
+  assert(object.layout->storage() == runtime::ClassStorage::Inline);
+  const auto fields = runtime::ObjectFieldStorage(object);
+  return fields.subspan(static_cast<std::size_t>(index) * runtime::FieldStorage::kPayloadBytes)
+      .data();
+}
+
+BoundScalarCallback BoundScalarCallback::Bind(runtime::Isolate& isolate,
+                                              runtime::Value callable) noexcept {
+  const auto& object = *callable.AsObject();
+  const auto* function = runtime::Heap::CallableFunction(object);
+  auto result = BoundScalarCallback{.control = &isolate.native_control().state()};
+  if (function == nullptr) {
+    return result;
+  }
+  result.entry = function->integer_callback;
+  if ((function->flags & runtime::kNativeInlineScalarCallback) != 0) {
+    const auto& control = *result.control;
+    result.operand = InlineScalarOperand(object, *function);
+    result.requests = control.requests;
+    result.stack_limit = control.callback_stack_limit;
+  }
+  return result;
+}
+
 Result<void> InvokeHostCallable(HandleScope& scope,
                                 runtime::Value callable,
                                 std::span<const runtime::Value> arguments,
                                 runtime::Value& output) {
   auto& isolate = scope.isolate();
   const auto* parent = isolate.native_control().state().host_execution;
-  if (parent != nullptr) {
-    const auto resolved = runtime::ResolveNativeCallable(parent->instance(), callable);
-    if (!resolved) {
-      return std::unexpected(Error::FromStatus(resolved.error()));
-    }
-  }
   auto* environment = runtime::Heap::NativeEnvironment(*callable.AsObject());
   auto instance = runtime::NativeInstance::Borrow(*environment);
+  const auto& domain = parent != nullptr ? parent->instance() : instance;
+  const auto resolved = runtime::ResolveNativeCallable(domain, callable);
+  if (!resolved) {
+    return std::unexpected(Error::FromStatus(resolved.error()));
+  }
   runtime::NativeExecution execution(instance, parent);
-  const auto result = runtime::InvokeNativeCallable(execution, callable, arguments);
+  const auto result = runtime::InvokeResolvedNativeCallable(execution, *resolved, arguments);
   if (!result) {
     return std::unexpected(CaptureHostError(execution, result.error()));
   }

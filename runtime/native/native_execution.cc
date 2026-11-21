@@ -24,11 +24,8 @@ ExecutionResult Failure(Value value, ExecutionStatus status, FutureDiagnostic di
   };
 }
 
-ExecutionResult Complete(NativeExecution& execution, std::expected<Value, ExecutionStatus> result) {
-  if (result) {
-    return {.value = *result, .stack_trace = {}, .message = {}, .origin = {}};
-  }
-  const auto status = result.error();
+[[clang::noinline]] ExecutionResult CompleteFailure(NativeExecution& execution,
+                                                     ExecutionStatus status) {
   if (!execution.HasException()) {
     return {
         .status = status,
@@ -38,6 +35,13 @@ ExecutionResult Complete(NativeExecution& execution, std::expected<Value, Execut
     };
   }
   return Failure(execution.ExceptionPayload(), status, execution.ExceptionDiagnostic());
+}
+
+ExecutionResult Complete(NativeExecution& execution, std::expected<Value, ExecutionStatus> result) {
+  if (result) [[likely]] {
+    return {.value = *result, .stack_trace = {}, .message = {}, .origin = {}};
+  }
+  return CompleteFailure(execution, result.error());
 }
 
 }  // namespace

@@ -21,7 +21,6 @@
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
-#include "runtime/heap/intrusive_link_internal.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
@@ -39,14 +38,6 @@ struct alignas(std::max_align_t) NativeHeader final {
 }  // namespace
 
 RootRange::RootRange(Heap& heap,
-                     const Value* values,
-                     std::size_t count,
-                     std::optional<ExternalResourceKind> resource_kind) noexcept
-    : resource_kind_(resource_kind) {
-  Attach(heap, values, count);
-}
-
-RootRange::RootRange(Heap& heap,
                      std::span<StringObject* const> strings,
                      std::optional<ExternalResourceKind> resource_kind) noexcept
     : heap_(&heap),
@@ -55,10 +46,6 @@ RootRange::RootRange(Heap& heap,
       kind_(Kind::Strings),
       resource_kind_(resource_kind) {
   heap.RegisterRoot(*this);
-}
-
-RootRange::~RootRange() {
-  Detach();
 }
 
 RootRange::RootRange(Heap& heap,
@@ -88,14 +75,6 @@ void RootRange::Attach(Heap& heap, const InstanceStorage& fields) noexcept {
   count_ = fields.count;
   kind_ = Kind::InstanceFields;
   heap_->RegisterRoot(*this);
-}
-
-void RootRange::Detach() noexcept {
-  if (heap_ == nullptr) {
-    return;
-  }
-  vela::runtime::Heap::UnregisterRoot(*this);
-  heap_ = nullptr;
 }
 
 Heap::Heap(std::size_t gc_threshold, GcScheduling scheduling) noexcept
@@ -346,17 +325,6 @@ void Heap::Collect() noexcept {
   FinishCollection();
 }
 
-void Heap::RegisterRoot(RootRange& root) noexcept {
-  if (root.resource_kind_) {
-    root.identity_ = next_root_identity_++;
-  }
-  internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
-  if (IsCollecting()) {
-    MarkRoot(root);
-    DrainGrayIfSweeping();
-  }
-}
-
 void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
   for (auto* root = roots_; root != nullptr; root = root->next_) {
     const auto kind = root->resource_kind_;
@@ -365,10 +333,6 @@ void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const 
     }
     result.push_back({.kind = *kind, .identity = root->identity_, .references = 1});
   }
-}
-
-void Heap::UnregisterRoot(RootRange& root) noexcept {
-  internal::UnlinkIntrusive(root, &RootRange::next_, &RootRange::previous_link_);
 }
 
 void Heap::MarkRoots() noexcept {

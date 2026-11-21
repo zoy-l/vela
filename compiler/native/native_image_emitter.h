@@ -25,6 +25,7 @@ struct NativeImageEntries final {
   std::span<llvm::Function* const> external;
   std::span<llvm::Function* const> reflection;
   std::span<llvm::Function* const> host;
+  std::span<llvm::Function* const> integer_callbacks;
 };
 
 std::expected<EmittedNativeImage, std::string> EmitNativeImage(
