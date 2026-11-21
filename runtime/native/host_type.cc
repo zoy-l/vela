@@ -3,14 +3,9 @@
 #include "runtime/isolate/external_resources.h"
 
 #include <cassert>
-#include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <span>
-#include <string_view>
 #include <utility>
-
-#include <absl/container/flat_hash_map.h>
 
 #include "base/execution_status.h"
 #include "base/layout_description.h"
@@ -20,6 +15,7 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_program_state.h"
 #include "runtime/native/native_type.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -35,10 +31,8 @@ std::expected<LayoutCache, ExecutionStatus> BindNominals(const NativeInstance& i
   }
   const auto classes = instance.image().classes.values();
   const auto& layouts = instance.layouts();
-  absl::flat_hash_map<std::string_view, std::size_t> class_indices;
-  for (std::size_t index = 0; index < classes.size(); ++index) {
-    class_indices.emplace(classes[index].name.text(), index);
-  }
+  const auto& program = instance.program();
+  const auto& class_indices = program.class_name_indices;
   for (const auto& nominal : description.classes) {
     if (nominal.kind == layout::Class::Kind::Host) {
       if (instance.isolate().FindNativeClass(nominal.native_key) == nullptr) {
@@ -56,17 +50,13 @@ std::expected<LayoutCache, ExecutionStatus> BindNominals(const NativeInstance& i
     }
     cache.classes.emplace(nominal.name, layouts.classes[index]);
   }
-  const auto interfaces = instance.image().interfaces.values();
-  absl::flat_hash_map<std::string_view, const InterfaceType*> interface_types;
-  for (std::size_t index = 0; index < interfaces.size(); ++index) {
-    interface_types.emplace(interfaces[index].text(), layouts.interfaces[index]);
-  }
+  const auto& interface_types = program.interface_name_indices;
   for (const auto& name : description.interfaces) {
     const auto found = interface_types.find(name);
     if (found == interface_types.end()) {
       return std::unexpected(ExecutionStatus::InvalidEntry);
     }
-    cache.interfaces.emplace(name, found->second);
+    cache.interfaces.emplace(name, layouts.interfaces[found->second]);
   }
   return cache;
 }

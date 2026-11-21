@@ -124,6 +124,7 @@ struct DevelopmentOptions final {
   frontend::ModulePaths imports;
   std::vector<frontend::ReflectionSelection> reflection;
   std::size_t gc_threshold = runtime::kDefaultGcThreshold;
+  runtime::GcScheduling gc_scheduling = runtime::GcScheduling::kAutomatic;
   std::string entry = "main";
   jit::CompileOptions compilation;
   // 借用调试器；它须覆盖会话，或在销毁前通过 SetDebugger 解除注册。

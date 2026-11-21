@@ -19,6 +19,64 @@ namespace {
 
 class CollectionLanguageTest : public testing::TestWithParam<std::string_view> {};
 
+constexpr std::string_view kCollectionIdentitySource = R"(
+func sameMap<T>(left: Map<string, T>?, right: Map<string, T>?): bool {
+  return left == right;
+}
+func sameSet<T>(left: Set<T>?, right: Set<T>?): bool {
+  return left == right;
+}
+func main(): int {
+  const map = Map<string, int>();
+  const otherMap = Map<string, int>();
+  map.set('value', 42);
+  otherMap.set('value', 42);
+  const mapAlias = map;
+  const set = Set<int>();
+  const otherSet = Set<int>();
+  set.add(42);
+  otherSet.add(42);
+  const setAlias = set;
+  if (map != mapAlias || map == otherMap || set != setAlias || set == otherSet) {
+    return 0;
+  }
+  if (!sameMap(map, mapAlias) || sameMap(map, otherMap) ||
+      !sameSet(set, setAlias) || sameSet(set, otherSet)) {
+    return 0;
+  }
+  if (!sameMap<int>(null, null) || sameMap(map, null) || sameMap(null, map) ||
+      !sameSet<int>(null, null) || sameSet(set, null) || sameSet(null, set)) {
+    return 0;
+  }
+  const dynamicMap: dynamic = map;
+  const dynamicSet: dynamic = set;
+  if (dynamicMap != mapAlias || dynamicSet != setAlias ||
+      dynamicMap == otherMap || dynamicSet == otherSet) {
+    return 0;
+  }
+  map.clear();
+  set.clear();
+  if (map != mapAlias || set != setAlias || map == otherMap || set == otherSet) {
+    return 0;
+  }
+  return 42;
+}
+)";
+
+TEST(CollectionIdentityTest, PreservesAliasesAndNullableIdentityUnderGcPressure) {
+  runtime::Isolate isolate(1);
+  test::ExpectStableAnswer(kCollectionIdentitySource, isolate);
+}
+
+TEST(CollectionIdentityTest, RestoresIdentityWithoutCompilerMetadata) {
+  test::ExpectRestoredAnswer(kCollectionIdentitySource);
+}
+
+TEST(CollectionIdentityTest, RejectsIncompatibleCollectionTypes) {
+  test::ExpectRejectedCheck("func main(): bool { return Map<int, int>() == Set<int>(); }");
+  test::ExpectRejectedCheck("func main(): bool { return Map<int, int>() == Map<int, string>(); }");
+}
+
 TEST_P(CollectionLanguageTest, ExecutesTypedCollectionsUnderGcPressure) {
   runtime::Isolate isolate(1);
   const auto program = test::CompileCleanSource(GetParam(), isolate);

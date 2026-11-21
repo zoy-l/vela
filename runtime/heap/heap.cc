@@ -98,16 +98,18 @@ void RootRange::Detach() noexcept {
   heap_ = nullptr;
 }
 
-Heap::Heap(std::size_t gc_threshold) noexcept
+Heap::Heap(std::size_t gc_threshold, GcScheduling scheduling) noexcept
     : gc_threshold_(std::max<std::size_t>(gc_threshold, 1)),
       minimum_gc_threshold_(gc_threshold_),
+      gc_scheduling_(scheduling),
       host_index_(*this) {}
 
 Heap::~Heap() {
   DestroyAll();
 }
 
-Heap::Heap(Isolate& isolate, std::size_t gc_threshold) noexcept : Heap(gc_threshold) {
+Heap::Heap(Isolate& isolate, std::size_t gc_threshold, GcScheduling scheduling) noexcept
+    : Heap(gc_threshold, scheduling) {
   isolate_ = &isolate;
 }
 
@@ -642,7 +644,7 @@ void Heap::MaybeCollect(std::size_t next_size) noexcept {
   if (!IsCollecting() && ShouldCollect(next_size)) {
     StartCollection();
   }
-  if (IsCollecting()) {
+  if (IsCollecting() && gc_scheduling_ == GcScheduling::kAutomatic) {
     Step(kAutomaticWork);
   }
 }

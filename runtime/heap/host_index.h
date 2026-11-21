@@ -24,16 +24,14 @@ class HostIndex final {
 
   [[nodiscard]] HeapObject* Find(const NominalType& type, const void* pointer) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> PrepareInsert() noexcept;
-  void Insert(const NominalType& type, const void* pointer, HeapObject& object) noexcept;
-  void Erase(const NominalType& type, const void* pointer) noexcept;
+  void Insert(HeapObject& object) noexcept;
+  void Erase(HeapObject& object) noexcept;
   void ReleaseEmpty() noexcept;
   void CompactAfterCollection() noexcept;
 
  private:
   enum class State : std::uint8_t { Empty, Live, Removed };
   struct Entry final {
-    const NominalType* type = nullptr;
-    const void* pointer = nullptr;
     HeapObject* object = nullptr;
     State state = State::Empty;
   };

@@ -97,6 +97,9 @@ enum class GcPhase : std::uint8_t {
   Sweep,
 };
 
+// 宿主驱动模式仍自动开始回收；宿主在所属线程的空闲任务中调用 Step 推进同一个回收周期。
+enum class GcScheduling : std::uint8_t { kAutomatic, kHostDriven };
+
 // Heap 独占更新；原生写屏障借用同一状态，不维护单独的 GC 阶段镜像。
 struct GcBarrierState final {
   GcPhase phase = GcPhase::Idle;
@@ -162,8 +165,9 @@ struct ByteViewRange final {
 class Heap final {
  public:
   [[nodiscard]] HeapObject* AllocateReflectionHandle(const ReflectionHandle& handle) noexcept;
-  explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
-  Heap(Isolate& isolate, std::size_t gc_threshold) noexcept;
+  explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold,
+                GcScheduling scheduling = GcScheduling::kAutomatic) noexcept;
+  Heap(Isolate& isolate, std::size_t gc_threshold, GcScheduling scheduling) noexcept;
   ~Heap();
 
   Heap(Heap&&) = delete;
@@ -554,6 +558,7 @@ class Heap final {
   std::uint64_t allocation_count_limit_ = std::numeric_limits<std::uint64_t>::max();
   std::size_t gc_threshold_ = 0;
   std::size_t minimum_gc_threshold_ = 0;
+  const GcScheduling gc_scheduling_;
   GcBarrierState barrier_state_;
   // Heap 析构体先释放所有包装，弱索引随后释放其自身预算。
   HostIndex host_index_;

@@ -12,6 +12,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
+#include "runtime/value/object.h"
 
 namespace vela::runtime {
 namespace {
@@ -40,7 +41,9 @@ HostIndex::Entry* HostIndex::FindEntry(const NominalType& type, const void* poin
     if (entry.state == State::Empty) {
       return nullptr;
     }
-    if (entry.state == State::Live && entry.type == &type && entry.pointer == pointer) {
+    // Live 条目借用尚未释放的包装；类型和 native pointer 只有对象自身这一份真值。
+    if (entry.state == State::Live && &Heap::ClassOf(*entry.object)->nominal_type() == &type &&
+        HostObjectPointer(*entry.object) == pointer) {
       return &entry;
     }
     index = (index + 1) & (capacity_ - 1);
@@ -56,7 +59,8 @@ HostIndex::State HostIndex::InsertEntry(Entry* entries,
                                         std::size_t capacity,
                                         Entry value) noexcept {
   const auto slots = std::span(entries, capacity);
-  auto index = Bucket(value.type, value.pointer, capacity);
+  const auto& object = *value.object;
+  auto index = Bucket(&Heap::ClassOf(object)->nominal_type(), HostObjectPointer(object), capacity);
   while (slots[index].state == State::Live) {
     index = (index + 1) & (capacity - 1);
   }
@@ -101,22 +105,18 @@ std::expected<void, ExecutionStatus> HostIndex::Rehash(std::size_t capacity) noe
   return {};
 }
 
-void HostIndex::Insert(const NominalType& type, const void* pointer, HeapObject& object) noexcept {
-  const auto previous =
-      InsertEntry(entries_, capacity_,
-                  {.type = &type, .pointer = pointer, .object = &object, .state = State::Live});
+void HostIndex::Insert(HeapObject& object) noexcept {
+  const auto previous = InsertEntry(entries_, capacity_, {.object = &object, .state = State::Live});
   if (previous == State::Removed) {
     --removed_;
   }
   ++size_;
 }
 
-void HostIndex::Erase(const NominalType& type, const void* pointer) noexcept {
-  auto* entry = FindEntry(type, pointer);
+void HostIndex::Erase(HeapObject& object) noexcept {
+  auto* entry = FindEntry(Heap::ClassOf(object)->nominal_type(), HostObjectPointer(object));
   assert(entry != nullptr);
   entry->state = State::Removed;
-  entry->type = nullptr;
-  entry->pointer = nullptr;
   entry->object = nullptr;
   --size_;
   ++removed_;

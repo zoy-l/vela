@@ -2121,6 +2121,7 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
       (left.type.nullable || right.type.nullable || left.type.kind == Kind::Null ||
        right.type.kind == Kind::Null || left.type.kind == Kind::Class ||
        left.type.kind == Kind::Interface || left.type.kind == Kind::Function ||
+       left.type.kind == Kind::Map || left.type.kind == Kind::Set ||
        left.type.kind == Kind::ByteArray || left.type.kind == Kind::ByteData ||
        left.type.kind == Kind::RegExp || left.type.kind == Kind::RegExpMatch)) {
     const auto result = AllocateRegister(expression.location);

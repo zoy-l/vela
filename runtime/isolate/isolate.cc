@@ -57,22 +57,22 @@ std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name)
   return found == natives_.end() ? FindStandardNative(name) : found->second;
 }
 
-Isolate::Isolate(std::size_t gc_threshold) noexcept
+Isolate::Isolate(std::size_t gc_threshold, GcScheduling scheduling) noexcept
     : dynamic_array_layout_(CreateArrayLayout({.element = {.dynamic = true}})),
       string_array_layout_(CreateArrayLayout({.element = {.kind = ValueKind::String}})),
       dynamic_map_layout_(CreateCollectionLayout({
           .keys = {.element = {.kind = ValueKind::String}},
           .values = *dynamic_array_layout_,
       })),
-      heap_(*this, gc_threshold),
+      heap_(*this, gc_threshold, scheduling),
       native_dispatch_(*this) {
   constexpr auto references = std::to_array({kErrorMessageField, kErrorCodeField});
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
   date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});
 }
 
-Isolate::Isolate(NativeBindings bindings, std::size_t gc_threshold) noexcept
-    : Isolate(gc_threshold) {
+Isolate::Isolate(NativeBindings bindings, std::size_t gc_threshold, GcScheduling scheduling) noexcept
+    : Isolate(gc_threshold, scheduling) {
   natives_ = std::move(bindings.functions_);
   for (auto& [key, description] : bindings.classes_) {
     native_classes_.emplace(key, NativeClassBinding{

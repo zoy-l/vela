@@ -89,6 +89,24 @@ func main(): int { return add(40, 2); }
 保留状态的更新使用 `DevelopmentSession` 和 `DevelopmentRepl`，
 不直接替换封闭实例中的代码。详见[热重载](hot_reload.md)。
 
+## 回收调度
+
+`Isolate` 默认使用 `GcScheduling::kAutomatic`，在分配过程中增量推进 GC。
+需要优先完成交互帧的宿主可显式选择 `GcScheduling::kHostDriven`：
+
+```cpp
+vela::runtime::Isolate isolate(vela::runtime::kDefaultGcThreshold,
+                               vela::runtime::GcScheduling::kHostDriven);
+// 在所属线程的空闲任务中推进；存在未完成周期时继续安排任务。
+isolate.heap().Step(work_budget);
+```
+
+宿主驱动模式保留原有阈值、回收器、写屏障和分配限额。达到阈值仍自动开始回收，
+分配不再消耗自动清扫预算；宿主负责及时调用 `Step`，通过 `IsCollecting()` 决定是否继续安排任务。
+预算按现有标记与清扫工作项计数，不是微秒上限；根扫描、引用发布屏障和周期收尾仍可能同步执行。
+宿主不推进时内存可以增长，达到既有限额后分配明确失败，不自动切换回同步完整回收。
+`DevelopmentOptions.gc_scheduling` 将同一选择用于初始 Isolate 与完整 Reload 的替换 Isolate。
+
 ## 带类型的宿主绑定
 
 在创建实例前注册绑定。`NativeFunction::Bind<Function>` 从 `noexcept` C++ 函数推导签名。

@@ -65,9 +65,11 @@ struct LayoutCounts final {
 
 class Isolate final {
  public:
-  explicit Isolate(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
+  explicit Isolate(std::size_t gc_threshold = kDefaultGcThreshold,
+                   GcScheduling scheduling = GcScheduling::kAutomatic) noexcept;
   explicit Isolate(NativeBindings bindings,
-                   std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
+                   std::size_t gc_threshold = kDefaultGcThreshold,
+                   GcScheduling scheduling = GcScheduling::kAutomatic) noexcept;
   ~Isolate();
 
   Isolate(Isolate&&) = delete;

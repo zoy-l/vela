@@ -66,13 +66,13 @@ std::expected<HeapObject*, HostObjectError> Heap::WrapHostObject(
   object->layout = &layout;
   object->native_payload = pointer;
   std::construct_at(StorageAfter<HostObjectStorage>(*object), std::move(storage));
-  host_index_.Insert(type, pointer, *object);
+  host_index_.Insert(*object);
   Publish(*object, allocation);
   return object;
 }
 
 void Heap::ReleaseHostObject(HeapObject& object) noexcept {
-  host_index_.Erase(object.layout->nominal_type(), object.native_payload);
+  host_index_.Erase(object);
   std::destroy_at(StorageAfter<HostObjectStorage>(object));
 }
 

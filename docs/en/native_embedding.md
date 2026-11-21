@@ -93,6 +93,27 @@ that owner alive. Separate instances have independent globals. Use
 `DevelopmentSession` and `DevelopmentRepl` for state-preserving updates, rather
 than replacing a closed instance's code. See [hot reload](../zh-CN/hot_reload.md).
 
+## Collection scheduling
+
+`Isolate` defaults to `GcScheduling::kAutomatic`, which advances incremental GC during allocation.
+Hosts that prioritize completing an interactive frame can select `GcScheduling::kHostDriven`:
+
+```cpp
+vela::runtime::Isolate isolate(vela::runtime::kDefaultGcThreshold,
+                               vela::runtime::GcScheduling::kHostDriven);
+// Advance on the owning thread during idle tasks; reschedule while collection remains active.
+isolate.heap().Step(work_budget);
+```
+
+Host-driven scheduling retains the collector, threshold, write barriers and allocation limits.
+Crossing the threshold still starts collection, but allocation does not consume automatic sweep
+work. The host must advance `Step` and use `IsCollecting()` to decide whether to schedule more work.
+Its budget counts existing mark and sweep work items, not microseconds; root scanning, publication
+barriers and cycle finalization may still run synchronously. Without host progress memory can grow
+until allocation explicitly fails at its existing limit; there is no implicit switch to a full
+synchronous collection. `DevelopmentOptions.gc_scheduling` applies to both the initial Isolate and
+the replacement Isolate created by a full Reload.
+
 ## Typed host bindings
 
 Register bindings before instance creation. `NativeFunction::Bind<Function>`

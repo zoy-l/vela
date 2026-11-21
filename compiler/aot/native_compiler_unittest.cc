@@ -1326,6 +1326,28 @@ export func calculate(count: int): int {
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
 }
 
+TEST(NativeCompilerTest, CollectionIdentityUsesPointerComparisonsWithoutRuntimeCalls) {
+  const auto prepared = Prepare(R"(
+export func map(left: Map<int, int>, right: Map<int, int>): bool { return left == right; }
+export func set(left: Set<int>, right: Set<int>): bool { return left != right; }
+export func optionalMap(left: Map<int, int>?, right: Map<int, int>?): bool {
+  return left == right;
+}
+export func optionalSet(left: Set<int>?, right: Set<int>?): bool { return left != right; }
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
+    const auto result =
+        Compile(prepared.program, {.optimization = optimization,
+                                   .exports = {"map", "set", "optionalMap", "optionalSet"},
+                                   .preserve_ir = true});
+    ASSERT_TRUE(result.has_value()) << result.error().front().message;
+    EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_equal"), std::string::npos);
+    EXPECT_NE(result->llvm_ir.find("icmp eq ptr"), std::string::npos);
+    EXPECT_NE(result->llvm_ir.find("icmp ne ptr"), std::string::npos);
+  }
+}
+
 TEST(NativeCompilerTest, NullComparisonsUsePresenceForReferencesScalarsAndDynamicValues) {
   const auto prepared = Prepare(R"(
 export class Box { value: int = 0; }

@@ -162,7 +162,8 @@ DevelopmentSession::DevelopmentSession(std::string entry,
                                                options_.diagnostics,
                                                options_.reflection,
                                                options_.imports)),
-      isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold)),
+      isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold,
+                                               options_.gc_scheduling)),
       endpoint_(isolate_->native_control().endpoint()) {
   isolate_->native_control().SetDebugger(options_.debugger);
 }
@@ -316,7 +317,8 @@ DevelopmentResult DevelopmentSession::Submit(DevelopmentCandidate candidate) {
   if (result_.operation == DevelopmentOperation::Reload) {
     const auto started = Clock::now();
     auto& replacement = pending_->replacement;
-    replacement = std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold);
+    replacement = std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold,
+                                                   options_.gc_scheduling);
     replacement->SetOutput(isolate_->output());
     auto& dispatch = replacement->native_dispatch();
     const auto published = PublishCode(dispatch, 0, pending_->candidate.code_.image);

@@ -605,14 +605,23 @@ NativeInstance::Instantiate(Isolate& isolate,
   state.code_identity = cache.code_identity;
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
+  state.class_name_indices.reserve(state.layouts.classes.size());
   for (std::size_t index = 0; index < state.layouts.classes.size(); ++index) {
     const auto* nominal = &state.layouts.classes[index]->nominal_type();
     state.class_indices.emplace(nominal, static_cast<std::uint32_t>(index));
+    state.class_name_indices.emplace(image.classes.values()[index].name.text(),
+                                     static_cast<std::uint32_t>(index));
     const auto names = image.classes.values()[index].enum_members.values();
     for (std::size_t ordinal = 0; ordinal < names.size(); ++ordinal) {
       state.enum_members.emplace(std::pair(nominal, names[ordinal].text()),
                                  static_cast<std::uint32_t>(ordinal));
     }
+  }
+  const auto interfaces = image.interfaces.values();
+  state.interface_name_indices.reserve(interfaces.size());
+  for (std::size_t index = 0; index < interfaces.size(); ++index) {
+    state.interface_name_indices.emplace(interfaces[index].text(),
+                                         static_cast<std::uint32_t>(index));
   }
   for (auto* type : state.layouts.classes) {
     if (type->callable() != nullptr) {

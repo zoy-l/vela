@@ -66,6 +66,9 @@ struct NativeProgramState final {
   std::unique_ptr<ReflectionIndex> reflection;
   ReflectedLookupCache reflection_type_cache;
   absl::flat_hash_map<const NominalType*, std::uint32_t> class_indices;
+  // 名称借用本版本 image；宿主枚举与名义类型解析复用索引，不在每次输入/属性访问时重建。
+  absl::flat_hash_map<std::string_view, std::uint32_t> class_name_indices;
+  absl::flat_hash_map<std::string_view, std::uint32_t> interface_name_indices;
   absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::uint32_t> enum_members;
   absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;
   const CodeIdentity* code_identity = nullptr;

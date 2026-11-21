@@ -127,8 +127,16 @@ const result: int = value ?? 42; // result is 42; value remains null.
 Null comparisons are allowed for value types. Equality of nullable values
 requires the same underlying type; null equals only null. Non-null strings
 compare by contents, primitives by their existing typed equality, and class
-objects by identity. Array and builder equality remain undefined except for
-comparison with null.
+objects, `Map<K, V>`, and `Set<T>` by identity. Array and builder equality remain
+undefined except for comparison with null.
+
+Statically typed Map/Set `==` and `!=` require matching collection kinds and type arguments;
+either operand may be nullable. Separately created collections remain unequal
+even when their contents match. Mutating a collection does not change its identity.
+JIT and AOT compare statically typed collection pointers directly, including
+nullable references, without traversal or allocation, in O(1) time.
+Comparisons through `dynamic` use the same identity semantics through the existing
+dynamic operation's value-kind checks.
 
 Registers and fields already store tagged `Value` slots, so nullable values
 need no wrapper object. Nullable primitive arrays use contiguous `Value`

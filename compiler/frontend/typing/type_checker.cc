@@ -1226,8 +1226,7 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
   if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
-      left.kind == Type::Kind::Function || left.kind == Type::Kind::Set ||
-      left.kind == Type::Kind::Map) {
+      left.kind == Type::Kind::Function) {
     AddDiagnostic(expression.location, "equality is not defined for this type");
     return InvalidType();
   }
