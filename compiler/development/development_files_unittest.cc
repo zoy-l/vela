@@ -1,7 +1,6 @@
 #include "compiler/development/development_files.h"
 
 #include <chrono>
-#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <memory>
