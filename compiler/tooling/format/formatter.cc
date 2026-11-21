@@ -93,6 +93,28 @@ std::size_t StringTailIndex(std::span<const frontend::Token> tokens, std::size_t
   return head;
 }
 
+void AppendTypeClosings(std::vector<FormatItem>& items,
+                        std::string_view source,
+                        const frontend::Token& token) {
+  // 同一词法 token 中的多个类型闭括号分别进入布局栈，尾部赋值仍保留为独立 token。
+  const auto closing = token.type_closing_length;
+  for (std::size_t character = 0; character < closing; ++character) {
+    items.push_back({
+        .kind = TokenKind::Greater,
+        .role = TokenRole::TypeDelimiter,
+        .text = source.substr(token.offset + character, 1),
+        .offset = token.offset + character,
+    });
+  }
+  if (closing < token.length) {
+    items.push_back({
+        .kind = TokenKind::Equal,
+        .text = source.substr(token.offset + closing, token.length - closing),
+        .offset = token.offset + closing,
+    });
+  }
+}
+
 std::vector<FormatItem> Items(std::string_view source, const frontend::LexResult& lexed) {
   std::vector<FormatItem> items;
   std::size_t comment = 0;
@@ -113,21 +135,8 @@ std::vector<FormatItem> Items(std::string_view source, const frontend::LexResult
     if (token.kind == TokenKind::EndOfFile) {
       break;
     }
-    const auto closing = token.type_closing_length;
-    if (closing != 0) {
-      items.push_back({
-          .kind = TokenKind::Greater,
-          .role = TokenRole::TypeDelimiter,
-          .text = source.substr(token.offset, closing),
-          .offset = token.offset,
-      });
-      if (closing < token.length) {
-        items.push_back({
-            .kind = TokenKind::Equal,
-            .text = source.substr(token.offset + closing, token.length - closing),
-            .offset = token.offset + closing,
-        });
-      }
+    if (token.type_closing_length != 0) {
+      AppendTypeClosings(items, source, token);
       continue;
     }
     auto end = token.offset + token.length;
@@ -184,6 +193,23 @@ bool IsOperator(const FormatItem& item) {
     case TokenKind::Slash:
     case TokenKind::Percent:
     case TokenKind::PercentEqual:
+    case TokenKind::PlusEqual:
+    case TokenKind::MinusEqual:
+    case TokenKind::StarEqual:
+    case TokenKind::SlashEqual:
+    case TokenKind::Ampersand:
+    case TokenKind::AmpersandEqual:
+    case TokenKind::Pipe:
+    case TokenKind::PipeEqual:
+    case TokenKind::Caret:
+    case TokenKind::CaretEqual:
+    case TokenKind::ShiftLeft:
+    case TokenKind::ShiftLeftEqual:
+    case TokenKind::ShiftRight:
+    case TokenKind::ShiftRightEqual:
+    case TokenKind::ShiftUnsignedRight:
+    case TokenKind::ShiftUnsignedRightEqual:
+    case TokenKind::QuestionQuestion:
     case TokenKind::Less:
     case TokenKind::LessEqual:
     case TokenKind::Greater:
@@ -203,7 +229,10 @@ bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   if (left.role == TokenRole::ConditionalOperator || right.role == TokenRole::ConditionalOperator) {
     return true;
   }
-  if (current == TokenKind::Dot || current == TokenKind::Comma || current == TokenKind::Semicolon ||
+  if (current == TokenKind::Dot || current == TokenKind::QuestionDot ||
+      (right.role == TokenRole::Ordinary &&
+       (current == TokenKind::PlusPlus || current == TokenKind::MinusMinus)) ||
+      current == TokenKind::Comma || current == TokenKind::Semicolon ||
       current == TokenKind::Colon || current == TokenKind::Question ||
       current == TokenKind::RightParen || current == TokenKind::RightBracket ||
       (current == TokenKind::RightBrace && right.role == TokenRole::MapDelimiter) ||
@@ -213,8 +242,8 @@ bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   if (left.role == TokenRole::PrefixOperator) {
     return right.role == TokenRole::PrefixOperator;
   }
-  if (previous == TokenKind::Dot || previous == TokenKind::LeftParen ||
-      previous == TokenKind::LeftBracket ||
+  if (previous == TokenKind::Dot || previous == TokenKind::QuestionDot ||
+      previous == TokenKind::LeftParen || previous == TokenKind::LeftBracket ||
       (previous == TokenKind::LeftBrace && left.role == TokenRole::MapDelimiter) ||
       (previous == TokenKind::Less && left.role == TokenRole::TypeDelimiter)) {
     return false;
@@ -241,36 +270,20 @@ struct Scope final {
   TokenRole role = TokenRole::Ordinary;
   bool multiline = false;
   bool case_indented = false;
+  std::size_t closing = 0;
+};
+
+struct DelimiterLayout final {
+  std::size_t closing = 0;
+  std::size_t flat_width = 0;
+  bool force_break = false;
 };
 
 class Formatter final {
  public:
   Formatter(std::string_view source, std::span<const FormatItem> items)
-      : source_(source), items_(items), multiline_(items.size()) {
-    std::vector<std::size_t> openers;
-    std::vector<std::size_t> widths(items.size() + 1);
-    constexpr std::size_t kContinuationWidth = 80;
-    for (std::size_t index = 0; index < items.size(); ++index) {
-      const auto& item = items[index];
-      widths.at(index + 1) = widths.at(index) + item.spelling().size() + 1;
-      if (item.kind == TokenKind::LeftParen || item.kind == TokenKind::LeftBracket ||
-          (item.kind == TokenKind::LeftBrace && item.role == TokenRole::MapDelimiter)) {
-        openers.push_back(index);
-      } else if ((item.kind == TokenKind::RightParen || item.kind == TokenKind::RightBracket ||
-                  (item.kind == TokenKind::RightBrace && item.role == TokenRole::MapDelimiter)) &&
-                 !openers.empty()) {
-        const auto opening = openers.back();
-        openers.pop_back();
-        multiline_.at(opening) = widths.at(index + 1) - widths.at(opening) > kContinuationWidth;
-        if (item.role == TokenRole::MapDelimiter) {
-          const auto& start = items[opening];
-          multiline_.at(opening) =
-              multiline_.at(opening) ||
-              source.substr(start.offset, item.offset - start.offset).contains('\n') ||
-              items[index - 1].kind == TokenKind::Comma;
-        }
-      }
-    }
+      : source_(source), items_(items), layouts_(items.size()) {
+    PlanDelimiters();
   }
   std::string Run();
 
@@ -279,21 +292,91 @@ class Formatter final {
   void Blankline();
   void Space();
   void Text(std::string_view text);
+  void PlanDelimiters();
+  [[nodiscard]] std::size_t Column() const;
+  [[nodiscard]] std::size_t NextSyntax(std::size_t index) const;
+  void TrailingComma(std::size_t index);
   void Open(const FormatItem& item, std::size_t index);
   void Close(const FormatItem& item, TokenKind next);
   void Comment(const FormatItem& item, std::size_t index);
   void Separate(std::size_t index);
+  void EmitSeparator(const FormatItem& item);
   void Emit(std::size_t index);
 
   std::string_view source_;
   std::span<const FormatItem> items_;
-  std::vector<bool> multiline_;
+  std::vector<DelimiterLayout> layouts_;
   std::vector<Scope> scopes_;
   std::string output_;
   std::size_t indent_ = 0;
   bool case_label_ = false;
   TokenKind top_level_kind_ = TokenKind::EndOfFile;
 };
+
+bool CanHaveTrailingComma(TokenRole role) {
+  return role == TokenRole::ParameterDelimiter || role == TokenRole::ArgumentDelimiter ||
+         role == TokenRole::ArrayDelimiter || role == TokenRole::MapDelimiter ||
+         role == TokenRole::EnumDelimiter || role == TokenRole::MatchDelimiter;
+}
+
+void Formatter::PlanDelimiters() {
+  std::vector<std::size_t> openers;
+  std::vector<std::size_t> widths(items_.size() + 1);
+  for (std::size_t index = 0; index < items_.size(); ++index) {
+    const auto& item = items_[index];
+    const bool space = index != 0 && NeedsSpace(items_[index - 1], item);
+    widths[index + 1] = widths[index] + item.spelling().size() + (space ? 1 : 0);
+    if (item.item != ItemKind::Syntax) {
+      if (!openers.empty() && (item.item == ItemKind::LineComment || item.text.contains('\n'))) {
+        layouts_[openers.back()].force_break = true;
+      }
+      continue;
+    }
+    if (IsOpening(item)) {
+      openers.push_back(index);
+    } else if (IsClosing(item)) {
+      const auto opening = openers.back();
+      openers.pop_back();
+      const auto& start = items_[opening];
+      auto& layout = layouts_[opening];
+      layout.closing = index;
+      const bool leading_space = opening != 0 && NeedsSpace(items_[opening - 1], start);
+      layout.flat_width = widths[index + 1] - widths[opening] - (leading_space ? 1 : 0);
+      if (start.role == TokenRole::MapDelimiter &&
+          source_.substr(start.offset, item.offset - start.offset).contains('\n')) {
+        layout.force_break = true;
+      }
+    }
+  }
+}
+
+std::size_t Formatter::Column() const {
+  if (output_.empty() || output_.ends_with('\n')) {
+    return indent_ * 2;
+  }
+  const auto newline = output_.rfind('\n');
+  return newline == std::string::npos ? output_.size() : output_.size() - newline - 1;
+}
+
+std::size_t Formatter::NextSyntax(std::size_t index) const {
+  while (index < items_.size() && items_[index].item != ItemKind::Syntax) {
+    ++index;
+  }
+  return index;
+}
+
+void Formatter::TrailingComma(std::size_t index) {
+  const auto& item = items_[index];
+  if (item.item != ItemKind::Syntax || item.kind == TokenKind::Comma || IsOpening(item) ||
+      scopes_.empty()) {
+    return;
+  }
+  const auto& scope = scopes_.back();
+  if (scope.multiline && CanHaveTrailingComma(scope.role) &&
+      NextSyntax(index + 1) == scope.closing) {
+    Text(",");
+  }
+}
 
 void Formatter::Newline() {
   while (!output_.empty() && output_.back() == ' ') {
@@ -326,12 +409,21 @@ void Formatter::Text(std::string_view text) {
 
 void Formatter::Open(const FormatItem& item, std::size_t index) {
   const auto brace = item.kind == TokenKind::LeftBrace && item.role != TokenRole::MapDelimiter;
-  const auto multiline = brace || multiline_.at(index);
+  const auto& layout = layouts_[index];
+  constexpr std::size_t kPrintWidth = 100;
+  const bool empty = layout.closing == index + 1;
+  const auto multiline =
+      !empty && (brace || layout.force_break || Column() + layout.flat_width > kPrintWidth);
   if (brace) {
     Space();
   }
   Text(item.text);
-  scopes_.push_back({.opener = item.kind, .role = item.role, .multiline = multiline});
+  scopes_.push_back({
+      .opener = item.kind,
+      .role = item.role,
+      .multiline = multiline,
+      .closing = layout.closing,
+  });
   if (multiline) {
     ++indent_;
     Newline();
@@ -368,6 +460,12 @@ void Formatter::Close(const FormatItem& item, TokenKind next) {
     case TokenKind::RightBracket:
     case TokenKind::Dot:
     case TokenKind::LeftParen:
+      return;
+    case TokenKind::RightBrace:
+      if (!scopes_.empty() && CanHaveTrailingComma(scopes_.back().role)) {
+        return;
+      }
+      Newline();
       return;
     default:
       Newline();
@@ -441,7 +539,15 @@ void Formatter::Emit(std::size_t index) {
   }
   Separate(index);
   const auto kind = item.kind;
-  const auto next = index + 1 < items_.size() ? items_[index + 1].kind : TokenKind::EndOfFile;
+  const auto next_index = NextSyntax(index + 1);
+  const auto next = next_index < items_.size() ? items_[next_index].kind : TokenKind::EndOfFile;
+  if (kind == TokenKind::Comma && !scopes_.empty()) {
+    const auto& scope = scopes_.back();
+    if (!scope.multiline && CanHaveTrailingComma(scope.role) &&
+        next_index == scope.closing) {
+      return;
+    }
+  }
   if (kind == TokenKind::Case || kind == TokenKind::Default) {
     Newline();
     auto& scope = scopes_.back();
@@ -463,6 +569,11 @@ void Formatter::Emit(std::size_t index) {
     return;
   }
   Text(item.spelling());
+  EmitSeparator(item);
+}
+
+void Formatter::EmitSeparator(const FormatItem& item) {
+  const auto kind = item.kind;
   if (kind == TokenKind::Colon && item.role != TokenRole::ConditionalOperator && case_label_) {
     case_label_ = false;
     scopes_.back().case_indented = true;
@@ -470,7 +581,11 @@ void Formatter::Emit(std::size_t index) {
     Newline();
   } else if (kind == TokenKind::Semicolon) {
     if (!scopes_.empty() && scopes_.back().opener == TokenKind::LeftParen) {
-      Space();
+      if (scopes_.back().multiline) {
+        Newline();
+      } else {
+        Space();
+      }
     } else {
       Newline();
     }
@@ -486,6 +601,7 @@ void Formatter::Emit(std::size_t index) {
 std::string Formatter::Run() {
   for (std::size_t index = 0; index < items_.size(); ++index) {
     Emit(index);
+    TrailingComma(index);
   }
   Newline();
   return std::move(output_);

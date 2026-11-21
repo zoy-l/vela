@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 
@@ -187,13 +188,90 @@ TEST_P(FormattingInvariantTest, IsIdempotent) {
 
 void ExpectSameTokens(const frontend::LexResult& before, const frontend::LexResult& after) {
   ASSERT_TRUE(after.diagnostics.empty());
-  ASSERT_EQ(before.tokens.size(), after.tokens.size());
-  for (std::size_t index = 0; index < before.tokens.size(); ++index) {
-    const auto& left = before.tokens.at(index);
-    const auto& right = after.tokens.at(index);
+  const auto significant = [](const frontend::LexResult& lexed) {
+    std::vector<const frontend::Token*> tokens;
+    for (std::size_t index = 0; index < lexed.tokens.size(); ++index) {
+      const auto& token = lexed.tokens[index];
+      if (token.kind == frontend::TokenKind::Comma && index + 1 < lexed.tokens.size()) {
+        const auto next = lexed.tokens[index + 1].kind;
+        if (next == frontend::TokenKind::RightParen || next == frontend::TokenKind::RightBracket ||
+            next == frontend::TokenKind::RightBrace) {
+          continue;
+        }
+      }
+      tokens.push_back(&token);
+    }
+    return tokens;
+  };
+  const auto left_tokens = significant(before);
+  const auto right_tokens = significant(after);
+  ASSERT_EQ(left_tokens.size(), right_tokens.size());
+  for (std::size_t index = 0; index < left_tokens.size(); ++index) {
+    const auto& left = *left_tokens[index];
+    const auto& right = *right_tokens[index];
     EXPECT_EQ(left.kind, right.kind);
     EXPECT_EQ(left.lexeme, right.lexeme);
   }
+}
+
+TEST(FormatterTest, KeepsPostfixAndNullSafeOperatorsTightAndSpacesAllBinaryAssignments) {
+  const auto result = FormatSource(
+      "func main():void{let value=1;value++;--value;value+=(2);value<<=(1);"
+      "value&=(3);const bits=value&(1);const maybe:Node?=null;print(maybe?.value??(0));}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_TRUE(result->contains("value++;"));
+  EXPECT_TRUE(result->contains("--value;"));
+  EXPECT_TRUE(result->contains("value += (2);"));
+  EXPECT_TRUE(result->contains("value <<= (1);"));
+  EXPECT_TRUE(result->contains("value &= (3);"));
+  EXPECT_TRUE(result->contains("value & (1);"));
+  EXPECT_TRUE(result->contains("maybe?.value ?? (0)"));
+}
+
+TEST(FormatterTest, NormalizesEmptyBlocksAndListTrailingCommas) {
+  const auto result = FormatSource(
+      "enum Color{red,green,blue}class Empty{}func main():void{"
+      "const values=[1,2,];print(values,);}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "enum Color {\n  red,\n  green,\n  blue,\n}\n\nclass Empty {}\n\n"
+            "func main(): void {\n  const values = [1, 2];\n  print(values);\n}\n");
+}
+
+TEST(FormatterTest, NestedGenericClosingsLeaveSubsequentDeclarationsAtTopLevel) {
+  const auto result =
+      FormatSource("type Nested=Map<string,Future<int[]>>;func first():void{}func second():void{}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "type Nested = Map<string, Future<int[]>>;\n\n"
+            "func first(): void {}\n\nfunc second(): void {}\n");
+}
+
+TEST(FormatterTest, BreaksCommentedArgumentsAndPlacesTrailingCommasBeforeComments) {
+  const auto result = FormatSource(
+      "func main():void{call(\n1,// first\n2/* last */\n);"
+      "const values=[\n1 // item\n];}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "func main(): void {\n  call(\n    1, // first\n    2, /* last */\n  );\n"
+            "  const values = [\n    1, // item\n  ];\n}\n");
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
+}
+
+TEST(FormatterTest, IncludesCallPrefixAndIndentationWhenBreakingAtOneHundredColumns) {
+  const auto result = FormatSource(
+      "func main():void{const result=longFunctionName(firstLongArgumentName,"
+      "secondLongArgumentName,thirdLongArgumentName);}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "func main(): void {\n  const result = longFunctionName(\n"
+            "    firstLongArgumentName,\n    secondLongArgumentName,\n"
+            "    thirdLongArgumentName,\n  );\n}\n");
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
 }
 
 TEST_P(FormattingInvariantTest, PreservesEveryLanguageToken) {

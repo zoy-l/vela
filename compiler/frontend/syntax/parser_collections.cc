@@ -9,6 +9,7 @@
 namespace vela::frontend {
 
 std::unique_ptr<Expression> Parser::ParseArrayLiteral() {
+  AnnotatePrevious(TokenRole::ArrayDelimiter);
   auto expression = MakeExpression(Expression::Kind::ArrayLiteral, Previous().location);
   while (!Check(TokenKind::RightBracket) && !IsAtEnd()) {
     auto element = ParseExpression();
@@ -23,6 +24,7 @@ std::unique_ptr<Expression> Parser::ParseArrayLiteral() {
   if (Expect(TokenKind::RightBracket, "expected ']' after array literal") == nullptr) {
     return nullptr;
   }
+  AnnotatePrevious(TokenRole::ArrayDelimiter);
   return expression;
 }
 

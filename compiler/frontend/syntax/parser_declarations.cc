@@ -52,6 +52,7 @@ std::optional<Enum> Parser::ParseEnum() {
   if (Expect(TokenKind::LeftBrace, "expected '{' after enum name") == nullptr) {
     return std::nullopt;
   }
+  AnnotatePrevious(TokenRole::EnumDelimiter);
 
   Enum declaration;
   declaration.name = name_token->lexeme;
@@ -77,6 +78,7 @@ std::optional<Enum> Parser::ParseEnum() {
   if (Expect(TokenKind::RightBrace, "expected '}' after enum members") == nullptr) {
     return std::nullopt;
   }
+  AnnotatePrevious(TokenRole::EnumDelimiter);
   return declaration;
 }
 
@@ -469,6 +471,7 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
 }
 
 std::optional<std::vector<Parameter>> Parser::ParseParameters(ParameterTyping typing) {
+  AnnotatePrevious(TokenRole::ParameterDelimiter);
   std::vector<Parameter> parameters;
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
     auto parameter = ParseParameter(typing);
@@ -479,6 +482,9 @@ std::optional<std::vector<Parameter>> Parser::ParseParameters(ParameterTyping ty
     if (!Match(TokenKind::Comma)) {
       break;
     }
+  }
+  if (Check(TokenKind::RightParen)) {
+    tokens_[current_].role = TokenRole::ParameterDelimiter;
   }
   return parameters;
 }

@@ -480,6 +480,9 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
             DeclareLocal(&parameter, parameter.location, std::move(detail), body,
                          sources_[body.source].tokens[TokenAt(parameter.location)].offset)) {
       symbols_[*symbol].role = Symbol::Role::Parameter;
+      if (function.body && parameter.location.source_id == 0) {
+        parameter_definitions_.insert(*symbol);
+      }
     }
   }
   VisitStatement(function.body.get(), body);
@@ -687,6 +690,13 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   }
   for (const auto* child : ExpressionOperands(*expression)) {
     VisitExpression(child, scope);
+  }
+  if (expression->kind == Expression::Kind::Binary && expression->operation == TokenKind::Equal &&
+      expression->left && expression->left->kind == Expression::Kind::Name) {
+    const auto reference = references_.find(KeyAt(expression->left->location));
+    if (reference != references_.end()) {
+      reference->second.is_read = false;
+    }
   }
   for (const auto& element : expression->elements) {
     VisitExpression(element.get(), scope);

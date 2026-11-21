@@ -36,6 +36,93 @@ async function runVelaTask(file, stop = false) {
   }
 }
 
+async function readSemanticTokens(document) {
+  const uri = document.uri;
+  const legend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", uri);
+  const tokens = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", uri);
+  assert.ok(legend && tokens, "Vela must provide semantic tokens in the extension host");
+  const result = [];
+  let line = 0, character = 0;
+  for (let index = 0; index < tokens.data.length; index += 5) {
+    const [deltaLine, deltaCharacter, length, kind, modifiers] = tokens.data.slice(index, index + 5);
+    line += deltaLine;
+    character = deltaLine ? deltaCharacter : character + deltaCharacter;
+    const range = new vscode.Range(line, character, line, character + length);
+    result.push({
+      offset: document.offsetAt(range.start),
+      spelling: document.getText(range),
+      kind: legend.tokenTypes[kind],
+      modifiers: legend.tokenModifiers.filter((_, bit) => modifiers & (1 << bit))
+    });
+  }
+  return result;
+}
+
+async function checkTypeHighlighting(document, source) {
+  const syntax = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", document.uri);
+  const syntaxAt = new Map();
+  let syntaxOffset = 0;
+  for (const token of syntax) {
+    syntaxAt.set(syntaxOffset, token);
+    syntaxOffset += token.c.length;
+  }
+  assert.equal(syntaxOffset, source.replaceAll("\n", "").length,
+    "captured syntax tokens must cover the document apart from its line breaks");
+  const semantic = new Map((await readSemanticTokens(document)).map(token => [token.offset, token]));
+  for (const [context, spelling, scope, kind] of [
+    ["as lib;", "lib", "entity.name.namespace"],
+    ["callback<T extends", "T", "entity.name.type.parameter", "typeParameter"],
+    ["T extends payload", "payload", "entity.name.type", "class"],
+    ["extends payload implements", "payload", "entity.name.type", "class"],
+    ["implements reader<payload>", "reader", "entity.name.type", "interface"],
+    [", lib.measurable", "measurable", "entity.name.type", "interface"],
+    ["field: payload?", "payload", "entity.name.type", "class"],
+    ["handler: callback<payload>", "callback", "entity.name.type", "type"],
+    ["entries: Map<string", "Map", "support.type"],
+    ["Map<string, lib.remote?[]>", "remote", "entity.name.type", "class"],
+    ["constructor(initial: payload)", "payload", "entity.name.type", "class"],
+    ["get current(): payload?", "payload", "entity.name.type", "class"],
+    ["set current(value: payload?)", "payload", "entity.name.type", "class"],
+    ["const variable:\n    payload", "payload", "entity.name.type", "class"],
+    ["(input: payload):", "payload", "entity.name.type", "class"],
+    ["): payload => input", "payload", "entity.name.type", "class"],
+    ["value is\n    lib.remote", "remote", "entity.name.type", "class"],
+    ["value is payload?", "payload", "entity.name.type", "class"],
+    ["value is payload?", "?", "keyword.operator.type.nullable"],
+    ["value as payload;", "payload", "entity.name.type", "class"],
+    ["lib.identity<lib.remote>", "remote", "entity.name.type", "class"],
+    ["catch (error: lib.remote)", "remote", "entity.name.type", "class"],
+    ["consume(value: fallback)", "fallback", "variable.other.readwrite"],
+    ["'fallback': fallback", "fallback", "variable.other.readwrite"],
+    ["flag ? variable : fallback", "fallback", "variable.other.readwrite"],
+    ["count < other && other > count", "other", "variable.other.readwrite"]
+  ]) {
+    const start = source.indexOf(context);
+    assert.ok(start >= 0, context);
+    const offset = start + context.lastIndexOf(spelling);
+    const token = syntaxAt.get(offset - document.positionAt(offset).line);
+    assert.equal(token?.c, spelling, context);
+    assert.ok(token.t.split(" ").includes(scope + ".vela"), context + ": " + token.t);
+    if (scope.startsWith("entity.name.type") || scope.startsWith("support.type")) {
+      for (const theme of ["dark_modern", "light_modern", "dark_plus", "light_plus"]) {
+        assert.ok(token.r[theme] && !token.r[theme].startsWith("default:"), context + " in " + theme);
+      }
+    }
+    if (kind) {
+      assert.equal(semantic.get(offset)?.kind, kind, context);
+    }
+  }
+
+  const field = document.positionAt(source.indexOf("payload? = null"));
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, new vscode.Range(field, field.translate(0, "payload".length)), "lib.remote");
+  assert.equal(await vscode.workspace.applyEdit(edit), true);
+  const edited = (await readSemanticTokens(document)).find(token =>
+    token.offset === document.offsetAt(field) + "lib.".length);
+  assert.equal(edited?.spelling, "remote", "unsaved changes must update the field's semantic type");
+  assert.equal(edited.kind, "class");
+}
+
 async function runEditorTests() {
   const extension = vscode.extensions.getExtension("vela.vela-language");
   assert.ok(extension, "Vela extension must be available in the real extension host");
@@ -93,17 +180,28 @@ async function runEditorTests() {
   try {
     const asyncUri = vscode.Uri.file(path.join(directory, "async-highlighting.vela"));
     const asyncText = "async func main(): Future<int> {\n" +
-      "  // async await Future\n" +
-      "  const label = 'async await Future';\n" +
+      "  // async await Future override\n" +
+      "  const label = 'async await Future override';\n" +
+      "  const overrideValue = 1;\n" +
       "  const remainder = 43 % (5);\n" +
       "  const futureValue = Future.value(42);\n" +
-      "  return await futureValue;\n}\n";
+      "  return await futureValue;\n}\n" +
+      "class Base {\n" +
+      "  value: int = 1;\n" +
+      "  read(): int { return this.value; }\n" +
+      "  get amount(): int { return this.value; }\n" +
+      "  set amount(value: int): void { this.value = value; }\n}\n" +
+      "class Child extends Base {\n" +
+      "  override read(): int { return 2; }\n" +
+      "  override get amount(): int { return this.value + 1; }\n" +
+      "  override set amount(value: int): void { this.value = value + 1; }\n}\n";
     await fs.writeFile(asyncUri.fsPath, asyncText);
     const asyncDocument = await vscode.workspace.openTextDocument(asyncUri);
     temporaryDocuments.push(asyncDocument);
     const syntaxTokens = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", asyncUri);
     for (const [spelling, scope, count] of [
       ["async", "storage.modifier.vela", 1],
+      ["override", "storage.modifier.vela", 3],
       ["await", "keyword.control.vela", 1],
       ["Future", "support.type.vela", 2]
     ]) {
@@ -119,23 +217,104 @@ async function runEditorTests() {
     assert.equal(syntaxTokens.filter(token => token.c === "%"
       && token.t.split(" ").includes("keyword.operator.vela")).length, 1,
       "remainder must receive the arithmetic operator scope");
-    const asyncLegend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", asyncUri);
-    const asyncTokens = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", asyncUri);
-    assert.ok(asyncTokens, "async code must expose semantic tokens");
-    const futureTokens = [];
-    let asyncLine = 0, asyncCharacter = 0;
-    for (let index = 0; index < asyncTokens.data.length; index += 5) {
-      const [deltaLine, deltaCharacter, length, kind, modifiers] = asyncTokens.data.slice(index, index + 5);
-      asyncLine += deltaLine;
-      asyncCharacter = deltaLine ? deltaCharacter : asyncCharacter + deltaCharacter;
-      const spelling = asyncDocument.getText(new vscode.Range(asyncLine, asyncCharacter,
-        asyncLine, asyncCharacter + length));
-      if (spelling === "Future") futureTokens.push({ kind: asyncLegend.tokenTypes[kind], modifiers });
+    const futureTokens = (await readSemanticTokens(asyncDocument)).filter(token => token.spelling === "Future");
+    assert.deepEqual(futureTokens.map(({ kind, modifiers }) => [kind, modifiers]),
+      [["type", ["defaultLibrary"]], ["type", ["defaultLibrary"]]],
+      "Future annotations and factory receivers must keep built-in type coloring");
+    console.log("PASS: async, await, Future and override have syntax colors and preserve semantic type coloring");
+
+    await fs.writeFile(path.join(directory, "highlight-library.vela"), [
+      "export class remote {}",
+      "export interface measurable { measure(): int; }",
+      "export func identity<T>(value: T): T { return value; }",
+      ""
+    ].join("\n"));
+    const typeUri = vscode.Uri.file(path.join(directory, "type-highlighting.vela"));
+    const typeText = [
+      "import 'highlight-library' as lib;",
+      "class payload {}",
+      "interface reader<T> { read(): T; }",
+      "type callback<T extends payload> = (T) => lib.remote;",
+      "class highlighted extends payload implements reader<payload>, lib.measurable {",
+      "  field: payload? = null;",
+      "  handler: callback<payload>? = null;",
+      "  static entries: Map<string, lib.remote?[]> = {};",
+      "  constructor(initial: payload) { this.field = initial; }",
+      "  get current(): payload? { return this.field; }",
+      "  set current(value: payload?): void { this.field = value; }",
+      "  read(): payload { return payload(); }",
+      "  measure(): int { return 1; }",
+      "}",
+      "func consume(value: payload): payload { return value; }",
+      "func choose(value: dynamic, flag: bool, fallback: payload, count: int, other: int): payload {",
+      "  const variable:",
+      "    payload = fallback;",
+      "  const fn = (input: payload): payload => input;",
+      "  const tested = value is",
+      "    lib.remote;",
+      "  const nullable = value is payload?;",
+      "  const cast = value as payload;",
+      "  const explicit = lib.identity<lib.remote>(value as lib.remote);",
+      "  const chosen = flag ? variable : fallback;",
+      "  const mapped = {'fallback': fallback};",
+      "  const smaller = count < other && other > count;",
+      "  try {} catch (error: lib.remote) {}",
+      "  return consume(value: fallback);",
+      "}",
+      ""
+    ].join("\n");
+    await fs.writeFile(typeUri.fsPath, typeText);
+    const typeDocument = await vscode.workspace.openTextDocument(typeUri);
+    temporaryDocuments.push(typeDocument);
+    await checkTypeHighlighting(typeDocument, typeText);
+    console.log("PASS: type annotations, type tests, casts and generic arguments use the editor's type colors");
+
+    const enumUri = vscode.Uri.file(path.join(directory, "enum-highlighting.vela"));
+    const enumText = "enum Palette { light, dark }\n" +
+      "class Item { light: int = 0; }\n" +
+      "func main(): void { const color: Palette = Palette.dark; print(Item().light); }\n";
+    await fs.writeFile(enumUri.fsPath, enumText);
+    const enumDocument = await vscode.workspace.openTextDocument(enumUri);
+    temporaryDocuments.push(enumDocument);
+    const enumSyntax = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", enumUri);
+    const enumMembers = enumSyntax.filter(token =>
+      token.t.split(" ").includes("variable.other.enummember.vela"));
+    assert.deepEqual(enumMembers.map(token => token.c), ["light", "dark"]);
+    for (const token of enumMembers) {
+      for (const theme of ["dark_modern", "light_modern", "dark_plus", "light_plus"]) {
+        assert.ok(token.r[theme] && !token.r[theme].startsWith("default:"),
+          "enum members must use the theme's enum member color");
+      }
     }
-    const defaultLibrary = 1 << asyncLegend.tokenModifiers.indexOf("defaultLibrary");
-    assert.deepEqual(futureTokens, [{ kind: "type", modifiers: defaultLibrary },
-      { kind: "type", modifiers: defaultLibrary }], "Future annotations and factory receivers must keep built-in type coloring");
-    console.log("PASS: async, await and Future have syntax colors and preserve semantic type coloring");
+    const enumSemantic = await readSemanticTokens(enumDocument);
+    assert.deepEqual(enumSemantic.filter(token => token.kind === "enumMember")
+      .map(token => [token.spelling, token.modifiers]),
+    [["light", ["declaration"]], ["dark", ["declaration"]], ["dark", []]]);
+    console.log("PASS: enum declarations and member references have enum colors without coloring instance fields");
+
+    await fs.writeFile(path.join(directory, "warning-library.vela"),
+      "export func echo(value: int): int { return value; }\n");
+    const warningUri = vscode.Uri.file(path.join(directory, "unused-warnings.vela"));
+    const warningText = "import 'warning-library' as unused;\nfunc consume(value: int): void {}\n";
+    await fs.writeFile(warningUri.fsPath, warningText);
+    const warningDocument = await vscode.workspace.openTextDocument(warningUri);
+    temporaryDocuments.push(warningDocument);
+    await readSemanticTokens(warningDocument);
+    const warnings = vscode.languages.getDiagnostics(warningUri);
+    assert.deepEqual(warnings.map(diagnostic => diagnostic.code), ["unused_import", "unused_parameter"]);
+    for (const diagnostic of warnings) {
+      assert.equal(diagnostic.severity, vscode.DiagnosticSeverity.Warning);
+      assert.deepEqual(diagnostic.tags, [vscode.DiagnosticTag.Unnecessary]);
+      assert.ok(!diagnostic.range.isEmpty, "unused declarations must have a range for editor fading");
+    }
+    const warningEdit = new vscode.WorkspaceEdit();
+    warningEdit.replace(warningUri, new vscode.Range(0, 0, warningDocument.lineCount, 0),
+      warningText.replace("void {}", "void { print(unused.echo(value)); }"));
+    assert.equal(await vscode.workspace.applyEdit(warningEdit), true);
+    await readSemanticTokens(warningDocument);
+    assert.deepEqual(vscode.languages.getDiagnostics(warningUri), [],
+      "using the parameter and import in an unsaved edit must clear the warnings");
+    console.log("PASS: unused parameters and imports show warnings and fading, then clear after edits");
 
     const runUri = vscode.Uri.file(path.join(directory, "run $shell; 中文.vela"));
     await fs.writeFile(runUri.fsPath, "func main(): int { return 1; }\n");
@@ -147,8 +326,8 @@ async function runEditorTests() {
     runEdit.replace(runUri, new vscode.Range(0, 0, runDocument.lineCount, 0), runText);
     assert.equal(await vscode.workspace.applyEdit(runEdit), true);
     assert.ok(runDocument.isDirty);
-    assert.equal(await runVelaTask(runUri.fsPath), 23,
-      "the task must execute the current edits and preserve the program exit code");
+    assert.equal(await runVelaTask(runUri.fsPath), 0,
+      "the task must save and successfully execute the current edits");
     assert.equal(await fs.readFile(runUri.fsPath, "utf8"), runText);
     assert.equal(runDocument.isDirty, false);
     console.log("PASS: Run File saves edits and executes paths containing spaces, Unicode and shell characters");
@@ -230,21 +409,9 @@ async function runEditorTests() {
     const classHover = await vscode.commands.executeCommand("vscode.executeHoverProvider",
       argumentUri, argumentDocument.positionAt(argumentOffset - "Counter(".length));
     assert.ok(classHover[0].contents.some(content => content.value.includes("constructor(value: int, step: int = 1)")));
-    const semanticLegend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", argumentUri);
-    const semanticTokens = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", argumentUri);
-    assert.ok(semanticTokens && semanticTokens.data.length, "user classes must have semantic highlighting in the real editor");
-    const classKind = semanticLegend.tokenTypes.indexOf("class");
-    let semanticLine = 0, semanticCharacter = 0;
-    let classUses = 0;
-    for (let index = 0; index < semanticTokens.data.length; index += 5) {
-      const [deltaLine, deltaCharacter, length, kind] = semanticTokens.data.slice(index, index + 4);
-      semanticLine += deltaLine;
-      semanticCharacter = deltaLine ? deltaCharacter : semanticCharacter + deltaCharacter;
-      const spelling = argumentDocument.getText(new vscode.Range(semanticLine, semanticCharacter,
-        semanticLine, semanticCharacter + length));
-      if (kind === classKind && spelling === "Counter") classUses++;
-    }
-    assert.equal(classUses, 2, "class declaration and constructor use must both receive class coloring");
+    const classUses = (await readSemanticTokens(argumentDocument)).filter(token =>
+      token.kind === "class" && token.spelling === "Counter");
+    assert.equal(classUses.length, 2, "class declaration and constructor use must both receive class coloring");
     const argumentsList = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider",
       argumentUri, argumentDocument.positionAt(argumentOffset), "(");
     const valueArgument = argumentsList.items.find(item => item.label === "value:");

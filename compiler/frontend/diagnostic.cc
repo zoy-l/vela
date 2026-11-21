@@ -15,6 +15,10 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
       return {};
     case DiagnosticCode::ImplicitDynamicConversion:
       return "implicit_dynamic_conversion";
+    case DiagnosticCode::UnusedParameter:
+      return "unused_parameter";
+    case DiagnosticCode::UnusedImport:
+      return "unused_import";
   }
   std::unreachable();
 }

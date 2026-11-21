@@ -20,6 +20,8 @@ std::optional<SemanticTokenKind> TokenKindFor(CompletionKind kind) {
       return SemanticTokenKind::Interface;
     case CompletionKind::Enum:
       return SemanticTokenKind::Enum;
+    case CompletionKind::EnumMember:
+      return SemanticTokenKind::EnumMember;
     case CompletionKind::Type:
       return SemanticTokenKind::Type;
     default:

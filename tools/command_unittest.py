@@ -250,6 +250,92 @@ func main(): void {
         self.command("fmt", "--check", self.entry)
         self.assertEqual(self.command("fmt", self.entry).stdout, formatted)
 
+    def test_formatter_recurses_directories_and_reports_sorted_changes_without_writing(self) -> None:
+        root = self.directory / "project 中😀"
+        nested = root / "nested"
+        nested.mkdir(parents=True)
+        sources = [root / "a.vela", nested / "b.vela"]
+        original = "func main():void{}"
+        for source in reversed(sources):
+            source.write_text(original, encoding="utf-8", newline="\n")
+        timestamps = [source.stat().st_mtime_ns for source in sources]
+        checked = self.command("fmt", "--check", root, expected=1)
+        self.assertEqual(checked.stdout.splitlines(), [source.as_posix() for source in sources])
+        self.assertEqual([source.read_text(encoding="utf-8") for source in sources], [original] * 2)
+        self.assertEqual([source.stat().st_mtime_ns for source in sources], timestamps)
+        self.command("fmt", "--write", root)
+        for source in sources:
+            self.assertEqual(source.read_text(encoding="utf-8"), "func main(): void {}\n")
+        self.assertEqual(self.command("fmt", "--check", root).stdout, "")
+        timestamps = [source.stat().st_mtime_ns for source in sources]
+        self.command("fmt", "--write", root)
+        self.assertEqual([source.stat().st_mtime_ns for source in sources], timestamps)
+
+    def test_formatter_directory_scan_excludes_dependencies_generated_files_and_other_extensions(self) -> None:
+        source = self.directory / "main.vela"
+        source.write_text("func main():void{}", encoding="utf-8", newline="\n")
+        ignored = []
+        for name in (".git", ".cache", ".cipd", "out", "third_party", "node_modules", "src/out"):
+            directory = self.directory / name
+            directory.mkdir(parents=True)
+            target = directory / "broken.vela"
+            target.write_text("func broken(", encoding="utf-8", newline="\n")
+            ignored.append(target)
+        notes = self.directory / "notes.txt"
+        notes.write_text("func broken(", encoding="utf-8", newline="\n")
+        ignored.append(notes)
+        original = [path.read_bytes() for path in ignored]
+        self.command("fmt", "--write", self.directory)
+        self.assertEqual(source.read_text(encoding="utf-8"), "func main(): void {}\n")
+        self.assertEqual([path.read_bytes() for path in ignored], original)
+        self.command("fmt", "--check", self.directory)
+
+    def test_formatter_directory_reports_syntax_errors_and_continues_processing_other_sources(self) -> None:
+        broken = self.directory / "a-broken.vela"
+        valid = self.directory / "z-valid.vela"
+        broken.write_text("func broken(", encoding="utf-8", newline="\n")
+        valid.write_text("func main():void{}", encoding="utf-8", newline="\n")
+        checked = self.command("fmt", "--check", self.directory, expected=65)
+        self.assertEqual(checked.stdout.splitlines(), [valid.as_posix()])
+        self.assertIn(broken.as_posix(), checked.stderr)
+        self.assertEqual(valid.read_text(encoding="utf-8"), "func main():void{}")
+        written = self.command("fmt", "--write", self.directory, expected=65)
+        self.assertEqual(written.stdout, "")
+        self.assertIn(broken.as_posix(), written.stderr)
+        self.assertEqual(broken.read_text(encoding="utf-8"), "func broken(")
+        self.assertEqual(valid.read_text(encoding="utf-8"), "func main(): void {}\n")
+
+    def test_formatter_directory_modes_empty_inputs_and_missing_paths(self) -> None:
+        empty = self.directory / "empty"
+        empty.mkdir()
+        self.command("fmt", "--check", empty)
+        self.command("fmt", "--write", empty)
+        self.assertIn("--write or --check", self.command("fmt", empty, expected=64).stderr)
+        self.command("fmt", "--check", self.directory / "missing", expected=74)
+        self.command("fmt", "--unknown", expected=64)
+        self.command("fmt", "--write", expected=64)
+        self.command("fmt", "--check", "--write", expected=64)
+        self.command("fmt", "--write", "--check", expected=64)
+        self.command("fmt", "--write", empty, empty, expected=64)
+
+    def test_formatter_directory_scan_does_not_follow_file_or_directory_symlinks(self) -> None:
+        root = self.directory / "project"
+        root.mkdir()
+        outside = self.directory / "outside.vela"
+        outside.write_text("func main():void{}", encoding="utf-8", newline="\n")
+        file_link = root / "linked.vela"
+        directory_link = root / "linked-directory"
+        try:
+            file_link.symlink_to(outside)
+            directory_link.symlink_to(self.directory, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks are unavailable: {error}")
+        self.command("fmt", "--write", root)
+        self.command("fmt", "--check", root)
+        self.assertTrue(file_link.is_symlink())
+        self.assertTrue(directory_link.is_symlink())
+        self.assertEqual(outside.read_text(encoding="utf-8"), "func main():void{}")
+
     def test_documentation_checks_modules_without_evaluating_initializers(self) -> None:
         self.write('/// A value.\nexport let value = fail();\n'
                    'func fail(): int { print("must not execute"); return 42; }\n')

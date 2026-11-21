@@ -126,8 +126,10 @@ class Connection {
       this.diagnostics.set(vscode.Uri.parse(params.uri), params.diagnostics.map(item => {
         const start = item.range.start, end = item.range.end;
         const diagnostic = new vscode.Diagnostic(new vscode.Range(start.line, start.character, end.line, end.character),
-          item.message, vscode.DiagnosticSeverity.Error);
+          item.message, item.severity === undefined ? vscode.DiagnosticSeverity.Error : item.severity - 1);
         diagnostic.source = item.source;
+        diagnostic.code = item.code;
+        diagnostic.tags = item.tags;
         return diagnostic;
       }));
     } else if (message.method === "window/logMessage") this.output.appendLine(message.params.message);
@@ -156,7 +158,7 @@ function registerSymbolProviders(context, client, flush) {
   const linksChanged = new vscode.EventEmitter();
   const tokensChanged = new vscode.EventEmitter();
   const tokenLegend = new vscode.SemanticTokensLegend(
-    ["class", "interface", "enum", "type", "typeParameter"], ["declaration", "defaultLibrary"]);
+    ["class", "interface", "enum", "type", "typeParameter", "enumMember"], ["declaration", "defaultLibrary"]);
   context.subscriptions.push(
     linksChanged,
     tokensChanged,

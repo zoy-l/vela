@@ -67,9 +67,16 @@ struct Hover final {
   TextRange range;
 };
 
-enum class SemanticTokenKind : std::uint8_t { Class, Interface, Enum, Type, TypeParameter };
-inline constexpr auto kSemanticTokenTypes =
-    std::to_array<std::string_view>({"class", "interface", "enum", "type", "typeParameter"});
+enum class SemanticTokenKind : std::uint8_t {
+  Class,
+  Interface,
+  Enum,
+  Type,
+  TypeParameter,
+  EnumMember,
+};
+inline constexpr auto kSemanticTokenTypes = std::to_array<std::string_view>(
+    {"class", "interface", "enum", "type", "typeParameter", "enumMember"});
 inline constexpr auto kSemanticTokenModifiers =
     std::to_array<std::string_view>({"declaration", "defaultLibrary"});
 inline constexpr std::uint32_t kSemanticDeclaration = 1U;
@@ -118,6 +125,7 @@ class SemanticIndex final {
   RenameSymbol(std::size_t offset, std::string_view name, PositionEncoding encoding) const;
   [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<SemanticToken> SemanticTokens(PositionEncoding encoding) const;
+  [[nodiscard]] frontend::Diagnostics UnusedDiagnostics() const;
   [[nodiscard]] std::vector<Completion> CompleteArguments(
       const ArgumentCompletionQuery& query) const;
 
@@ -168,6 +176,7 @@ class SemanticIndex final {
   struct Reference final {
     std::size_t symbol = 0;
     const frontend::Expression* expression = nullptr;
+    bool is_read = true;
   };
   struct TypeReference final {
     Key key;
@@ -233,6 +242,8 @@ class SemanticIndex final {
   void CollectEnumMembers(const frontend::Enum& declaration);
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();
+  void CollectUnusedParameters(frontend::Diagnostics& diagnostics) const;
+  void CollectUnusedImports(frontend::Diagnostics& diagnostics) const;
   std::optional<TypeReference> VisitType(const frontend::TypeName& type);
   void VisitFunction(const frontend::Function& function,
                      const Scope& scope,
@@ -306,6 +317,7 @@ class SemanticIndex final {
   absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::size_t>> members_;
   absl::flat_hash_map<std::size_t, NamedSymbols> parameters_;
   absl::flat_hash_map<std::uint32_t, std::size_t> bindings_;
+  absl::flat_hash_set<std::size_t> parameter_definitions_;
   absl::flat_hash_map<Key, Receiver> receivers_;
   absl::flat_hash_map<Key, const frontend::Expression*> calls_;
   absl::flat_hash_map<Key, const frontend::Attribute*> attribute_calls_;

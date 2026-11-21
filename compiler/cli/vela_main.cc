@@ -37,7 +37,7 @@
 #include "compiler/testing/command.h"
 #include "compiler/testing/settings.h"
 #include "compiler/tooling/documentation/documentation.h"
-#include "compiler/tooling/format/formatter.h"
+#include "compiler/tooling/format/format_command.h"
 #include "compiler/tooling/lsp/language_server.h"
 #include "compiler/tooling/mock/mock_generator.h"
 #include "runtime/isolate/isolate.h"
@@ -55,25 +55,25 @@ using vela::kSourceErrorExitCode;
 using vela::kUsageExitCode;
 
 void PrintUsage(std::ostream& output) {
-  output
-      << "Usage: vela <command> [arguments]\n"
-      << "\n"
-      << "Commands:\n"
-      << "  --help       Show this message\n"
-      << "  --version    Show the compiler version\n"
-      << "  check FILE [--config=FILE]   Parse and statically check a Vela source file\n"
-      << "  run FILE     Compile native code with a local cache and run main\n"
-      << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
-      << "  mock API_FILE --interface NAME -o OUTPUT [--check]   Generate interface mocks\n"
-      << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
-      << "  build FILE [--config=FILE] [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
-      << "  build --verify-manifest=FILE   Verify a native library and its header\n"
-      << "  fmt [--write|--check] FILE   Format Vela source\n"
-      << "  doc FILE OUTPUT   Generate exported API Markdown\n"
-      << "  host-header FILE --namespace=NAME -o OUTPUT   Generate typed C++ declarations\n"
-      << "  lsp          Run the language server over stdio\n"
-      << "  debug FILE   Debug main with source breakpoints and stepping\n"
-      << "  repl         Start a persistent interactive session\n";
+  output << "Usage: vela <command> [arguments]\n"
+         << "\n"
+         << "Commands:\n"
+         << "  --help       Show this message\n"
+         << "  --version    Show the compiler version\n"
+         << "  check FILE [--config=FILE]   Parse and statically check a Vela source file\n"
+         << "  run FILE     Compile native code with a local cache and run main\n"
+         << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
+         << "  mock API_FILE --interface NAME -o OUTPUT [--check]   Generate interface mocks\n"
+         << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
+         << "  build FILE [--config=FILE] [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   "
+            "Build native code\n"
+         << "  build --verify-manifest=FILE   Verify a native library and its header\n"
+         << "  fmt [--write|--check] PATH   Format a Vela file or directory\n"
+         << "  doc FILE OUTPUT   Generate exported API Markdown\n"
+         << "  host-header FILE --namespace=NAME -o OUTPUT   Generate typed C++ declarations\n"
+         << "  lsp          Run the language server over stdio\n"
+         << "  debug FILE   Debug main with source breakpoints and stepping\n"
+         << "  repl         Start a persistent interactive session\n";
 }
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
@@ -155,8 +155,6 @@ int RunFile(std::string_view path, ExecutionMode mode) {
                                         vela::runtime::ProcessStopDiagnostic::Report);
 }
 
-enum class FormatMode : std::uint8_t { Output, Write, Check };
-
 int PublishTextArtifact(const std::filesystem::path& path, std::string_view text) {
   const auto written = vela::WriteFileAtomically(path, std::as_bytes(std::span(text)));
   if (!written) {
@@ -178,34 +176,6 @@ int DocumentFile(std::string_view path, const std::filesystem::path& output) {
     return kSourceErrorExitCode;
   }
   return PublishTextArtifact(output, documentation.markdown);
-}
-
-int FormatFile(std::string_view path, FormatMode mode) {
-  const auto file = vela::Utf8Path(path);
-  const auto bytes = vela::ReadBinaryFile(file);
-  if (!bytes) {
-    vela::WriteError(std::cerr, path, vela::SourceLocation(), bytes.error());
-    return kIoErrorExitCode;
-  }
-  const void* storage = bytes->data();
-  const std::string_view source(static_cast<const char*>(storage), bytes->size());
-  const auto formatted = vela::tooling::FormatSource(source);
-  if (!formatted) {
-    PrintDiagnostics(path, formatted.error());
-    return kSourceErrorExitCode;
-  }
-  if (mode == FormatMode::Check) {
-    return *formatted == source ? 0 : 1;
-  }
-  if (mode == FormatMode::Write) {
-    if (*formatted == source) {
-      return 0;
-    }
-    return PublishTextArtifact(file, *formatted);
-  }
-  std::cout << *formatted;
-
-  return 0;
 }
 
 int HostHeaderCommand(std::span<char*> arguments) {
@@ -235,20 +205,6 @@ int HostHeaderCommand(std::span<char*> arguments) {
     return kSourceErrorExitCode;
   }
   return PublishTextArtifact(vela::Utf8Path(arguments[3]), *header);
-}
-
-int FormatCommand(std::span<char*> arguments) {
-  if (arguments.size() == 1) {
-    return FormatFile(arguments.front(), FormatMode::Output);
-  }
-  if (arguments.size() == 2) {
-    const std::string_view option = arguments.front();
-    if (option == "--write" || option == "--check") {
-      return FormatFile(arguments[1], option == "--write" ? FormatMode::Write : FormatMode::Check);
-    }
-  }
-  std::cerr << "vela: fmt [--write|--check] requires one source file\n";
-  return kUsageExitCode;
 }
 
 int ReplCommand(std::span<char*> arguments) {
@@ -373,7 +329,8 @@ int main(int argc, char** argv) {
   }
 
   if (command == "fmt") {
-    return FormatCommand(arguments.subspan(2));
+    return vela::tooling::FormatCommand(arguments.subspan(2),
+                                        {.output = std::cout, .errors = std::cerr});
   }
   if (command == "build") {
     return vela::compiler::aot::BuildCommand(arguments.subspan(2), std::cerr);

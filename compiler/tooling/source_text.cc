@@ -143,12 +143,27 @@ std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition positi
   return index_.OffsetAt(text_, position, encoding);
 }
 
+TextRange SourceLineIndex::RangeAt(std::string_view text,
+                                   SourceLocation location,
+                                   std::size_t length,
+                                   PositionEncoding encoding) const {
+  const auto start = PositionAt(text, location, PositionEncoding::Utf8);
+  const auto offset = *OffsetAt(text, start, PositionEncoding::Utf8);
+  return RangeAt(text, offset, length, encoding);
+}
+
 TextPosition SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const {
   return index_.PositionAt(text_, offset, encoding);
 }
 
 TextPosition SourceText::PositionAt(SourceLocation location, PositionEncoding encoding) const {
   return index_.PositionAt(text_, location, encoding);
+}
+
+TextRange SourceText::RangeAt(SourceLocation location,
+                              std::size_t length,
+                              PositionEncoding encoding) const {
+  return index_.RangeAt(text_, location, length, encoding);
 }
 
 std::expected<void, std::string> SourceText::Replace(TextRange range,

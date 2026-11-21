@@ -31,7 +31,8 @@ const mock = {
     fire() { for (const listener of this.listeners) listener(); }
     dispose() { this.listeners = []; }
   },
-  DiagnosticSeverity: { Error: 0 }
+  DiagnosticSeverity: { Error: 0, Warning: 1 },
+  DiagnosticTag: { Unnecessary: 1 }
 };
 const source = fs.readFileSync(path.join(__dirname, "extension.js"), "utf8");
 const { ByteQueue, Connection, registerSymbolProviders, runFile } = vm.runInNewContext(`${source}\n({ ByteQueue, Connection, registerSymbolProviders, runFile });`, {
@@ -154,6 +155,7 @@ test("extension connection initializes, formats, publishes diagnostics and shuts
   await connection.request("textDocument/formatting", { textDocument: { uri } });
   assert.equal(diagnostics.get(uri).length, 1);
   assert.match(diagnostics.get(uri)[0].message, /return/);
+  assert.equal(diagnostics.get(uri)[0].severity, mock.DiagnosticSeverity.Error);
   const text = "func answer(): int { return 42; }\nfunc main(): int { return answer(); }";
   connection.notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text }] });
   const completions = await connection.request("textDocument/completion", {
@@ -169,12 +171,33 @@ test("extension connection initializes, formats, publishes diagnostics and shuts
   assert.equal(logs.length, 0);
 });
 
+test("diagnostics preserve protocol warning severity, codes, ranges and unnecessary tags", () => {
+  const uri = "file:///unused.vela";
+  const published = new Map();
+  const connection = Object.create(Connection.prototype);
+  connection.diagnostics = { set: (key, value) => published.set(key.toString(), value) };
+  connection.dispatch({
+    method: "textDocument/publishDiagnostics",
+    params: { uri, diagnostics: [{
+      range: { start: { line: 1, character: 12 }, end: { line: 1, character: 17 } },
+      severity: 2, source: "vela", code: "unused_parameter", tags: [1],
+      message: "parameter 'value' is never read"
+    }] }
+  });
+  const [diagnostic] = published.get(uri);
+  assert.equal(diagnostic.severity, mock.DiagnosticSeverity.Warning);
+  assert.equal(diagnostic.source, "vela");
+  assert.equal(diagnostic.code, "unused_parameter");
+  assert.deepEqual(diagnostic.range.values, [1, 12, 1, 17]);
+  assert.deepEqual(diagnostic.tags, [mock.DiagnosticTag.Unnecessary]);
+});
+
 test("VS Code symbol providers synchronize text, map protocol results and discard stale replies", async () => {
   const providers = {};
   mock.languages = {
     registerDocumentSemanticTokensProvider(selector, provider, legend) {
       assert.equal(selector.language, "vela");
-      assert.deepEqual(Array.from(legend.tokenTypes), ["class", "interface", "enum", "type", "typeParameter"]);
+      assert.deepEqual(Array.from(legend.tokenTypes), ["class", "interface", "enum", "type", "typeParameter", "enumMember"]);
       assert.deepEqual(Array.from(legend.tokenModifiers), ["declaration", "defaultLibrary"]);
       providers.semantic = provider;
       return { dispose() {} };

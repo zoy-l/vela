@@ -12,7 +12,7 @@ python -m tools.vl editor package
 ```
 
 In VS Code, run **Extensions: Install from VSIX...** and select the generated
-`out/editor/vela-language-0.1.19.vsix`. Open the Vela workspace. The default server
+`out/editor/vela-language-0.1.23.vsix`. Open the Vela workspace. The default server
 is `out/debug/vela.exe` on Windows or `out/debug/vela` elsewhere. Set
 `vela.serverPath` to use another build or an installed executable; it must expose
 the `lsp` and `run` commands. No global PATH changes are needed.
@@ -26,8 +26,11 @@ Use **Tasks: Terminate Task** or the task terminal's stop control to stop the pr
 The working directory is the file's workspace folder, or its parent directory for
 a file outside the workspace.
 
-**Format Document** uses Vela's two-space formatter with single-quoted strings,
-spaces after colons and around operators, and blank lines between declarations.
+**Format Document** uses two-space indentation, single-quoted strings and a
+100-column target. Groups break according to their available line width and
+comments. Multiline argument, parameter, array, map, enum and match lists use
+trailing commas. Empty blocks stay compact. Operators use syntax-aware spacing,
+and declarations are separated by blank lines.
 Both quote styles support interpolation. Changes are sent after a
 short configurable delay (`vela.diagnosticsDelay`, default 150 ms). Import and
 module file changes trigger diagnostics as well. **Vela: Show Language
@@ -51,9 +54,17 @@ snapshot as navigation. **Ctrl+K Ctrl+I** also opens the hover from the keyboard
 
 Class hover shows constructor parameters and literal defaults. Built-in API documentation is in English and shows
 usage, parameters, return values, units, boundary conditions and examples where useful;
-the same documentation appears in completion details. Semantic highlighting colors
-classes, interfaces, enums, aliases and generic type parameters at declarations and uses,
-including imported types and constructors. It follows the active theme's TypeScript-style type colors.
+the same documentation appears in completion details.
+
+Type names use the active theme's type colors in member and parameter annotations,
+return types, inheritance clauses, generic arguments, and after `is` and `as`.
+The language server distinguishes classes, interfaces, enums, enum members, aliases and type
+parameters, including imported names and constructor calls.
+
+Unused parameters and imports produce editor warnings and fade their source ranges.
+Parameters whose names start with `_` express intentional non-use. Interface and
+external signatures have no implementation to inspect. Type-only references,
+default expressions and closure captures count as uses.
 
 Hover follows TypeScript's display conventions: enum and interface names show their
 declaration headers and documentation; enum members include their owner and value;

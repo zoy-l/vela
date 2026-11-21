@@ -23,6 +23,7 @@ struct TextPosition final {
 struct TextRange final {
   TextPosition start;
   TextPosition end;
+  bool operator==(const TextRange&) const = default;
 };
 
 // 索引与文本所有权分离；调用方始终提供建立索引时的文本，磁盘错误字节也可定位。
@@ -45,6 +46,10 @@ class SourceLineIndex final {
                                   std::size_t offset,
                                   std::size_t length,
                                   PositionEncoding encoding) const;
+  [[nodiscard]] TextRange RangeAt(std::string_view text,
+                                  SourceLocation location,
+                                  std::size_t length,
+                                  PositionEncoding encoding) const;
 
  private:
   [[nodiscard]] std::size_t LineEnd(std::string_view text, std::size_t line) const;
@@ -61,6 +66,9 @@ class SourceText final {
                                                                  PositionEncoding encoding) const;
   [[nodiscard]] TextPosition PositionAt(std::size_t offset, PositionEncoding encoding) const;
   [[nodiscard]] TextPosition PositionAt(SourceLocation location, PositionEncoding encoding) const;
+  [[nodiscard]] TextRange RangeAt(SourceLocation location,
+                                  std::size_t length,
+                                  PositionEncoding encoding) const;
   [[nodiscard]] std::expected<void, std::string> Replace(TextRange range,
                                                          std::string_view text,
                                                          PositionEncoding encoding);

@@ -115,10 +115,56 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], [".", "(", ","])
                 self.assertNotIn("signatureHelpProvider", capabilities)
                 self.assertEqual(capabilities['semanticTokensProvider']['legend'], {
-                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter'],
+                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter', 'enumMember'],
                     'tokenModifiers': ['declaration', 'defaultLibrary']})
                 self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])
+
+    def test_unused_parameter_warnings_have_precise_ranges_and_clear_after_unsaved_reads(self) -> None:
+        source = "const label = '中😀'; func ignore(value: int): void {}"
+        for encoding in ("utf-8", "utf-16"):
+            with self.subTest(encoding=encoding):
+                messages = self.session([self.open(source), self.change([{
+                    "text": source.replace("void {}", "void { print(value); }")
+                }])], encoding)
+                diagnostics = self.diagnostics(messages)
+                self.assertEqual(len(diagnostics), 2)
+                self.assertEqual(diagnostics[-1]["diagnostics"], [])
+                warnings = diagnostics[0]["diagnostics"]
+                self.assertEqual(len(warnings), 1)
+                warning = warnings[0]
+                self.assertEqual(warning["code"], "unused_parameter")
+                self.assertEqual(warning["severity"], 2)
+                self.assertEqual(warning["tags"], [1])
+                prefix = source[:source.index("value")]
+                column = (len(prefix.encode("utf-8")) if encoding == "utf-8"
+                          else len(prefix.encode("utf-16-le")) // 2)
+                self.assertEqual(warning["range"], {
+                    "start": {"line": 0, "character": column},
+                    "end": {"line": 0, "character": column + len("value")}
+                })
+
+    def test_unused_imports_distinguish_aliases_type_uses_and_shadowed_locals(self) -> None:
+        library = self.directory / "library.vela"
+        library.write_text("export class Item {}", encoding="utf-8")
+        source = ("import 'library' as types;\n"
+                  "import 'library' as spare;\n"
+                  "class Holder { value: types.Item?; }\n"
+                  "func main(): void { const spare = 1; print(spare); }")
+        messages = self.session([self.open(source), self.change([{
+            "text": source.replace("const spare = 1;", "const spare = spare.Item();")
+        }])])
+        diagnostics = self.diagnostics(messages)
+        warning = diagnostics[0]["diagnostics"]
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(warning[0]["code"], "unused_import")
+        self.assertEqual(warning[0]["severity"], 2)
+        self.assertEqual(warning[0]["tags"], [1])
+        self.assertEqual(warning[0]["range"], {
+            "start": {"line": 1, "character": 0},
+            "end": {"line": 1, "character": len("import 'library' as spare;")}
+        })
+        self.assertEqual(diagnostics[-1]["diagnostics"], [])
 
     def test_external_classes_share_imported_hover_completion_and_definition_contracts(self) -> None:
         native = self.write("counter.vela", """/// A native counter.
@@ -318,7 +364,9 @@ func main(): int {
             self.symbol_query("hover", source, argument, "argument"),
             self.symbol_query("definition", source, label, "label-definition"),
             self.symbol_query("definition", source, argument, "argument-definition")])
-        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        warnings = self.diagnostics(messages)[-1]["diagnostics"]
+        self.assertEqual([item["code"] for item in warnings], ["unused_parameter"])
+        self.assertEqual(warnings[0]["range"]["start"], {"line": 0, "character": 12})
         for identity, type_name in (("label", "int?"), ("argument", "int")):
             self.assertEqual(self.reply(messages, identity)["result"]["contents"]["value"],
                              f"```vela\n(parameter) value: {type_name}\n```")
@@ -692,6 +740,50 @@ func main(): int {
                 column = len(source[:offset].encode('utf-8')) if encoding == 'utf-8' else len(source[:offset].encode('utf-16-le')) // 2
                 self.assertIn((0, column, 4, 'class', 0), self.semantic_tokens(messages, 'disk'))
                 self.assertFalse(any(token[1] == column for token in self.semantic_tokens(messages, 'overlay')))
+
+    def test_semantic_tokens_color_enum_members_without_reclassifying_instance_fields(self) -> None:
+        (self.directory / "palette.vela").write_text(
+            "export enum Remote { light, dark }", encoding="utf-8", newline="\n")
+        source = ("import 'palette' as palette;\n"
+                  "enum Mode { light, dark }\n"
+                  "class Item { light: int = 0; }\n"
+                  "func main(): void {\n"
+                  "  const local: Mode = Mode.light;\n"
+                  "  const remote = palette.Remote.dark;\n"
+                  "  print(Item().light);\n"
+                  "}")
+        for encoding in ("utf-8", "utf-16"):
+            with self.subTest(encoding=encoding):
+                messages = self.session([self.open(source), request("textDocument/semanticTokens/full",
+                    {"textDocument": {"uri": self.uri}}, "tokens")], encoding)
+                self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+                tokens = self.semantic_tokens(messages)
+                lines = source.splitlines()
+                for line, spelling, modifiers in ((1, "light", 1), (1, "dark", 1),
+                                                  (4, "light", 0), (5, "dark", 0)):
+                    self.assertIn((line, lines[line].index(spelling), len(spelling),
+                                   "enumMember", modifiers), tokens)
+                for line in (2, 6):
+                    self.assertFalse(any(token[0] == line and token[3] == "enumMember"
+                                         for token in tokens))
+
+    def test_formatting_normalizes_enum_lists_comments_and_optional_trailing_commas(self) -> None:
+        source = "enum Color{red,blue}func main():void{call(1,// item\n2);const values=[1,2,];}"
+        messages = self.session([self.open(source), request("textDocument/formatting",
+            {"textDocument": {"uri": self.uri}}, "format")])
+        text = self.reply(messages, "format")["result"][0]["newText"]
+        self.assertEqual(text, "enum Color {\n  red,\n  blue,\n}\n\nfunc main(): void {\n"
+                         "  call(\n    1, // item\n    2,\n  );\n"
+                         "  const values = [1, 2];\n}\n")
+
+    def test_unused_import_checks_keep_enum_type_names_distinct_from_import_aliases(self) -> None:
+        (self.directory / "palette.vela").write_text(
+            "export enum Remote { red }", encoding="utf-8", newline="\n")
+        source = ("import 'palette' as Remote;\nimport 'palette' as palette;\n"
+                  "func main(): void { print(palette.Remote.red); }")
+        warnings = self.diagnostics(self.session([self.open(source)]))[-1]["diagnostics"]
+        self.assertEqual([item["code"] for item in warnings], ["unused_import"])
+        self.assertEqual(warnings[0]["range"]["start"], {"line": 0, "character": 0})
 
     def argument_completions(self, marked_source: str, encoding: str = 'utf-16') -> list[dict]:
         offset = marked_source.index('¦')
@@ -1166,7 +1258,9 @@ func main(): int {
                                  {'changes': {self.uri: expected}})
                 self.assertEqual(self.reply(messages, 'prepare')['result'], expected[-1]['range'])
                 self.assertIsNotNone(self.reply(messages, 'ordinary')['result'])
-                self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+                warnings = self.diagnostics(messages)[-1]['diagnostics']
+                self.assertEqual([item['code'] for item in warnings], ['unused_parameter'])
+                self.assertIn("'other'", warnings[0]['message'])
 
     def test_map_literal_variable_keys_rename_without_changing_string_keys(self) -> None:
         source = ("func main(): void { const key = 'answer'; "
@@ -1302,7 +1396,9 @@ func main(): int {
                     messages = self.session([self.open(source), *[
                         self.symbol_query('definition', source, offset, str(index))
                         for index, offset in enumerate(offsets)]])
-                    self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+                    warnings = self.diagnostics(messages)[-1]['diagnostics']
+                    self.assertEqual([item['code'] for item in warnings], ['unused_import'])
+                    self.assertEqual(warnings[0]['severity'], 2)
                     for index in range(len(offsets)):
                         target = self.reply(messages, str(index))['result']
                         self.assertIsNotNone(target)

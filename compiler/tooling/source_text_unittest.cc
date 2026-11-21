@@ -32,6 +32,16 @@ TEST(SourceTextTest, RejectsPositionsSplittingUnicodeAndOutOfRangeLines) {
             (TextPosition{.line = 0, .character = 1}));
 }
 
+TEST(SourceTextTest, ConvertsDiagnosticByteLengthsToUtf16RangesAcrossLines) {
+  const auto source = SourceText::Create("中😀unused\nnext");
+  ASSERT_TRUE(source);
+  const auto range = source->RangeAt(SourceLocation{.column = 8}, 8, PositionEncoding::Utf16);
+  EXPECT_EQ(range.start, (TextPosition{.character = 3}));
+  EXPECT_EQ(range.end, (TextPosition{.line = 1, .character = 1}));
+  const auto point = source->RangeAt(SourceLocation{.column = 100}, 0, PositionEncoding::Utf16);
+  EXPECT_EQ(point.start, point.end);
+}
+
 TEST(SourceTextTest, AppliesSequentialEditsAndRebuildsTheLineIndex) {
   auto source = SourceText::Create("a中😀z\r\nnext\n");
   ASSERT_TRUE(source);

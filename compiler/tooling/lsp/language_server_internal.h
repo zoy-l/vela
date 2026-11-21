@@ -49,6 +49,7 @@ inline constexpr std::string_view kNewText = "newText";
 inline constexpr std::string_view kContentChanges = "contentChanges";
 inline constexpr std::string_view kSeverity = "severity";
 inline constexpr std::string_view kCode = "code";
+inline constexpr std::string_view kTags = "tags";
 inline constexpr std::string_view kSource = "source";
 inline constexpr std::string_view kMessage = "message";
 inline constexpr std::string_view kSdkSource = "vela/sdkSource";
@@ -73,7 +74,7 @@ struct RpcCall final {
 };
 
 struct EditorDiagnostic final {
-  TextPosition position;
+  TextRange range;
   std::string message;
   frontend::DiagnosticSeverity severity;
   frontend::DiagnosticCode code;

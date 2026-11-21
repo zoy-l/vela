@@ -229,6 +229,7 @@ void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
   for (const auto& value : declaration.members) {
     const auto symbol_id = AddSymbol(value.location, CompletionKind::EnumMember,
                                      owner + '.' + value.name + " = " + std::to_string(ordinal++));
+    symbols_[symbol_id].owner = owner;
     symbols_[symbol_id].storage = frontend::MemberStorage::Static;
     members.insert_or_assign(value.name, symbol_id);
   }

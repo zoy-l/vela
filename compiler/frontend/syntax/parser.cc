@@ -1048,6 +1048,7 @@ std::unique_ptr<Expression> Parser::ParseMatch() {
       (Expect(TokenKind::LeftBrace, "expected '{' before match arms") == nullptr)) {
     return nullptr;
   }
+  AnnotatePrevious(TokenRole::MatchDelimiter);
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
     MatchArm arm;
     arm.location = Peek().location;
@@ -1082,6 +1083,7 @@ std::unique_ptr<Expression> Parser::ParseMatch() {
   if (Expect(TokenKind::RightBrace, "expected '}' after match arms") == nullptr) {
     return nullptr;
   }
+  AnnotatePrevious(TokenRole::MatchDelimiter);
   return expression;
 }
 
@@ -1170,6 +1172,7 @@ std::unique_ptr<Expression> Parser::ParseString() {
 }
 
 std::vector<CallArgument> Parser::ParseArguments() {
+  AnnotatePrevious(TokenRole::ArgumentDelimiter);
   std::vector<CallArgument> arguments;
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
     CallArgument argument;
@@ -1186,6 +1189,9 @@ std::vector<CallArgument> Parser::ParseArguments() {
     if (!Match(TokenKind::Comma)) {
       break;
     }
+  }
+  if (Check(TokenKind::RightParen)) {
+    tokens_[current_].role = TokenRole::ArgumentDelimiter;
   }
   return arguments;
 }

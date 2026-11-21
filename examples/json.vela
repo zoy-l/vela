@@ -39,3 +39,4 @@ func main(): int {
   print(integers.reduce((total, value) => total + value, 0));
   return parsed.value[0].age == 7 && output == '[{"name":"Vela","age":7}]' && integers[0] + integers[1] == 42 ? 0 : 1;
 }
+

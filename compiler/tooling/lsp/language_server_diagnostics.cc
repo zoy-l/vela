@@ -49,7 +49,7 @@ JsonOutput DiagnosticNotification(std::string_view uri) {
 yyjson_mut_val* JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic& diagnostic) {
   auto* diagnostic_object = yyjson_mut_obj(document);
   AddJsonField(document, diagnostic_object, protocol::kRange,
-               JsonRange(document, {.start = diagnostic.position, .end = diagnostic.position}));
+               JsonRange(document, diagnostic.range));
   AddJsonField(document, diagnostic_object, protocol::kSeverity,
                yyjson_mut_sint(document,
                                diagnostic.severity == frontend::DiagnosticSeverity::Error ? 1 : 2));
@@ -57,6 +57,12 @@ yyjson_mut_val* JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic&
   if (!code.empty()) {
     AddJsonField(document, diagnostic_object, protocol::kCode,
                  yyjson_mut_strncpy(document, code.data(), code.size()));
+  }
+  if (diagnostic.code == frontend::DiagnosticCode::UnusedParameter ||
+      diagnostic.code == frontend::DiagnosticCode::UnusedImport) {
+    auto* tags = yyjson_mut_arr(document);
+    yyjson_mut_arr_add_uint(document, tags, 1);
+    AddJsonField(document, diagnostic_object, protocol::kTags, tags);
   }
   AddJsonField(document, diagnostic_object, protocol::kSource, yyjson_mut_str(document, "vela"));
   AddJsonField(document, diagnostic_object, protocol::kMessage,
@@ -102,6 +108,7 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
   if (const auto cached = indices_->find(uri); cached != indices_->end()) {
     const auto& index = cached->second;
     CollectDiagnostics(index.diagnostics(), index.source_files(), path);
+    CollectDiagnostics(index.UnusedDiagnostics(), index.source_files(), path);
     return;
   }
   const auto options = compiler::LoadSourceConfiguration(Utf8Path(path));
@@ -116,6 +123,7 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
       indices_->try_emplace(std::string(uri), std::move(loaded), options->diagnostics)
           .first->second;
   CollectDiagnostics(index.diagnostics(), index.source_files(), path);
+  CollectDiagnostics(index.UnusedDiagnostics(), index.source_files(), path);
 }
 
 void DiagnosticCollection::CollectDiagnostics(std::span<const frontend::Diagnostic> diagnostics,
@@ -141,17 +149,17 @@ void DiagnosticCollection::CollectDiagnostics(std::span<const frontend::Diagnost
     const auto found = open_sources_.find(source_path);
     const auto uri =
         found == open_sources_.end() ? SourceUri(source_path) : std::string(found->second.uri);
-    TextPosition position;
+    TextRange range;
     if (found != open_sources_.end()) {
-      position = found->second.source->PositionAt(diagnostic.location, encoding_);
+      range = found->second.source->RangeAt(diagnostic.location, diagnostic.length, encoding_);
     } else if (const auto source = sources.find(source_path); source != sources.end()) {
       const auto& text = source->second->text;
       const auto index = indices.try_emplace(source->first, source->second->syntax->lines).first;
-      position = index->second.PositionAt(text, diagnostic.location, encoding_);
+      range = index->second.RangeAt(text, diagnostic.location, diagnostic.length, encoding_);
     }
     auto& bucket = buckets_.try_emplace(uri).first->second;
     bucket.push_back({
-        .position = position,
+        .range = range,
         .message = diagnostic.message,
         .severity = diagnostic.severity,
         .code = diagnostic.code,

@@ -5,20 +5,33 @@
 
 ## Formatter
 
-`vela fmt FILE` writes formatted source to standard output. `vela fmt --write FILE`
-replaces the file atomically; `vela fmt --check FILE` exits with `1` when formatting
-would change it. Syntax errors return the ordinary source diagnostics and exit `65`.
-Failed I/O returns `74`. No file is rewritten after a syntax error.
+`vela fmt FILE` writes formatted source to standard output. `vela fmt --write PATH`
+formats one file or recursively formats the `.vela` files in a directory, replacing
+each changed file atomically. `vela fmt --check PATH` lists files that need formatting
+and exits with `1` if any file differs. A directory requires `--write` or `--check`.
+
+```powershell
+out/debug/vela.exe fmt --check src
+out/debug/vela.exe fmt --write src
+```
+
+Directory traversal uses sorted paths and skips symbolic links and child directories
+named `.git`, `.cache`, `.cipd`, `out`, `third_party`, or `node_modules`.
+An empty directory succeeds. Every discovered file is processed even when another
+file has syntax errors. Syntax-invalid files remain unchanged and produce ordinary
+source diagnostics. The final exit status is `74` for an I/O failure, otherwise `65`
+for a syntax error, otherwise `1` for formatting differences in check mode, or `0`.
 
 The formatter uses the production lexer and parser. Tokens retain their raw byte
 ranges separately from decoded literal values; the parser annotates generic type
 delimiters and prefix operators. It uses two-space indentation, LF endings,
-braced blocks on multiple lines, a space after type/named-argument colons,
+compact empty blocks, a space after type/named-argument colons,
 spaces around binary operators and no spaces inside generic delimiters.
 Top-level declarations are separated by a blank line; consecutive imports stay
 together, and existing blank lines inside blocks are capped at one.
-Long parenthesized/bracketed groups use continuation
-lines at comma boundaries. This is deterministic layout, not a maximum-width
+Groups use a 100-column target with continuation lines at comma boundaries.
+Multiline parameter, argument, array, map, enum and match lists have trailing commas.
+This is deterministic layout, not a maximum-width
 guarantee for indivisible tokens or long expressions.
 
 Comments remain in source order, including trailing line comments and comments
@@ -33,7 +46,7 @@ separately even when lexed as one compound token, as in
 unresolved imports or temporarily inconsistent types can still be formatted.
 
 Map literals keep short entries on one line and use multiple lines for existing
-line breaks, trailing commas, or long entries. Empty maps remain `{}`. Colons
+line breaks or long entries. Empty maps remain `{}`. Colons
 separate key/value expressions with a following space. Required lambda parentheses,
 as in `value => ({'answer': value})`, remain intact.
 

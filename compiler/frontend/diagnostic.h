@@ -17,7 +17,12 @@ using ::vela::SourceLocation;
 
 enum class DiagnosticKind : std::uint8_t { Source, Io, Internal };
 enum class DiagnosticSeverity : std::uint8_t { Warning, Error };
-enum class DiagnosticCode : std::uint8_t { None, ImplicitDynamicConversion };
+enum class DiagnosticCode : std::uint8_t {
+  None,
+  ImplicitDynamicConversion,
+  UnusedParameter,
+  UnusedImport,
+};
 
 struct DiagnosticOptions final {
   DiagnosticSeverity implicit_dynamic_conversion = DiagnosticSeverity::Warning;
@@ -30,6 +35,7 @@ struct Diagnostic final {
   DiagnosticKind kind = DiagnosticKind::Source;
   DiagnosticSeverity severity = DiagnosticSeverity::Error;
   DiagnosticCode code = DiagnosticCode::None;
+  std::size_t length = 0;
 };
 
 using Diagnostics = std::vector<Diagnostic>;

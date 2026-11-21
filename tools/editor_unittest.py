@@ -17,8 +17,7 @@ class EditorPackagingTest(unittest.TestCase):
     def test_numeric_highlighting_covers_complete_radix_literals(self) -> None:
         grammar_path = Path(__file__).resolve().parents[1] / "editors/vscode/syntaxes/vela.tmLanguage.json"
         grammar = json.loads(grammar_path.read_text(encoding="utf-8"))
-        pattern = next(item["match"] for item in grammar["patterns"]
-                       if item.get("name") == "constant.numeric.vela")
+        pattern = grammar["repository"]["number"]["match"]
         for literal in ("0x2a", "0XFF", "0b101010", "0B01", "0o52", "0O07",
                         "42", "1.5e+2"):
             with self.subTest(literal=literal):

@@ -120,6 +120,11 @@ enum class TokenRole : std::uint8_t {
   ConditionalOperator,
   MapDelimiter,
   AttributeDelimiter,
+  ParameterDelimiter,
+  ArgumentDelimiter,
+  ArrayDelimiter,
+  EnumDelimiter,
+  MatchDelimiter,
 };
 
 [[nodiscard]] constexpr bool IsStringToken(TokenKind kind) noexcept {
