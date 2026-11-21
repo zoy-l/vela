@@ -253,6 +253,9 @@ TypeChecker::Type TypeChecker::CheckCallback(const Expression& expression,
     function_types_.erase(expected.name);
     types_.erase(expected.name);
   }
+  if (presence == CallbackPresence::Optional && actual.kind == Type::Kind::Null) {
+    return actual;
+  }
   if (actual.kind != Type::Kind::Function ||
       (actual.nullable && presence == CallbackPresence::Required)) {
     AddDiagnostic(expression.location, "callback must be a non-null function");
@@ -383,9 +386,12 @@ TypeChecker::Type TypeChecker::CheckInferenceArgument(const Expression& expressi
                                                       const Type& context,
                                                       TypeInference& inference,
                                                       CallbackArity arity) {
-  auto actual = context.kind == Type::Kind::Function
-                    ? CheckCallback(expression, function_types_.at(context.name), arity)
-                    : CheckExpression(expression, IsValid(context) ? &context : nullptr);
+  auto actual =
+      context.kind == Type::Kind::Function
+          ? CheckCallback(
+                expression, function_types_.at(NonNullable(context).name), arity,
+                context.nullable ? CallbackPresence::Optional : CallbackPresence::Required)
+          : CheckExpression(expression, IsValid(context) ? &context : nullptr);
   if (!IsValid(actual)) {
     return actual;
   }

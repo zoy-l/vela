@@ -383,14 +383,16 @@ std::vector<ExportedNominal> ExportedNominals(const ir::Program& program) {
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
     const auto& type = program.classes.at(index);
     const auto& name = program.layouts.classes.at(index).name;
-    if (IsSourceClass(type) && IsExported(program.layouts, name)) {
+    const layout::Type logical_type{
+        .kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
+                                                   : layout::Type::Kind::Instance,
+        .index = static_cast<std::uint32_t>(index),
+    };
+    // 公开模板在实现内部的特化不一定能作为宿主类型；实际公共签名仍逐项诊断私有参数。
+    if (IsSourceClass(type) && IsExported(program.layouts, name) &&
+        HostLogicalType(program.layouts, logical_type, "").has_value()) {
       result.push_back({
-          .type =
-              {
-                  .kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
-                                                             : layout::Type::Kind::Instance,
-                  .index = static_cast<std::uint32_t>(index),
-              },
+          .type = logical_type,
           .name = name,
           .alias = type.name,
           .native_key = type.native_key,
@@ -399,13 +401,14 @@ std::vector<ExportedNominal> ExportedNominals(const ir::Program& program) {
   }
   for (std::size_t index = 0; index < program.layouts.interfaces.size(); ++index) {
     const auto& name = program.layouts.interfaces[index];
-    if (IsExported(program.layouts, name)) {
+    const layout::Type logical_type{
+        .kind = layout::Type::Kind::Interface,
+        .index = static_cast<std::uint32_t>(index),
+    };
+    if (IsExported(program.layouts, name) &&
+        HostLogicalType(program.layouts, logical_type, "").has_value()) {
       result.push_back({
-          .type =
-              {
-                  .kind = layout::Type::Kind::Interface,
-                  .index = static_cast<std::uint32_t>(index),
-              },
+          .type = logical_type,
           .name = name,
           .alias = name,
           .native_key = {},
@@ -559,6 +562,14 @@ std::expected<std::string, std::string> HostLogicalType(const layout::Program& p
         return std::unexpected("public signature references a declaration that is not exported: " +
                                nominal.name);
       }
+      const auto& contract = program.nominals.at(nominal.name);
+      for (std::size_t index = 0; index < contract.arguments.size(); ++index) {
+        const auto argument = HostLogicalType(program, contract.arguments[index], name_space);
+        if (!argument) {
+          return std::unexpected(contract.name + ".argument[" + std::to_string(index) +
+                                 "]: " + argument.error());
+        }
+      }
       std::string_view wrapper = "Object";
       if (type.kind == Kind::Enum) {
         wrapper = "Enum";
@@ -572,6 +583,14 @@ std::expected<std::string, std::string> HostLogicalType(const layout::Program& p
       if (!IsExported(program, name)) {
         return std::unexpected("public signature references an interface that is not exported: " +
                                name);
+      }
+      const auto& contract = program.nominals.at(name);
+      for (std::size_t index = 0; index < contract.arguments.size(); ++index) {
+        const auto argument = HostLogicalType(program, contract.arguments[index], name_space);
+        if (!argument) {
+          return std::unexpected(contract.name + ".argument[" + std::to_string(index) +
+                                 "]: " + argument.error());
+        }
       }
       return "vela::Object<" + Tag(name, name_space) + '>';
     }

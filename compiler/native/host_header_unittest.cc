@@ -68,6 +68,25 @@ TEST(HostHeaderTest, ReportsPrivateNominalsAtThePublicGenerationBoundary) {
   EXPECT_NE(header.error().find("not exported"), std::string::npos);
 }
 
+TEST(HostHeaderTest, PrivateGenericApplicationsRemainInternalToPublicEntryBodies) {
+  const auto prepared = ir::test::Prepare(R"(
+class Props { value: int = 7; }
+export class Component<P> { props: P; }
+export interface Reader<P> { read(): P; }
+class Control extends Component<Props> implements Reader<Props> {
+  constructor() { super(props: Props()); }
+  read(): Props { return this.props; }
+}
+export func run(): int { return Control().read().value; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto header = EmitHostDeclarations(prepared.program, "application");
+  ASSERT_TRUE(header) << header.error();
+  EXPECT_NE(header->find("Entry_run"), std::string::npos);
+  EXPECT_EQ(header->find("Type_Component"), std::string::npos);
+  EXPECT_EQ(header->find("Type_Reader"), std::string::npos);
+}
+
 TEST(HostHeaderTest, RejectsPrivateGenericDependenciesAndInvalidCppNamespaces) {
   const auto prepared = ir::test::Prepare(
       "class Secret {} export class Box<T> { value: T; } "

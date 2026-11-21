@@ -3,12 +3,36 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {
 
 class BoundedInferenceTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(GenericCallbackInferenceTest, NullableCallbacksUseTheCanonicalCallableContext) {
+  const auto result = CheckTestSource(R"(
+class Props { value: int; }
+class Model {
+  value: int;
+  constructor(props: Props) { this.value = props.value; }
+}
+class Route<P, M> {
+  parameters: P;
+  create: (P) => M;
+  entered: ((P, M) => void)? = null;
+}
+func enter(props: Props, model: Model): void {}
+func main(): void {
+  const first = Route(parameters: Props(value: 1), create: Model, entered: enter);
+  const second = Route(parameters: Props(value: 2), create: Model, entered: null);
+  const optional: ((Props, Model) => void)? = enter;
+  const third = Route(parameters: Props(value: 3), create: Model, entered: optional);
+}
+)");
+  EXPECT_TRUE(result.Succeeded()) << DiagnosticsText(result.diagnostics);
+}
 
 TEST_P(BoundedInferenceTest, UsesTheSameRelationsForEvidenceBoundsAndFinalBindings) {
   const auto result = CheckTestSource(GetParam());
