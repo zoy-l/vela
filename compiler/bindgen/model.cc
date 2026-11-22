@@ -204,7 +204,6 @@ Type HostType(std::string_view key, Ownership ownership) {
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
-      .dispatch_targets = {},
   });
   return result;
 }

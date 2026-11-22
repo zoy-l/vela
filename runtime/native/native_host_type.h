@@ -49,7 +49,6 @@ template <NativeHostClass T>
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
-        .dispatch_targets = {},
     });
     return program;
   }();

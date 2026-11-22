@@ -50,7 +50,8 @@ baseline collector:
 
 Collection work is budgeted and scheduled cooperatively:
 
-- **Budget Units**: `Step` budgets count discrete objects marked or swept rather
+- **Budget Units**: `Step` budgets count discrete objects marked or swept and empty
+  allocation pages released rather
   than relying on CPU timestamps or elapsed wall-clock nanoseconds.
 - **Pacing**: As allocation pressure increases, the allocator schedules incremental GC
   steps based on allocated bytes. Indivisible work and collection at memory pressure
@@ -62,6 +63,30 @@ Collection work is budgeted and scheduled cooperatively:
 - **Thread Affinity**: All GC steps, root scans, and sweeping execute strictly
   on the owning `Isolate` thread. Multi-threaded hosts communicate across isolates
   via message queues rather than shared GC pointers.
+
+Small objects and owned array, collection, string and native scratch buffers of the
+same size class share aligned 64 KiB pages mapped directly from the operating system.
+Size classes include the midpoint between adjacent powers of two, reducing unused
+space within each slot. Each page reuses its own freed slots; full, partially occupied
+and empty pages transition in constant
+time, without enlarging object headers. Large objects retain independent allocations.
+After sweeping, the allocator releases empty pages while committed bytes exceed
+live bytes plus the greater of occupied pooled-slot bytes and the initial GC threshold.
+External-resource budgets and independent large blocks do not increase this page-cache
+budget. Partially occupied pages remain stable because live objects do not move. Each page release
+consumes one `Step` unit. `allocated_bytes()` counts active blocks and external
+storage; `committed_bytes()` also includes retained pages, page headers and padding.
+Releasing an empty page unmaps its storage instead of returning it to a malloc cache.
+These allocator counters are not process RSS or its historical peak.
+
+`NativeContext::Construct<T>` reserves a non-moving heap block containing the host
+wrapper, destructor and correctly aligned C++ payload before calling the constructor.
+The construction bundle owns that unpublished block across C++ reentry and collection;
+`Own` publishes the same address into the collector and weak host index. Dropping a
+bundle or failing publication destroys the C++ value once and releases the block.
+The inline payload is included in the block budget; reported additional host memory
+is accounted separately. Externally supplied `unique_ptr` and `shared_ptr` objects
+retain their original addresses and ownership, and are never relocated into a wrapper.
 
 ## Write Barriers and Field Stores
 

@@ -21,7 +21,6 @@ class HostMemory final {
   HostMemory& operator=(HostMemory&& other) noexcept;
 
   [[nodiscard]] bool IsReserved() const noexcept { return heap_ != nullptr; }
-  [[nodiscard]] bool IsOwnedBy(const Heap& heap) const noexcept { return heap_ == &heap; }
   [[nodiscard]] std::expected<void, ExecutionStatus> Resize(std::size_t bytes) noexcept;
 
  private:

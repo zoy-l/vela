@@ -1,6 +1,7 @@
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/code_cache_status.h"
 #include "compiler/native/compile_options.h"
+#include "runtime/native/host_callback.h"
 
 #include <atomic>
 #include <cassert>

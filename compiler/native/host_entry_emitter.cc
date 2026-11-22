@@ -605,7 +605,11 @@ void FinalizeHostEntries(llvm::Module& module,
         arrays.push_back(static_cast<unsigned>(parameter + 1));
       }
     }
-    GeneratedFunction guard{.leaf = function.host_leaf, .leaf_guard = function.host_guard};
+    GeneratedFunction guard{
+        .leaf = function.host_leaf,
+        .leaf_guard = function.host_guard,
+        .inline_scalar = {},
+    };
     EmitBoundedLeafGuard(guard, arrays);
     const auto* returned =
         llvm::cast<llvm::ReturnInst>(function.host_guard->getEntryBlock().getTerminator());

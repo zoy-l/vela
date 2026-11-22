@@ -308,7 +308,6 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
       .reference_fields = {},
       .callable = type.callable,
       .interfaces = type.interfaces,
-      .dispatch_targets = type.dispatch_targets,
   };
   switch (type.kind) {
     case Class::Kind::Instance:

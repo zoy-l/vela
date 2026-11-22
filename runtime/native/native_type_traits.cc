@@ -138,7 +138,6 @@ NativeTypeBlueprint DescribeNativeNominal(std::string_view module,
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
-      .dispatch_targets = {},
   });
   return result;
 }
@@ -154,7 +153,6 @@ NativeTypeBlueprint DescribeNativeHost(std::string_view key) {
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
-      .dispatch_targets = {},
   });
   return result;
 }

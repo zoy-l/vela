@@ -283,7 +283,7 @@ TEST(StringGcTest, BuilderAccountsExternalStorageAndReleasesItOnCollection) {
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), 0U);
   EXPECT_EQ(heap.object_count(), 0U);
-  EXPECT_EQ(heap.committed_bytes(), initial);
+  EXPECT_EQ(heap.committed_bytes(), 0U);
 }
 
 TEST(StringGcTest, BuilderGrowthIsGeometricAndSnapshotsOwnIndependentStorage) {

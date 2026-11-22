@@ -215,7 +215,6 @@ Type ImportType(Program& target, const Program& source, const Type& type) {
           .reference_fields = {},
           .callable = {},
           .interfaces = {},
-          .dispatch_targets = {},
       });
       break;
     }

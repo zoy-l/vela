@@ -19,6 +19,7 @@
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/value/value.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -99,7 +100,7 @@ void Cpp(benchmark::State& state, native_call::Case problem) {
       } else if constexpr (Case == Workload::Double) {
         sum += invoke(static_cast<double>(index));
       } else if constexpr (Case == Workload::Boolean) {
-        sum += static_cast<std::int64_t>(invoke((index & 1) == 0));
+        sum += static_cast<std::int64_t>(invoke(index % 2 == 0));
       } else {
         sum += invoke(problem.text);
       }

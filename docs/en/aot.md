@@ -185,7 +185,15 @@ Internal `dynamic` values and signatures do not by themselves retain every class
 method. Dynamic constraints crossing selected exports or native imports propagate
 through fields, arrays, collections, callbacks, and Future payloads. Unknown host
 values and operations that resolve arbitrary dynamic calls conservatively retain
-their member closure. Function/member pruning preserves type and layout indices.
+their member closure. Pruning also removes implementation classes that are neither
+created nor referenced by any retained structural, host, or reflection type contract.
+Class references in creation instructions, layout constraints, and bound member
+descriptions are remapped together; runtime type indices remain stable. Base classes
+remain available for nominal subtype checks. Method dispatch belongs to the program
+image rather than the type-layout graph. Its selector table stores only the range
+between its first and last targets, with the first selector recorded separately.
+Selector identities stay unchanged; entries outside that range and holes inside it
+keep the same type-error behavior.
 
 ## Async lowering
 

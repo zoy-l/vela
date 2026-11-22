@@ -3,16 +3,19 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "base/callable.h"
+#include "base/layout_description.h"
 #include "base/opcode.h"
 #include "base/reflection.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -23,9 +26,11 @@
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/native/native_image_data.h"
 #include "compiler/test_support/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/program_layouts.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -55,6 +60,16 @@ export func main(): int { return polymorphic(Base()) + exact() + unique(Solo());
   auto& program = prepared.program;
   std::optional<std::uint32_t> main;
   PruneNativeProgram(program, main);
+  const auto image = native::DescribeNativeImage(program);
+  const auto classes = image->image()->classes.values();
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    const auto& description = classes[index];
+    const auto& targets = program.classes[index].dispatch_targets;
+    for (std::size_t selector = 0; selector < targets.size(); ++selector) {
+      EXPECT_EQ(description.VirtualTarget(static_cast<std::uint32_t>(selector)), targets[selector]);
+    }
+    EXPECT_EQ(description.VirtualTarget(runtime::kNoNativeIndex), runtime::kNoNativeIndex);
+  }
   EXPECT_FALSE(std::ranges::any_of(
       program.functions, [](const auto& function) { return function.name == "Base.unused"; }));
   DevirtualizeNativeCalls(program);
@@ -179,6 +194,51 @@ TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDesc
   runtime::LayoutCache cache;
   const auto layouts = runtime::InstantiateLayouts(prepared.program.layouts, isolate, cache);
   EXPECT_FALSE(layouts.classes.empty());
+}
+
+TEST(ReachabilityTest, CompactClassesPreserveCreatedObjectsAndStructuralTypeContracts) {
+  auto prepared = ir::test::Prepare(R"(
+func unused(value: int): () => int { return () => value; }
+class Box { value: int; }
+func capture(value: int): () => int { return () => value; }
+export func main(): int {
+  const boxes: Box[] = [Box(value: 21)];
+  const values = Map<string, Box>();
+  values.set('value', boxes[0]);
+  return capture(21)() + (values.get('value') as Box).value;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto original = prepared.program;
+  auto& program = prepared.program;
+  PruneMain(program);
+  EXPECT_LT(program.classes.size(), original.classes.size());
+  EXPECT_EQ(program.classes.size(), program.layouts.classes.size());
+  for (const auto& function : program.functions) {
+    const auto before = std::ranges::find(original.functions, function.name, &ir::Function::name);
+    ASSERT_NE(before, original.functions.end());
+    std::vector<std::string> expected;
+    std::vector<std::string> actual;
+    for (const auto& instruction : before->instructions) {
+      if (instruction.opcode == Opcode::NewInstance) {
+        expected.push_back(original.classes.at(instruction.index).name);
+      }
+    }
+    for (const auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::NewInstance) {
+        actual.push_back(program.classes.at(instruction.index).name);
+      }
+    }
+    EXPECT_EQ(actual, expected) << function.name;
+  }
+  for (std::size_t index = 0; index < program.layouts.types.size(); ++index) {
+    EXPECT_EQ(layout::TypeKey(program.layouts, program.layouts.types[index]),
+              layout::TypeKey(original.layouts, original.layouts.types[index]));
+  }
+  runtime::Isolate isolate;
+  runtime::LayoutCache cache;
+  const auto layouts = runtime::InstantiateLayouts(program.layouts, isolate, cache);
+  EXPECT_EQ(layouts.classes.size(), program.classes.size());
 }
 
 TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionIdentities) {

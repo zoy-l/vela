@@ -1338,9 +1338,11 @@ export func optionalSet(left: Set<int>?, right: Set<int>?): bool { return left !
   ASSERT_TRUE(prepared.Succeeded());
   for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
     const auto result =
-        Compile(prepared.program, {.optimization = optimization,
-                                   .exports = {"map", "set", "optionalMap", "optionalSet"},
-                                   .preserve_ir = true});
+        Compile(prepared.program, {
+                                      .optimization = optimization,
+                                      .exports = {"map", "set", "optionalMap", "optionalSet"},
+                                      .preserve_ir = true,
+                                  });
     ASSERT_TRUE(result.has_value()) << result.error().front().message;
     EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_equal"), std::string::npos);
     EXPECT_NE(result->llvm_ir.find("icmp eq ptr"), std::string::npos);
@@ -1427,6 +1429,25 @@ export func sum(values: double[]): double {
     }
   });
   EXPECT_GT(loop_blocks, 0U);
+}
+
+TEST(NativeCompilerTest, PrunesVirtualOverridesAfterCallsBecomeDirect) {
+  const auto prepared = Prepare(R"(
+class Base { read(): int { return 42; } }
+class Child extends Base { override read(): int { return 0; } }
+export func main(): int {
+  const unused = Child();
+  return Base().read();
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"main"}});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  const auto& functions = result->program.functions;
+  EXPECT_FALSE(std::ranges::any_of(
+      functions, [](const auto& function) { return function.name == "Child.read"; }));
+  EXPECT_TRUE(std::ranges::any_of(
+      functions, [](const auto& function) { return function.name == "Base.read"; }));
 }
 
 TEST(NativeCompilerTest, NumericParsingUsesTheSharedParserWithoutGenericBuiltinDispatch) {

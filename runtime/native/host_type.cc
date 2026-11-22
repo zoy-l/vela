@@ -3,6 +3,7 @@
 #include "runtime/isolate/external_resources.h"
 
 #include <cassert>
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <utility>

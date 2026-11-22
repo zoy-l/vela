@@ -228,6 +228,8 @@ llvm::Constant* EmitConstantTable(llvm::Module& module,
     auto* contents = llvm::ConstantArray::get(type, values);
     auto* global = new llvm::GlobalVariable(module, type, true, llvm::GlobalValue::PrivateLinkage,
                                             contents, name);
+    // 描述表按值消费，没有地址身份；允许 LLVM 合并泛型实例产生的相同不可变表。
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     data = global;
   }
   return llvm::ConstantStruct::get(

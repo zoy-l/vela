@@ -541,7 +541,7 @@ std::optional<runtime::NativeInlineScalarOperand> ResolveScalarCallbackOperand(
     return std::nullopt;
   }
   const auto right = flow.origins[operation.rhs];
-  if (left != parameter && !(operation.opcode == Opcode::AddInt && right == parameter)) {
+  if (left != parameter && (operation.opcode != Opcode::AddInt || right != parameter)) {
     return std::nullopt;
   }
   const auto operand = flow.OriginDefinition(left == parameter ? operation.rhs : operation.lhs);
@@ -552,7 +552,8 @@ std::optional<runtime::NativeInlineScalarOperand> ResolveScalarCallbackOperand(
   const auto& source = instructions[*operand];
   if (source.opcode == Opcode::LoadDouble && operation.opcode == Opcode::AddDouble) {
     return runtime::NativeInlineScalarOperand{
-        .bits = std::bit_cast<std::uint64_t>(function.doubles.at(source.index))};
+        .bits = std::bit_cast<std::uint64_t>(function.doubles.at(source.index)),
+    };
   }
   if (source.opcode == Opcode::GetField && operation.opcode == Opcode::AddInt) {
     return ScalarCapture(instructions, flow, source);
@@ -644,6 +645,36 @@ std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
   return needed;
 }
 
+void AddCallbackLeafEntries(llvm::Module& module,
+                            const std::string& prefix,
+                            const ir::Function& function,
+                            LeafKind kind,
+                            GeneratedFunction& baseline,
+                            GeneratedFunction& current) {
+  if (kind == LeafKind::None) {
+    return;
+  }
+  AddLeafEntry(module, prefix, function, kind, current);
+  baseline.leaf = current.leaf;
+  baseline.leaf_guard = current.leaf_guard;
+  baseline.budgeted_recursion = current.budgeted_recursion;
+  if (kind != LeafKind::Bounded || current.inline_scalar || !IsIntegerCallback(function)) {
+    return;
+  }
+  auto& context = module.getContext();
+  auto* integer = llvm::Type::getInt64Ty(context);
+  const auto& target = module.getTargetTriple();
+  llvm::Type* result = llvm::Type::getInt128Ty(context);
+  if (target.isOSWindows() && target.getArch() == llvm::Triple::x86_64) {
+    result = llvm::FixedVectorType::get(integer, 2);
+  }
+  auto* signature =
+      llvm::FunctionType::get(result, {integer, llvm::PointerType::getUnqual(context)}, false);
+  current.integer_callback = llvm::Function::Create(signature, llvm::GlobalValue::InternalLinkage,
+                                                    prefix + "_integer_callback", module);
+  baseline.integer_callback = current.integer_callback;
+}
+
 std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     llvm::Module& module,
     const ir::Program& program,
@@ -697,6 +728,13 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         llvm::Type::getInt8Ty(context), {pointer, pointer, pointer, pointer, pointer}, false);
     auto* reflection = llvm::Function::Create(reflection_type, llvm::GlobalValue::InternalLinkage,
                                               symbol("_reflection_"), module);
+    if (placement == NativeCodePlacement::Linked && module.getTargetTriple().isOSBinFormatMachO()) {
+      // 边界包装与 typed 主体分段，避免执行内部调用时一并驻留未调用的包装。
+      // 只改变 Mach-O 的代码放置，不把动态回调标记为 cold 或改变其调用契约。
+      constexpr auto* kBoundarySection = "__TEXT,__vela_entry,regular,pure_instructions";
+      entry->setSection(kBoundarySection);
+      reflection->setSection(kBoundarySection);
+    }
     auto* resume = AddResumeEntry(module, function, symbol("_resume_"));
     GeneratedFunction baseline{
         .body = body,
@@ -714,24 +752,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     }
     const auto inlining =
         PlanInlining(function, index, program.native_mode, debugging, placement, tier);
-    if (inlining.leaf != LeafKind::None) {
-      AddLeafEntry(module, prefix, function, inlining.leaf, current);
-      baseline.leaf = current.leaf;
-      baseline.leaf_guard = current.leaf_guard;
-      baseline.budgeted_recursion = current.budgeted_recursion;
-    }
-    if (inlining.leaf == LeafKind::Bounded && !operand && IsIntegerCallback(function)) {
-      auto* integer = llvm::Type::getInt64Ty(context);
-      const auto& target = module.getTargetTriple();
-      llvm::Type* result = llvm::Type::getInt128Ty(context);
-      if (target.isOSWindows() && target.getArch() == llvm::Triple::x86_64) {
-        result = llvm::FixedVectorType::get(integer, 2);
-      }
-      auto* signature = llvm::FunctionType::get(result, {integer, pointer}, false);
-      current.integer_callback = llvm::Function::Create(
-          signature, llvm::GlobalValue::InternalLinkage, symbol("_integer_callback_"), module);
-      baseline.integer_callback = current.integer_callback;
-    }
+    AddCallbackLeafEntries(module, prefix, function, inlining.leaf, baseline, current);
     if (inlining.enabled) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
       current.body->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -1052,10 +1073,12 @@ std::expected<llvm::Constant*, std::string> EmitModuleImage(
     BindDynamicEntries(output, entries, optimized);
   } else {
     const auto emitted = EmitNativeImage(module, *description->image(),
-                                         {.external = entries,
-                                          .reflection = reflection_entries,
-                                          .host = host_entries,
-                                          .integer_callbacks = callbacks},
+                                         {
+                                             .external = entries,
+                                             .reflection = reflection_entries,
+                                             .host = host_entries,
+                                             .integer_callbacks = callbacks,
+                                         },
                                          module_name);
     if (!emitted) {
       return std::unexpected(emitted.error());

@@ -151,7 +151,9 @@ class Isolate final {
   absl::flat_hash_map<std::string, NativeClassBinding> native_classes_;
   bool bindings_frozen_ = false;
   struct NativeImageCache final {
-    LayoutCache layouts;
+    // 封闭映像的编号不再变化；缓存实例化结果，不保留解析期间按名称建立的索引。
+    ProgramLayouts layouts;
+    const CodeIdentity* code_identity = nullptr;
     std::weak_ptr<const NativeImage> owner;
     bool static_lifetime = true;
   };

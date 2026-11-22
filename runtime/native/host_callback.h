@@ -24,7 +24,8 @@ struct NativeInlineScalarOperand final {
 
 // 低半部保存完整的整数结果，高半部保存状态。编译器按目标平台使用 Clang 的整数 ABI。
 using NativeIntegerCallbackResult = unsigned __int128;
-inline constexpr auto kIntegerCallbackResultBits = std::numeric_limits<std::uint64_t>::digits;
+inline constexpr auto kIntegerCallbackResultBits =
+    static_cast<unsigned>(std::numeric_limits<std::uint64_t>::digits);
 using NativeIntegerCallback =
     NativeIntegerCallbackResult (*)(std::int64_t argument,
                                     const NativeControlState* control) noexcept;
@@ -45,17 +46,17 @@ struct BoundScalarCallback final {
   template <class T>
   [[nodiscard]] std::optional<T> Try(T argument) const noexcept {
     if (operand != nullptr) [[likely]] {
-      std::byte stack_slot;
+      std::byte stack_slot{};
       const auto position = std::bit_cast<std::uintptr_t>(&stack_slot);
       const auto pending = requests->load(std::memory_order_relaxed);
       const auto active = std::bit_cast<std::uintptr_t>(control->host_execution);
       if ((active | static_cast<std::uintptr_t>(pending)) != 0 || position <= stack_limit) {
         return std::nullopt;
       }
-      std::uint64_t bits;
+      std::uint64_t bits = 0;
       std::memcpy(&bits, operand, sizeof(bits));
       if constexpr (std::is_same_v<T, std::int64_t>) {
-        std::int64_t result;
+        std::int64_t result = 0;
         if (__builtin_add_overflow(argument, std::bit_cast<std::int64_t>(bits), &result)) {
           return std::nullopt;
         }

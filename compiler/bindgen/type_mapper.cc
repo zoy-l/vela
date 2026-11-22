@@ -362,7 +362,6 @@ MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
-        .dispatch_targets = {},
     });
   }
   return result;

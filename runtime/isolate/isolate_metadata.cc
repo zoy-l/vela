@@ -75,6 +75,7 @@ void Isolate::CollectNativeMetadata() {
   MarkPersistent(code_identities_, native_metadata_.code_identities, tracer);
   for (const auto& [image, cache] : native_images_) {
     tracer.Mark(cache.layouts);
+    tracer.Mark(cache.code_identity);
   }
   heap_.TraceNativeMetadata(tracer);
   native_dispatch_.TraceMetadata(tracer);

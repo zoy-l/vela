@@ -72,7 +72,9 @@ struct NativeProgramState final {
   absl::flat_hash_map<std::pair<const NominalType*, std::string_view>, std::uint32_t> enum_members;
   absl::flat_hash_map<const layout::Program*, TypeConstraint> native_future_types;
   const CodeIdentity* code_identity = nullptr;
-  std::vector<CallSignature> signatures;
+  // 映像已拥有所有参数描述；仅动态/宿主调用需要带名称索引的拥有型契约。
+  // 稀疏缓存随版本存活，普通直接调用不复制整个程序的签名和参数字符串。
+  std::vector<std::unique_ptr<CallSignature>> call_signatures;
   // 固定索引表直接借用已验证描述符；稀疏所有者保活绑定，两者随本状态一同释放。
   const NativeFunction::AotEntry** imports = nullptr;
   std::vector<std::shared_ptr<const NativeFunction>> import_owners;

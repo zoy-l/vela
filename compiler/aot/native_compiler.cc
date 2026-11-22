@@ -131,6 +131,9 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
   ElideNativeResultBindings(program);
   DevirtualizeNativeCalls(program);
   BindNativeReflectedMembers(program);
+  // 去虚拟化和反射绑定已收窄真实调用边；发布前按最终 IR 重新裁剪，
+  // 不让初始 selector 闭包继续保留不再可调用的函数体与原生入口。
+  PruneNativeProgram(program, main);
   if (main) {
     if (const auto imports = CheckStandaloneImports(program); !imports) {
       return std::unexpected(imports.error());

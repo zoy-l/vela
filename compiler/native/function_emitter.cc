@@ -35,6 +35,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
@@ -48,6 +49,7 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_deoptimization.h"
@@ -1116,9 +1118,11 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
           .kind = NativeEntryKind::Leaf,
           .tier = NativeCodeTier::Baseline,
       },
-      EntryBody{.function = function.integer_callback,
-                .kind = NativeEntryKind::IntegerCallback,
-                .tier = NativeCodeTier::Baseline},
+      EntryBody{
+          .function = function.integer_callback,
+          .kind = NativeEntryKind::IntegerCallback,
+          .tier = NativeCodeTier::Baseline,
+      },
       EntryBody{.function = function.host_leaf, .kind = NativeEntryKind::HostLeaf, .tier = tier},
       EntryBody{.function = function.resume, .kind = NativeEntryKind::Resume, .tier = tier},
       EntryBody{

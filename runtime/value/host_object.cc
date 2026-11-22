@@ -3,12 +3,30 @@
 #include <memory>
 #include <utility>
 
+#include "runtime/heap/heap.h"
 #include "runtime/heap/host_memory.h"
+#include "runtime/value/object.h"
 
 namespace vela::runtime {
 
-HostObjectStorage::HostObjectStorage(void* pointer, Destructor destroy, HostMemory memory) noexcept
-    : memory_(std::move(memory)), pointer_(pointer), destroy_(destroy) {}
+HostConstruction::HostConstruction(Heap& heap, HeapObject& object) noexcept
+    : heap_(&heap), object_(&object) {}
+
+HostConstruction::~HostConstruction() {
+  if (object_ != nullptr) {
+    heap_->DiscardHostConstruction(*object_);
+  }
+}
+
+HostConstruction::HostConstruction(HostConstruction&& other) noexcept
+    : heap_(other.heap_), object_(std::exchange(other.object_, nullptr)) {}
+
+void* HostConstruction::pointer() const noexcept {
+  return HostObjectPointer(*object_);
+}
+
+HostObjectStorage::HostObjectStorage(void* pointer, Destructor destroy) noexcept
+    : pointer_(pointer), destroy_(destroy) {}
 
 HostObjectStorage::HostObjectStorage(std::shared_ptr<void> shared) noexcept
     : pointer_(shared.get()), shared_(std::move(shared)) {}

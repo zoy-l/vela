@@ -19,8 +19,10 @@
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
 #include "runtime/exceptions/exception.h"
+#include "runtime/heap/block_page_memory.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
+#include "runtime/heap/intrusive_link_internal.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
@@ -34,6 +36,10 @@ namespace {
 struct alignas(std::max_align_t) NativeHeader final {
   std::size_t size;
 };
+
+// 同类对象集中在独立页，回收时整页归还，避免系统小对象分配器保留历史碎片。
+// 页对齐使对象可以在不扩充其头部的情况下定位所属页；大对象仍独立分配。
+constexpr auto kBlockPageBytes = internal::kHeapBlockPageBytes;
 
 }  // namespace
 
@@ -96,9 +102,18 @@ void* Heap::AllocateExternal(std::size_t bytes, std::size_t replaced_bytes) noex
   if (!CanAllocate(bytes - replaced_bytes)) {
     return nullptr;
   }
-  auto* memory = ::operator new(bytes, std::nothrow);
+  const auto class_index = SelectBlockClass(bytes).second;
+  void* memory = nullptr;
+  if (class_index < available_pages_.size()) {
+    memory = AllocatePooledBlock(class_index);
+  } else {
+    memory = ::operator new(bytes, std::nothrow);
+    if (memory != nullptr) {
+      committed_bytes_ += bytes;
+    }
+  }
   if (memory != nullptr) {
-    RecordExternalAllocation(bytes);
+    RecordAllocation(bytes);
   }
   return memory;
 }
@@ -155,8 +170,17 @@ void Heap::FreeNative(void* pointer) noexcept {
 }
 
 void Heap::ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept {
-  ReleaseHostMemory(bytes);
-  ::operator delete(storage);
+  if (storage == nullptr) {
+    return;
+  }
+  allocated_bytes_ -= bytes;
+  const auto class_index = SelectBlockClass(bytes).second;
+  if (class_index < available_pages_.size()) {
+    ReleasePooledBlock(storage, class_index);
+  } else {
+    committed_bytes_ -= bytes;
+    ::operator delete(storage);
+  }
 }
 
 HeapObject* Heap::AllocateFuture(Future future) noexcept {
@@ -301,6 +325,10 @@ void Heap::Step(std::size_t work_budget) noexcept {
 
     HeapObject* object = *sweep_link_;
     if (object == nullptr) {
+      work_budget = ReleaseExcessCachedPages(work_budget);
+      if (work_budget == 0) {
+        return;
+      }
       FinishSweep();
       continue;
     }
@@ -498,21 +526,16 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   }
   void* memory = nullptr;
 
-  if (class_index < free_blocks_.size()) {
-    auto& free_block = std::span(free_blocks_).subspan(class_index).front();
-    if (free_block != nullptr) {
-      FreeBlock* block = free_block;
-      free_block = block->next;
-      memory = block;
-      std::destroy_at(block);
+  if (class_index < available_pages_.size()) {
+    memory = AllocatePooledBlock(class_index);
+  } else {
+    memory = ::operator new(block_size, std::nothrow);
+    if (memory != nullptr) {
+      committed_bytes_ += block_size;
     }
   }
   if (memory == nullptr) {
-    memory = ::operator new(block_size, std::nothrow);
-    if (memory == nullptr) {
-      return {};
-    }
-    committed_bytes_ += block_size;
+    return {};
   }
 
   RecordAllocation(block_size);
@@ -523,8 +546,62 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   };
 }
 
+void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
+  auto& available = available_pages_[class_index];
+  auto* page = available;
+  if (page == nullptr) {
+    page = empty_pages_[class_index];
+    if (page != nullptr) {
+      internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
+    } else {
+      auto* memory = internal::AllocateHeapBlockPage();
+      if (memory == nullptr) {
+        return nullptr;
+      }
+      page = std::construct_at(static_cast<BlockPage*>(memory));
+      committed_bytes_ += kBlockPageBytes;
+    }
+    internal::PrependIntrusive(*page, available, &BlockPage::next, &BlockPage::previous_link);
+  }
+  const auto block_size = kSizeClasses[class_index];
+  void* memory = nullptr;
+  if (auto* block = page->free_blocks) {
+    page->free_blocks = block->next;
+    memory = block;
+    std::destroy_at(block);
+  } else {
+    auto storage = std::span(std::as_writable_bytes(std::span(page, 1)).data(), kBlockPageBytes);
+    memory = storage.subspan(sizeof(BlockPage) + (page->initialized * block_size)).data();
+    ++page->initialized;
+  }
+  ++page->used;
+  pooled_live_bytes_ += block_size;
+  if (page->used == (kBlockPageBytes - sizeof(BlockPage)) / block_size) {
+    internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
+  }
+  return memory;
+}
+
+void Heap::ReleasePooledBlock(void* memory, std::size_t class_index) noexcept {
+  pooled_live_bytes_ -= kSizeClasses[class_index];
+  const auto address = std::bit_cast<std::uintptr_t>(memory) & ~(kBlockPageBytes - 1U);
+  auto* page = std::bit_cast<BlockPage*>(address);
+  const auto capacity = (kBlockPageBytes - sizeof(BlockPage)) / kSizeClasses[class_index];
+  if (page->used == capacity) {
+    internal::PrependIntrusive(*page, available_pages_[class_index], &BlockPage::next,
+                               &BlockPage::previous_link);
+  }
+  page->free_blocks = std::construct_at(static_cast<FreeBlock*>(memory), page->free_blocks);
+  --page->used;
+  if (page->used == 0U) {
+    internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
+    internal::PrependIntrusive(*page, empty_pages_[class_index], &BlockPage::next,
+                               &BlockPage::previous_link);
+  }
+}
+
 void Heap::ReleaseRaw(HeapObject& object) noexcept {
-  const std::size_t block_size = object.allocation_size;
+  const auto block_size = object.allocation_size;
   const auto class_index = object.size_class;
   allocated_bytes_ -= block_size;
 
@@ -577,14 +654,17 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。
   std::destroy_at(&object);
-  if (class_index < free_blocks_.size()) {
-    auto& free_block = std::span(free_blocks_).subspan(class_index).front();
-    free_block = std::construct_at(static_cast<FreeBlock*>(memory), free_block);
+  ReleaseBlock({.memory = memory, .size = block_size, .size_class = class_index});
+}
+
+void Heap::ReleaseBlock(const Allocation& allocation) noexcept {
+  if (allocation.size_class < available_pages_.size()) {
+    ReleasePooledBlock(allocation.memory, allocation.size_class);
     return;
   }
 
-  committed_bytes_ -= block_size;
-  ::operator delete(memory);
+  committed_bytes_ -= allocation.size;
+  ::operator delete(allocation.memory);
 }
 
 std::pair<std::size_t, std::size_t> Heap::SelectBlockClass(std::size_t requested_size) noexcept {
@@ -592,7 +672,13 @@ std::pair<std::size_t, std::size_t> Heap::SelectBlockClass(std::size_t requested
     return {requested_size, kSizeClasses.size()};
   }
   const auto block_size = std::bit_ceil(std::max(requested_size, kSizeClasses.front()));
-  return {block_size, std::bit_width(block_size) - std::bit_width(kSizeClasses.front())};
+  auto class_index =
+      static_cast<std::size_t>(std::bit_width(block_size) - std::bit_width(kSizeClasses.front())) *
+      2U;
+  if (class_index != 0U && requested_size <= kSizeClasses[class_index - 1U]) {
+    --class_index;
+  }
+  return {kSizeClasses[class_index], class_index};
 }
 
 bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
@@ -611,6 +697,28 @@ void Heap::MaybeCollect(std::size_t next_size) noexcept {
   if (IsCollecting() && gc_scheduling_ == GcScheduling::kAutomatic) {
     Step(kAutomaticWork);
   }
+}
+
+void Heap::ReleasePage(BlockPage& page) noexcept {
+  internal::UnlinkIntrusive(page, &BlockPage::next, &BlockPage::previous_link);
+  std::destroy_at(&page);
+  internal::ReleaseHeapBlockPage(&page);
+  committed_bytes_ -= kBlockPageBytes;
+}
+
+std::size_t Heap::ReleaseExcessCachedPages(std::size_t work_budget) noexcept {
+  // 复用预算只跟随池中活槽；原生资源压力和独立大块不会复用小对象页，不能放大缓存。
+  // 释放也消耗增量工作预算，页面卸载不会把历史高峰变成一次同步清理停顿。
+  const auto cache_budget = std::max(minimum_gc_threshold_, pooled_live_bytes_);
+  for (std::size_t index = empty_pages_.size(); index != 0 && work_budget != 0; --index) {
+    auto& head = empty_pages_[index - 1U];
+    while (head != nullptr && committed_bytes_ - allocated_bytes_ > cache_budget &&
+           work_budget != 0) {
+      ReleasePage(*head);
+      --work_budget;
+    }
+  }
+  return work_budget;
 }
 
 void Heap::FinishSweep() noexcept {
@@ -641,14 +749,9 @@ void Heap::DestroyAll() noexcept {
   object_count_ = 0;
   ReleaseRetiredNativePrograms();
 
-  for (std::size_t index = 0; index < free_blocks_.size(); ++index) {
-    FreeBlock*& block = std::span(free_blocks_).subspan(index).front();
-    while (block != nullptr) {
-      FreeBlock* next = block->next;
-      committed_bytes_ -= kSizeClasses.at(index);
-      std::destroy_at(block);
-      ::operator delete(block);
-      block = next;
+  for (auto& page : empty_pages_) {
+    while (page != nullptr) {
+      ReleasePage(*page);
     }
   }
   assert(allocated_bytes_ == 0);

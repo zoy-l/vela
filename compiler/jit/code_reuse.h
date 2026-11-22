@@ -12,6 +12,7 @@
 #include "base/fingerprint.h"
 #include "compiler/jit/code_inputs.h"
 #include "compiler/native/native_roots.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
 
 namespace llvm {

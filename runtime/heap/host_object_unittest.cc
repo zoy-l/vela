@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -26,6 +27,10 @@ namespace {
 
 struct TrackedHost final {
   explicit TrackedHost(std::uint32_t& destroyed) noexcept : destroyed(&destroyed) { ++constructed; }
+  TrackedHost(Heap& heap, std::uint32_t& destroyed) noexcept : destroyed(&destroyed) {
+    heap.Collect();
+    ++constructed;
+  }
   ~TrackedHost() { ++*destroyed; }
   TrackedHost(const TrackedHost&) = delete;
   TrackedHost& operator=(const TrackedHost&) = delete;
@@ -33,6 +38,17 @@ struct TrackedHost final {
   TrackedHost& operator=(TrackedHost&&) = delete;
   std::uint32_t* destroyed;
   inline static std::uint32_t constructed = 0;
+};
+
+constexpr std::size_t kOverAlignedHostAlignment = 64U;
+struct alignas(kOverAlignedHostAlignment) AlignedHost final {
+  explicit AlignedHost(std::uint32_t& destroyed) noexcept : destroyed(&destroyed) {}
+  ~AlignedHost() { ++*destroyed; }
+  AlignedHost(const AlignedHost&) = delete;
+  AlignedHost& operator=(const AlignedHost&) = delete;
+  AlignedHost(AlignedHost&&) = delete;
+  AlignedHost& operator=(AlignedHost&&) = delete;
+  std::uint32_t* destroyed;
 };
 
 void DeleteHost(void* pointer) noexcept {
@@ -44,6 +60,11 @@ void DeleteHost(void* pointer) noexcept {
 template <>
 struct NativeClassTraits<TrackedHost> final {
   static constexpr std::string_view kKey = "test.Tracked";
+};
+
+template <>
+struct NativeClassTraits<AlignedHost> final {
+  static constexpr std::string_view kKey = "test.Aligned";
 };
 
 namespace {
@@ -265,7 +286,7 @@ TEST_F(HostObjectTest, WrapperPublicationSurvivesCollectionOfTheLastIndexedObjec
   ASSERT_TRUE(context.Own(std::move(*first)));
   auto next = context.Construct<TrackedHost>(destroyed_);
   ASSERT_TRUE(next);
-  auto* pointer = next->value.get();
+  auto* pointer = next->value;
 
   heap.StartCollection();
   const auto wrapped = context.Own(std::move(*next));
@@ -292,8 +313,54 @@ TEST_F(HostObjectTest, ConstructionReservesBudgetBeforeCallingCppAndReleasesFail
     auto bundle = context.Construct<TrackedHost>(destroyed_);
     ASSERT_TRUE(bundle);
     EXPECT_EQ(TrackedHost::constructed, before + 1);
-    EXPECT_EQ(heap.allocated_bytes(), sizeof(TrackedHost));
+    EXPECT_GE(heap.allocated_bytes(), sizeof(TrackedHost));
   }
+  EXPECT_EQ(destroyed_, 1U);
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST_F(HostObjectTest, InlineConstructionSurvivesCppReentryAndKeepsItsAddressAfterPublication) {
+  auto& heap = isolate_.heap();
+  const NativeContext context(isolate_);
+  auto bundle = context.Construct<TrackedHost>(heap, destroyed_);
+  ASSERT_TRUE(bundle);
+  auto* pointer = bundle->value;
+  heap.Collect();
+  EXPECT_EQ(pointer->destroyed, &destroyed_);
+  EXPECT_EQ(destroyed_, 0U);
+  auto wrapped = context.Own(std::move(*bundle));
+  ASSERT_TRUE(wrapped);
+  auto value = *wrapped;
+  const RootRange roots(heap, &value, 1U);
+  heap.Collect();
+  EXPECT_EQ(HostObjectPointer(*value.AsObject()), pointer);
+  EXPECT_EQ(destroyed_, 0U);
+  value = Value::Null();
+  heap.Collect();
+  EXPECT_EQ(destroyed_, 1U);
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST_F(HostObjectTest, InlineConstructionPreservesOverAlignedPayloadAndExternalOwnershipConflicts) {
+  std::vector<NativeClass> module;
+  module.push_back(NativeClass::Define<AlignedHost>({}));
+  ASSERT_TRUE(isolate_.RegisterNativeModule(std::move(module)));
+  auto& heap = isolate_.heap();
+  const NativeContext context(isolate_);
+  auto bundle = context.Construct<AlignedHost>(destroyed_);
+  ASSERT_TRUE(bundle);
+  auto* pointer = bundle->value;
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(pointer) % alignof(AlignedHost), 0U);
+  auto owned = context.Own(std::move(*bundle));
+  ASSERT_TRUE(owned);
+  auto value = *owned;
+  const RootRange roots(heap, &value, 1U);
+  EXPECT_FALSE(context.Own(std::unique_ptr<AlignedHost>(pointer)));
+  EXPECT_EQ(destroyed_, 0U);
+  EXPECT_EQ(HostObjectPointer(*value.AsObject()), pointer);
+  ASSERT_TRUE(context.ReportExternalMemory(*pointer, sizeof(AlignedHost)));
+  value = Value::Null();
+  heap.Collect();
   EXPECT_EQ(destroyed_, 1U);
   EXPECT_EQ(heap.allocated_bytes(), 0U);
 }

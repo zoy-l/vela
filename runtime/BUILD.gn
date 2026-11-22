@@ -92,6 +92,7 @@ source_set("runtime") {
     "exceptions/exception.cc",
     "exceptions/exception.h",
     "heap/array_storage.h",
+    "heap/block_page_memory.h",
     "heap/element_storage.cc",
     "heap/element_storage.h",
     "heap/field_storage.cc",
@@ -266,11 +267,20 @@ source_set("runtime") {
     "value/value_operations.h",
   ]
   if (target_os == "win") {
-    sources += [ "native/native_stack_win.cc" ]
+    sources += [
+      "heap/block_page_memory_win.cc",
+      "native/native_stack_win.cc",
+    ]
   } else if (target_os == "mac") {
-    sources += [ "native/native_stack_mac.cc" ]
+    sources += [
+      "heap/block_page_memory_posix.cc",
+      "native/native_stack_mac.cc",
+    ]
   } else {
-    sources += [ "native/native_stack_linux.cc" ]
+    sources += [
+      "heap/block_page_memory_posix.cc",
+      "native/native_stack_linux.cc",
+    ]
   }
 }
 

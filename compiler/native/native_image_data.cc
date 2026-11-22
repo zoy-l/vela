@@ -29,6 +29,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native_build_identity.h"
 
@@ -163,6 +164,15 @@ class NativeImageBuilder final {
 runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
   const auto& type = program_->layouts.classes.at(index);
   const auto& source = program_->classes.at(index);
+  auto targets = std::span(source.dispatch_targets);
+  // selector 编号保持不变；不为声明较晚的方法或闭包保留前置空槽。
+  while (!targets.empty() && targets.back() == kInvalidFunctionTarget) {
+    targets = targets.first(targets.size() - 1U);
+  }
+  const auto first = std::ranges::find_if(
+      targets, [](std::uint32_t target) { return target != kInvalidFunctionTarget; });
+  const auto prefix = targets.empty() ? 0U : static_cast<std::size_t>(first - targets.begin());
+  targets = targets.subspan(prefix);
   std::vector<runtime::NativeFieldDescription> fields;
   fields.reserve(source.fields.size());
   for (const auto& field : source.fields) {
@@ -180,7 +190,8 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
       .native_contract = Text(type.native_contract),
       .reference_fields = Copy(type.reference_fields),
       .interfaces = Copy(type.interfaces),
-      .dispatch_targets = Copy(type.dispatch_targets),
+      .dispatch_targets = Copy(std::span<const std::uint32_t>(targets)),
+      .first_selector = static_cast<std::uint32_t>(prefix),
       .field_count = type.field_count,
       .kind = static_cast<std::uint32_t>(type.kind),
       .callable_function = type.callable ? type.callable->function : runtime::kNoNativeIndex,

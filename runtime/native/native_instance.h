@@ -82,9 +82,7 @@ class NativeInstance final {
   [[nodiscard]] const ProgramLayouts& layouts() const noexcept { return data_->layouts; }
   [[nodiscard]] const MemberTable& members() const noexcept { return data_->members; }
   [[nodiscard]] const CodeIdentity& code_identity() const noexcept { return *data_->code_identity; }
-  [[nodiscard]] const CallSignature& call_signature(std::size_t function) const noexcept {
-    return data_->signatures[function];
-  }
+  [[nodiscard]] const CallSignature& call_signature(std::size_t function) const noexcept;
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
   [[nodiscard]] std::expected<Value, ExecutionStatus> InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index);

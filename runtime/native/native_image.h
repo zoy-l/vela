@@ -70,7 +70,9 @@ struct NativeClassDescription final {
   NativeText native_contract;
   NativeTable<std::uint32_t> reference_fields;
   NativeTable<std::uint32_t> interfaces;
+  // 保留 selector 编号，只存首尾有效目标之间的槽；范围外与 kNoNativeIndex 等价。
   NativeTable<std::uint32_t> dispatch_targets;
+  std::uint32_t first_selector = 0;
   std::uint32_t field_count = 0;
   std::uint32_t kind = 0;
   std::uint32_t callable_function = kNoNativeIndex;
@@ -81,6 +83,15 @@ struct NativeClassDescription final {
   DeclarationId base_class;
   std::uint32_t constructor = kNoNativeIndex;
   NativeTable<NativeText> enum_members;
+
+  [[nodiscard]] std::uint32_t VirtualTarget(std::uint32_t selector) const noexcept {
+    if (selector < first_selector) {
+      return kNoNativeIndex;
+    }
+    const auto slot = selector - first_selector;
+    const auto targets = dispatch_targets.values();
+    return slot < targets.size() ? targets[slot] : kNoNativeIndex;
+  }
 };
 
 struct NativeArrayDescription final {

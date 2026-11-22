@@ -15,6 +15,7 @@
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/json_decode.h"
 #include "base/layout_description.h"
 #include "base/member.h"
@@ -73,10 +74,12 @@ class Reachability final {
   void VisitSource(const frontend::TypeDescriptor& type, TypeExposure exposure);
   void VisitMember(const MemberDefinition& member, TypeExposure exposure);
   void MarkDynamic();
+  void PruneClasses(ir::Program& program) const;
+  void RemapClasses(ir::Program& program, std::span<const std::uint32_t> mapping) const;
   std::vector<std::uint32_t> PruneJSONPlans(ir::Program& program,
                                             std::span<const std::uint32_t> functions) const;
   template <class T>
-  void RemapClass(T& type, std::uint32_t index, std::span<const std::uint32_t> mapping) const;
+  void RemapCallable(T& type, std::uint32_t index, std::span<const std::uint32_t> mapping) const;
 
   const ir::Program& program_;
   absl::flat_hash_map<std::string_view, Node> names_;
@@ -395,23 +398,17 @@ void Reachability::Trace() {
 }
 
 template <class T>
-void Reachability::RemapClass(T& type,
-                              std::uint32_t index,
-                              std::span<const std::uint32_t> mapping) const {
+void Reachability::RemapCallable(T& type,
+                                 std::uint32_t index,
+                                 std::span<const std::uint32_t> mapping) const {
   if (!reached_.contains({.kind = NodeKind::Class, .index = index})) {
     type.callable.reset();
     type.callable_type = {};
-    std::ranges::fill(type.dispatch_targets, kInvalidFunctionTarget);
     return;
   }
   if (type.callable && type.callable->mode != CallableMode::VirtualMethod) {
     const auto target = type.callable->function;
     type.callable->function = mapping[target];
-  }
-  for (auto& target : type.dispatch_targets) {
-    if (target != kInvalidFunctionTarget) {
-      target = mapping[target];
-    }
   }
 }
 
@@ -452,6 +449,130 @@ void RemapReflectedTargets(ir::Program& program, std::span<const std::uint32_t> 
   }
 }
 
+template <class Visit>
+void VisitLayoutTypes(layout::Program& program, Visit visit) {
+  for (auto& type : program.types) {
+    visit(type);
+  }
+  for (auto& array : program.arrays) {
+    visit(array.element);
+  }
+  for (auto& collection : program.collections) {
+    visit(collection.key);
+    if (collection.value) {
+      visit(*collection.value);
+    }
+  }
+  for (auto& signature : program.signatures) {
+    for (auto& parameter : signature.parameters) {
+      visit(parameter.type);
+    }
+    auto& result = signature.result;
+    if (result) {
+      visit(*result);
+    }
+  }
+  for (auto& [name, nominal] : program.nominals) {
+    for (auto& argument : nominal.arguments) {
+      visit(argument);
+    }
+  }
+}
+
+void RemapClassReferences(ir::Program& program, std::span<const std::uint32_t> mapping) {
+  VisitLayoutTypes(program.layouts, [&](layout::Type& type) {
+    if (type.kind == layout::Type::Kind::Instance || type.kind == layout::Type::Kind::Enum) {
+      type.index = mapping[type.index];
+    }
+  });
+  for (auto& function : program.functions) {
+    for (auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::NewInstance) {
+        instruction.index = mapping[instruction.index];
+      }
+    }
+  }
+  for (auto& member : program.members) {
+    if (member.kind == MemberKind::Method) {
+      member.target = mapping[member.target];
+    }
+  }
+}
+
+void Reachability::PruneClasses(ir::Program& program) const {
+  const auto count = program.classes.size();
+  std::vector<std::uint8_t> retained(count);
+  std::vector<std::uint32_t> pending;
+  const auto mark = [&](std::uint32_t index) {
+    auto& selected = retained[index];
+    if (selected == 0) {
+      selected = 1;
+      pending.push_back(index);
+    }
+  };
+  absl::flat_hash_map<DeclarationId, std::uint32_t> declarations;
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto ordinal = static_cast<std::uint32_t>(index);
+    const auto declaration = program.classes[index].declaration;
+    if (declaration != DeclarationId{}) {
+      declarations.emplace(declaration, ordinal);
+    }
+    if (reached_.contains({.kind = NodeKind::Class, .index = ordinal})) {
+      mark(ordinal);
+    }
+  }
+  // 公共/反射类型与全部结构约束保留原编号。只有既不可创建、也不参与任何类型契约的
+  // 实现类才会删除；这些通常是已裁剪函数留下的闭包，不靠类名推断可达性。
+  VisitLayoutTypes(program.layouts, [&](const layout::Type& type) {
+    if (type.kind == layout::Type::Kind::Instance || type.kind == layout::Type::Kind::Enum) {
+      mark(type.index);
+    }
+  });
+  while (!pending.empty()) {
+    const auto index = pending.back();
+    pending.pop_back();
+    const auto base = program.classes[index].base_class;
+    if (base != DeclarationId{}) {
+      mark(declarations.at(base));
+    }
+  }
+  std::vector<std::uint32_t> mapping(count, kInvalidFunctionTarget);
+  std::vector<ir::Class> classes;
+  std::vector<layout::Class> layouts;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (retained[index] != 0) {
+      mapping[index] = static_cast<std::uint32_t>(classes.size());
+      classes.push_back(std::move(program.classes[index]));
+      layouts.push_back(std::move(program.layouts.classes[index]));
+    }
+  }
+  program.classes = std::move(classes);
+  program.layouts.classes = std::move(layouts);
+  RemapClassReferences(program, mapping);
+}
+
+void Reachability::RemapClasses(ir::Program& program,
+                                std::span<const std::uint32_t> mapping) const {
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    auto& type = program.classes.at(index);
+    if (type.constructor != kInvalidFunctionTarget) {
+      type.constructor = mapping[type.constructor];
+    }
+    const auto class_index = static_cast<std::uint32_t>(index);
+    RemapCallable(type, class_index, mapping);
+    if (!reached_.contains({.kind = NodeKind::Class, .index = class_index})) {
+      std::ranges::fill(type.dispatch_targets, kInvalidFunctionTarget);
+    } else {
+      for (auto& target : type.dispatch_targets) {
+        if (target != kInvalidFunctionTarget) {
+          target = mapping[target];
+        }
+      }
+    }
+    RemapCallable(program.layouts.classes.at(index), class_index, mapping);
+  }
+}
+
 void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& main) const {
   std::vector<std::uint32_t> mapping(program.functions.size(), kInvalidFunctionTarget);
   std::vector<ir::Function> functions;
@@ -482,14 +603,7 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
   if (main) {
     main = mapping.at(*main);
   }
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    auto& type = program.classes.at(index);
-    if (type.constructor != kInvalidFunctionTarget) {
-      type.constructor = mapping.at(type.constructor);
-    }
-    RemapClass(type, static_cast<std::uint32_t>(index), mapping);
-    RemapClass(program.layouts.classes.at(index), static_cast<std::uint32_t>(index), mapping);
-  }
+  RemapClasses(program, mapping);
   std::erase_if(program.members, [&](const MemberDefinition& member) {
     return !reached_.contains(
         {.kind = NodeKind::Type, .index = member.receiver_type, .exposure = TypeExposure::Host});
@@ -503,6 +617,7 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
     }
   }
   RemapReflectedTargets(program, mapping);
+  PruneClasses(program);
 }
 
 }  // namespace

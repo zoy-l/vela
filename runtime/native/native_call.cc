@@ -126,11 +126,11 @@ ResolveClosedVirtualTarget(const NativeInstance& instance, std::uint32_t selecto
   if (found == state.class_indices.end()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto targets = instance.image().classes.values()[found->second].dispatch_targets.values();
-  if (selector >= targets.size() || targets[selector] == kInvalidFunctionTarget) {
+  const auto target = instance.image().classes.values()[found->second].VirtualTarget(selector);
+  if (target == kInvalidFunctionTarget) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return targets[selector];
+  return target;
 }
 
 std::uint8_t InvokeResolvedDeclaration(NativeExecution* execution,
@@ -230,6 +230,39 @@ void EncodePresence(std::span<NativeValue> output, std::size_t supplied) {
   }
 }
 
+std::expected<NativeValue, ExecutionStatus> EncodeCallbackArgument(
+    const NativeInstance& instance,
+    const NativeFunctionDescription& function,
+    std::size_t position,
+    Value value) {
+  if ((function.flags & kNativeTypedFunction) != 0) {
+    const auto& parameter = function.parameters.values()[position - function.hidden_parameters];
+    const auto converted = ConvertCallbackArgument(instance, parameter, value);
+    if (!converted) {
+      return std::unexpected(converted.error());
+    }
+    value = *converted;
+  }
+  return EncodeNativeValue(value);
+}
+
+std::expected<Value, ExecutionStatus> MakeOmittedCallbackArgument(
+    Heap& heap,
+    const NativeInstance& instance,
+    const NativeCallParameter& parameter) {
+  if ((parameter.flags & kNativeRestParameter) != 0) {
+    auto* empty = heap.AllocateArray(*instance.layouts().types.at(parameter.type).array, 0);
+    if (empty == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    return Value::Object(empty);
+  }
+  if ((parameter.flags & kNativeOptionalParameter) == 0) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return Value::Null();
+}
+
 }  // namespace
 
 std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
@@ -240,7 +273,6 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
   const auto& instance = execution.instance();
-  const auto& types = instance.layouts().types;
   const auto typed = (function.flags & kNativeTypedFunction) != 0;
   const auto parameters = function.parameters.values();
   const auto has_defaults = function.HasDefaults();
@@ -255,32 +287,18 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
     // 数量检查已排除实参和隐式接收者；没有需要编码、补缺省或保根的输入。
     return InvokeNativeTarget(execution, function, {});
   }
-  const auto encode = [&](std::size_t index) -> std::expected<NativeValue, ExecutionStatus> {
-    auto value = arguments[index];
-    if (typed) {
-      const auto parameter = parameters[index + hidden - function.hidden_parameters];
-      const auto converted = ConvertCallbackArgument(instance, parameter, value);
-      if (!converted) {
-        return std::unexpected(converted.error());
-      }
-      value = *converted;
-    }
-    return EncodeNativeValue(value);
-  };
-  if (arguments.size() == 1 && function.parameter_count == hidden + 1) {
-    const auto argument = arguments.front();
+  if (arguments.size() == 1 && function.parameter_count == hidden + 1 &&
+      !arguments.front().IsReference()) {
     // 调用方保活闭包及其接收者；单个标量实参不需要根槽，也没有待填充的参数。
-    if (!argument.IsReference()) {
-      const auto encoded = encode(0);
-      if (!encoded) {
-        return std::unexpected(encoded.error());
-      }
-      if (target.implicit) {
-        const std::array input{EncodeNativeValue(*target.implicit), *encoded};
-        return InvokeNativeTarget(execution, function, input);
-      }
-      return InvokeNativeTarget(execution, function, std::span(&*encoded, 1));
+    const auto encoded = EncodeCallbackArgument(instance, function, hidden, arguments.front());
+    if (!encoded) {
+      return std::unexpected(encoded.error());
     }
+    if (target.implicit) {
+      const std::array input{EncodeNativeValue(*target.implicit), *encoded};
+      return InvokeNativeTarget(execution, function, input);
+    }
+    return InvokeNativeTarget(execution, function, std::span(&*encoded, 1));
   }
   auto& heap = execution.isolate().heap();
   const NativeArgumentRoots arguments_root(heap, arguments);
@@ -311,7 +329,8 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
     encoded.front() = EncodeNativeValue(*target.implicit);
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const auto argument = encode(index);
+    const auto argument =
+        EncodeCallbackArgument(instance, function, index + hidden, arguments[index]);
     if (!argument) {
       return std::unexpected(argument.error());
     }
@@ -319,16 +338,12 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
   }
   for (std::size_t index = arguments.size() + hidden; index < logical_count; ++index) {
     const auto parameter = parameters[index - function.hidden_parameters];
-    auto& value = values[index - arguments.size()];
-    if ((parameter.flags & kNativeRestParameter) != 0) {
-      auto* empty = heap.AllocateArray(*types.at(parameter.type).array, 0);
-      if (empty == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      value = Value::Object(empty);
-    } else if ((parameter.flags & kNativeOptionalParameter) == 0) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    const auto omitted = MakeOmittedCallbackArgument(heap, instance, parameter);
+    if (!omitted) {
+      return std::unexpected(omitted.error());
     }
+    auto& value = values[index - arguments.size()];
+    value = *omitted;
     encoded[index] = EncodeNativeValue(value);
   }
   EncodePresence(encoded.subspan(logical_count), arguments.size());
@@ -480,13 +495,14 @@ std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
   if (!resolved) {
     return std::unexpected(resolved.error());
   }
-  const auto& state = Heap::NativeProgram(*resolved->state);
+  auto instance = NativeInstance::Borrow(*resolved->state);
+  const auto& state = instance.program();
   const auto index = resolved->target.function;
   const auto& function = state.image->function(index);
   if ((function.flags & kNativeTypedFunction) == 0) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& signature = state.signatures.at(index);
+  const auto& signature = instance.call_signature(index);
   const auto skipped = (resolved->target.implicit ? 1U : 0U) - signature.hidden_parameters;
   return NativeCallableContract{
       .signature = &signature,

@@ -13,6 +13,7 @@
 
 #include <benchmark/benchmark.h>
 #include <vela/host.h>
+#include "base/native_program_mode.h"
 
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/host_interop/entries.h"
@@ -538,11 +539,18 @@ void CppSavedCallback(benchmark::State& state) {
   }
 }
 
+template <class T>
+struct ScalarCallbackCase final {
+  std::string_view label;
+  std::string_view factory;
+  T input;
+  T expected;
+};
+
 template <class T, class... Params>
 void MeasureScalarCallback(benchmark::State& state,
                            const Result<Entry<Function<T(T)>(Params...)>>& entry,
-                           T input,
-                           T expected,
+                           const ScalarCallbackCase<T>& sample,
                            Params... captures) {
   if (!entry) {
     state.SkipWithError(entry.error().message);
@@ -553,25 +561,22 @@ void MeasureScalarCallback(benchmark::State& state,
     state.SkipWithError(saved.error().message);
     return;
   }
-  Measure(state, entry->isolate(), [&] { return saved->Call(input); }, expected);
+  Measure(state, entry->isolate(), [&] { return saved->Call(sample.input); }, sample.expected);
 }
 
 template <class T, class Kernel, class... Params>
-void RegisterScalarCallback(std::string_view label,
-                            std::string_view factory,
-                            T input,
-                            T expected,
+void RegisterScalarCallback(const ScalarCallbackCase<T>& sample,
                             Kernel kernel,
                             Params... captures) {
   using Factory = Entry<Function<T(T)>(Params...)>;
-  const std::string suffix = "/saved_callback/" + std::string(label);
+  const std::string suffix = "/saved_callback/" + std::string(sample.label);
   benchmark::RegisterBenchmark("interop/cpp" + suffix, [=](benchmark::State& state) {
     std::function<T(T)> callback = kernel;
     benchmark::DoNotOptimize(callback);
     for (auto iteration : state) {
-      auto result = callback(input);
+      auto result = callback(sample.input);
       benchmark::DoNotOptimize(result);
-      if (result != expected) {
+      if (result != sample.expected) {
         state.SkipWithError("C++ callback checksum mismatch");
         break;
       }
@@ -581,7 +586,7 @@ void RegisterScalarCallback(std::string_view label,
     runtime::Isolate isolate;
     const auto instance = Instantiate(state, isolate, Mode::Aot);
     if (instance != nullptr) {
-      MeasureScalarCallback(state, Factory::Bind(*instance, factory), input, expected, captures...);
+      MeasureScalarCallback(state, Factory::Bind(*instance, sample.factory), sample, captures...);
     }
   });
   benchmark::RegisterBenchmark("interop/reload_optimized" + suffix, [=](benchmark::State& state) {
@@ -591,8 +596,9 @@ void RegisterScalarCallback(std::string_view label,
       return;
     }
     MeasureScalarCallback(
-        state, Factory::Bind(setup->isolate->native_dispatch(), setup->program->entry, factory),
-        input, expected, captures...);
+        state,
+        Factory::Bind(setup->isolate->native_dispatch(), setup->program->entry, sample.factory),
+        sample, captures...);
   });
 }
 
@@ -600,15 +606,46 @@ void RegisterScalarCallbacks() {
   constexpr std::int64_t kNegative = -123;
   constexpr std::int64_t kMaximum = std::numeric_limits<std::int64_t>::max();
   constexpr std::int64_t kOffset = 7;
-  RegisterScalarCallback("integer_negative", "callback", kNegative, kNegative + 1, kIncrement);
-  RegisterScalarCallback("integer_max", "callback", kMaximum - 1, kMaximum, kIncrement);
   RegisterScalarCallback(
-      "integer_capture", "offsetCallback", kInput, kInput + kOffset,
+      ScalarCallbackCase<std::int64_t>{
+          .label = "integer_negative",
+          .factory = "callback",
+          .input = kNegative,
+          .expected = kNegative + 1,
+      },
+      kIncrement);
+  RegisterScalarCallback(
+      ScalarCallbackCase<std::int64_t>{
+          .label = "integer_max",
+          .factory = "callback",
+          .input = kMaximum - 1,
+          .expected = kMaximum,
+      },
+      kIncrement);
+  RegisterScalarCallback(
+      ScalarCallbackCase<std::int64_t>{
+          .label = "integer_capture",
+          .factory = "offsetCallback",
+          .input = kInput,
+          .expected = kInput + kOffset,
+      },
       [offset = kOffset](std::int64_t value) { return value + offset; }, kOffset);
-  RegisterScalarCallback("double", "floatingCallback", -2.25, -1.75,
-                         [](double value) { return value + 0.5; });
-  RegisterScalarCallback("boolean", "booleanCallback", true, false,
-                         [](bool value) { return !value; });
+  constexpr ScalarCallbackCase<double> kFloating{
+      .label = "double",
+      .factory = "floatingCallback",
+      .input = -2.25,
+      .expected = -1.75,
+  };
+  constexpr double kFloatingIncrement = 0.5;
+  RegisterScalarCallback(kFloating, [](double value) { return value + kFloatingIncrement; });
+  RegisterScalarCallback(
+      ScalarCallbackCase<bool>{
+          .label = "boolean",
+          .factory = "booleanCallback",
+          .input = true,
+          .expected = false,
+      },
+      [](bool value) { return !value; });
 }
 
 template <Mode Execution, Path Boundary>

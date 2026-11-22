@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "runtime/heap/heap.h"
-#include "runtime/heap/host_memory.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_class.h"
 #include "runtime/native/native_type.h"
@@ -57,8 +56,34 @@ vela::Error HostError(HostObjectError error) {
 
 }  // namespace
 
-HostMemory NativeContext::ReserveHostMemory(std::size_t bytes) const noexcept {
-  return {isolate_->heap(), bytes};
+std::expected<HostConstruction, vela::Error> NativeContext::PrepareHostConstruction(
+    NativeType type,
+    std::size_t size,
+    std::size_t alignment,
+    HostObjectStorage::Destructor destroy) const {
+  const auto* binding = FindHostBinding(*isolate_, type);
+  if (binding == nullptr) {
+    return std::unexpected(vela::Error{
+        .status = vela::ExecutionStatus::TypeError,
+        .message = "native construction has an unregistered host type",
+        .stack_trace = {},
+    });
+  }
+  auto storage =
+      isolate_->heap().PrepareHostConstruction(*binding->layout, size, alignment, destroy);
+  if (!storage) {
+    return std::unexpected(HostError(storage.error()));
+  }
+  return std::move(*storage);
+}
+
+NativeResult NativeContext::PublishHostConstruction(HostConstruction construction) const {
+  auto& heap = isolate_->heap();
+  auto object = heap.PublishHostConstruction(std::move(construction));
+  if (!object) {
+    return std::unexpected(HostError(object.error()));
+  }
+  return Value::Object(*object);
 }
 
 NativeResult NativeContext::PublishHost(NativeType type, HostObjectStorage storage) const {

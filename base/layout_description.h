@@ -82,7 +82,6 @@ struct Class final {
   std::vector<std::uint32_t> reference_fields;
   std::optional<CallableTarget> callable;
   std::vector<std::uint32_t> interfaces;
-  std::vector<std::uint32_t> dispatch_targets;
   std::optional<std::uint32_t> callable_type = std::nullopt;
 };
 

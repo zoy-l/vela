@@ -55,10 +55,13 @@ class RegExpTest : public testing::Test {
   RootRange root_{heap_, roots_.data(), roots_.size()};
 };
 
-TEST_F(RegExpTest, HasMatchDoesNotAllocateGCObjectsOrRetainWorkBuffers) {
+TEST_F(RegExpTest, HasMatchDoesNotAllocateGCObjectsOrAccumulateWorkBuffers) {
   Compile("(?<word>\\w+)");
   Input("😀中文42");
   heap().Collect();
+  const auto warmup = Call(Builtin::RegExpHasMatch, {roots().at(0), roots().at(1)});
+  ASSERT_TRUE(warmup);
+  ASSERT_TRUE(warmup->AsBoolean());
   const auto objects = heap().object_count();
   const auto bytes = heap().allocated_bytes();
   const auto committed = heap().committed_bytes();

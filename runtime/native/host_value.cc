@@ -1,9 +1,7 @@
 #include "runtime/native/host_value.h"
 
-#include <atomic>
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <span>
 #include <string_view>
@@ -18,6 +16,7 @@
 #include "runtime/heap/host_root.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_context.h"
@@ -89,10 +88,10 @@ const std::byte* InlineScalarOperand(const runtime::HeapObject& object,
   }
   if ((function.flags & runtime::kNativeScalarCallbackReadsCell) != 0) {
     const auto& cell = *runtime::Heap::LoadField(object, index).AsObject();
-    assert(cell.layout->storage() == runtime::ClassStorage::Inline);
+    assert(runtime::Heap::ClassOf(cell)->storage() == runtime::ClassStorage::Inline);
     return runtime::ObjectFieldStorage(cell).data();
   }
-  assert(object.layout->storage() == runtime::ClassStorage::Inline);
+  assert(runtime::Heap::ClassOf(object)->storage() == runtime::ClassStorage::Inline);
   const auto fields = runtime::ObjectFieldStorage(object);
   return fields.subspan(static_cast<std::size_t>(index) * runtime::FieldStorage::kPayloadBytes)
       .data();

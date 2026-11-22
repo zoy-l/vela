@@ -99,7 +99,6 @@ layout::Class DescribeClass(const NativeClassDescription& source) {
       .reference_fields = CopyTable(source.reference_fields),
       .callable = std::nullopt,
       .interfaces = CopyTable(source.interfaces),
-      .dispatch_targets = CopyTable(source.dispatch_targets),
       .callable_type = OptionalIndex(source.callable_type),
   };
   if (source.callable_function != kNoNativeIndex) {
@@ -375,6 +374,14 @@ std::string_view NativeTargetIdentity() noexcept {
   return kNativeTargetIdentity;
 }
 
+const CallSignature& NativeInstance::call_signature(std::size_t function) const noexcept {
+  auto& signature = data_->call_signatures[function];
+  if (signature == nullptr) {
+    signature = std::make_unique<CallSignature>(DescribeCall(data_->image->function(function)));
+  }
+  return *signature;
+}
+
 NativeInstance::NativeInstance(NativeProgramState& data,
                                Value anchor,
                                std::optional<ExternalResourceKind> root_owner)
@@ -415,7 +422,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
     }
   }
   const auto functions = data_->image->functions.values();
-  data_->signatures.reserve(functions.size());
+  data_->call_signatures.resize(functions.size());
   if (functions.size() >
       std::numeric_limits<std::size_t>::max() / sizeof(const NativeFunction::AotEntry*)) {
     return OutOfMemory("out of memory creating native import bindings");
@@ -432,7 +439,6 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
   const auto imports = std::span(data_->imports, functions.size());
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions[index];
-    data_->signatures.push_back(DescribeCall(function));
     const auto symbol = function.native_symbol.text();
     if (symbol.empty()) {
       continue;
@@ -444,7 +450,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
           .message = "unregistered native function '" + std::string(symbol) + "'",
       });
     }
-    if (!binding->IsSignatureCompatible(data_->signatures.back(), description)) {
+    if (!binding->IsSignatureCompatible(DescribeCall(function), description)) {
       return std::unexpected(NativeInstantiationError{
           .status = NativeInstantiationStatus::ImportSignatureMismatch,
           .message = "external declaration does not match native signature for '" +
@@ -590,19 +596,20 @@ NativeInstance::Instantiate(Isolate& isolate,
   const auto can_reuse = closed && existing != isolate.native_images_.end() &&
                          existing->second.static_lifetime == !has_owner &&
                          (!has_owner || !existing->second.owner.expired());
-  auto cache = can_reuse ? existing->second.layouts : LayoutCache();
-  if (cache.code_identity == nullptr) {
+  if (can_reuse) {
+    state.layouts = existing->second.layouts;
+    state.code_identity = existing->second.code_identity;
+  } else {
+    LayoutCache cache;
     cache.code_identity = isolate.CreateCodeIdentity();
-  }
-  std::vector<ClassLayoutOptions> class_options;
-  if (!closed) {
-    class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
-  }
-  state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
-  if (!can_reuse) {
+    std::vector<ClassLayoutOptions> class_options;
+    if (!closed) {
+      class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
+    }
+    state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
+    state.code_identity = cache.code_identity;
     BindNominalBases(image, state.layouts);
   }
-  state.code_identity = cache.code_identity;
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
   state.class_name_indices.reserve(state.layouts.classes.size());
@@ -625,7 +632,7 @@ NativeInstance::Instantiate(Isolate& isolate,
   }
   for (auto* type : state.layouts.classes) {
     if (type->callable() != nullptr) {
-      type->BindCodeIdentity(*cache.code_identity);
+      type->BindCodeIdentity(*state.code_identity);
     }
   }
   auto* anchor = isolate.heap().AllocateNativeProgram(std::move(data));
@@ -641,12 +648,15 @@ NativeInstance::Instantiate(Isolate& isolate,
     isolate.heap().Collect();
     return std::unexpected(initialized.error());
   }
-  if (closed) {
+  if (closed && !can_reuse) {
     isolate.native_images_.insert_or_assign(&image, Isolate::NativeImageCache{
-                                                        .layouts = std::move(cache),
+                                                        .layouts = state.layouts,
+                                                        .code_identity = state.code_identity,
                                                         .owner = state.image_owner,
                                                         .static_lifetime = !has_owner,
                                                     });
+  }
+  if (closed) {
     transaction.CommitImage();
   } else {
     transaction.CommitNative(*anchor);

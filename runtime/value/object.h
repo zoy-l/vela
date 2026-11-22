@@ -323,7 +323,8 @@ struct HeapObject final {
   // 为元素数，ByteArray/ByteData 为可见字节数；native callable 的 Instance 为函数编号。
   // Collection 的大小存于尾部 CollectionStorage，其他 kind 不使用本槽。
   std::uint32_t length = 0;
-  // 字符串逻辑长度或内联实例的物理字段数；两种对象不共享此槽的含义。
+  // 字符串逻辑长度、内联实例的物理字段数或新构造 Host 的内联载荷字节数。
+  // 外部 unique/shared Host 为零，内联 Host 不再重复核算这段载荷的外部预算。
   std::uint32_t auxiliary_length = 0;
   // native_payload：reloadable Instance 持有 InstanceStorage；native callable 借用
   // NativeProgram 对象；Timer、CancellationToken 分别拥有对应句柄；

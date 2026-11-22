@@ -278,7 +278,8 @@ void NativeDispatchSnapshot::IndexLayouts(const NativeImage& description,
     for (std::size_t selector = 0; selector < targets.size(); ++selector) {
       const auto target = targets[selector];
       if (target != kInvalidFunctionTarget) {
-        virtual_targets.emplace(std::pair(nominal, selectors[selector]), target);
+        const auto ordinal = class_description.first_selector + selector;
+        virtual_targets.emplace(std::pair(nominal, selectors[ordinal]), target);
       }
     }
   }

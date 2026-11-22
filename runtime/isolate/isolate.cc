@@ -16,6 +16,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include "runtime/exceptions/error.h"
+#include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/library/date.h"
 #include "runtime/library/standard_library.h"
@@ -71,7 +72,9 @@ Isolate::Isolate(std::size_t gc_threshold, GcScheduling scheduling) noexcept
   date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});
 }
 
-Isolate::Isolate(NativeBindings bindings, std::size_t gc_threshold, GcScheduling scheduling) noexcept
+Isolate::Isolate(NativeBindings bindings,
+                 std::size_t gc_threshold,
+                 GcScheduling scheduling) noexcept
     : Isolate(gc_threshold, scheduling) {
   natives_ = std::move(bindings.functions_);
   for (auto& [key, description] : bindings.classes_) {

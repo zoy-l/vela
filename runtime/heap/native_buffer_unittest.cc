@@ -31,7 +31,7 @@ TEST(NativeBufferTest, InlineAndEmptyBuffersDoNotConsumeTheHeapBudget) {
 TEST(NativeBufferTest, ExternalStorageIsAccountedAndOverflowIsRejected) {
   constexpr std::size_t kCount = 8;
   constexpr std::size_t kValue = 42;
-  Isolate isolate;
+  Isolate isolate(1U);
   auto& heap = isolate.heap();
   const auto bytes = heap.allocated_bytes();
   const auto committed = heap.committed_bytes();
@@ -40,7 +40,8 @@ TEST(NativeBufferTest, ExternalStorageIsAccountedAndOverflowIsRejected) {
     ASSERT_TRUE(buffer.IsAllocated());
     const auto allocated = heap.allocated_bytes() - bytes;
     EXPECT_GE(allocated, kCount * sizeof(std::size_t));
-    EXPECT_EQ(heap.committed_bytes() - committed, allocated);
+    EXPECT_GE(heap.committed_bytes(), heap.allocated_bytes());
+    EXPECT_GT(heap.committed_bytes(), committed);
     buffer.values().front() = kValue;
     EXPECT_EQ(buffer.values().front(), kValue);
     NativeBuffer<std::size_t> overflow(heap, std::numeric_limits<std::size_t>::max());
@@ -48,6 +49,7 @@ TEST(NativeBufferTest, ExternalStorageIsAccountedAndOverflowIsRejected) {
     EXPECT_EQ(heap.AllocateNative(std::numeric_limits<std::size_t>::max()), nullptr);
   }
   EXPECT_EQ(heap.allocated_bytes(), bytes);
+  heap.Collect();
   EXPECT_EQ(heap.committed_bytes(), committed);
 }
 

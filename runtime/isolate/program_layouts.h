@@ -1,7 +1,7 @@
 #pragma once
 
 #include <span>
-#include <string>
+#include <string_view>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -21,14 +21,15 @@ struct ProgramLayouts final {
   std::vector<TypeConstraint> types;
 };
 
-// 借用 Isolate 的不可移动元数据；失败的布局事务不得提交此缓存。
+// 只在类型解析期间借用描述中的不可变名称和 Isolate 元数据；描述须覆盖缓存的使用期。
+// 程序长期保留按编号排列的 ProgramLayouts，不保留这个解析索引；失败的布局事务不得提交它。
 struct LayoutCache final {
   const CodeIdentity* code_identity = nullptr;
-  absl::flat_hash_map<std::string, ClassLayout*> classes;
-  absl::flat_hash_map<std::string, const ArrayLayout*> arrays;
-  absl::flat_hash_map<std::string, const CollectionLayout*> collections;
-  absl::flat_hash_map<std::string, const TypeSignature*> signatures;
-  absl::flat_hash_map<std::string, const InterfaceType*> interfaces;
+  absl::flat_hash_map<std::string_view, ClassLayout*> classes;
+  absl::flat_hash_map<std::string_view, const ArrayLayout*> arrays;
+  absl::flat_hash_map<std::string_view, const CollectionLayout*> collections;
+  absl::flat_hash_map<std::string_view, const TypeSignature*> signatures;
+  absl::flat_hash_map<std::string_view, const InterfaceType*> interfaces;
 };
 
 // 消费受信任的编译产物；文件装载边界负责验证编号和结构图。

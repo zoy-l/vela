@@ -7,7 +7,7 @@
 
 namespace vela::compiler::aot {
 
-// 裁剪函数与成员并同步所有函数编号；类型编号保持稳定以沿用 Typed IR 的布局事实。
+// 裁剪不可调用函数和契约外实现类并同步其编号；运行时类型编号保持稳定。
 void PruneNativeProgram(ir::Program& program, std::optional<std::uint32_t>& main);
 
 }  // namespace vela::compiler::aot

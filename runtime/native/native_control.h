@@ -40,7 +40,7 @@ struct NativeControlState final {
   std::uintptr_t callback_stack_limit = kUnknownStackLimit;
 
   [[nodiscard]] std::expected<std::uintptr_t, ExecutionStatus> StackLimit() const noexcept {
-#if !defined(_WIN32)
+#ifndef _WIN32
     // POSIX Isolate 固定在创建线程，其原生栈边界在 Isolate 生命周期内不变。
     if (callback_stack_limit != kUnknownStackLimit) [[likely]] {
       return callback_stack_limit;

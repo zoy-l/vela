@@ -7,7 +7,6 @@
 namespace vela::runtime {
 
 struct ProgramLayouts;
-struct LayoutCache;
 
 // 程序和宿主类型创建的元数据按可达性回收；运行时内建元数据保持 Isolate 寿命。
 struct NativeMetadataSet final {
@@ -33,7 +32,6 @@ class NativeMetadataTracer final {
   void Mark(const CodeIdentity* identity);
   void Mark(TypeConstraint type);
   void Mark(const ProgramLayouts& layouts);
-  void Mark(const LayoutCache& cache);
   [[nodiscard]] const NativeMetadataSet& reached() const noexcept { return reached_; }
 
  private:

@@ -248,6 +248,7 @@ class Persistent final {
           !requires { typename internal::HostValueType<T>::Payload; },
       "Persistent requires a managed logical type; use scalars directly");
   Persistent() noexcept = default;
+  ~Persistent() = default;
   Persistent(const Persistent&) noexcept = default;
   Persistent& operator=(const Persistent&) noexcept = default;
   Persistent(Persistent&& other) noexcept

@@ -28,6 +28,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
+#include <llvm/Support/Casting.h>
 
 #include "base/declaration.h"
 #include "base/source_location.h"
@@ -59,6 +60,15 @@ using runtime::NativeSignatureParameter;
 using runtime::NativeTable;
 using runtime::NativeText;
 using runtime::NativeTypeDescription;
+
+enum class ImageDataKind : std::uint8_t { Runtime, Source };
+
+void PlaceImageData(llvm::Module& module, llvm::GlobalVariable& storage, ImageDataKind kind) {
+  if (kind == ImageDataKind::Source && module.getTargetTriple().isOSBinFormatMachO()) {
+    // 源码与逐指令位置只在异常或调试时读取；不要与运行时常量混排而一并驻留。
+    storage.setSection("__TEXT,__vela_source");
+  }
+}
 
 class ImageEmitter final {
  public:
@@ -95,10 +105,13 @@ class ImageEmitter final {
   llvm::Constant* Identity(FunctionIdentity identity);
   llvm::Constant* Identities(std::span<const DeclarationId> values);
   llvm::Constant* Declarations(std::span<const NativeDeclarationDescription> declarations);
-  llvm::Constant* Text(std::string_view value);
-  llvm::Constant* Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values);
+  llvm::Constant* Text(std::string_view value, ImageDataKind kind = ImageDataKind::Runtime);
+  llvm::Constant* Table(llvm::Type* element,
+                        llvm::ArrayRef<llvm::Constant*> values,
+                        ImageDataKind kind = ImageDataKind::Runtime);
   llvm::Constant* Numbers(std::span<const std::uint32_t> values);
-  llvm::Constant* Texts(std::span<const NativeText> values);
+  llvm::Constant* Texts(std::span<const NativeText> values,
+                        ImageDataKind kind = ImageDataKind::Runtime);
   llvm::Constant* Type(const NativeTypeDescription& type);
   llvm::Constant* Classes(std::span<const NativeClassDescription> classes);
   llvm::Constant* Arrays(std::span<const NativeArrayDescription> arrays);
@@ -193,6 +206,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              word_,
                                              word_,
                                              word_,
+                                             word_,
                                              wide_,
                                              table_,
                                              wide_,
@@ -206,6 +220,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              offsetof(NativeClassDescription, reference_fields),
                                              offsetof(NativeClassDescription, interfaces),
                                              offsetof(NativeClassDescription, dispatch_targets),
+                                             offsetof(NativeClassDescription, first_selector),
                                              offsetof(NativeClassDescription, field_count),
                                              offsetof(NativeClassDescription, kind),
                                              offsetof(NativeClassDescription, callable_function),
@@ -523,7 +538,7 @@ llvm::Constant* ImageEmitter::Declarations(
   return Table(declaration_, constants);
 }
 
-llvm::Constant* ImageEmitter::Text(std::string_view value) {
+llvm::Constant* ImageEmitter::Text(std::string_view value, ImageDataKind kind) {
   const auto [found, inserted] = texts_.try_emplace(value, nullptr);
   if (!inserted) {
     return found->second;
@@ -532,13 +547,21 @@ llvm::Constant* ImageEmitter::Text(std::string_view value) {
   auto* storage = new llvm::GlobalVariable(module_, bytes->getType(), true,
                                            llvm::GlobalValue::PrivateLinkage, bytes, "vela.utf8");
   storage->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  PlaceImageData(module_, *storage, kind);
   found->second = Record(
       text_, {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), value.size())});
   return found->second;
 }
 
-llvm::Constant* ImageEmitter::Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values) {
-  return EmitConstantTable(module_, table_, element, values, "vela.table");
+llvm::Constant* ImageEmitter::Table(llvm::Type* element,
+                                    llvm::ArrayRef<llvm::Constant*> values,
+                                    ImageDataKind kind) {
+  auto* result = EmitConstantTable(module_, table_, element, values, "vela.table");
+  if (!values.empty()) {
+    PlaceImageData(module_, *llvm::cast<llvm::GlobalVariable>(result->getAggregateElement(0U)),
+                   kind);
+  }
+  return result;
 }
 
 llvm::Constant* ImageEmitter::Numbers(std::span<const std::uint32_t> values) {
@@ -550,13 +573,13 @@ llvm::Constant* ImageEmitter::Numbers(std::span<const std::uint32_t> values) {
   return Table(word_, constants);
 }
 
-llvm::Constant* ImageEmitter::Texts(std::span<const NativeText> values) {
+llvm::Constant* ImageEmitter::Texts(std::span<const NativeText> values, ImageDataKind kind) {
   std::vector<llvm::Constant*> constants;
   constants.reserve(values.size());
   for (const auto& value : values) {
-    constants.push_back(Text(value.text()));
+    constants.push_back(Text(value.text(), kind));
   }
-  return Table(text_, constants);
+  return Table(text_, constants, kind);
 }
 
 llvm::Constant* ImageEmitter::Type(const NativeTypeDescription& type) {
@@ -587,6 +610,7 @@ llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> cl
                                            Numbers(type.reference_fields.values()),
                                            Numbers(type.interfaces.values()),
                                            Numbers(type.dispatch_targets.values()),
+                                           Word(type.first_selector),
                                            Word(type.field_count),
                                            Word(static_cast<std::uint32_t>(type.kind)),
                                            Word(type.callable_function),
@@ -659,7 +683,7 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
             Text(function.name.text()),
             Text(function.native_symbol.text()),
             CallParameters(function.parameters.values()),
-            Table(location_, locations),
+            Table(location_, locations, ImageDataKind::Source),
             entry,
             entries.reflection[index],
             llvm::Constant::getNullValue(pointer_),
@@ -772,7 +796,7 @@ std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(const NativeImage
                                          Members(image.members.values()),
                                          Numbers(image.global_initializers.values()),
                                          Wide(image.revision),
-                                         Texts(image.source_texts.values()),
+                                         Texts(image.source_texts.values(), ImageDataKind::Source),
                                          Declarations(image.declarations.values()),
                                          Identities(image.interface_declarations.values()),
                                          Identities(image.global_declarations.values()),

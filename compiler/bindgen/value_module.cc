@@ -291,7 +291,6 @@ class ValueCollector final {
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
-        .dispatch_targets = {},
     });
     return result;
   }

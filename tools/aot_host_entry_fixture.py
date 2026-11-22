@@ -173,16 +173,16 @@ class NativeHostEntryTest : public ::testing::Test {
     return ExecuteNativeFunction(*instance, instance->FindFunction("read").value()).value.AsInteger();
   }
   HeapObject* StateForTarget(NativeHostTarget target) {
-    auto state = std::make_unique<NativeProgramState>(target);
     const auto& original = instance->program();
+    const auto function_count = original.image->functions.size;
+    auto state = std::make_unique<NativeProgramState>(target);
     state->isolate = &isolate;
     state->image = original.image;
     state->layouts = original.layouts;
-    state->signatures = original.signatures;
+    state->call_signatures.resize(function_count);
     state->code_identity = original.code_identity;
     state->import_owners = original.import_owners;
     auto& heap = isolate.heap();
-    const auto function_count = original.image->functions.size;
     state->imports = static_cast<const NativeFunction::AotEntry**>(
         heap.AllocateNative(function_count * sizeof(const NativeFunction::AotEntry*)));
     if (state->imports == nullptr) { return nullptr; }

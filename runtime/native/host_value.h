@@ -18,6 +18,7 @@
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/host_root.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_callback.h"
 #include "runtime/strings/string.h"
@@ -215,7 +216,7 @@ struct HostFunctionCall<Function<R(Args...)>> final {
       return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
     }
     // 重入宿主期间原 Persistent 可以被重置；持有同一根直至完整调用返回。
-    const auto retained = root;
+    const auto retained = runtime::HostRoot(root);
     HandleScope scope(retained.isolate());
     return Invoke(scope, retained.value(), std::move(arguments)...);
   }

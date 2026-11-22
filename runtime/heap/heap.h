@@ -198,6 +198,13 @@ class Heap final {
       const ClassLayout& layout,
       std::size_t native_size,
       HostObjectStorage storage) noexcept;
+  [[nodiscard]] std::expected<HostConstruction, HostObjectError> PrepareHostConstruction(
+      const ClassLayout& layout,
+      std::size_t size,
+      std::size_t alignment,
+      HostObjectStorage::Destructor destroy) noexcept;
+  [[nodiscard]] std::expected<HeapObject*, HostObjectError> PublishHostConstruction(
+      HostConstruction construction) noexcept;
   [[nodiscard]] HeapObject* FindHostObject(const NominalType& type, const void* pointer) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> SetHostMemory(HeapObject& object,
                                                                    std::size_t bytes) noexcept;
@@ -431,6 +438,7 @@ class Heap final {
  private:
   friend class Isolate;
   friend class HostMemory;
+  friend class HostConstruction;
   [[nodiscard]] std::expected<void, ExecutionStatus> ReserveHostMemory(std::size_t bytes) noexcept;
   void ReleaseHostMemory(std::size_t bytes) noexcept;
   void RecordExternalAllocation(std::size_t bytes) noexcept;
@@ -456,8 +464,9 @@ class Heap final {
       const HeapObject& array,
       Value value) noexcept;
 
-  static constexpr auto kSizeClasses =
-      std::to_array<std::size_t>({64, 128, 256, 512, 1024, 2048, 4096});
+  // 在相邻二次幂之间加入中点，避免常见的节点和原生包装为少数字节多占一倍槽位。
+  static constexpr auto kSizeClasses = std::to_array<std::size_t>(
+      {64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096});
   static_assert(sizeof(HeapObject) <= kSizeClasses.front());
   static constexpr std::size_t kAutomaticWork = 16;
 
@@ -499,8 +508,12 @@ class Heap final {
   }
 
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
+  [[nodiscard]] void* AllocatePooledBlock(std::size_t class_index) noexcept;
+  void ReleasePooledBlock(void* memory, std::size_t class_index) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
+  void DiscardHostConstruction(HeapObject& object) noexcept;
+  void ReleaseBlock(const Allocation& allocation) noexcept;
   void RecordAllocation(std::size_t bytes) noexcept;
   // 调用者在分配边界推进 GC；replaced_bytes 只抵扣本次即将替换的已计费存储。
   [[nodiscard]] void* AllocateExternal(std::size_t bytes, std::size_t replaced_bytes = 0) noexcept;
@@ -511,6 +524,7 @@ class Heap final {
   [[nodiscard]] bool CanAllocate(std::size_t bytes) const noexcept;
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;
+  std::size_t ReleaseExcessCachedPages(std::size_t work_budget) noexcept;
   void DestroyAll() noexcept;
   [[nodiscard]] InstanceStorage* AllocateInstanceStorage(std::uint32_t count) noexcept;
   void ReleaseInstanceStorage(InstanceStorage& storage) noexcept;
@@ -558,7 +572,18 @@ class Heap final {
   struct FreeBlock final {
     FreeBlock* next;
   };
-  std::array<FreeBlock*, kSizeClasses.size()> free_blocks_{};
+  struct alignas(std::max_align_t) BlockPage final {
+    FreeBlock* free_blocks = nullptr;
+    BlockPage* next = nullptr;
+    BlockPage** previous_link = nullptr;
+    std::size_t used = 0;
+    std::size_t initialized = 0;
+  };
+  void ReleasePage(BlockPage& page) noexcept;
+  // 满页不在分配链中；最后一个对象归还后从可用链移至空页链，增量释放无需扫描活页。
+  std::array<BlockPage*, kSizeClasses.size()> available_pages_{};
+  std::array<BlockPage*, kSizeClasses.size()> empty_pages_{};
+  std::size_t pooled_live_bytes_ = 0;
 
   std::size_t object_count_ = 0;
   std::size_t allocated_bytes_ = 0;

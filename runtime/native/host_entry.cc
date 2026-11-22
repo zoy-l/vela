@@ -45,7 +45,8 @@ Result<void> HostEntry::Check(NativeResolvedDeclaration target) const {
     return {};
   }
   const auto& function = image.function(target.function);
-  const auto& actual = state.signatures.at(target.function);
+  auto instance = NativeInstance::Borrow(*target.state);
+  const auto& actual = instance.call_signature(target.function);
   const auto& expected = *signature_.constraint().signature;
   const auto& types = state.layouts.types;
   if ((function.flags & kNativeExportedFunction) == 0 || actual.hidden_parameters != 0 ||

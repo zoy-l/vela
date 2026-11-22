@@ -95,23 +95,4 @@ void NativeMetadataTracer::Mark(const ProgramLayouts& layouts) {
   }
 }
 
-void NativeMetadataTracer::Mark(const LayoutCache& cache) {
-  Mark(cache.code_identity);
-  for (const auto& [name, layout] : cache.classes) {
-    Mark(layout);
-  }
-  for (const auto& [name, layout] : cache.arrays) {
-    Mark(layout);
-  }
-  for (const auto& [name, layout] : cache.collections) {
-    Mark(layout);
-  }
-  for (const auto& [name, signature] : cache.signatures) {
-    Mark(signature);
-  }
-  for (const auto& [name, interface] : cache.interfaces) {
-    Mark(interface);
-  }
-}
-
 }  // namespace vela::runtime

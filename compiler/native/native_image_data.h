@@ -8,6 +8,7 @@
 #include <llvm/Support/Allocator.h>
 
 #include "compiler/ir/ir.h"
+#include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {

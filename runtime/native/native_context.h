@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
-#include <new>
 #include <optional>
 #include <string_view>
 #include <type_traits>
@@ -14,7 +15,6 @@
 #include <vela/type.h>
 
 #include "base/execution_status.h"
-#include "runtime/heap/host_memory.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_type.h"
 #include "runtime/native/native_host_type.h"
@@ -36,8 +36,10 @@ using NativeResult = std::expected<Value, vela::Error>;
 
 template <NativeHostClass T>
 struct NativeConstructed final {
-  HostMemory memory;
-  std::unique_ptr<T> value;
+  NativeConstructed(HostConstruction storage, T& value) noexcept
+      : storage(std::move(storage)), value(&value) {}
+  HostConstruction storage;
+  T* value;
 };
 
 class NativeContext final {
@@ -77,15 +79,16 @@ class NativeContext final {
       Args&&... arguments) const {
     static_assert(std::is_nothrow_constructible_v<T, Args...>);
     static_assert(std::is_nothrow_destructible_v<T>);
-    auto memory = ReserveHostMemory(sizeof(T));
-    if (!memory.IsReserved()) {
-      return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
+    static_assert(sizeof(T) <= std::numeric_limits<std::uint32_t>::max());
+    auto storage = PrepareHostConstruction(
+        NativeHostType<T>(), sizeof(T), alignof(T),
+        [](void* pointer) noexcept { std::destroy_at(static_cast<T*>(pointer)); });
+    if (!storage) {
+      return std::unexpected(std::move(storage.error()));
     }
-    std::unique_ptr<T> value(::new (std::nothrow) T(std::forward<Args>(arguments)...));
-    if (value == nullptr) {
-      return std::unexpected(vela::Error::FromStatus(vela::ExecutionStatus::OutOfMemory));
-    }
-    return NativeConstructed<T>{.memory = std::move(memory), .value = std::move(value)};
+    auto* value =
+        std::construct_at(static_cast<T*>(storage->pointer()), std::forward<Args>(arguments)...);
+    return NativeConstructed<T>(std::move(*storage), *value);
   }
 
   template <NativeHostClass T>
@@ -106,12 +109,7 @@ class NativeContext final {
 
   template <NativeHostClass T>
   [[nodiscard]] NativeResult Own(NativeConstructed<T> value) const {
-    return PublishHost(
-        NativeHostType<T>(),
-        HostObjectStorage(
-            value.value.release(),
-            [](void* pointer) noexcept { std::default_delete<T>{}(static_cast<T*>(pointer)); },
-            std::move(value.memory)));
+    return PublishHostConstruction(std::move(value.storage));
   }
 
   template <NativeHostClass T>
@@ -129,7 +127,12 @@ class NativeContext final {
   [[nodiscard]] std::expected<HostType, ExecutionStatus> BindTypeContract(NativeType type) const;
   [[nodiscard]] Result<Local<vela::Value>> TypedFutureValue(NativeType type,
                                                             const Future& future) const;
-  [[nodiscard]] HostMemory ReserveHostMemory(std::size_t bytes) const noexcept;
+  [[nodiscard]] std::expected<HostConstruction, vela::Error> PrepareHostConstruction(
+      NativeType type,
+      std::size_t size,
+      std::size_t alignment,
+      HostObjectStorage::Destructor destroy) const;
+  [[nodiscard]] NativeResult PublishHostConstruction(HostConstruction construction) const;
   [[nodiscard]] NativeResult PublishHost(NativeType type, HostObjectStorage storage) const;
   [[nodiscard]] std::expected<void, vela::Error> SetHostMemory(NativeType type,
                                                                const void* object,
