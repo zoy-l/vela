@@ -305,6 +305,15 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
              [](BinaryWriter& output, const auto& handler) { Put(output, handler.target); });
     FunctionCodeInputs input;
     InstructionInputs(writer, function, program, tier, classes, signatures, fields);
+    Sequence(writer, calls.direct_calls.at(function_index),
+             [&](BinaryWriter& output, const auto& target) {
+               Put(output, target.has_value());
+               if (target) {
+                 Put(output, target->function);
+                 Put(output, target->mode);
+                 Put(output, signatures.at(target->function));
+               }
+             });
     Numbers(writer, calls.slot_calls.at(function_index));
     input.dependencies = calls.dependencies.at(function_index);
     input.fingerprint = ContentFingerprint(writer.bytes());

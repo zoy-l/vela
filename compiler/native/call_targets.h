@@ -36,6 +36,9 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program,
                                NativeCodeTier tier,
                                NativeDebugging debugging = NativeDebugging::Safepoints);
 
+[[nodiscard]] std::vector<std::optional<std::uint32_t>> FindUniqueVirtualTargets(
+    const ir::Program& program);
+
 inline constexpr std::size_t kMaximumInlineInstructions = 64;
 
 enum class LeafKind : std::uint8_t { None, Bounded, Guarded, Recursive };

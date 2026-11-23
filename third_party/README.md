@@ -40,7 +40,6 @@ and standard library with the project `ld64.lld`. See the root README for platfo
 
 | Dependency | Revision | License |
 | --- | --- | --- |
-| [LuaJIT 2.1](https://github.com/LuaJIT/LuaJIT) | `a4c064539ea931274d407e1249b4bb575424a0f4` | MIT; [upstream license](https://github.com/LuaJIT/LuaJIT/blob/a4c064539ea931274d407e1249b4bb575424a0f4/COPYRIGHT) |
 | [Abseil](https://github.com/abseil/abseil-cpp) | `76bb24329e8bf5f39704eb10d21b9a80befa7c81` | Apache-2.0; [upstream license](https://github.com/abseil/abseil-cpp/blob/76bb24329e8bf5f39704eb10d21b9a80befa7c81/LICENSE) |
 | [efsw 1.7.3 (Vela fork)](https://github.com/zoy-l/efsw) | `d3b9595a4043d371923511098d32372d28adbaed` | MIT; [upstream license](https://github.com/zoy-l/efsw/blob/d3b9595a4043d371923511098d32372d28adbaed/LICENSE) |
 | [GoogleTest](https://github.com/google/googletest) | `52eb8108c5bdec04579160ae17225d66034bd723` | BSD-3-Clause; [upstream license](https://github.com/google/googletest/blob/52eb8108c5bdec04579160ae17225d66034bd723/LICENSE) |
@@ -51,7 +50,7 @@ and standard library with the project `ld64.lld`. See the root README for platfo
 | [yyjson 0.13.0](https://github.com/ibireme/yyjson) | `6447536015f3d600f3d65323b10976103b337ca7` | MIT; [upstream license](https://github.com/ibireme/yyjson/blob/6447536015f3d600f3d65323b10976103b337ca7/LICENSE) |
 | [xxHash 0.8.3](https://github.com/Cyan4973/xxHash) | `e626a72bc2321cd320e953a0ccf1584cad60f363` | BSD-2-Clause; [upstream license](https://github.com/Cyan4973/xxHash/blob/e626a72bc2321cd320e953a0ccf1584cad60f363/LICENSE) |
 
-GoogleTest, Google Benchmark and LuaJIT are `testonly` GN dependencies. Abseil is a
+GoogleTest and Google Benchmark are `testonly` GN dependencies. Abseil is a
 production dependency of the compiler and runtime, and Vela builds its own pinned copy.
 
 efsw supplies development-session file notifications through its native Windows, Linux and macOS
@@ -93,15 +92,3 @@ Third-party headers are system headers and their
 source targets use the compiler's default warnings; Vela's additional warning
 flags and clang-tidy checks continue to apply to project-owned code, including
 unit tests and benchmarks. Formatting skips upstream source trees.
-
-LuaJIT is linked only by the benchmark executable. Its integration is in
-[`BUILD.gn`](BUILD.gn). GN builds the upstream minilua and
-buildvm host tools with the pinned compiler. [`luajit.py`](../build/scripts/luajit.py)
-uses the target's preprocessed `lj_arch.h` for DynASM flags and invokes upstream
-generators for version, VM assembly/object and definition headers. All generated
-files live under each output's `gen/third_party/luajit`; upstream sources stay
-unchanged. The runtime uses upstream `ljamalg.c`, the default allocator, GC64 and
-the architecture's default number mode. Unix builds use external unwinding;
-Windows builds consume buildvm's PE object. No system Lua installation or Lua
-module installation is required. See [benchmark boundaries](../benchmarks/README.md)
-for JIT mode selection and measurement.

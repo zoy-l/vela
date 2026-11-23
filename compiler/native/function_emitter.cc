@@ -948,6 +948,41 @@ std::vector<std::optional<reflection::Operation>> PlanReflectionOperations(
     const ir::Function& function,
     std::span<const ir::Function> functions);
 
+std::vector<std::optional<CallableTarget>> ProjectCallTargets(
+    const ir::Function& function,
+    const ir::Program& program,
+    const NativeCallPlan& calls,
+    std::size_t function_index,
+    std::span<const std::size_t> origins) {
+  const auto& canonical = program.functions[function_index];
+  const auto& planned = calls.direct_calls[function_index];
+  if (&function == &canonical) {
+    return planned;
+  }
+  auto targets = FindDirectCalls(function, program);
+  if (planned.empty()) {
+    return targets;
+  }
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions[index];
+    const auto origin = origins[index];
+    const auto& original = canonical.instructions[origin];
+    if (instruction.opcode != Opcode::CallVirtual || original.opcode != instruction.opcode ||
+        original.index != instruction.index || original.immediate != instruction.immediate) {
+      continue;
+    }
+    const auto target = planned[origin];
+    if (!target) {
+      continue;
+    }
+    if (targets.empty()) {
+      targets.resize(function.instructions.size());
+    }
+    targets[index] = target;
+  }
+  return targets;
+}
+
 FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
                                         const NativeCallPlan& calls,
                                         const FieldTargets& field_targets,
@@ -985,8 +1020,8 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
   }
   if (tier == NativeCodeTier::Optimized) {
     // 规范 IR 复用调用计划；逃逸改写后的寄存器与指令位置必须重新分析。
-    facts.direct_calls = &function == &canonical ? calls.direct_calls[function_index]
-                                                 : FindDirectCalls(function, program);
+    facts.direct_calls =
+        ProjectCallTargets(function, program, calls, function_index, escape.origins);
   }
   const auto& instructions = canonical.instructions;
   facts.field_accesses.resize(instructions.size());

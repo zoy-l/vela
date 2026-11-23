@@ -28,7 +28,6 @@ runs:
           third_party/benchmark
           third_party/efsw
           third_party/googletest
-          third_party/luajit
           third_party/pcre2
           third_party/utf8proc
           third_party/yyjson

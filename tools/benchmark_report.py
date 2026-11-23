@@ -16,11 +16,10 @@ ALGORITHM_WORKLOADS = frozenset(case["name"] for case in json.loads(
 
 
 CASE = re.compile(
-    r"^(compare|first|compile)/(cpp|jit|luajit|luajit_interp|representative)/"
+    r"^(compare|first|compile)/(cpp|jit|representative)/"
     r"([^/]+)/(\d+)(?:/real_time)?$")
 MICROSECONDS = {"ns": 0.001, "us": 1.0, "ms": 1000.0, "s": 1_000_000.0}
-LABELS = {"cpp": "C++", "jit": "Vela JIT", "luajit_interp": "Lua interpreter",
-          "luajit": "LuaJIT", "representative": "Vela compile"}
+LABELS = {"cpp": "C++", "jit": "Vela JIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
     r"^native/(cpp|cpp_indirect|baseline|optimized|aot|baseline_control|optimized_control|aot_control)/"
     r"(empty|integer|double|boolean|string_borrow(?:_\d+)?)/(\d+)/real_time$")
@@ -231,31 +230,17 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
         samples[phase, backend, workload, size] = times
         if phase != "compare" or backend == "cpp":
             continue
-        fields = (("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes")
-                  if backend == "jit" else
-                  ("baseline_bytes", "allocated_bytes", "retained_bytes", "warmup_calls",
-                   "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes"))
+        fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes")
         for entry in entries:
             validate_counters(name, entry, fields)
         values = {field: [entry[field] for entry in entries] for field in fields}
-        if backend == "luajit" and any(value == 0 for value in values["warm_traces"]):
-            raise ValueError(f"{name}: no compiled traces after warm-up")
-        if backend == "luajit_interp" and any(
-                value != 0 for field in ("warm_traces", "traces", "jit_code_bytes")
-                for value in values[field]):
-            raise ValueError(f"{name}: interpreter reported compiled traces")
         counters[backend, workload, size] = values
 
     lines = ["Median wall time per complete workload (microseconds).",
              "Ratios are Vela / the named backend; lower is better.",
              "Execution excludes source loading, native compilation, input setup and warm-up; "
-             "normal GC and subsequent JIT tracing remain timed.",
+             "normal GC remains timed.",
              f"Every selected case passed all {repetitions} repetitions.", ""]
-    context = report.get("context", {})
-    for key in sorted(context):
-        if key.startswith("luajit_"):
-            lines.append(f"{key}: {context[key]}")
-    lines.append("")
 
     def table(phase: str, backends: tuple[str, ...], title: str) -> None:
         keys = sorted({(workload, size) for kind, _, workload, size in samples if kind == phase})
@@ -280,22 +265,19 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
             lines.append("| " + " | ".join([workload, str(size), *elapsed, *compared, counts, cvs]) + " |")
         lines.append("")
 
-    table("compare", ("cpp", "jit", "luajit_interp", "luajit"), "Steady execution after warm-up.")
-    table("first", ("jit", "luajit_interp", "luajit"),
+    table("compare", ("cpp", "jit"), "Steady execution after warm-up.")
+    table("first", ("jit",),
           "First invocation in a fresh state. Setup, compilation and destruction are excluded; "
-          "LuaJIT tracing during this invocation is included.")
-    table("compile", ("representative", "luajit"),
-          "Compilation in a fresh state. Vela performs semantic analysis, optimization and native code "
-          "preparation; LuaJIT loads source into Lua bytecode. These are distinct compiler boundaries.")
+          "lazy initialization during this invocation is included.")
+    table("compile", ("representative",),
+          "Compilation with a reusable JIT engine. Vela performs semantic analysis, optimization "
+          "and native code preparation.")
 
     lines.extend(["Heap snapshots in bytes (medians), including rooted input and program/library objects.",
-                  "Retained is after full GC; these counters are not process RSS. "
-                  "JIT code bytes sum live trace machine code, excluding unused reserved code pages.", "",
-                  "| Workload | Size | Backend | Baseline | End heap | After GC | Committed | "
-                  "Warm calls | Warm traces | Final traces | Warm JIT code | Final JIT code |",
-                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
-    fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes",
-              "warmup_calls", "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes")
+                  "Retained is after full GC; these counters are not process RSS.", "",
+                  "| Workload | Size | Backend | Baseline | End heap | After GC | Committed |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: |"])
+    fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes")
     for (backend, workload, size), values in sorted(counters.items(), key=lambda item: (item[0][1:],
                                                                                      item[0][0])):
         numbers = [f"{median(values[field]):.0f}" if field in values else "-" for field in fields]

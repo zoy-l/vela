@@ -161,6 +161,6 @@ plans separately from GC live/committed bytes and process resident memory;
 compiler frame plans are not measured physical stack sizes.
 
 The benchmark suites compare JIT, both reloadable tiers, AOT and appropriate C++
-or LuaJIT workloads. Historical measurements are comparable only when backend,
+workloads. Historical measurements are comparable only when backend,
 machine, toolchain, repetitions and boundaries match. Exact retention rules and
 commands are in the [benchmark guide](../../benchmarks/README.md).

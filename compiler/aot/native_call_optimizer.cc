@@ -19,27 +19,6 @@
 namespace vela::compiler::aot {
 namespace {
 
-std::vector<std::optional<std::uint32_t>> UniqueVirtualTargets(const ir::Program& program) {
-  std::vector<std::optional<std::uint32_t>> targets(program.selector_declarations.size());
-  std::vector<std::uint8_t> polymorphic(targets.size());
-  for (const auto& type : program.classes) {
-    for (std::size_t selector = 0; selector < type.dispatch_targets.size(); ++selector) {
-      const auto target = type.dispatch_targets[selector];
-      if (target == kInvalidFunctionTarget || polymorphic[selector] != 0) {
-        continue;
-      }
-      auto& selected = targets[selector];
-      if (selected && *selected != target) {
-        selected.reset();
-        polymorphic[selector] = 1;
-      } else {
-        selected = target;
-      }
-    }
-  }
-  return targets;
-}
-
 void DevirtualizeInstanceCalls(ir::Function& function,
                                const ir::Program& program,
                                std::span<const std::optional<std::uint32_t>> unique) {
@@ -100,7 +79,7 @@ void DevirtualizeNativeCalls(ir::Program& program) {
   if (program.native_mode != NativeProgramMode::Closed) {
     return;
   }
-  const auto unique = UniqueVirtualTargets(program);
+  const auto unique = native::FindUniqueVirtualTargets(program);
   for (auto& member : program.reflection_members) {
     if ((member.flags & reflection::kVirtual) != 0) {
       if (const auto target = unique[member.target]) {

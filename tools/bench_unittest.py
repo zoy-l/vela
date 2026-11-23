@@ -19,7 +19,7 @@ from tools.native_class_benchmark_report import aggregate_native_class_results
 from tools.reflection_benchmark_report import aggregate_reflection_results, reflection_comparison_report
 
 
-BACKENDS = ("cpp", "jit", "luajit_interp", "luajit")
+BACKENDS = ("cpp", "jit")
 
 
 class ReflectionReportTest(unittest.TestCase):
@@ -186,14 +186,11 @@ def case(backend: str, phase: str = "compare") -> str:
 
 def sample(backend: str, elapsed: float, unit: str = "ns",
            phase: str = "compare", repetition: int = 0, repetitions: int = 1) -> dict:
-    traces = 10 if backend == "luajit" else 0
     return {
         "name": case(backend, phase), "real_time": elapsed, "cpu_time": 999999999,
         "time_unit": unit, "repetitions": repetitions, "repetition_index": repetition,
         "baseline_bytes": 100, "allocated_bytes": 150, "retained_bytes": 100,
-        "committed_bytes": 200, "warmup_calls": 128,
-        "warm_traces": traces, "traces": traces,
-        "warm_jit_code_bytes": traces * 20, "jit_code_bytes": traces * 20,
+        "committed_bytes": 200,
     }
 
 
@@ -563,30 +560,26 @@ class BenchmarkReportTest(unittest.TestCase):
 
     def test_uses_wall_time_medians_and_separates_cold_compilation_and_memory(self) -> None:
         rows = []
-        for backend, values in zip(BACKENDS, ((1, 3, 2), (8, 10, 12), (4, 5, 6), (1, 2, 3))):
+        for backend, values in zip(BACKENDS, ((1, 3, 2), (8, 10, 12))):
             rows.extend(sample(backend, value, "us", repetition=index, repetitions=3)
                         for index, value in enumerate(values))
-        for phase, backends in (("first", ("jit", "luajit_interp", "luajit")),
-                                ("compile", ("representative", "luajit"))):
+        for phase, backends in (("first", ("jit",)), ("compile", ("representative",))):
             rows.extend(sample(backend, 3, "ms", phase, repetition=index, repetitions=3)
                         for backend in backends for index in range(3))
         aggregate = sample("cpp", 999999)
         aggregate.update(run_type="aggregate", aggregate_name="mean")
         names = list(dict.fromkeys(row["name"] for row in rows))
-        result = comparison_report({"benchmarks": [*rows, aggregate],
-                                    "context": {"luajit_revision": "pinned"}}, names, 3)
-        self.assertIn("| sieve | 10000 | 2.000 | 10.000 | 5.000 | 2.000 | 5.00x | 2.00x | 5.00x |", result)
+        result = comparison_report({"benchmarks": [*rows, aggregate]}, names, 3)
+        self.assertIn("| sieve | 10000 | 2.000 | 10.000 | 5.00x |", result)
         self.assertIn("3000.000", result)
         self.assertIn("| sieve | 10000 | Vela JIT | 100 | 150 | 100 | 200 |", result)
         self.assertIn("First invocation in a fresh state", result)
-        self.assertIn("LuaJIT loads source into Lua bytecode", result)
-        self.assertIn("luajit_revision: pinned", result)
+        self.assertIn("Compilation with a reusable JIT engine", result)
 
     def test_converts_units_without_using_cpu_time(self) -> None:
-        rows = [sample("cpp", 1000), sample("jit", 0.000010, "s"),
-                sample("luajit_interp", 0.005, "ms"), sample("luajit", 2, "us")]
+        rows = [sample("cpp", 1000), sample("jit", 0.000010, "s")]
         result = comparison_report({"benchmarks": rows}, [case(backend) for backend in BACKENDS], 1)
-        self.assertIn("| 1.000 | 10.000 | 5.000 | 2.000 | 10.00x | 2.00x | 5.00x |", result)
+        self.assertIn("| 1.000 | 10.000 | 10.00x |", result)
 
     def test_rejects_missing_backends_workloads_and_duplicate_or_missing_repetitions(self) -> None:
         names = [case(backend) for backend in BACKENDS]
@@ -601,7 +594,7 @@ class BenchmarkReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "repetitions"):
             comparison_report({"benchmarks": rows}, names, 3)
 
-    def test_rejects_failed_nonfinite_or_false_jit_reports(self) -> None:
+    def test_rejects_failed_nonfinite_or_invalid_heap_reports(self) -> None:
         names = [case(backend) for backend in BACKENDS]
         rows = steady_samples()
         rows[1].update(error_occurred=True, error_message="checksum mismatch")
@@ -612,20 +605,16 @@ class BenchmarkReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid wall time"):
             comparison_report({"benchmarks": rows}, names, 1)
         rows = steady_samples()
-        rows[-1]["warm_traces"] = 0
-        with self.assertRaisesRegex(ValueError, "no compiled traces"):
-            comparison_report({"benchmarks": rows}, names, 1)
-        rows = steady_samples()
-        rows[-2]["traces"] = 1
-        with self.assertRaisesRegex(ValueError, "interpreter reported"):
+        rows[-1]["allocated_bytes"] = -1
+        with self.assertRaisesRegex(ValueError, "invalid allocated_bytes"):
             comparison_report({"benchmarks": rows}, names, 1)
         with self.assertRaisesRegex(ValueError, "No supported"):
             comparison_report({"benchmarks": []}, [], 1)
 
     def test_explicit_backend_filter_reports_only_selected_backends(self) -> None:
-        rows = steady_samples()[:2]
+        rows = steady_samples()[1:]
         result = comparison_report({"benchmarks": rows}, [row["name"] for row in rows], 1)
-        self.assertIn("| 1.000 | 2.000 | - | - | 2.00x |", result)
+        self.assertIn("| sieve | 10000 | - | 2.000 | - |", result)
 
     def test_documents_api_baseline_differences_only_for_selected_workloads(self) -> None:
         entries = [sample("cpp", 1000), sample("jit", 5000)]
@@ -788,7 +777,7 @@ class BenchmarkReportTest(unittest.TestCase):
             with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
-            self.assertIn("Vela/LuaJIT", report.with_suffix(".md").read_text(encoding="utf-8"))
+            self.assertIn("Vela/C++", report.with_suffix(".md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

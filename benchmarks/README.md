@@ -2,7 +2,7 @@
 
 Google Benchmark runs production JIT, AOT and shared-runtime workloads.
 `//benchmarks:vela_benchmarks` contains source execution, runtime, tooling and
-C++/LuaJIT comparisons. `//benchmarks:vela_aot_benchmarks` contains offline AOT,
+C++ comparisons. `//benchmarks:vela_aot_benchmarks` contains offline AOT,
 reloadable JIT, generic, Map-literal and escape-analysis workloads.
 Dependencies and versions are pinned in `DEPS`.
 
@@ -157,23 +157,20 @@ repetitions. They are not process RSS or peak heap measurements. The step p95 is
 calculated per cycle, averaged within each repetition, then reported as the median
 of those averages; it is not a pooled percentile of every step in the run.
 
-## Representative C++ and LuaJIT comparisons
+## Representative C++ comparisons
 
 `--compare` runs representative workloads at two sizes with closed Vela JIT,
-ordinary optimized C++, LuaJIT and the LuaJIT interpreter. The labels are
-`compare/jit/*`, `compare/cpp/*`, `compare/luajit/*` and
-`compare/luajit_interp/*`. The report checks LuaJIT trace evidence and rejects
-compiled traces reported by the interpreter mode.
+ordinary optimized C++. The steady execution labels are `compare/jit/*` and
+`compare/cpp/*`.
 
 Steady time excludes source loading, compilation, input preparation and warm-up.
-Normal GC and subsequent LuaJIT tracing remain timed. `first/jit/*` and the Lua
-first-call cases use fresh state and include lazy work during that invocation.
+Normal GC remains timed. `first/jit/*` uses fresh state and includes lazy work
+during that invocation.
 `compile/representative/*` measures the native source pipeline with a reusable
-JIT engine; `compile/luajit/*` loads source into Lua bytecode. These are different
-compiler boundaries.
+JIT engine. The report separates compilation, first invocation and steady time.
 
 ```powershell
-python -m tools.vl bench --compare -- --benchmark_filter='^compare/(cpp|jit|luajit|luajit_interp)/sieve/'
+python -m tools.vl bench --compare -- --benchmark_filter='^compare/(cpp|jit)/sieve/'
 ```
 
 Workloads include algorithms, arrays, closures, dynamic dispatch, JSON, byte views,
@@ -182,7 +179,7 @@ C++ uses its ordinary containers and ownership; it may inline or vectorize code.
 Differences in checked arithmetic, dynamic dispatch, object representation and
 GC are part of each complete workload, not isolated ABI overhead.
 See [representative_benchmark.cc](representative_benchmark.cc) for checksums and
-the LuaJIT warm-up contract.
+measurement boundaries.
 
 ## Offline AOT and reloadable JIT
 

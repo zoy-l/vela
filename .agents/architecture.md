@@ -101,6 +101,13 @@ Function indices belong to the program image, including dispatch for Isolate-sha
 such as `DateParts`. Object layouts do not duplicate those tables. Getter and setter visibility and
 implementation ownership remain independent when accessors are inherited or merged.
 
+Closed JIT and AOT share the proof of a unique selector implementation; AOT can narrow the receiver
+set through reachability before applying it. Optimized reloadable loops may select a scalar
+receiver-field body from the static class's selector table. Its canonical-layout and initialization
+guards recover at the original virtual call before any method effects. The selected body participates
+in code lifetime, invalidation dependencies and reuse fingerprints, including after escape rewriting;
+baseline recovery retains the original selector lookup against the current publication.
+
 Closed linked images publish reflection-call entries only for described callable targets, including
 every live implementation of a reflected virtual selector. Ordinary host entries keep their own
 argument-validation ABI. Direct compiler-bound reflection calls retain their wrappers through their

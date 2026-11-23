@@ -636,6 +636,10 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       break;
     }
     case Opcode::CallVirtual: {
+      if (const auto target = CallTarget(instruction_index_)) {
+        EmitCall(instruction, *target);
+        return {};
+      }
       const auto count = static_cast<std::size_t>(instruction.immediate);
       PackArguments(instruction.lhs, count);
       if (program_.native_mode == NativeProgramMode::Reloadable) {

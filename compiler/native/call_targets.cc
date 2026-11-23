@@ -6,8 +6,11 @@
 #include <optional>
 #include <ranges>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 
 #include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/ADT/SmallVector.h>
@@ -56,6 +59,69 @@ bool CanCallDirectly(const ir::Instruction& instruction,
     }
   }
   return IsSameType(caller.value_types.at(instruction.dst), callee.return_type);
+}
+
+bool CanUseVirtualArguments(const ir::Instruction& instruction,
+                            const ir::Function& caller,
+                            const ir::Function& callee) {
+  if (!callee.native_symbol.empty() ||
+      !std::cmp_equal(callee.parameter_count, instruction.immediate) ||
+      !IsSameType(caller.value_types[instruction.dst], callee.return_type)) {
+    return false;
+  }
+  for (std::size_t argument = 1; argument < callee.parameter_count; ++argument) {
+    if (!IsSameType(caller.value_types[instruction.lhs + argument], callee.value_types[argument])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void PlanVirtualCalls(const ir::Function& function,
+                      const ir::Program& program,
+                      std::span<const std::optional<std::uint32_t>> unique,
+                      const absl::flat_hash_map<std::string_view, const ir::Class*>& classes,
+                      NativeDebugging debugging,
+                      std::vector<std::optional<CallableTarget>>& targets) {
+  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions[index];
+    if (instruction.opcode != Opcode::CallVirtual) {
+      continue;
+    }
+    const auto& receiver = function.value_types[instruction.lhs];
+    if (receiver.nullable) {
+      continue;
+    }
+    std::optional<std::uint32_t> target;
+    if (reloadable) {
+      const auto owner = classes.find(receiver.name);
+      if (owner != classes.end()) {
+        const auto selected = owner->second->dispatch_targets[instruction.index];
+        if (selected != kInvalidFunctionTarget) {
+          target = selected;
+        }
+      }
+    } else {
+      target = unique[instruction.index];
+    }
+    if (!target) {
+      continue;
+    }
+    const auto& callee = program.functions[*target];
+    if (!CanUseVirtualArguments(instruction, function, callee)) {
+      continue;
+    }
+    if (reloadable && (!CanUseScalarFieldBody(callee, program.native_mode, debugging) ||
+                       !IsSameType(receiver, callee.value_types.front()))) {
+      continue;
+    }
+    if (targets.empty()) {
+      targets.resize(function.instructions.size());
+    }
+    // 可重载目标只供规范接收者的字段体使用；布局失配在原 CallVirtual 位置恢复。
+    targets[index] = CallableTarget{.function = *target};
+  }
 }
 
 std::vector<std::size_t> CallFinishOrder(const std::vector<std::vector<std::size_t>>& edges) {
@@ -228,6 +294,27 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
   }
 }
 
+void RemoveSlottedVirtualCalls(NativeCallPlan& plan,
+                               const ir::Program& program,
+                               std::vector<std::vector<std::size_t>>& edges) {
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    auto& direct = plan.direct_calls[index];
+    const auto& function = program.functions[index];
+    const auto& instructions = function.instructions;
+    for (std::size_t instruction = 0; instruction < direct.size(); ++instruction) {
+      auto& target = direct[instruction];
+      if (instructions[instruction].opcode == Opcode::CallVirtual && target &&
+          plan.IsEntrySlotRequired({.caller = index, .callee = target->function})) {
+        target.reset();
+      }
+    }
+    edges[index] = FunctionCallees(function, program, direct);
+    std::erase_if(plan.slot_calls[index], [&](std::size_t callee) {
+      return !std::ranges::binary_search(edges[index], callee);
+    });
+  }
+}
+
 }  // namespace
 
 void ForEachDirectCallee(const ir::Function& function,
@@ -262,18 +349,29 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program,
   NativeCallPlan plan{.slot_calls = {}, .dependencies = {}, .direct_calls = {}};
   plan.slot_calls.resize(count);
   plan.direct_calls.resize(count);
+  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
+  const auto unique = !reloadable && tier == NativeCodeTier::Optimized
+                          ? FindUniqueVirtualTargets(program)
+                          : std::vector<std::optional<std::uint32_t>>{};
+  absl::flat_hash_map<std::string_view, const ir::Class*> classes;
+  if (reloadable && tier == NativeCodeTier::Optimized) {
+    for (const auto& owner : program.classes) {
+      classes.emplace(owner.name, &owner);
+    }
+  }
   std::vector<std::vector<std::size_t>> edges(count);
   for (std::size_t index = 0; index < count; ++index) {
     const auto& function = functions[index];
     auto& direct = plan.direct_calls[index];
     if (tier == NativeCodeTier::Optimized) {
       direct = FindDirectCalls(function, program);
+      PlanVirtualCalls(function, program, unique, classes, debugging, direct);
     }
     edges[index] = FunctionCallees(function, program, direct);
   }
-  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
   if (reloadable && tier == NativeCodeTier::Optimized) {
     PlanReloadableEntrySlots(plan, program, edges, debugging);
+    RemoveSlottedVirtualCalls(plan, program, edges);
   }
   plan.dependencies = std::move(edges);
   for (std::size_t index = 0; index < count; ++index) {
@@ -287,6 +385,27 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program,
     });
   }
   return plan;
+}
+
+std::vector<std::optional<std::uint32_t>> FindUniqueVirtualTargets(const ir::Program& program) {
+  std::vector<std::optional<std::uint32_t>> targets(program.selector_declarations.size());
+  std::vector<std::uint8_t> polymorphic(targets.size());
+  for (const auto& type : program.classes) {
+    for (std::size_t selector = 0; selector < type.dispatch_targets.size(); ++selector) {
+      const auto target = type.dispatch_targets[selector];
+      if (target == kInvalidFunctionTarget || polymorphic[selector] != 0) {
+        continue;
+      }
+      auto& selected = targets[selector];
+      if (selected && *selected != target) {
+        selected.reset();
+        polymorphic[selector] = 1;
+      } else {
+        selected = target;
+      }
+    }
+  }
+  return targets;
 }
 
 bool CanInlineSmallFunction(const ir::Function& function) {

@@ -31,6 +31,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/code_inputs.h"
 #include "compiler/jit/code_reuse.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/jit/test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/async/future.h"
@@ -675,6 +676,85 @@ export func main(): int {
   const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(main);
   ASSERT_TRUE(test::ReturnsInteger(*main, 42));
+}
+
+TEST(JitCompilerTest, OptimizedVirtualMethodGuardsPreservePriorEffectsAndArguments) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler, R"(
+class Base {
+  value: int = 0;
+  calls: int = 0;
+  step(value: int): int { this.calls++; this.value = value; return this.value + 1; }
+}
+class Child extends Base {
+  override step(value: int): int { this.value = value; return this.value + 2; }
+}
+let effects = 0;
+func total(value: Base): int {
+  let sum = 0;
+  for (let i = 0; i < 4; i++) {
+    effects++;
+    const text = effects.toString();
+    sum += value.step(effects + 30);
+    if (text.length != 1) { return -1; }
+  }
+  return sum;
+}
+export func main(): int {
+  const base = Base();
+  const child = Child();
+  const first = total(base);
+  const second = total(child);
+  const failure = Base();
+  let failed = false;
+  try {
+    for (let i = 0; i < 4; i++) { failure.step(9223372036854775807); }
+  } catch (error: Error) { failed = true; }
+  return first == 134 && second == 154 && effects == 8 &&
+         base.value == 34 && child.value == 38 && failed &&
+         failure.calls == 1 && failure.value == 9223372036854775807 ? 42 : 0;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
+  ASSERT_TRUE(main);
+  ASSERT_TRUE(test::ReturnsInteger(*main, 42));
+}
+
+TEST(JitCompilerTest, ClosedVirtualCallsRetainPolymorphicTargets) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  SourceOptions options;
+  options.compilation.tier = NativeCodeTier::Optimized;
+  const auto compiled = CompileSource(**compiler, R"(
+class Base {
+  value: int = 0;
+  step(value: int): int { this.value = value; return this.value + 1; }
+}
+class Child extends Base {
+  override step(value: int): int { this.value = value; return this.value + 2; }
+}
+func total(value: Base): int {
+  let sum = 0;
+  for (let i = 0; i < 4; i++) { sum += value.step(i); }
+  return sum;
+}
+export func main(): int { return total(Base()) == 10 && total(Child()) == 14 ? 42 : 0; }
+)",
+                                      options);
+  ASSERT_TRUE(compiled.Succeeded()) << DiagnosticsText(compiled.diagnostics);
+  runtime::Isolate isolate(1);
+  const auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  ASSERT_TRUE(instance);
+  const auto main = (*instance)->FindFunction("main");
+  ASSERT_TRUE(main);
+  const auto result = runtime::ExecuteNativeFunction(**instance, *main);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
 TEST(JitCompilerTest, WarmGlobalBindingsStopUsingSlotsWhenTheDispatchCloses) {

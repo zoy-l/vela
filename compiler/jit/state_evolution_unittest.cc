@@ -216,6 +216,93 @@ TEST_P(JitStateTest, ClassCallsFollowAddedAndRemovedOverridesWhileMethodValuesKe
   EXPECT_EQ(Entry("invoke").Invoke(new_callback)->AsInteger(), 42);
 }
 
+TEST_P(JitStateTest, GuardedVirtualLoopsFollowEditedBodiesAndNewOverrides) {
+  const std::string entries =
+      "const object = Counter(); const child = Child(); "
+      "export func direct(): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { sum += object.step(i); } return sum; } "
+      "export func derived(): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { sum += child.step(i); } return sum; } ";
+  const std::string initial =
+      "class Counter { value: int = 0; "
+      "step(value: int): int { this.value = value; return this.value + 1; } } ";
+  auto update = Update(initial + "class Child extends Counter {} " + entries);
+  ASSERT_TRUE(update) << update.error();
+  const auto old_direct = Entry("direct").Capture();
+  const auto old_derived = Entry("derived").Capture();
+  ASSERT_TRUE(old_direct);
+  ASSERT_TRUE(old_derived);
+  EXPECT_EQ(old_direct->Invoke({})->AsInteger(), 10);
+  EXPECT_EQ(old_derived->Invoke({})->AsInteger(), 10);
+  const std::string changed =
+      "class Counter { value: int = 0; "
+      "step(value: int): int { this.value = value; return this.value + 2; } } ";
+  update = Update(changed +
+                  "class Child extends Counter { override step(value: int): int { "
+                  "this.value = value; return this.value + 3; } } " +
+                  entries);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(old_direct->Invoke({})->AsInteger(), 14);
+  EXPECT_EQ(Entry("direct").Invoke({})->AsInteger(), 14);
+  EXPECT_EQ(old_derived->Invoke({})->AsInteger(), 18);
+  EXPECT_EQ(Entry("derived").Invoke({})->AsInteger(), 18);
+  update = Update(changed + "class Child extends Counter {} " + entries);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(old_derived->Invoke({})->AsInteger(), 14);
+  EXPECT_EQ(Entry("derived").Invoke({})->AsInteger(), 14);
+}
+
+TEST_P(JitStateTest, GuardedVirtualLoopsPreserveDefaultsAcrossPublication) {
+  const std::string entries =
+      "const object = Counter(); export func direct(): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { sum += object.step(value: i); "
+      "sum += object.step(); } return sum; } ";
+  auto update = Update(
+      "class Counter { value: int = 0; "
+      "step(value: int = 1): int { this.value = value; return this.value; } } " +
+      entries);
+  ASSERT_TRUE(update) << update.error();
+  const auto retained = Entry("direct").Capture();
+  ASSERT_TRUE(retained);
+  EXPECT_EQ(retained->Invoke({})->AsInteger(), 10);
+  update = Update(
+      "class Counter { value: int = 0; "
+      "step(value: int = 2): int { this.value = value; return this.value + 1; } } " +
+      entries);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(retained->Invoke({})->AsInteger(), 22);
+  EXPECT_EQ(Entry("direct").Invoke({})->AsInteger(), 22);
+}
+
+TEST_P(JitStateTest, GuardedVirtualLoopsInitializeNewFieldsWithoutReplayingWrites) {
+  const std::string prefix =
+      "let defaults = 0; func next(): int { defaults++; return 7; } "
+      "class Counter { value: int = 0; ";
+  const std::string entries =
+      "} const receiver = Counter(); export func run(includeAdded: bool): int { let sum = 0; "
+      "for (let i = 0; i < 4; i++) { sum += receiver.read(includeAdded); } return sum; } "
+      "export func state(): int { return receiver.value * 10 + defaults; } ";
+  auto update = Update(
+      prefix + "read(includeAdded: bool): int { this.value++; return this.value; } " + entries);
+  ASSERT_TRUE(update) << update.error();
+  const std::array cold{runtime::Value::Boolean(false)};
+  EXPECT_EQ(Entry("run").Invoke(cold)->AsInteger(), 10);
+  update = Update(prefix +
+                  "added: int = next(); read(includeAdded: bool): int { this.value++; "
+                  "return includeAdded ? this.value + this.added : this.value; } " +
+                  entries);
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("run").Invoke(cold)->AsInteger(), 26);
+  EXPECT_EQ(Entry("state").Invoke({})->AsInteger(), 80);
+  const std::array hot{runtime::Value::Boolean(true)};
+  EXPECT_EQ(Entry("run").Invoke(hot)->AsInteger(), 70);
+  EXPECT_EQ(Entry("state").Invoke({})->AsInteger(), 121);
+  EXPECT_EQ(isolate_.native_control().state().initializations, 0U);
+}
+
 TEST_P(JitStateTest, RetainedClassSelectorsRestoreGenericOverrideSpecializations) {
   const std::string entries =
       "export func make(): Base<int> { return Child<int>(); } "
