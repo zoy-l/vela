@@ -647,7 +647,8 @@ std::expected<Value, ExecutionStatus> CompleteInvocation(
   if (host != nullptr) {
     auto& control = isolate.native_control().state();
     NativeHostContext context(instance.program(), control,
-                              parent == nullptr ? 0 : parent->frame_count(), control.StackLimit());
+                              parent == nullptr ? 0 : parent->frame_count(),
+                              CurrentNativeStackLimit(control));
     NativeValue output;
     const auto status = host(&context, object, &output);
     if (status == ToNativeStatus(ExecutionStatus::Returned)) {

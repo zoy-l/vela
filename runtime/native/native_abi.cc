@@ -63,7 +63,7 @@ NativeFrame::~NativeFrame() {
       barrier_state_(&isolate().heap().barrier_state()),
       stack_roots_(isolate().heap().native_stack_roots_head()),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
-  const auto limit = control_state_->StackLimit();
+  const auto limit = CurrentNativeStackLimit(*control_state_);
   if (parent != nullptr) {
     current_frame_ = parent->current_frame_;
     frame_count_ = parent->frame_count_;

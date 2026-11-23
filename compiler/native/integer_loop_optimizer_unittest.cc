@@ -90,7 +90,8 @@ declare i1 @guard(ptr, i1)
   }
   auto& guard = *module->getFunction("guard");
   const unsigned parameter = 0;
-  EmitBoundedLeafGuard({.leaf = &body, .leaf_guard = &guard}, std::span(&parameter, 1));
+  EmitBoundedLeafGuard({.leaf = &body, .leaf_guard = &guard, .inline_scalar = {}},
+                       std::span(&parameter, 1));
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t loads = 0;
   for (const auto& instruction : llvm::instructions(guard)) {

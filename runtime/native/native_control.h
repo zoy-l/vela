@@ -38,17 +38,19 @@ struct NativeControlState final {
   NativeExecution* host_execution = nullptr;
   std::uint64_t initializations = 0;
   std::uintptr_t callback_stack_limit = kUnknownStackLimit;
-
-  [[nodiscard]] std::expected<std::uintptr_t, ExecutionStatus> StackLimit() const noexcept {
-#ifndef _WIN32
-    // POSIX Isolate 固定在创建线程，其原生栈边界在 Isolate 生命周期内不变。
-    if (callback_stack_limit != kUnknownStackLimit) [[likely]] {
-      return callback_stack_limit;
-    }
-#endif
-    return CurrentNativeStackLimit();
-  }
 };
+
+[[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus> CurrentNativeStackLimit(
+    [[maybe_unused]] const NativeControlState& control) noexcept {
+#ifndef _WIN32
+  // POSIX Isolate 固定在创建线程，其原生栈边界在 Isolate 生命周期内不变。
+  const auto cached_limit = control.callback_stack_limit;
+  if (cached_limit != NativeControlState::kUnknownStackLimit) [[likely]] {
+    return cached_limit;
+  }
+#endif
+  return CurrentNativeStackLimit();
+}
 
 // 跨线程只拥有队列控制状态；关闭后投递不会访问已退休的 Isolate。
 class NativeSafepointEndpoint final {

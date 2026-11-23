@@ -237,7 +237,11 @@ class Local final {
   Local(HandleScope& scope, runtime::Value& value) noexcept : scope_(&scope), value_(&value) {}
   HandleScope* scope_;
   runtime::Value* value_;
+#ifdef _MSC_VER
+  [[msvc::no_unique_address]] internal::HandleCallback<T> callback_;
+#else
   [[no_unique_address]] internal::HandleCallback<T> callback_;
+#endif
 };
 
 template <class T>
@@ -287,7 +291,11 @@ class Persistent final {
     }
   }
   runtime::HostRoot root_;
+#ifdef _MSC_VER
+  [[msvc::no_unique_address]] internal::HandleCallback<T> callback_;
+#else
   [[no_unique_address]] internal::HandleCallback<T> callback_;
+#endif
 };
 
 template <class T>

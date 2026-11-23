@@ -1,7 +1,9 @@
 #include "runtime/heap/block_page_memory.h"
 
-#include <memoryapi.h>
 #include <windows.h>  // IWYU pragma: keep
+
+#include <memoryapi.h>
+#include <winnt.h>
 
 namespace vela::runtime::internal {
 

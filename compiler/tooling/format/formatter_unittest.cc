@@ -217,7 +217,8 @@ void ExpectSameTokens(const frontend::LexResult& before, const frontend::LexResu
 TEST(FormatterTest, KeepsPostfixAndNullSafeOperatorsTightAndSpacesAllBinaryAssignments) {
   const auto result = FormatSource(
       "func main():void{let value=1;value++;--value;value+=(2);value<<=(1);"
-      "value&=(3);const bits=value&(1);const maybe:Node?=null;print(maybe?.value??(0));}");
+      "value&=(3);const bits=value&(1);const maybe:Node?=null;print(maybe?.value?"
+      "?(0));}");
   ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
   EXPECT_TRUE(result->contains("value++;"));
   EXPECT_TRUE(result->contains("--value;"));
