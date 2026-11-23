@@ -435,6 +435,8 @@ source_set("native") {
     "native/reflection_emitter.cc",
     "native/repeated_field_optimizer.cc",
     "native/repeated_field_optimizer.h",
+    "native/root_store_optimizer.cc",
+    "native/root_store_optimizer.h",
     "native/scalar_emitter.cc",
     "native/target_version_emitter.cc",
     "native/target_version_emitter.h",
@@ -662,6 +664,7 @@ executable("vela_aot_tests") {
     "native/recursive_inliner_unittest.cc",
     "native/reflection_unittest.cc",
     "native/repeated_field_optimizer_unittest.cc",
+    "native/root_store_optimizer_unittest.cc",
   ]
   deps = [
     ":aot",

@@ -21,5 +21,6 @@ void WithFunctionLoops(llvm::Function& function,
 void WithFunctionLoops(llvm::Module& module,
                        llvm::function_ref<void(llvm::Function&, const llvm::LoopInfo&)> verify);
 void RunFunctionPasses(llvm::Function& function, void (*add_passes)(llvm::FunctionPassManager&));
+unsigned CountLoopsCalling(llvm::Module& module, std::string_view symbol);
 
 }  // namespace vela::compiler::native::test

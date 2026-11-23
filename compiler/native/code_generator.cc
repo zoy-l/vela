@@ -44,11 +44,14 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/IPO/AlwaysInliner.h>
+#include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
+#include "base/callable.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/reflection.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -74,6 +77,7 @@
 #include "compiler/native/native_values.h"
 #include "compiler/native/recursive_inliner.h"
 #include "compiler/native/repeated_field_optimizer.h"
+#include "compiler/native/root_store_optimizer.h"
 #include "compiler/native/target_version_emitter.h"
 #include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
@@ -284,6 +288,8 @@ void Optimize(llvm::Module& module,
       AddCallLoopPasses(call_loops);
       AddLateFieldGuardPasses(call_loops);
     }
+    AddRootStorePasses(call_loops);
+    call_loops.addPass(llvm::DCEPass());
     llvm::ModulePassManager finishing;
     finishing.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(call_loops)));
     finishing.run(module, modules);
@@ -1032,6 +1038,35 @@ void RequireReflectionReceiverLayouts(const ir::Program& program,
   }
 }
 
+std::vector<std::uint8_t> ReflectedFunctions(const ir::Program& program,
+                                             NativeCodePlacement placement) {
+  const auto closed = IsClosedLinkedProgram(program.native_mode, placement);
+  std::vector<std::uint8_t> functions(program.functions.size(), closed ? 0 : 1);
+  if (!closed) {
+    return functions;
+  }
+  std::vector<std::uint8_t> selectors(program.selector_declarations.size());
+  for (const auto& member : program.reflection_members) {
+    if (!reflection::IsCallable(member.kind) || member.target == kInvalidFunctionTarget) {
+      continue;
+    }
+    if ((member.flags & reflection::kVirtual) != 0) {
+      selectors[member.target] = 1;
+    } else {
+      functions[member.target] = 1;
+    }
+  }
+  for (const auto& type : program.classes) {
+    for (std::size_t selector = 0; selector < type.dispatch_targets.size(); ++selector) {
+      const auto target = type.dispatch_targets[selector];
+      if (selectors[selector] != 0 && target != kInvalidFunctionTarget) {
+        functions[target] = 1;
+      }
+    }
+  }
+  return functions;
+}
+
 std::expected<llvm::Constant*, std::string> EmitModuleImage(
     NativeModule& output,
     const ir::Program& program,
@@ -1052,9 +1087,13 @@ std::expected<llvm::Constant*, std::string> EmitModuleImage(
   reflection_entries.reserve(count);
   host_entries.reserve(count);
   callbacks.reserve(count);
-  for (const auto& function : generated) {
+  const auto reflected = ReflectedFunctions(program, placement);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto& function = generated[index];
     entries.push_back(function.entry);
-    reflection_entries.push_back(function.reflection_entry);
+    // 封闭映像只为实际描述的反射目标保留运行时入口；普通宿主调用使用独立 external ABI。
+    // 编译器直接绑定的反射调用仍通过 LLVM 引用保留其包装，动态代码继续发布完整入口表。
+    reflection_entries.push_back(reflected[index] != 0 ? function.reflection_entry : nullptr);
     host_entries.push_back(function.host_entry_selector);
     callbacks.push_back(function.integer_callback);
   }

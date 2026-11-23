@@ -75,6 +75,7 @@ class Reachability final {
   void VisitMember(const MemberDefinition& member, TypeExposure exposure);
   void MarkDynamic();
   void PruneClasses(ir::Program& program) const;
+  void PruneSelectors(ir::Program& program) const;
   void RemapClasses(ir::Program& program, std::span<const std::uint32_t> mapping) const;
   std::vector<std::uint32_t> PruneJSONPlans(ir::Program& program,
                                             std::span<const std::uint32_t> functions) const;
@@ -573,6 +574,64 @@ void Reachability::RemapClasses(ir::Program& program,
   }
 }
 
+void RemapSelectorReferences(ir::Program& program, std::span<const std::uint32_t> mapping) {
+  const auto remap_callable = [&](auto& type) {
+    auto& callable = type.callable;
+    if (callable && callable->mode == CallableMode::VirtualMethod) {
+      callable->function = mapping[callable->function];
+    }
+  };
+  for (auto& type : program.classes) {
+    auto& targets = type.dispatch_targets;
+    std::vector<std::uint32_t> compact(program.selector_declarations.size(),
+                                       kInvalidFunctionTarget);
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+      const auto selector = mapping[index];
+      if (selector != kInvalidFunctionTarget) {
+        compact[selector] = targets[index];
+      }
+    }
+    targets = std::move(compact);
+    remap_callable(type);
+  }
+  for (auto& type : program.layouts.classes) {
+    remap_callable(type);
+  }
+  for (auto& function : program.functions) {
+    for (auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::CallVirtual) {
+        instruction.index = mapping[instruction.index];
+      }
+    }
+  }
+  for (auto& member : program.reflection_members) {
+    if ((member.flags & reflection::kVirtual) != 0 && member.target != kInvalidFunctionTarget) {
+      member.target = mapping[member.target];
+    }
+  }
+}
+
+void Reachability::PruneSelectors(ir::Program& program) const {
+  const auto count = program.selector_declarations.size();
+  std::vector<std::uint32_t> mapping(count, kInvalidFunctionTarget);
+  std::vector<std::uint8_t> reflected(count);
+  for (const auto& member : program.reflection_members) {
+    if ((member.flags & reflection::kVirtual) != 0 && member.target != kInvalidFunctionTarget) {
+      reflected[member.target] = 1;
+    }
+  }
+  std::vector<DeclarationId> declarations;
+  for (std::size_t index = 0; index < count; ++index) {
+    const Node selector{.kind = NodeKind::Selector, .index = static_cast<std::uint32_t>(index)};
+    if (reflected[index] != 0 || reached_.contains(selector)) {
+      mapping[index] = static_cast<std::uint32_t>(declarations.size());
+      declarations.push_back(program.selector_declarations[index]);
+    }
+  }
+  program.selector_declarations = std::move(declarations);
+  RemapSelectorReferences(program, mapping);
+}
+
 void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& main) const {
   std::vector<std::uint32_t> mapping(program.functions.size(), kInvalidFunctionTarget);
   std::vector<ir::Function> functions;
@@ -618,6 +677,9 @@ void Reachability::Prune(ir::Program& program, std::optional<std::uint32_t>& mai
   }
   RemapReflectedTargets(program, mapping);
   PruneClasses(program);
+  // 封闭程序的 selector 序号只在本映像内使用。保留声明身份，并同步虚调用、方法值和反射，
+  // 避免已裁剪方法继续在每个类的分派表中占据空槽。
+  PruneSelectors(program);
 }
 
 }  // namespace

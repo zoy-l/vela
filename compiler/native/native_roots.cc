@@ -266,6 +266,14 @@ NativeRootPlan InitializeRoots(const ir::Function& function,
     plan.safepoints.assign(recovery.safepoints.begin(), recovery.safepoints.end());
   } else if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
     PlanSafepoints(plan, function, debugging);
+  } else {
+    // Closed AOT 的宿主入口和运行时调用已有控制边界；纯脚本回边仍须观察跨线程请求，
+    // 否则无分配循环会阻止所属 Isolate 停止。它不需要热更新或逐行调试元数据。
+    for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+      if (ir::IsBackJump(function.instructions[index], index)) {
+        plan.safepoints[index] = kNativeSafepointBoundary;
+      }
+    }
   }
   return plan;
 }

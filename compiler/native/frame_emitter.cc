@@ -76,6 +76,12 @@ bool FunctionEmitter::CanUseLeafEntry() const {
       !IsScalar(source_.return_type)) {
     return false;
   }
+  // 普通入口的控制 Poll 可调用宿主、收集或请求停止，需要完整逻辑帧和根链。
+  // 专门的有界 Leaf 在调用方检查控制请求，不能把普通 Closed 入口也当成该证明。
+  if (kind_ != NativeEntryKind::Leaf &&
+      std::ranges::any_of(roots_.safepoints, [](std::uint8_t flags) { return flags != 0; })) {
+    return false;
+  }
   return std::ranges::all_of(source_.instructions, [&](const ir::Instruction& instruction) {
     // 标量 return 不装箱；字段和数组读写可保留副作用，但不能进入用户代码或分配。
     if (instruction.opcode == Opcode::Return) {

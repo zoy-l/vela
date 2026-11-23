@@ -15,6 +15,7 @@
 #include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "compiler/native/root_store_optimizer.h"
 #include "runtime/native/native_symbols.h"
 
 #include <algorithm>
@@ -825,6 +826,9 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   auto& context = module_.getContext();
   if (roots_.bounded_polls && ir::CanAnalyzeSynchronousFunction(source_)) {
     body_->addFnAttr(kNativeArrayReductionCandidateAttribute);
+    if (IsClosedLinkedProgram(program_.native_mode, placement_)) {
+      body_->addFnAttr(kNativeReadOnlyRootsAttribute);
+    }
   }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
   builder_.SetInsertPoint(entry);

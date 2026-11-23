@@ -93,11 +93,18 @@ override through the same worklist used for interface implementations. Class and
 calls share selector-indexed Typed IR, callable metadata, and runtime target tables; lexical
 `super`, private, static, constructor, intrinsic, and immutable host entries remain direct.
 Reflection uses the same selector contract. Closed AOT traces reachable selector/receiver pairs
-and devirtualizes only proven targets. Reloadable calls resolve stable selectors against the
+and devirtualizes only proven targets. After pruning, it compacts image-local selector indices
+across dispatch tables, virtual calls, captured method layouts and reflection targets while retaining
+their declaration identities. Reloadable calls resolve stable selectors against the
 current publication, while extracted method values retain the selected implementation version.
 Function indices belong to the program image, including dispatch for Isolate-shared fixed layouts
 such as `DateParts`. Object layouts do not duplicate those tables. Getter and setter visibility and
 implementation ownership remain independent when accessors are inherited or merged.
+
+Closed linked images publish reflection-call entries only for described callable targets, including
+every live implementation of a reflected virtual selector. Ordinary host entries keep their own
+argument-validation ABI. Direct compiler-bound reflection calls retain their wrappers through their
+code references; reloadable images retain the complete entry set.
 
 Script parameter defaults use a trailing presence window in the ordinary native call contract.
 Logical signatures distinguish defaulted parameters from their types, preserving the difference

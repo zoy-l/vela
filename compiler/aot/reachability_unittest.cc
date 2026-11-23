@@ -46,18 +46,22 @@ void PruneMain(ir::Program& program) {
 TEST(ReachabilityTest, VirtualSelectorsRetainOverridesAndDevirtualizeOnlyProvenTargets) {
   auto prepared = ir::test::Prepare(R"(
 class Base {
-  read(): int { return 1; }
   unused(): int { return 0; }
+  read(): int { return 1; }
 }
 class Child extends Base { override read(): int { return 42; } }
 class Solo { read(): int { return 42; } }
 func polymorphic(value: Base): int { return value.read(); }
 func exact(): int { const value: Base = Child(); return value.read(); }
 func unique(value: Solo): int { return value.read(); }
-export func main(): int { return polymorphic(Base()) + exact() + unique(Solo()); }
+func capture(value: Base): () => int { return value.read; }
+export func main(): int {
+  return polymorphic(Base()) + exact() + unique(Solo()) + capture(Child())();
+}
 )");
   ASSERT_TRUE(prepared.Succeeded());
   auto& program = prepared.program;
+  const auto original = program;
   std::optional<std::uint32_t> main;
   PruneNativeProgram(program, main);
   const auto image = native::DescribeNativeImage(program);
@@ -69,6 +73,17 @@ export func main(): int { return polymorphic(Base()) + exact() + unique(Solo());
       EXPECT_EQ(description.VirtualTarget(static_cast<std::uint32_t>(selector)), targets[selector]);
     }
     EXPECT_EQ(description.VirtualTarget(runtime::kNoNativeIndex), runtime::kNoNativeIndex);
+    const auto& type = program.classes[index];
+    if (type.callable && type.callable->mode == CallableMode::VirtualMethod) {
+      const auto before = std::ranges::find(original.classes, type.name, &ir::Class::name);
+      ASSERT_NE(before, original.classes.end());
+      ASSERT_TRUE(before->callable);
+      EXPECT_EQ(program.selector_declarations.at(type.callable->function),
+                original.selector_declarations.at(before->callable->function));
+      const auto& callable = program.layouts.classes[index].callable;
+      ASSERT_TRUE(callable);
+      EXPECT_EQ(callable->function, type.callable->function);
+    }
   }
   EXPECT_FALSE(std::ranges::any_of(
       program.functions, [](const auto& function) { return function.name == "Base.unused"; }));

@@ -55,6 +55,11 @@ boundary and reserve 64 KiB for reporting failure and unwinding. A call can retu
 `StackOverflow` before the logical limit if the host stack is smaller.
 
 The compiler uses typed frame storage and precise shadow roots for managed values.
+For synchronous closed linked code, the collector and callees only read the frame's non-moving
+root values. Native optimization removes a repeated payload or tag store only when the same
+SSA value is already present on every incoming path. Clears, overlapping or unknown writes,
+explicit root-address escapes and unproven loop backedges invalidate that fact. This does not
+remove collection boundaries or apply to reloadable or suspended frames.
 Native frame aggregates larger than 4 KiB use fallible runtime storage; this
 threshold is not a limit on script local variables. Typed argument storage has
 a separate 4 KiB budget checked by code generation. All of these limits are
@@ -76,6 +81,11 @@ Runtime errors use immutable source metadata from the executing code version.
 Caller positions identify the call instruction. Resolved diagnostic strings
 survive code retirement. Stop requests return `ExecutionStopped` without
 becoming catchable script errors; normal exceptions follow catch/finally semantics.
+Closed AOT also checks control requests at script loop backedges. A loop without allocations
+must still observe stop requests and host safepoint actions. These boundaries retain full
+logical frames and precise roots without requiring source-line debugging or reload metadata.
+Optimizations may combine checks within proven bounded regions. Observable loops preserve
+the completed prefix of field writes instead of folding entire traversals as unobserved work.
 
 Language regression tests cover full int64 and IEEE binary64 behavior, evaluation
 order, GC roots, recursion, closures, interfaces, native calls and async completion.

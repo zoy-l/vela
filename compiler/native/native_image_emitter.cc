@@ -685,7 +685,8 @@ llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescriptio
             CallParameters(function.parameters.values()),
             Table(location_, locations, ImageDataKind::Source),
             entry,
-            entries.reflection[index],
+            entries.reflection[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
+                                                 : entries.reflection[index],
             llvm::Constant::getNullValue(pointer_),
             entries.host[index] == nullptr ? llvm::Constant::getNullValue(pointer_)
                                            : entries.host[index],

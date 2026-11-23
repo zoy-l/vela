@@ -1,5 +1,6 @@
 #include "compiler/aot/native_compiler.h"
 #include "compiler/native/compile_options.h"
+#include "runtime/native/native_symbols.h"
 
 #include <algorithm>
 #include <array>
@@ -1413,22 +1414,8 @@ export func sum(values: double[]): double {
   llvm::LLVMContext context;
   const auto module = ParseModule(text, context);
   ASSERT_NE(module, nullptr);
-  std::size_t loop_blocks = 0;
-  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
-    for (auto* loop : loops.getLoopsInPreorder()) {
-      for (const auto* block : loop->blocks()) {
-        ++loop_blocks;
-        for (const auto& instruction : *block) {
-          if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
-            const auto* callee = call->getCalledFunction();
-            EXPECT_TRUE(callee != nullptr && callee->isIntrinsic()) << text;
-          }
-          EXPECT_FALSE(llvm::isa<llvm::StoreInst>(instruction)) << text;
-        }
-      }
-    }
-  });
-  EXPECT_GT(loop_blocks, 0U);
+  // 数值转换仍为 typed 指令；普通循环新增控制慢路径，可登记根和处理宿主请求。
+  EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
 }
 
 TEST(NativeCompilerTest, PrunesVirtualOverridesAfterCallsBecomeDirect) {
@@ -1509,7 +1496,7 @@ export func read(): int { return count; }
   EXPECT_EQ(initializer_calls, 1U);
 }
 
-TEST(NativeCompilerTest, EliminatesIntegerReductionsWithDynamicBounds) {
+TEST(NativeCompilerTest, KeepsDynamicIntegerReductionsInterruptible) {
   const auto sources = std::to_array<std::string_view>({
       "let sum = initial; for (let index = 0; index < bound; index++) { sum += index; }",
       "let sum = initial; for (let index = 0; index > bound; index--) { sum += index; }",
@@ -1536,12 +1523,7 @@ TEST(NativeCompilerTest, EliminatesIntegerReductionsWithDynamicBounds) {
     llvm::LLVMContext context;
     const auto module = ParseModule(result->llvm_ir, context);
     ASSERT_NE(module, nullptr);
-    WithFunctionLoops(*module, [&](llvm::Function& function, const llvm::LoopInfo& loops) {
-      EXPECT_TRUE(loops.empty()) << function.getName().str() << '\n' << result->llvm_ir;
-    });
-    EXPECT_EQ(result->llvm_ir.find("@llvm.sadd.with.overflow"), std::string::npos);
-    EXPECT_EQ(result->llvm_ir.find("@llvm.ssub.with.overflow"), std::string::npos);
-    EXPECT_NE(result->llvm_ir.find("@vela_native_v2_leaf_failure"), std::string::npos);
+    EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
   }
 }
 
@@ -1571,7 +1553,7 @@ export func sum(): int {
   ASSERT_NE(module, nullptr);
   const auto entry = std::ranges::find(result->exports, "sum", &NativeExport::name);
   ASSERT_NE(entry, result->exports.end());
-  const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
+  const auto* function = module->getFunction("vela_aot_entry_" + std::to_string(entry->function));
   ASSERT_NE(function, nullptr);
   EXPECT_TRUE(HasVectorIntegerAddition(*function)) << result->llvm_ir;
 }
@@ -1665,7 +1647,7 @@ export func formattedCaller(values: int[]): string { return '${sum(values)}'; }
   }
 }
 
-TEST(NativeCompilerTest, VectorizesCheckedParameterArraySumsBeforePartialUnrolling) {
+TEST(NativeCompilerTest, KeepsCheckedParameterArraySumsInterruptible) {
   for (const auto* const expression : {
            "counter.value = values[index]; total += counter.value;",
            "total += counter.accept(values[index]);",
@@ -1691,25 +1673,8 @@ export func sum(values: int[]): int {
     llvm::LLVMContext context;
     const auto module = ParseModule(result->llvm_ir, context);
     ASSERT_NE(module, nullptr);
-    const auto entry = std::ranges::find(result->exports, "sum", &NativeExport::name);
-    ASSERT_NE(entry, result->exports.end());
-    const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
-    ASSERT_NE(function, nullptr);
-    EXPECT_TRUE(HasVectorIntegerAddition(*function)) << result->llvm_ir;
+    EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
     EXPECT_NE(result->llvm_ir.find("@llvm.sadd.with.overflow"), std::string::npos);
-    const auto reads_range =
-        std::ranges::any_of(llvm::instructions(function), [&](const auto& instruction) {
-          const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
-          if (load == nullptr ||
-              !load->getType()->isIntegerTy(runtime::NativeMemoryLayout::kArrayIntegerRangeBits)) {
-            return false;
-          }
-          std::int64_t offset = 0;
-          llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), offset,
-                                                 module->getDataLayout());
-          return std::cmp_equal(offset, runtime::NativeMemoryLayout::kArrayIntegerRange);
-        });
-    EXPECT_TRUE(reads_range) << result->llvm_ir;
   }
 }
 
@@ -1799,7 +1764,7 @@ export func append(values: int[], value: int): void { values.push(value); }
   }
 }
 
-TEST(NativeCompilerTest, PromotesFloatingFieldLoopsWithGuardedFailurePrefixes) {
+TEST(NativeCompilerTest, RetainsFloatingFieldControlBoundariesAndFailurePrefixes) {
   const auto prepared = Prepare(R"(
 export class Point { x: double; y: double; }
 export func update(values: Point[], initial: double): double {
@@ -1826,11 +1791,14 @@ export func update(values: Point[], initial: double): double {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << frontend::DiagnosticsText(result.error());
-  EXPECT_NE(result->llvm_ir.find("staged fields"), std::string::npos) << result->llvm_ir;
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
   EXPECT_EQ(result->llvm_ir.find("field.shadow = alloca"), std::string::npos);
 }
 
-TEST(NativeCompilerTest, SchedulesIndependentFloatingFieldsWithoutReassociation) {
+TEST(NativeCompilerTest, PreservesFloatingOrderAcrossControlBoundaries) {
   const auto prepared = Prepare(R"(
 class Point { x: double; y: double; vx: double; vy: double; }
 export func update(scale: double): double {
@@ -1860,34 +1828,16 @@ export func update(scale: double): double {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto result = Compile(prepared.program, {.exports = {"update"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << frontend::DiagnosticsText(result.error());
-  EXPECT_NE(result->llvm_ir.find("@llvm.sqrt.v2f64"), std::string::npos) << result->llvm_ir;
+  EXPECT_NE(result->llvm_ir.find("@llvm.sqrt"), std::string::npos);
   EXPECT_EQ(result->llvm_ir.find(" reassoc "), std::string::npos);
   EXPECT_EQ(result->llvm_ir.find(" fast "), std::string::npos);
   llvm::LLVMContext context;
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
-  const auto has_bit_guard = std::ranges::any_of(*module, [](const auto& function) {
-    return std::ranges::any_of(llvm::instructions(function), [](const auto& instruction) {
-      const auto* compare = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
-      if (compare == nullptr || compare->getPredicate() != llvm::CmpInst::ICMP_NE) {
-        return false;
-      }
-      const auto* shifted = llvm::dyn_cast<llvm::BinaryOperator>(compare->getOperand(0));
-      const auto* zero = llvm::dyn_cast<llvm::ConstantInt>(compare->getOperand(1));
-      if (shifted == nullptr || shifted->getOpcode() != llvm::Instruction::Shl || zero == nullptr ||
-          !zero->isZero()) {
-        return false;
-      }
-      const auto* bits = llvm::dyn_cast<llvm::BitCastInst>(shifted->getOperand(0));
-      const auto* amount = llvm::dyn_cast<llvm::ConstantInt>(shifted->getOperand(1));
-      return bits != nullptr && bits->getSrcTy()->isDoubleTy() && amount != nullptr &&
-             amount->equalsInt(1);
-    });
-  });
-  EXPECT_TRUE(has_bit_guard) << result->llvm_ir;
+  EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
 }
 
-TEST(NativeCompilerTest, FoldsUnobservedUnitFieldUpdates) {
+TEST(NativeCompilerTest, KeepsUnitFieldUpdatesObservableAtControlBoundaries) {
   const auto prepared = Prepare(R"(
 class Box { value: int; }
 export func fields(bound: int): int {
@@ -1902,9 +1852,7 @@ export func fields(bound: int): int {
   llvm::LLVMContext context;
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
-  WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
-    EXPECT_TRUE(loops.empty()) << result->llvm_ir;
-  });
+  EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
 }
 
 TEST(NativeCompilerTest, PreservesArrayStorageWhenTemporaryValuesAreErasedToDynamic) {
