@@ -198,8 +198,9 @@ bool NativeControl::CanProcessSafepoint() const noexcept {
 
 bool NativeControl::HasReadySafepoint() const noexcept {
   const auto requests = queue_->requests.load(std::memory_order_acquire);
-  return CanProcessSafepoint() && ((requests & kQueuedAction) != 0 ||
-                                   ((requests & kPendingPublication) != 0 && CanPublish()));
+  return (requests & kStopRequested) == 0 && !HasHostBorrow() && !processing_ &&
+         ((requests & kQueuedAction) != 0 ||
+          ((requests & kPendingPublication) != 0 && !IsInitializing()));
 }
 
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept {

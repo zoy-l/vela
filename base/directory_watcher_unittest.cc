@@ -28,8 +28,9 @@ constexpr std::string_view kSource = "export func value(): int { return 42; }";
 class DirectoryWatcherTest : public test::DirectoryTest {
  protected:
   static testing::AssertionResult AwaitPaths(DirectoryWatcher& watcher,
-                                             std::initializer_list<std::filesystem::path> paths) {
-    absl::flat_hash_set<std::filesystem::path, std::hash<std::filesystem::path>> pending(paths);
+                                             std::span<const std::filesystem::path> paths) {
+    absl::flat_hash_set<std::filesystem::path, std::hash<std::filesystem::path>> pending(
+        paths.begin(), paths.end());
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!pending.empty() && std::chrono::steady_clock::now() < deadline) {
       const auto changes = watcher.Drain(std::chrono::milliseconds(10));
@@ -42,6 +43,19 @@ class DirectoryWatcherTest : public test::DirectoryTest {
     }
     if (!pending.empty()) {
       return testing::AssertionFailure() << "file event did not arrive: " << *pending.begin();
+    }
+    return testing::AssertionSuccess();
+  }
+
+  static testing::AssertionResult AwaitPaths(DirectoryWatcher& watcher,
+                                             std::initializer_list<std::filesystem::path> paths) {
+    return AwaitPaths(watcher, std::span(paths));
+  }
+
+  static testing::AssertionResult CreateDirectory(const std::filesystem::path& path) {
+    std::error_code error;
+    if (!std::filesystem::create_directory(path, error)) {
+      return testing::AssertionFailure() << path << ": " << error.message();
     }
     return testing::AssertionSuccess();
   }
@@ -79,8 +93,8 @@ TEST_F(DirectoryWatcherTest, RemovingOneDirectoryKeepsOtherSubscriptionsActive) 
   const auto removed = directory() / "removed";
   const auto retained = directory() / "retained";
   std::error_code error;
-  ASSERT_TRUE(std::filesystem::create_directory(removed, error)) << error.message();
-  ASSERT_TRUE(std::filesystem::create_directory(retained, error)) << error.message();
+  ASSERT_TRUE(CreateDirectory(removed));
+  ASSERT_TRUE(CreateDirectory(retained));
   DirectoryWatcher watcher;
   ASSERT_TRUE(watcher.Watch(directory()));
   ASSERT_TRUE(watcher.Watch(removed));
@@ -107,8 +121,7 @@ TEST_F(DirectoryWatcherTest, UnicodeRenamesReportBothSourceAndDestinationPaths) 
 
 TEST_F(DirectoryWatcherTest, UpgradingToRecursiveWatchingInvalidatesTheCapture) {
   const auto nested = directory() / "nested";
-  std::error_code error;
-  ASSERT_TRUE(std::filesystem::create_directory(nested, error)) << error.message();
+  ASSERT_TRUE(CreateDirectory(nested));
   DirectoryWatcher watcher;
   ASSERT_TRUE(watcher.Watch(directory()));
   ASSERT_TRUE(watcher.Watch(directory(), DirectoryWatchScope::Descendants));
@@ -122,27 +135,18 @@ TEST_F(DirectoryWatcherTest, ManyDirectoriesContinueDeliveringEventsAfterRetirem
   DirectoryWatcher watcher;
   constexpr std::size_t kDirectories = 128;
   std::vector<std::filesystem::path> directories;
-  absl::flat_hash_set<std::filesystem::path, std::hash<std::filesystem::path>> pending;
+  std::vector<std::filesystem::path> pending;
   for (std::size_t index = 0; index < kDirectories; ++index) {
     const auto path = directory() / std::to_string(index);
-    std::error_code error;
-    ASSERT_TRUE(std::filesystem::create_directory(path, error)) << error.message();
+    ASSERT_TRUE(CreateDirectory(path));
     ASSERT_TRUE(watcher.Watch(path));
     directories.push_back(path);
-    pending.insert(path / "source.vela");
+    pending.push_back(path / "source.vela");
   }
   for (const auto& file : pending) {
     ASSERT_TRUE(WriteFileAtomically(file, std::as_bytes(std::span(kSource))));
   }
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!pending.empty() && std::chrono::steady_clock::now() < deadline) {
-    const auto changes = watcher.Drain(std::chrono::milliseconds(10));
-    ASSERT_FALSE(changes.invalidated);
-    for (const auto& path : changes.paths) {
-      pending.erase(path.path);
-    }
-  }
-  ASSERT_TRUE(pending.empty());
+  ASSERT_TRUE(AwaitPaths(watcher, std::span(pending)));
   for (const auto& path : directories) {
     watcher.Unwatch(path);
     ASSERT_TRUE(watcher.Watch(path));
@@ -161,8 +165,7 @@ TEST_F(DirectoryWatcherTest, MissingDirectoriesReturnSubscriptionErrors) {
 
 TEST_F(DirectoryWatcherTest, DirectSubscriptionsExcludeNestedFileWrites) {
   const auto nested = directory() / "nested";
-  std::error_code error;
-  ASSERT_TRUE(std::filesystem::create_directory(nested, error)) << error.message();
+  ASSERT_TRUE(CreateDirectory(nested));
   const auto ignored = nested / "ignored.vela";
   const auto observed = directory() / "observed.vela";
   DirectoryWatcher watcher;
@@ -184,8 +187,7 @@ TEST_F(DirectoryWatcherTest, DirectSubscriptionsExcludeNestedFileWrites) {
 
 TEST_F(DirectoryWatcherTest, RecursiveSubscriptionsRetainOverlappingDirectWatches) {
   const auto nested = directory() / "nested";
-  std::error_code error;
-  ASSERT_TRUE(std::filesystem::create_directory(nested, error)) << error.message();
+  ASSERT_TRUE(CreateDirectory(nested));
   DirectoryWatcher watcher;
   ASSERT_TRUE(watcher.Watch(directory(), DirectoryWatchScope::Descendants));
   ASSERT_TRUE(watcher.Watch(nested));

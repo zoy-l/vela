@@ -225,12 +225,10 @@ std::optional<ArrayAccess> ClassifyArrayAccess(const ir::Instruction& instructio
     case Opcode::PushRecord:
       return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Elements};
     case Opcode::BuiltinCall:
+      if (IsArrayMetadataRead(static_cast<Builtin>(instruction.index))) {
+        return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Both};
+      }
       switch (static_cast<Builtin>(instruction.index)) {
-        case Builtin::ArrayLength:
-        case Builtin::ArrayCapacity:
-        case Builtin::ArrayMutation:
-        case Builtin::ArrayCheckMutation:
-          return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Both};
         case Builtin::ArrayReserve:
         case Builtin::ArrayClear:
         case Builtin::ArrayPush:

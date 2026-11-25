@@ -187,16 +187,16 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
   const auto kind = frontend::IsStandardTypeNamespace(program_, declaration)
                         ? CompletionKind::Type
                         : CompletionKind::Class;
-  const auto class_symbol =
-      DeclareSymbol(declaration, kind, [&] { return ClassCompletion(declaration).detail; });
-  if (const auto* checked = FindClassDescriptor(declaration);
-      checked != nullptr && checked->HasInheritedConstructor()) {
+  const auto* checked = FindClassDescriptor(declaration);
+  const auto class_symbol = DeclareSymbol(
+      declaration, kind, [&] { return ClassCompletion(declaration, checked).detail; });
+  if (checked != nullptr && checked->HasInheritedConstructor()) {
     const auto origin = program_.origins.find(declaration.name);
     if (!declaration.type_parameters.empty() ||
         (!checked->type.is_abstract &&
          (origin == program_.origins.end() || origin->second.arguments.empty()))) {
       // 初次声明先于类型检查；工厂只创建新符号，此处更新检查后才得到的继承签名。
-      symbols_[class_symbol].completion.detail = ClassCompletion(declaration).detail;
+      symbols_[class_symbol].completion.detail = ClassCompletion(declaration, checked).detail;
     }
   }
   for (const auto& field : declaration.fields) {
@@ -309,7 +309,8 @@ const frontend::ClassDescriptor* SemanticIndex::FindClassDescriptor(
   return found == model_.classes.end() ? nullptr : &found->second;
 }
 
-Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
+Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration,
+                                          const frontend::ClassDescriptor* checked) const {
   if (frontend::IsStandardTypeNamespace(program_, declaration)) {
     return StandardClassCompletion(declaration);
   }
@@ -333,12 +334,13 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) co
       declaration.constructor->visibility == frontend::Visibility::Private) {
     text += "private ";
   }
-  text += ConstructorParameters(declaration);
+  text += ConstructorParameters(declaration, checked);
   text += "\n}";
   return result;
 }
 
-std::string SemanticIndex::ConstructorParameters(const frontend::Class& declaration) const {
+std::string SemanticIndex::ConstructorParameters(const frontend::Class& declaration,
+                                                 const frontend::ClassDescriptor* checked) const {
   std::string text;
   text += "constructor(";
   const auto append = [&](std::string_view name, const std::string& type) {
@@ -349,8 +351,7 @@ std::string SemanticIndex::ConstructorParameters(const frontend::Class& declarat
     text += ": ";
     text += type;
   };
-  if (const auto* checked = FindClassDescriptor(declaration);
-      checked != nullptr && checked->HasInheritedConstructor()) {
+  if (checked != nullptr && checked->HasInheritedConstructor()) {
     const auto& constructor = checked->constructor;
     for (const auto& parameter : constructor.parameters) {
       append(parameter.name, DisplayType(parameter.type));
@@ -366,15 +367,13 @@ std::string SemanticIndex::ConstructorParameters(const frontend::Class& declarat
     }
     return text + ");";
   }
-  {
-    for (const auto& field : declaration.fields) {
-      if (!declaration.IsConstructorField(field)) {
-        continue;
-      }
-      append(field.name, TypeText(field.type));
-      if (field.initializer) {
-        text += " = " + DefaultValue(*field.initializer);
-      }
+  for (const auto& field : declaration.fields) {
+    if (!declaration.IsConstructorField(field)) {
+      continue;
+    }
+    append(field.name, TypeText(field.type));
+    if (field.initializer) {
+      text += " = " + DefaultValue(*field.initializer);
     }
   }
 

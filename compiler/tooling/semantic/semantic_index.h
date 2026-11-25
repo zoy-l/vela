@@ -222,7 +222,8 @@ class SemanticIndex final {
   [[nodiscard]] bool CanPreserveReferences(const SemanticIndex& renamed,
                                            const SymbolRename& request) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
-  [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration) const;
+  [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration,
+                                           const frontend::ClassDescriptor* checked) const;
   [[nodiscard]] const frontend::ClassDescriptor* FindClassDescriptor(
       const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
@@ -255,7 +256,8 @@ class SemanticIndex final {
                     const frontend::Expression* expression = nullptr);
   void CollectDeclarations();
   void CollectInheritedParameters();
-  std::string ConstructorParameters(const frontend::Class& declaration) const;
+  std::string ConstructorParameters(const frontend::Class& declaration,
+                                    const frontend::ClassDescriptor* checked) const;
   void CollectClass(const frontend::Class& declaration);
   void CollectInterface(const frontend::Interface& declaration);
   void BindIntrinsicSignature(std::size_t symbol,

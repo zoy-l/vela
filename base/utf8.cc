@@ -142,16 +142,7 @@ std::size_t Utf8Length(std::string_view text) noexcept {
 std::optional<std::size_t> Utf8Offset(std::string_view text, std::size_t index) noexcept {
   std::size_t offset = 0;
   while (index != 0 && offset < text.size()) {
-    const auto first = static_cast<unsigned char>(text.substr(offset).front());
-    if (first < kContinuationTag) {
-      ++offset;
-    } else if (first < kThreeByteTag) {
-      offset += 2;
-    } else if (first < kFourByteTag) {
-      offset += 3;
-    } else {
-      offset += 4;
-    }
+    offset += Utf8SequenceWidth(text[offset]);
     --index;
   }
   return index == 0 ? std::optional(offset) : std::nullopt;

@@ -16,7 +16,8 @@ namespace vela::tooling {
 
 ReferenceIndex::Key ReferenceIndex::KeyFor(const Definition& location) {
   const auto& start = location.range.start;
-  return {location.path, start.line, start.character};
+  const auto path = paths_.try_emplace(location.path, paths_.size()).first->second;
+  return {path, start.line, start.character};
 }
 
 void ReferenceIndex::Connect(const Definition& first, const Definition& second) {
@@ -67,7 +68,12 @@ void SemanticIndex::AddReferences(ReferenceIndex& references, PositionEncoding e
 
 std::vector<Definition> ReferenceIndex::FindReferences(const Definition& declaration,
                                                        ReferenceDeclaration include) const {
-  std::vector<Key> pending{KeyFor(declaration)};
+  const auto path = paths_.find(declaration.path);
+  if (path == paths_.end()) {
+    return {};
+  }
+  const auto& start = declaration.range.start;
+  std::vector<Key> pending{Key{path->second, start.line, start.character}};
   absl::flat_hash_set<Key> visited;
   std::vector<Definition> result;
   while (!pending.empty()) {

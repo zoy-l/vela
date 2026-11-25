@@ -1,4 +1,4 @@
-#include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 
 #include <expected>
 #include <filesystem>
@@ -10,7 +10,7 @@
 
 namespace vela::compiler {
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchDirectories(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::WatchDirectories(
     const std::string& path,
     std::span<const std::filesystem::path> directories) {
   for (const auto& directory : directories) {

@@ -313,6 +313,22 @@ void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
   }
 }
 
+std::optional<std::size_t> FunctionEmitter::InlineFieldOffset(const SourceType& type) {
+  if (type.kind == Kind::Function) {
+    return sizeof(runtime::HeapObject);
+  }
+  const auto name = frontend::NonNullableTypeName(type);
+  const auto [cached, inserted] = inline_field_offsets_.try_emplace(name);
+  if (inserted) {
+    const auto owner = std::ranges::find(program_.classes, name, &ir::Class::name);
+    if (owner != program_.classes.end()) {
+      cached->second = owner->callable ? sizeof(runtime::HeapObject)
+                                       : runtime::NativeMemoryLayout::kInlineObjectFields;
+    }
+  }
+  return cached->second;
+}
+
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
@@ -332,20 +348,11 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
       builder_.getInt64(runtime::FieldStorage::KindOffset(0, instruction.index)));
   const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
-  const auto type = std::ranges::find(program_.classes, frontend::NonNullableTypeName(receiver),
-                                      &ir::Class::name);
   llvm::Value* fields = nullptr;
-  if (receiver.kind == Kind::Function || type != program_.classes.end()) {
-    const auto callable = receiver.kind == Kind::Function || type->callable.has_value();
-    fields = ByteAddress(
-        object, callable ? sizeof(runtime::HeapObject) : NativeMemoryLayout::kInlineObjectFields);
+  if (const auto offset = InlineFieldOffset(receiver)) {
+    fields = ByteAddress(object, *offset);
   } else {
-    auto* field_offset = LoadMemory(
-        builder_.getInt8Ty(), ByteAddress(object, NativeMemoryLayout::kObjectInlineFieldOffset),
-        MemoryRegion::HeapHeader);
-    MarkInvariant(*field_offset);
-    fields = builder_.CreateInBoundsGEP(builder_.getInt8Ty(), object,
-                                        builder_.CreateZExt(field_offset, builder_.getInt64Ty()));
+    fields = LoadInlineObjectFields(builder_, object);
   }
   const auto address = FieldAddress(fields, *builder_.getInt32(instruction.index), kind_offset);
   EmitFieldAccess(instruction, object, address);

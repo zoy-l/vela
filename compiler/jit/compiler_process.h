@@ -51,6 +51,9 @@ class CompilerProcess final {
   std::expected<std::vector<std::byte>, std::string> Exchange(std::span<const std::byte> request);
 
  private:
+  static std::expected<std::shared_ptr<CompilerProcess>, std::string> FinishStart(
+      CompilerStreams streams,
+      CompilerProcessHandle process);
   void ReadMessages();
   void CloseStreams();
   CompilerStreams streams_;
@@ -59,7 +62,7 @@ class CompilerProcess final {
   std::mutex response_mutex_;
   std::condition_variable response_ready_;
   std::optional<std::vector<std::byte>> response_;
-  std::optional<std::string> failure_;
+  std::expected<void, std::string> channel_;
   std::mutex callbacks_mutex_;
   absl::flat_hash_map<std::uint64_t, std::function<void()>> callbacks_;
   std::thread receiver_;

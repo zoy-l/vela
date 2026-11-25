@@ -37,12 +37,9 @@ class LocalHandleStack final {
       for (; segment != nullptr; segment = segment->previous) {
         segment->count = 0;
       }
-      auto* top = top_;
-      while (top != page->segments.data() && std::prev(top)->count == 0) {
-        top = std::prev(top);
-      }
-      top_ = top;
-      if (page != &inline_page_ && top == page->segments.data()) [[unlikely]] {
+      auto* begin = page->segments.data();
+      top_ = TrimEmptySegments(begin, top_);
+      if (page != &inline_page_ && top_ == begin) [[unlikely]] {
         RewindPages();
       }
     }
@@ -78,6 +75,13 @@ class LocalHandleStack final {
   void AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const;
 
  private:
+  static Segment* TrimEmptySegments(Segment* begin, Segment* top) noexcept {
+    while (top != begin && std::prev(top)->count == 0) {
+      top = std::prev(top);
+    }
+    return top;
+  }
+
   // 四个常见嵌套作用域无需额外分配；每次扩容仍经过 Heap 的预算与 GC 边界。
   struct Page final {
     std::array<Segment, 4> segments;

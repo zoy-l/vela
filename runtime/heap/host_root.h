@@ -79,7 +79,7 @@ class HostRoot final {
   static void Destroy(Storage& storage) noexcept;
   // 作用域共享根的所有权并借用稳定槽；只用于构造读句柄，不作为输出目标。
   [[nodiscard]] Value& slot() const noexcept { return storage_->value; }
-  // 仅可调用根附带描述；函数类型的 Persistent 已在创建边界确立这一契约。
+  // 仅同类型单标量参数及结果的根附带描述；调用方的 Function 类型已确立这一契约。
   [[nodiscard]] const ::vela::internal::BoundScalarCallback& callback() const noexcept {
     return *StorageAfter<const ::vela::internal::BoundScalarCallback>(*storage_);
   }

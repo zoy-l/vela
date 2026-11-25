@@ -99,22 +99,23 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
   return plan;
 }
 
-void PlanFunctionBindings(std::span<const std::string> symbols,
-                          std::size_t index,
-                          std::string_view suffix,
-                          CodeReusePlan& plan) {
+FunctionBinding PlanFunctionBindings(std::span<const std::string> symbols,
+                                     std::size_t index,
+                                     std::string_view suffix,
+                                     CodeReusePlan& plan) {
   if (plan.reused[index] != 0) {
     auto& entries = plan.retained[index];
     plan.functions.insert(plan.functions.end(), std::make_move_iterator(entries.begin()),
                           std::make_move_iterator(entries.end()));
     entries.clear();
-  } else {
-    ++plan.compiled_functions;
-    for (const auto& name : symbols) {
-      plan.functions.push_back(
-          {.name = name, .symbol = std::string(name).append(suffix), .resource = {}});
-    }
+    return FunctionBinding::Reused;
   }
+  ++plan.compiled_functions;
+  for (const auto& name : symbols) {
+    plan.functions.push_back(
+        {.name = name, .symbol = std::string(name).append(suffix), .resource = {}});
+  }
+  return FunctionBinding::Compiled;
 }
 
 void UpdateSourceCache(CodeReuseCache& reuse,
@@ -142,12 +143,11 @@ void BindReusableCode(llvm::Module& module,
                       CodeReusePlan& plan) {
   const auto suffix = "_batch_" + std::to_string(batch);
   for (std::size_t index = 0; index < symbols.size(); ++index) {
-    const auto reused = plan.reused[index] != 0;
     const auto first = plan.functions.size();
-    PlanFunctionBindings(symbols[index], index, suffix, plan);
+    const auto binding = PlanFunctionBindings(symbols[index], index, suffix, plan);
     for (auto& entry : std::span(plan.functions).subspan(first)) {
       if (auto* function = module.getFunction(entry.name)) {
-        if (reused) {
+        if (binding == FunctionBinding::Reused) {
           function->removeFnAttr(llvm::Attribute::AlwaysInline);
         }
         function->setName(entry.symbol);

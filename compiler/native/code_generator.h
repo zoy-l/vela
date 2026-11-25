@@ -59,7 +59,7 @@ struct NativeModule final {
   NativeCodePlacement placement;
   NativeOptimization optimization;
   std::unique_ptr<llvm::LLVMContext> context;
-  std::shared_ptr<llvm::TargetMachine> machine;
+  std::unique_ptr<llvm::TargetMachine> machine;
   std::unique_ptr<llvm::Module> module;
   std::string image_symbol;
   std::shared_ptr<NativeImageData> image_data;

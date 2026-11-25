@@ -1,0 +1,11 @@
+[
+  {"name": "math_atan2", "native": "MathAtan2", "problems": [[256, 388447], [2048, 3229401]]},
+  {"name": "math_cbrt", "native": "MathCbrt", "problems": [[256, -5040], [2048, -39946]]},
+  {"name": "math_hypot", "native": "MathHypot", "problems": [[256, 15512871], [2048, 128374666]]},
+  {"name": "math_remainder", "native": "MathRemainder", "problems": [[256, -105000], [2048, -105000]]},
+  {"name": "string_boundary", "native": "StringBoundary", "problems": [[256, 136], [2048, 1091]]},
+  {"name": "string_slice_bytes", "native": "StringSliceBytes", "problems": [[256, 10240], [2048, 81920]]},
+  {"name": "string_replace_bytes", "native": "StringReplaceBytes", "problems": [[256, 20608], [2048, 164864]]},
+  {"name": "string_byte_offset", "native": "StringByteOffset", "problems": [[256, 6422], [2048, 52880]]},
+  {"name": "string_trim", "native": "StringTrim", "problems": [[256, 13680], [2048, 109280]]}
+]

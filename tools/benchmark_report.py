@@ -231,6 +231,8 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
     rows = iteration_rows(report, expected_cases, repetitions)
     samples: dict[tuple[str, str, str, int], list[float]] = {}
     counters: dict[tuple[str, str, int], dict[str, list[float]]] = {}
+    allocation_fields = ("allocation_bytes_per_iteration", "allocation_count_per_iteration",
+                         "peak_live_growth_bytes")
     for name, entries in rows.items():
         match = CASE.fullmatch(name)
         phase, backend, workload, size_text = match.groups()
@@ -243,8 +245,6 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
         for entry in entries:
             validate_counters(name, entry, fields)
         values = {field: [entry[field] for entry in entries] for field in fields}
-        allocation_fields = ("allocation_bytes_per_iteration", "allocation_count_per_iteration",
-                             "peak_live_growth_bytes")
         if any(field in entry for entry in entries for field in allocation_fields):
             for entry in entries:
                 if not all(field in entry for field in allocation_fields):
@@ -308,9 +308,7 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
                       "| Workload | Size | Allocated bytes/iteration | Allocations/iteration | Peak live growth bytes |",
                       "| --- | ---: | ---: | ---: | ---: |"])
         for (_, workload, size), values in sorted(allocations):
-            fields = ("allocation_bytes_per_iteration", "allocation_count_per_iteration",
-                      "peak_live_growth_bytes")
-            numbers = [f"{median(values[field]):.2f}" for field in fields]
+            numbers = [f"{median(values[field]):.2f}" for field in allocation_fields]
             lines.append("| " + " | ".join([workload, str(size), *numbers]) + " |")
     notes = [(name, note) for name, note in NATIVE_BASELINES.items()
              if any(workload == name for _, _, workload, _ in samples)]

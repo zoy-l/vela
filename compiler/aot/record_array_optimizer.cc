@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_set.h>
+
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/declaration.h"
@@ -83,25 +85,16 @@ bool IsRecordClass(const ir::Class& type, const ir::Program& program) {
           ir::IsTrivialConstructor(program.functions[type.constructor]));
 }
 
-std::optional<RecordArray> FindRecordArray(const ir::Program& program,
-                                           std::span<const FunctionFlow> flows,
-                                           std::uint32_t global) {
-  constexpr auto kUnexposed = static_cast<std::uint32_t>(GlobalFlag::Private) |
-                              static_cast<std::uint32_t>(GlobalFlag::ModuleLocal);
-  if ((program.global_flags[global] & kUnexposed) == 0) {
-    return std::nullopt;
-  }
-  const auto declaration = program.global_declarations[global];
-  if (std::ranges::any_of(program.reflection_members,
-                          [&](const auto& member) { return member.declaration == declaration; })) {
-    return std::nullopt;
-  }
+std::optional<RecordArray> FindRecordArray(const ir::Program& program, std::uint32_t global) {
   const auto initializer = program.global_initializers[global];
-  if (std::ranges::count(program.global_initializers, initializer) != 1) {
+  const auto& function = program.functions[initializer];
+  if (!std::ranges::any_of(function.instructions, [](const auto& instruction) {
+        return instruction.opcode == Opcode::NewArray && instruction.immediate == 0;
+      })) {
     return std::nullopt;
   }
-  const auto& function = program.functions[initializer];
-  const auto& flow = flows[initializer].values;
+  const auto accesses = ir::AnalyzeRegisterAccesses(function, program.functions);
+  const auto flow = ir::AnalyzeRegisterFlow(function, accesses);
   std::optional<std::size_t> origin;
   for (const auto& instruction : function.instructions) {
     if (instruction.opcode == Opcode::Return) {
@@ -252,11 +245,11 @@ bool IsArrayUse(const ir::Instruction& instruction, ir::RegisterId reg) {
   if (instruction.opcode != Opcode::BuiltinCall) {
     return false;
   }
-  switch (static_cast<Builtin>(instruction.index)) {
-    case Builtin::ArrayLength:
-    case Builtin::ArrayCapacity:
-    case Builtin::ArrayMutation:
-    case Builtin::ArrayCheckMutation:
+  const auto builtin = static_cast<Builtin>(instruction.index);
+  if (IsArrayMetadataRead(builtin)) {
+    return true;
+  }
+  switch (builtin) {
     case Builtin::ArrayReserve:
     case Builtin::ArrayClear:
     case Builtin::ArrayPush:
@@ -281,8 +274,7 @@ bool IsReadOnlyBorrow(const ir::Function& function,
     if (instruction.opcode == Opcode::BuiltinCall &&
         IsArrayOrigin(function, flow.values, function_index, array, instruction.lhs)) {
       const auto builtin = static_cast<Builtin>(instruction.index);
-      if (builtin != Builtin::ArrayLength && builtin != Builtin::ArrayCapacity &&
-          builtin != Builtin::ArrayMutation && builtin != Builtin::ArrayCheckMutation) {
+      if (!IsArrayMetadataRead(builtin)) {
         return false;
       }
     }
@@ -354,15 +346,13 @@ bool CanPackFunction(const ir::Program& program,
                    (!reads || IsReadOnlyBorrow(function, flow, function_index, array)));
 }
 
+template <class ElementPredicate>
 void RewriteElementTypes(ir::Function& function,
-                         const FunctionFlow& flow,
-                         std::size_t function_index,
-                         const RecordArray& array) {
-  const auto& original = function.instructions;
+                         const ir::RegisterFlow& flow,
+                         const ElementPredicate& is_element) {
   for (ir::RegisterId reg = 0; reg < function.register_count; ++reg) {
-    const auto origin = flow.values.OriginDefinition(reg);
-    if (origin && original[*origin].opcode == Opcode::GetIndex &&
-        IsArrayOrigin(function, flow.values, function_index, array, original[*origin].lhs)) {
+    const auto origin = flow.OriginDefinition(reg);
+    if (origin && is_element(function.instructions[*origin])) {
       function.value_types[reg] = {.kind = Kind::Int, .name = frontend::kIntTypeName};
     }
   }
@@ -373,13 +363,16 @@ void RewriteFunction(ir::Function& function,
                      std::size_t function_index,
                      const RecordArray& array,
                      std::uint32_t array_type) {
-  RewriteElementTypes(function, flow, function_index, array);
   const auto original = function.instructions;
+  const auto is_element = [&](const ir::Instruction& instruction) {
+    return instruction.opcode == Opcode::GetIndex &&
+           IsArrayOrigin(function, flow.values, function_index, array, instruction.lhs);
+  };
+  RewriteElementTypes(function, flow.values, is_element);
   for (std::size_t index = 0; index < original.size(); ++index) {
     auto& instruction = function.instructions[index];
     const auto& source = original[index];
-    if (source.opcode == Opcode::GetIndex &&
-        IsArrayOrigin(function, flow.values, function_index, array, source.lhs)) {
+    if (is_element(source)) {
       instruction.opcode = Opcode::CheckRecordIndex;
       instruction.array_type = array_type;
     } else if (ir::IsBuiltinCall(source, Builtin::ArrayPush) &&
@@ -391,8 +384,7 @@ void RewriteFunction(ir::Function& function,
       const auto reading = source.opcode == Opcode::GetField;
       const auto receiver = reading ? source.lhs : source.dst;
       const auto origin = flow.values.OriginDefinition(receiver);
-      if (!origin || original[*origin].opcode != Opcode::GetIndex ||
-          !IsArrayOrigin(function, flow.values, function_index, array, original[*origin].lhs)) {
+      if (!origin || !is_element(original[*origin])) {
         continue;
       }
       const auto owner = original[*origin].lhs;
@@ -415,17 +407,38 @@ void RewriteFunction(ir::Function& function,
 }  // namespace
 
 void PackPrivateRecordArrays(ir::Program& program) {
+  if (program.global_initializers.empty()) {
+    return;
+  }
+  constexpr auto kUnexposed = static_cast<std::uint32_t>(GlobalFlag::Private) |
+                              static_cast<std::uint32_t>(GlobalFlag::ModuleLocal);
+  std::vector<std::size_t> initializer_counts(program.functions.size());
+  for (const auto initializer : program.global_initializers) {
+    ++initializer_counts[initializer];
+  }
+  absl::flat_hash_set<DeclarationId> reflected;
+  for (const auto& member : program.reflection_members) {
+    reflected.insert(member.declaration);
+  }
+  std::vector<RecordArray> candidates;
+  for (std::uint32_t global = 0; global < program.global_initializers.size(); ++global) {
+    if ((program.global_flags[global] & kUnexposed) != 0 &&
+        initializer_counts[program.global_initializers[global]] == 1 &&
+        !reflected.contains(program.global_declarations[global])) {
+      if (const auto candidate = FindRecordArray(program, global)) {
+        candidates.push_back(*candidate);
+      }
+    }
+  }
+  if (candidates.empty()) {
+    return;
+  }
   std::vector<FunctionFlow> flows;
   flows.reserve(program.functions.size());
   for (const auto& function : program.functions) {
     flows.push_back(AnalyzeFunction(function, program.functions));
   }
-  for (std::uint32_t global = 0; global < program.global_initializers.size(); ++global) {
-    const auto candidate = FindRecordArray(program, flows, global);
-    if (!candidate) {
-      continue;
-    }
-    const auto& array = *candidate;
+  for (const auto& array : candidates) {
     bool eligible = true;
     for (std::size_t function = 0; function < program.functions.size(); ++function) {
       eligible &= CanPackFunction(program, function, flows[function], array);
@@ -434,7 +447,7 @@ void PackPrivateRecordArrays(ir::Program& program) {
       continue;
     }
     auto layout = program.layouts.arrays[program.layouts.array_types[array.array_type]];
-    layout.name += "$records/" + std::to_string(program.global_declarations[global].value);
+    layout.name += "$records/" + std::to_string(program.global_declarations[array.global].value);
     layout.record_fields =
         static_cast<std::uint32_t>(program.classes[array.type].field_types.size());
     const auto physical = static_cast<std::uint32_t>(program.layouts.arrays.size());

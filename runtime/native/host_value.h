@@ -198,14 +198,19 @@ struct HostFunctionCall<Function<R(Args...)>> final {
     }
     if constexpr (kIsScalarCallback<Function<R(Args...)>>) {
       const auto& cached = callable.callback_;
-      const auto result = cached != nullptr ? cached->Try(arguments...)
-                                            : BoundScalarCallback::Bind(
-                                                  scope.isolate(), HandleAccess::Read(callable))
-                                                  .Try(arguments...);
-      if (result) {
-        return *result;
+      if (cached != nullptr) {
+        if (const auto result = cached->Try(arguments...)) {
+          return *result;
+        }
       }
-      return InvokeScalar(scope.isolate(), HandleAccess::Read(callable), arguments...);
+      const auto value = HandleAccess::Read(callable);
+      if (cached == nullptr) {
+        if (const auto result =
+                BoundScalarCallback::Bind(scope.isolate(), value).Try(arguments...)) {
+          return *result;
+        }
+      }
+      return InvokeScalar(scope.isolate(), value, arguments...);
     } else {
       return Invoke(scope, HandleAccess::Read(callable), std::forward<Actual>(arguments)...);
     }

@@ -166,11 +166,15 @@ void FunctionEmitter::EnterHostFrame() {
   }
 }
 
-void FunctionEmitter::LinkHostFrame() {
+void FunctionEmitter::SetBorrowedCallerPosition() {
   if (borrowed_caller_position_ != nullptr) {
-    // 唯一宿主调用点的脚本位置在挂链时写入；连续调用无需重写已挂链的调用者。
+    // 挂链及回到完整调用检查时，使用同一借用位置恢复调用者的脚本位置。
     StoreMemory(borrowed_caller_position_, instruction_slot_, MemoryRegion::Execution);
   }
+}
+
+void FunctionEmitter::LinkHostFrame() {
+  SetBorrowedCallerPosition();
   auto* depth = builder_.CreateAdd(entry_depth_, builder_.getInt64(2));
   StoreExecutionState(builder_, import_frame_, depth);
 }
@@ -549,9 +553,7 @@ llvm::BasicBlock* FunctionEmitter::EmitInlineImportCall(const ir::Instruction& i
   builder_.CreateBr(done);
   builder_.SetInsertPoint(checked);
   ReleaseBorrowedHostFrame();
-  if (borrowed_caller_position_ != nullptr) {
-    StoreMemory(borrowed_caller_position_, instruction_slot_, MemoryRegion::Execution);
-  }
+  SetBorrowedCallerPosition();
   return done;
 }
 

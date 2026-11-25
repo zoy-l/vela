@@ -52,7 +52,7 @@ void DevelopmentReplTest::LoadSession(runtime::NativeBindings bindings) {
   repl_.reset();
   session_.reset();
   ASSERT_NO_FATAL_FAILURE(Write("main.vela", "func main(): void {}\n"));
-  files_ = std::make_unique<DevelopmentFiles>(Path("main.vela"));
+  files_ = DevelopmentFiles::Create(Path("main.vela"));
   auto update = files_->Capture(CompiledSourceSnapshot{});
   ASSERT_TRUE(update) << frontend::DiagnosticsText(update.error());
   DevelopmentOptions options;

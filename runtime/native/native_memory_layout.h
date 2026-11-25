@@ -31,7 +31,7 @@ struct NativeMemoryLayout final {
   static constexpr auto kStringLength = offsetof(HeapObject, auxiliary_length);
   static constexpr auto kObjectFieldCount = offsetof(HeapObject, auxiliary_length);
   static constexpr auto kObjectNativePayload = offsetof(HeapObject, type_metadata);
-  static constexpr auto kInlineObjectFields = offsetof(HeapObject, type_metadata);
+  static constexpr auto kInlineObjectFields = kObjectNativePayload;
   static constexpr auto kObjectInlineFieldOffset = offsetof(HeapObject, inline_field_offset);
   static constexpr auto kObjectLayout = offsetof(HeapObject, layout);
   static constexpr auto kObjectMarkBit = offsetof(HeapObject, mark_bit);

@@ -26,6 +26,12 @@ std::string_view FormatNumber(T value, std::span<char, kScalarTextCapacity> buff
   return {buffer.data(), static_cast<std::size_t>(converted.ptr - buffer.data())};
 }
 
+template <class T>
+std::size_t NumberTextLength(T value) {
+  std::array<char, kScalarTextCapacity> buffer{};
+  return FormatNumber(value, buffer).size();
+}
+
 std::span<char> WriteArrayNumberDigits(std::span<const char> digits,
                                        int exponent,
                                        std::span<char> output) {
@@ -134,13 +140,11 @@ std::size_t ScalarTextLength(Value value) {
 }
 
 std::size_t ScalarTextLength(std::int64_t value) {
-  std::array<char, kScalarTextCapacity> buffer{};
-  return FormatNumber(value, buffer).size();
+  return NumberTextLength(value);
 }
 
 std::size_t ScalarTextLength(double value) {
-  std::array<char, kScalarTextCapacity> buffer{};
-  return FormatNumber(value, buffer).size();
+  return NumberTextLength(value);
 }
 
 void WriteValue(std::ostream& output, Value value) {

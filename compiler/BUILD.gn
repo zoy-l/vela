@@ -540,6 +540,8 @@ source_set("jit_loading") {
     "jit/image_ownership.cc",
     "jit/image_ownership.h",
     "jit/lazy_compiler.cc",
+    "jit/object_buffer.cc",
+    "jit/object_buffer.h",
     "jit/platform_support.h",
     "jit/runtime_symbols.cc",
     "jit/runtime_symbols.h",
@@ -598,6 +600,7 @@ source_set("development_core") {
     "//include/vela/development.h",
     "development/development_files.cc",
     "development/development_files.h",
+    "development/development_files_local.h",
     "development/development_session.cc",
     "development/development_session.h",
   ]

@@ -187,12 +187,7 @@ StringObject* Heap::AllocateString(std::string_view first,
 StringObject* Heap::AllocateScalarString(Value value) noexcept {
   std::array<char, kScalarTextCapacity> buffer{};
   const auto text = FormatScalar(value, buffer);
-  const auto length = text.size();
-  auto* string = AllocateStringStorage({.bytes = length, .code_points = length});
-  if (string != nullptr) {
-    std::ranges::copy(text, StringStorage(*string, length).begin());
-  }
-  return string;
+  return AllocateString(text, text.size());
 }
 
 StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,

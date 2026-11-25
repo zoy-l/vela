@@ -25,6 +25,16 @@ namespace {
 
 using internal::HandleAccess;
 
+void PersistString(runtime::Isolate& isolate, std::string_view text, Persistent<String>& saved) {
+  HandleScope registration(isolate);
+  const auto value = HandleAccess::Root<String>(
+      registration, runtime::Value::String(isolate.heap().AllocateString(text)));
+  ASSERT_TRUE(value);
+  auto persistent = value->Persist();
+  ASSERT_TRUE(persistent);
+  saved = std::move(*persistent);
+}
+
 TEST(HandleScopeTest, GrowthPreservesEarlierLocalsAndReleasesAllStorage) {
   runtime::Isolate isolate(1);
   auto& heap = isolate.heap();
@@ -90,15 +100,7 @@ TEST(HandleScopeTest, LocalizedRootsSurviveIndependentReleaseAndFurtherScopeStor
   runtime::Isolate isolate(1);
   auto& heap = isolate.heap();
   Persistent<String> saved;
-  {
-    HandleScope registration(isolate);
-    const auto value = HandleAccess::Root<String>(
-        registration, runtime::Value::String(heap.AllocateString("shared localization")));
-    ASSERT_TRUE(value);
-    auto persistent = value->Persist();
-    ASSERT_TRUE(persistent);
-    saved = std::move(*persistent);
-  }
+  ASSERT_NO_FATAL_FAILURE(PersistString(isolate, "shared localization", saved));
   auto first = std::make_unique<HandleScope>(isolate);
   auto second = std::make_unique<HandleScope>(isolate);
   const auto first_local = saved.ToLocal(*first);
@@ -124,15 +126,7 @@ TEST(HandleScopeTest, FirstLocalizationNeedsNoNewAllocationAndStillBlocksStoppin
   runtime::Isolate isolate(1);
   auto& heap = isolate.heap();
   Persistent<String> saved;
-  {
-    HandleScope registration(isolate);
-    const auto value = HandleAccess::Root<String>(
-        registration, runtime::Value::String(heap.AllocateString("budgeted localization")));
-    ASSERT_TRUE(value);
-    auto persistent = value->Persist();
-    ASSERT_TRUE(persistent);
-    saved = std::move(*persistent);
-  }
+  ASSERT_NO_FATAL_FAILURE(PersistString(isolate, "budgeted localization", saved));
   const auto baseline = heap.allocated_bytes();
   heap.SetAllocationLimit(baseline);
   {

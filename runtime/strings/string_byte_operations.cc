@@ -24,6 +24,10 @@ bool IsBoundary(std::string_view text, std::int64_t offset) {
           !IsContinuationByte(text[static_cast<std::size_t>(offset)]));
 }
 
+bool IsByteRange(std::string_view text, std::int64_t start, std::int64_t end) {
+  return start <= end && IsBoundary(text, start) && IsBoundary(text, end);
+}
+
 bool IsWhitespace(std::uint32_t point) {
   // Unicode White_Space；不包含 BOM、零宽空格或内嵌 NUL。
   switch (point) {
@@ -90,7 +94,7 @@ std::expected<StringObject*, ExecutionStatus> SliceStringBytes(Heap& heap,
                                                                std::int64_t start,
                                                                std::int64_t end) {
   const auto text = string.value();
-  if (end < start || !IsBoundary(text, start) || !IsBoundary(text, end)) {
+  if (!IsByteRange(text, start, end)) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
   auto* result = heap.AllocateString(
@@ -145,7 +149,7 @@ std::expected<Value, ExecutionStatus> ExecuteStringByteBuiltin(Builtin builtin,
       return Value::String(result);
     });
   }
-  if (end < start || !IsBoundary(text, start) || !IsBoundary(text, end)) {
+  if (!IsByteRange(text, start, end)) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
   const auto first = static_cast<std::size_t>(start);

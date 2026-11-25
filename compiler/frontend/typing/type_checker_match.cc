@@ -57,8 +57,7 @@ TypeChecker::Type TypeChecker::CheckMatchPattern(const MatchArm& arm,
     narrowed = {.kind = Type::Kind::Null, .name = kNullTypeName};
   }
   if (arm.kind == MatchArm::Kind::Binding &&
-      DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm) ==
-          CheckStatus::Succeeded) {
+      DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm) != nullptr) {
     facts_.match_bindings.emplace(&arm, narrowed);
   }
   coverage.null = true;

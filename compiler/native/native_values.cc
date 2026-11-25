@@ -190,6 +190,22 @@ llvm::LoadInst* LoadInstanceUnready(Builder& builder, llvm::Value* storage) {
   return unready;
 }
 
+llvm::LoadInst* LoadObjectFieldOffset(Builder& builder, llvm::Value* object) {
+  auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), object,
+                                             runtime::NativeMemoryLayout::kObjectInlineFieldOffset);
+  auto* offset = builder.CreateLoad(builder.getInt8Ty(), address);
+  offset->setMetadata(llvm::LLVMContext::MD_tbaa,
+                      NativeMemoryTag(builder.getContext(), MemoryRegion::HeapHeader));
+  MarkInvariant(*offset);
+  return offset;
+}
+
+llvm::Value* LoadInlineObjectFields(Builder& builder, llvm::Value* object) {
+  auto* offset = LoadObjectFieldOffset(builder, object);
+  return builder.CreateInBoundsGEP(builder.getInt8Ty(), object,
+                                   builder.CreateZExt(offset, builder.getInt64Ty()));
+}
+
 NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode) {
   using runtime::NativeMemoryLayout;
   const auto address = [&](llvm::Value* base, std::size_t offset) {
@@ -208,13 +224,9 @@ NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, Nativ
     MarkInvariant(*physical);
     count = physical;
   } else {
-    auto* field_offset =
-        load(builder.getInt8Ty(), address(object, NativeMemoryLayout::kObjectInlineFieldOffset),
-             MemoryRegion::HeapHeader);
-    MarkInvariant(*field_offset);
+    auto* field_offset = LoadObjectFieldOffset(builder, object);
     // 混合表示的选择尚未确认 reloadable；内联首字段与该载荷槽重叠，不能添加 header TBAA。
-    auto* payload = builder.CreateLoad(builder.getPtrTy(),
-                                       address(object, NativeMemoryLayout::kObjectNativePayload));
+    auto* payload = builder.CreateLoad(builder.getPtrTy(), fields);
     // 调用方已建立普通脚本实例契约，不含宿主对象或 callable 环境。
     // 此时 native_payload 仅在可重载实例中持有字段块；从物理存储读取字段数也支持派生类。
     auto* indirect = builder.CreateICmpEQ(field_offset, builder.getInt8(0));

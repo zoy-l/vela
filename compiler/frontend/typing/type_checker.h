@@ -498,11 +498,11 @@ class TypeChecker final : private InferenceTypeRelations {
   void BeginScope();
   void EndScope();
   enum class CheckStatus : std::uint8_t { Succeeded, Failed };
-  CheckStatus DeclareLocal(std::string_view name,
-                           const Type& type,
-                           SourceLocation location,
-                           BindingKind kind = BindingKind::Mutable,
-                           const void* declaration = nullptr);
+  const LocalBinding* DeclareLocal(std::string_view name,
+                                   const Type& type,
+                                   SourceLocation location,
+                                   BindingKind kind = BindingKind::Mutable,
+                                   const void* declaration = nullptr);
   [[nodiscard]] static bool IsAssignable(const Expression& expression);
   [[nodiscard]] static bool IsSameType(const Type& left, const Type& right);
   // 静态可证明的类型关系：身份、可空提升、class 继承、显式 implements、参数上界与 Future 载荷契约。

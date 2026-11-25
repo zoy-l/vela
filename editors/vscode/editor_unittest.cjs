@@ -516,10 +516,8 @@ async function runEditorTests() {
     console.log("PASS: exceptions.vela member completion with unfinished earlier statement");
 
     const formattingUri = vscode.Uri.file(path.join(directory, "formatting.vela"));
-    await fs.writeFile(formattingUri.fsPath,
+    const formatting = await openTemporary(formattingUri,
       'func greet(name:string):string{return "Hello, ${name}!";}func main():void{const label:string=greet(name:"Vela");print(label);}');
-    const formatting = await vscode.workspace.openTextDocument(formattingUri);
-    temporaryDocuments.push(formatting);
     await vscode.window.showTextDocument(formatting);
     await vscode.commands.executeCommand("editor.action.formatDocument");
     const expected = "func greet(name: string): string {\n  return 'Hello, ${name}!';\n}\n\n" +

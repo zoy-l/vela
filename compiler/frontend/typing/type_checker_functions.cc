@@ -28,10 +28,10 @@ void TypeChecker::DeclareFunctionParameters(const Function& function,
         AddDiagnostic(initializer.location, "parameter default does not match its declared type");
       }
     }
-    if (DeclareLocal(parameter.name, type, parameter.location, kind, &parameter) ==
-            CheckStatus::Succeeded &&
-        function.body) {
-      parameter_usage_.Declare(parameter, LookupLocal(parameter.name)->id);
+    if (const auto* binding =
+            DeclareLocal(parameter.name, type, parameter.location, kind, &parameter);
+        binding != nullptr && function.body) {
+      parameter_usage_.Declare(parameter, binding->id);
     }
   }
 }

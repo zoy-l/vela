@@ -22,9 +22,9 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -32,7 +32,10 @@ namespace vela::internal {
 
 struct WindowsDirectoryWatch final {
   static constexpr std::size_t kNotificationBufferBytes = std::size_t{64} * 1024;
-  WindowsDirectoryWatch() = default;
+  static constexpr std::size_t kNotificationBufferWords = kNotificationBufferBytes / sizeof(DWORD);
+  using Buffer = std::array<DWORD, kNotificationBufferWords>;
+  WindowsDirectoryWatch(std::filesystem::path directory_path, DirectoryWatchScope requested_scope)
+      : path(std::move(directory_path)), scope(requested_scope) {}
   WindowsDirectoryWatch(const WindowsDirectoryWatch&) = delete;
   WindowsDirectoryWatch& operator=(const WindowsDirectoryWatch&) = delete;
   WindowsDirectoryWatch(WindowsDirectoryWatch&&) = delete;
@@ -46,7 +49,7 @@ struct WindowsDirectoryWatch final {
   HANDLE directory = INVALID_HANDLE_VALUE;
   OVERLAPPED operation{};
   // ReadDirectoryChangesW 的网络目录缓冲区不得超过 64 KiB。
-  alignas(DWORD) std::array<std::byte, kNotificationBufferBytes> buffer{};
+  std::unique_ptr<Buffer> buffer = std::make_unique_for_overwrite<Buffer>();
   std::filesystem::path path;
   DirectoryWatchScope scope = DirectoryWatchScope::Direct;
   bool active = true;
@@ -61,18 +64,18 @@ namespace vela {
 namespace {
 
 std::string WatchError(std::string_view operation, DWORD error) {
-  return std::string(operation) + ": " +
-         std::error_code(static_cast<int>(error), std::system_category()).message();
+  return internal::DirectoryWatchErrorMessage(operation, static_cast<int>(error));
 }
 
 std::expected<void, std::string> Arm(internal::WindowsDirectoryWatch& watch) {
   watch.operation = {};
   constexpr DWORD kChanges = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
                              FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE;
-  if (ReadDirectoryChangesW(watch.directory, watch.buffer.data(),
-                            static_cast<DWORD>(watch.buffer.size()),
-                            static_cast<BOOL>(watch.scope == DirectoryWatchScope::Descendants),
-                            kChanges, nullptr, &watch.operation, nullptr) == 0) {
+  if (ReadDirectoryChangesW(
+          watch.directory, watch.buffer->data(),
+          static_cast<DWORD>(internal::WindowsDirectoryWatch::kNotificationBufferBytes),
+          static_cast<BOOL>(watch.scope == DirectoryWatchScope::Descendants), kChanges, nullptr,
+          &watch.operation, nullptr) == 0) {
     return std::unexpected(WatchError("ReadDirectoryChangesW", GetLastError()));
   }
   return {};
@@ -81,9 +84,10 @@ std::expected<void, std::string> Arm(internal::WindowsDirectoryWatch& watch) {
 // OS 缓冲区在下一次 Arm 前独占；把名字解码成自有路径后才重新交给内核。
 std::vector<FileChange> DecodeChanges(const internal::WindowsDirectoryWatch& watch, DWORD bytes) {
   std::vector<FileChange> changes;
+  const auto buffer = std::as_bytes(std::span(*watch.buffer));
   std::size_t offset = 0;
   while (offset < bytes) {
-    const void* record = &watch.buffer[offset];
+    const void* record = &buffer[offset];
     const auto* event = static_cast<const FILE_NOTIFY_INFORMATION*>(record);
     const auto name_bytes = event->FileNameLength;
     const std::wstring_view name(&event->FileName[0], name_bytes / sizeof(wchar_t));
@@ -113,9 +117,7 @@ std::expected<void, std::string> DirectoryWatcher::AddNative(const std::filesyst
     }
     native_.completion_port = port;
   }
-  auto watch = std::make_unique<internal::WindowsDirectoryWatch>();
-  watch->path = directory;
-  watch->scope = scope;
+  auto watch = std::make_unique<internal::WindowsDirectoryWatch>(directory, scope);
   watch->directory =
       CreateFileW(directory.c_str(), FILE_LIST_DIRECTORY,
                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,

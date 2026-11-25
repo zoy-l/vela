@@ -24,6 +24,28 @@
 namespace vela::compiler::native {
 namespace {
 
+std::string PaddedCallLoop(std::string_view name, std::size_t padding_count) {
+  auto source = "define void @" + std::string(name) + R"((ptr %target, ptr %slot) {
+entry:
+  br label %loop
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  call void %target()
+)";
+  for (std::size_t index = 0; index < padding_count; ++index) {
+    source += "  %padding" + std::to_string(index) + " = load volatile i64, ptr %slot\n";
+  }
+  source += R"(
+  %next = add nuw nsw i64 %index, 1
+  %more = icmp ult i64 %next, 64
+  br i1 %more, label %loop, label %done
+done:
+  ret void
+}
+)";
+  return source;
+}
+
 std::size_t IndirectCallCount(const llvm::Function& function) {
   std::size_t count = 0;
   for (const auto& instruction : llvm::instructions(function)) {
@@ -150,26 +172,7 @@ done:
 }
 
 TEST(CallLoopOptimizerTest, ReducesUnrollCountToFitTheCombinedLoopBudget) {
-  std::string source = R"(
-define void @invoke(ptr %target, ptr %slot) {
-entry:
-  br label %loop
-loop:
-  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
-  call void %target()
-)";
-  constexpr std::size_t kPaddingInstructions = 100;
-  for (std::size_t index = 0; index < kPaddingInstructions; ++index) {
-    source += "  %padding" + std::to_string(index) + " = load volatile i64, ptr %slot\n";
-  }
-  source += R"(
-  %next = add nuw nsw i64 %index, 1
-  %more = icmp ult i64 %next, 64
-  br i1 %more, label %loop, label %done
-done:
-  ret void
-}
-)";
+  const auto source = PaddedCallLoop("invoke", 100);
   llvm::LLVMContext context;
   const auto module = test::ParseModule(source, context);
   ASSERT_NE(module, nullptr);
@@ -226,25 +229,9 @@ done:
 }
 
 TEST(CallLoopOptimizerTest, RespectsExpandedInstructionBudgetAndDisabledLoops) {
-  std::string source = R"(
-define void @large(ptr %target, ptr %slot) {
-entry:
-  br label %loop
-loop:
-  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
-  call void %target()
-)";
   constexpr std::size_t kPaddingInstructions = 256;
-  for (std::size_t index = 0; index < kPaddingInstructions; ++index) {
-    source += "  %padding" + std::to_string(index) + " = load volatile i64, ptr %slot\n";
-  }
+  auto source = PaddedCallLoop("large", kPaddingInstructions);
   source += R"(
-  %next = add nuw nsw i64 %index, 1
-  %more = icmp ult i64 %next, 64
-  br i1 %more, label %loop, label %done
-done:
-  ret void
-}
 define void @disabled(ptr %target) {
 entry:
   br label %loop

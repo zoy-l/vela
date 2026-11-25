@@ -1,12 +1,9 @@
 #include <array>
-#include <cstddef>
-#include <cstdint>
-#include <numeric>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "benchmark/benchmark.h"
 
@@ -14,7 +11,9 @@
 #include "benchmarks/native_standard_workloads.h"
 #include "benchmarks/native_workloads.h"
 #include "benchmarks/source.h"
-#include "benchmarks/standard_api_workloads.h"
+#include "benchmarks/standard_api_native/workloads.h"
+#include "benchmarks/workload.h"
+#include "benchmarks/workload_benchmark.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/jit/compiler.h"
@@ -31,12 +30,6 @@ constexpr std::string_view kSetupEntry = "benchmarkSetup";
 constexpr std::string_view kWorkloadEntry = "benchmarkEntry";
 
 using Problem = WorkloadProblem;
-
-struct Workload final {
-  std::string_view name;
-  NativeWorkload native;
-  std::array<Problem, 2> problems;
-};
 
 constexpr auto kWorkloads = std::to_array<Workload>({
     {
@@ -169,7 +162,8 @@ std::optional<Sources> LoadSources(benchmark::State& state,
   const auto path = "workloads/" + std::string(workload.name) + ".vela";
   auto source = LoadBenchmarkSource(state, path);
   auto input = LoadBenchmarkSource(state, kInputModule);
-  if (!source || !input) {
+  auto entry = LoadBenchmarkSource(state, "workloads/entry.vela.inc");
+  if (!source || !input || !entry) {
     return std::nullopt;
   }
   // 包装入口只提供负载规模；保留独立脚本中的 main，便于直接运行相同实现。
@@ -177,15 +171,9 @@ std::optional<Sources> LoadSources(benchmark::State& state,
       .append(kSetupEntry)
       .append("(): void { data.prepare(")
       .append(std::to_string(problem.size))
-      .append("); }\nfunc ")
-      .append(kWorkloadEntry)
-      .append("(): int { return run(); }\n");
+      .append("); }\n")
+      .append(*entry);
   return Sources{.path = path, .workload = std::move(*source), .input = std::move(*input)};
-}
-
-bool IsExpected(const runtime::ExecutionResult& result, Problem problem) {
-  return result.Succeeded() && result.value.IsInteger() &&
-         result.value.AsInteger() == problem.expected;
 }
 
 void Compile(benchmark::State& state, Workload workload, Problem problem) {
@@ -245,7 +233,7 @@ void Jit(benchmark::State& state, Workload workload, Problem problem) {
   }
   const auto entry = *workload_entry;
   const auto warm = runtime::ExecuteNativeFunction(instance, entry);
-  if (!IsExpected(warm, problem)) {
+  if (!IsExpectedWorkloadResult(warm, problem)) {
     state.SkipWithError("Warm-up failed or checksum mismatched: " + warm.message);
     return;
   }
@@ -259,7 +247,7 @@ void Jit(benchmark::State& state, Workload workload, Problem problem) {
   for (auto iteration : state) {
     auto result = runtime::ExecuteNativeFunction(instance, entry);
     benchmark::DoNotOptimize(result);
-    if (!IsExpected(result, problem)) {
+    if (!IsExpectedWorkloadResult(result, problem)) {
       state.SkipWithError("Execution failed or checksum mismatched: " + result.message);
       return;
     }
@@ -324,7 +312,7 @@ void FirstJit(benchmark::State& state, Workload workload, Problem problem) {
       auto result = runtime::ExecuteNativeFunction(instance, entry);
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
-      if (!IsExpected(result, problem)) {
+      if (!IsExpectedWorkloadResult(result, problem)) {
         state.ResumeTiming();
         state.SkipWithError("First execution failed or checksum mismatched: " + result.message);
         return;
@@ -334,53 +322,24 @@ void FirstJit(benchmark::State& state, Workload workload, Problem problem) {
   }
 }
 
-void Cpp(benchmark::State& state, Workload workload, Problem problem) {
-  std::vector<std::int64_t> input(static_cast<std::size_t>(problem.size));
-  std::ranges::iota(input, std::int64_t{0});
-  if (workload.native(input) != problem.expected) {
-    state.SkipWithError("C++ warm-up checksum mismatched");
-    return;
-  }
-  for (auto iteration : state) {
-    // 原生内核独立编译；输入屏障和结果屏障阻止编译器跨迭代合并整个负载。
-    benchmark::DoNotOptimize(input.data());
-    auto result = workload.native(input);
-    benchmark::DoNotOptimize(result);
-    if (result != problem.expected) {
-      state.SkipWithError("C++ checksum mismatched");
-      return;
-    }
-  }
-  state.counters["result"] = static_cast<double>(problem.expected);
-}
-
 int RegisterWorkloads() {
-  for (const auto& workload : kStandardApiWorkloads) {
-    for (const auto problem : workload.problems) {
-      const Workload shared{
-          .name = workload.name,
-          .native = workload.native,
-          .problems = workload.problems,
-      };
-      const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
-      benchmark::RegisterBenchmark("compare/cpp/" + suffix, Cpp, shared, problem)->UseRealTime();
-      benchmark::RegisterBenchmark("compare/jit/" + suffix, Jit, shared, problem)->UseRealTime();
-      benchmark::RegisterBenchmark("compile/representative/" + suffix, Compile, shared, problem)
-          ->UseRealTime();
-      benchmark::RegisterBenchmark("first/jit/" + suffix, FirstJit, shared, problem)->UseRealTime();
+  const auto register_workloads = [](std::span<const Workload> workloads) {
+    for (const auto& workload : workloads) {
+      for (const auto problem : workload.problems) {
+        const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
+        benchmark::RegisterBenchmark("compare/cpp/" + suffix, RunCppWorkload, workload, problem)
+            ->UseRealTime();
+        benchmark::RegisterBenchmark("compare/jit/" + suffix, Jit, workload, problem)
+            ->UseRealTime();
+        benchmark::RegisterBenchmark("compile/representative/" + suffix, Compile, workload, problem)
+            ->UseRealTime();
+        benchmark::RegisterBenchmark("first/jit/" + suffix, FirstJit, workload, problem)
+            ->UseRealTime();
+      }
     }
-  }
-  for (const auto& workload : kWorkloads) {
-    for (const auto problem : workload.problems) {
-      const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
-      benchmark::RegisterBenchmark("compare/cpp/" + suffix, Cpp, workload, problem)->UseRealTime();
-      benchmark::RegisterBenchmark("compare/jit/" + suffix, Jit, workload, problem)->UseRealTime();
-      benchmark::RegisterBenchmark("compile/representative/" + suffix, Compile, workload, problem)
-          ->UseRealTime();
-      benchmark::RegisterBenchmark("first/jit/" + suffix, FirstJit, workload, problem)
-          ->UseRealTime();
-    }
-  }
+  };
+  register_workloads(kWorkloads);
+  register_workloads(kStandardApiWorkloads);
   return 0;
 }
 

@@ -259,12 +259,7 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
   auto* indirect = load(builder_.getInt8Ty(), offsetof(ReflectedFieldCache, reloadable));
   builder_.CreateCondBr(builder_.CreateICmpNE(indirect, builder_.getInt8(0)), reloadable, fixed);
   builder_.SetInsertPoint(fixed);
-  auto* field_offset =
-      LoadMemory(builder_.getInt8Ty(),
-                 ByteAddress(receiver, runtime::NativeMemoryLayout::kObjectInlineFieldOffset),
-                 MemoryRegion::HeapHeader);
-  auto* inline_storage = builder_.CreateInBoundsGEP(
-      builder_.getInt8Ty(), receiver, builder_.CreateZExt(field_offset, builder_.getInt64Ty()));
+  auto* inline_storage = LoadInlineObjectFields(builder_, receiver);
   builder_.CreateBr(access);
   builder_.SetInsertPoint(reloadable);
   auto* storage = LoadInstanceStorage(builder_, receiver);

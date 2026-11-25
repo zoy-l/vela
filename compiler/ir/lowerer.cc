@@ -486,9 +486,8 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
                                       const frontend::Class* owner,
                                       const frontend::LambdaDescriptor* lambda) {
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
-  const auto* constructor = owner != nullptr && source.name == frontend::kConstructorName
-                                ? &model_.classes.at(owner->name)
-                                : nullptr;
+  const auto* owner_info = owner != nullptr ? &model_.classes.at(owner->name) : nullptr;
+  const auto* constructor = source.name == frontend::kConstructorName ? owner_info : nullptr;
   const auto count = static_cast<std::uint32_t>(source.parameters.size());
   const auto presence = function_info.HasDefaults() ? count : 0;
   const auto parameter_base = current_function_->parameter_count - count - presence;
@@ -500,7 +499,7 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
 
   if (has_receiver) {
     const RegisterId this_reg = AllocateRegister(source.location);
-    RecordValueType(this_reg, model_.classes.at(owner->name).type);
+    RecordValueType(this_reg, owner_info->type);
   }
   for (std::uint32_t index = 0; index < masks; ++index) {
     const auto reg = AllocateRegister(source.location);
@@ -519,8 +518,7 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
     LowerConstructorInitializers(*constructor);
   }
   if (has_receiver) {
-    DeclareLocal(frontend::kReceiverName, 0, model_.classes.at(owner->name).type, source.location,
-                 source.body.get());
+    DeclareLocal(frontend::kReceiverName, 0, owner_info->type, source.location, source.body.get());
   }
   if (lambda != nullptr) {
     LowerCaptures(source, *lambda);
@@ -586,9 +584,11 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
                                   const frontend::Class* owner,
                                   const frontend::LambdaDescriptor* lambda) {
   Function function;
+  const auto* owner_info = owner != nullptr ? &model_.classes.at(owner->name) : nullptr;
+  const auto* constructor = source.name == frontend::kConstructorName ? owner_info : nullptr;
   function.is_generated_constructor =
-      owner != nullptr && source.name == frontend::kConstructorName &&
-      model_.classes.at(owner->name).constructor_kind == frontend::ConstructorKind::Generated;
+      constructor != nullptr &&
+      constructor->constructor_kind == frontend::ConstructorKind::Generated;
   function.location = source.location;
   const auto identity = declarations_->functions.find(&source);
   if (identity != declarations_->functions.end()) {
@@ -618,14 +618,12 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
     };
   }
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
-  const auto masks = owner != nullptr && source.name == frontend::kConstructorName
-                         ? ConstructorMaskCount(model_.classes.at(owner->name))
-                         : 0;
+  const auto masks = constructor != nullptr ? ConstructorMaskCount(*constructor) : 0;
   function.parameter_count = static_cast<std::uint32_t>(
       source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0) + masks);
   auto& signature = RegisterFunctionSignature(function, source, function_info);
   if (has_receiver) {
-    signature.receiver = RegisterRuntimeType(model_.classes.at(owner->name).type);
+    signature.receiver = RegisterRuntimeType(owner_info->type);
   }
   if (masks != 0) {
     signature.hidden_parameters = 1;

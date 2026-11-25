@@ -151,8 +151,7 @@ class LanguageServerTest(CommandTestCase):
         for encoding in ("utf-8", "utf-16"):
             with self.subTest(encoding=encoding):
                 query = self.symbol_query("references", source, source.index("value"),
-                                          encoding=encoding)
-                query["params"]["context"] = {"includeDeclaration": True}
+                                          encoding=encoding, include_declaration=True)
                 messages = self.session([self.open(source), query], encoding)
                 references = self.reply(messages, "query")["result"]
                 self.assertEqual(len(references), 3)
@@ -744,7 +743,7 @@ func main(): int {
                   "const builder = String(); print(text.slice(0, 1)); print(text.length); "
                   "print(values.slice(0, 1)); print(values.length); print(values.map(value => value + 1)); "
                   "print(lookup.get(1)); print(keys.add(1)); builder.append('x'); print(builder.toString()); }")
-        checks = [('text.slice', 'slice', 'Unicode code point'), ('text.length', 'length', 'O(UTF-8'),
+        checks = [('text.slice', 'slice', 'Unicode code point'), ('text.length', 'length', 'O(1)'),
                   ('values.slice', 'slice', 'shallow copy'), ('values.length', 'length', 'O(1)'),
                   ('values.map', 'map', 'original array unchanged'), ('lookup.get', 'get', 'null'),
                   ('keys.add', 'add', 'false'), ('builder.append', 'append', 'amortized'),

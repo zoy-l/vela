@@ -167,7 +167,7 @@ function registerSymbolProviders(context, client, flush) {
     for (const document of documents) await flush(document);
     if (token.isCancellationRequested || document.isClosed) return;
     const result = await client.request(method, {
-      textDocument: { uri: documents[0].uri.toString() }, ...params
+      textDocument: { uri: document.uri.toString() }, ...params
     }, token);
     if (token.isCancellationRequested || document.isClosed || document.version !== version) return;
     return result;
@@ -267,8 +267,7 @@ function registerSymbolProviders(context, client, flush) {
       async provideDocumentFormattingEdits(document, options, token) {
         const edits = await query([document], "textDocument/formatting", { options }, token);
         if (!edits) return [];
-        const result = edits.map(edit => new vscode.TextEdit(new vscode.Range(edit.range.start.line,
-          edit.range.start.character, edit.range.end.line, edit.range.end.character), edit.newText));
+        const result = edits.map(edit => new vscode.TextEdit(editorRange(edit.range), edit.newText));
         if (document.eol !== vscode.EndOfLine.LF) result.push(vscode.TextEdit.setEndOfLine(vscode.EndOfLine.LF));
         return result;
       }

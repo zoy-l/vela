@@ -236,7 +236,7 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               {Kind::String, "length"},
               "Returns the number of Unicode code points as int, not the byte count or perceived "
               "character count.\n\n"
-              "Read-only. O(UTF-8 byte length). A combining character sequence may contain "
+              "Read-only. O(1), using the cached count. A combining character sequence may contain "
               "multiple code points.",
           },
           {
@@ -248,6 +248,37 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               {Kind::String, "graphemeLength"},
               "Returns the number of extended grapheme clusters as int, approximating "
               "user-perceived characters.\n\nRead-only. Scans the string.",
+          },
+          {
+              {Kind::String, "isCodePointBoundary"},
+              "Returns whether byteOffset is a UTF-8 code point boundary. Valid offsets range "
+              "from 0 through byteLength, inclusive. Other offsets return false. O(1).",
+          },
+          {
+              {Kind::String, "sliceBytes"},
+              "Returns a copied string for the half-open UTF-8 byte range [start, end). "
+              "Requires 0 <= start <= end <= byteLength and code point boundaries at both ends. "
+              "Invalid bounds fail with IndexOutOfBounds.",
+          },
+          {
+              {Kind::String, "replaceBytes"},
+              "Returns the prefix before start, inserted text and the suffix from end in one "
+              "result allocation. Bounds use UTF-8 bytes and require "
+              "0 <= start <= end <= byteLength with code point boundaries at both ends. "
+              "Invalid bounds fail with IndexOutOfBounds. The receiver remains unchanged.",
+          },
+          {
+              {Kind::String, "byteOffsetAt"},
+              "Returns the UTF-8 byte offset at codePointIndex. The terminal index length maps "
+              "to byteLength. Negative indices and indices beyond length return null. "
+              "The position cache gives amortized O(1) sequential traversal and O(n) arbitrary "
+              "jumps.",
+          },
+          {
+              {Kind::String, "trim"},
+              "Returns text with leading and trailing Unicode White_Space removed. Internal "
+              "whitespace, embedded NUL, BOM and zero-width space are preserved. Scans the "
+              "removed edges. An already trimmed string reuses the receiver.",
           },
           {
               {Kind::String, "slice"},
@@ -542,7 +573,7 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               {Kind::Map, "values"},
               "Returns an independent V[] snapshot of values in key insertion order.",
           },
-      };
+  };
   const auto found = kDocumentation.find({receiver, name});
   return found == kDocumentation.end() ? std::string_view{} : found->second;
 }

@@ -42,12 +42,15 @@ class CallLoopHintsPass : public llvm::PassInfoMixin<CallLoopHintsPass> {
   static llvm::PreservedAnalyses run(llvm::Function& function,
                                      llvm::FunctionAnalysisManager& analyses) {
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
-    auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
     bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
       if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop) ||
-          !HasInvariantIndirectCall(*loop) || (trips != 0 && trips < kMinimumCallLoopUnrollCount) ||
+          !HasInvariantIndirectCall(*loop)) {
+        continue;
+      }
+      auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
+      if ((trips != 0 && trips < kMinimumCallLoopUnrollCount) ||
           (trips == 0 && !function.hasFnAttribute(kNativeArrayReductionCandidateAttribute))) {
         continue;
       }

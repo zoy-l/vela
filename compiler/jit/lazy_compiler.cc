@@ -166,8 +166,8 @@ std::expected<void, std::string> DefineFunctions(const std::shared_ptr<LazyBatch
     llvm::orc::SymbolFlagsMap implementations;
     const auto first = reuse.functions.size();
     const auto& names = batch->compiler->symbols[index].implementations;
-    PlanFunctionBindings(names, index, kFunctionEntrySuffix, reuse);
-    if (reuse.reused[index] != 0) {
+    const auto binding = PlanFunctionBindings(names, index, kFunctionEntrySuffix, reuse);
+    if (binding == FunctionBinding::Reused) {
       for (auto& function : std::span(reuse.functions).subspan(first)) {
         function.symbol = std::string(function.name).append(kFunctionEntrySuffix);
         retained.try_emplace(batch->interned.Get(function.symbol),

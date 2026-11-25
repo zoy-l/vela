@@ -110,6 +110,12 @@ bool Lowerer::HasInstanceInitialization(const frontend::ClassDescriptor& owner) 
   return initialized;
 }
 
+bool Lowerer::NeedsConstructorInitialization(const frontend::ClassDescriptor& owner) {
+  return (native_mode_ == NativeProgramMode::Reloadable &&
+          owner.constructor_kind == frontend::ConstructorKind::Generated) ||
+         HasInstanceInitialization(owner);
+}
+
 std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& owner) const {
   if (native_mode_ == NativeProgramMode::Reloadable) {
     return 0;
@@ -190,21 +196,19 @@ void Lowerer::LowerBaseConstructor(const frontend::ClassDescriptor& owner) {
   if (source.base_class && !model_.explicit_super_constructors.contains(owner.type.name)) {
     const auto& base = model_.classes.at(source.base_class->name);
     if (owner.HasInheritedConstructor()) {
+      if (!NeedsConstructorInitialization(base)) {
+        return;
+      }
       const auto count = owner.constructor_kind == frontend::ConstructorKind::Generated
                              ? ConstructorMaskCount(base)
-                             : static_cast<std::uint32_t>(base.constructor.parameters.size()) *
-                                   (base.constructor.HasDefaults() ? 2U : 1U);
+                             : current_function_->parameter_count - 1U;
       std::vector<RegisterId> arguments;
       arguments.reserve(count);
       for (std::uint32_t index = 0; index < count; ++index) {
         arguments.push_back(index + 1);
       }
       // 字段实参已写入接收者；这里只转发字段掩码或显式参数及 presence，不提前求值父类默认值。
-      if (HasInstanceInitialization(base) ||
-          (base.constructor_kind == frontend::ConstructorKind::Generated &&
-           native_mode_ == NativeProgramMode::Reloadable)) {
-        EmitConstructorInitialization(base, 0, arguments, source.location);
-      }
+      EmitConstructorInitialization(base, 0, arguments, source.location);
     } else {
       static_cast<void>(LowerConstructorCall({}, {}, source.location, base, 0));
     }
@@ -401,8 +405,7 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
       arguments.at(parameter) = saved;
     }
   }
-  if (HasInstanceInitialization(info) ||
-      (generated && native_mode_ == NativeProgramMode::Reloadable)) {
+  if (NeedsConstructorInitialization(info)) {
     if (generated) {
       for (const auto mask : provided) {
         arguments.push_back(EmitTemporary({

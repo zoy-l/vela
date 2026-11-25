@@ -554,54 +554,52 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   };
 }
 
-const Heap::BlockPageLayout& Heap::BlockLayout(std::size_t class_index) noexcept {
-  // 每个保留区至少容纳一个槽及页头；按实际用量提交，保留区大小仍为二次幂，
-  // 释放时可以直接由块地址定位页头。
-  static constexpr auto kPageBytes = [] {
-    std::array<BlockPageLayout, kSizeClasses.size()> sizes{};
+std::size_t Heap::BlockCapacity(std::size_t class_index) noexcept {
+  // 真实池化槽都能装进一个固定页；大块走独立分配，不扩大池化保留区。
+  static_assert(sizeof(BlockPage) + kSizeClasses.back() <= internal::kHeapBlockPageBytes);
+  static constexpr auto kCapacities = [] {
+    std::array<std::size_t, kSizeClasses.size()> sizes{};
     for (std::size_t index = 0; index < sizes.size(); ++index) {
       const auto block_size = kSizeClasses[index];
-      const auto bytes = std::max(internal::kMinimumHeapBlockPageBytes,
-                                  std::bit_ceil(sizeof(BlockPage) + block_size));
-      sizes[index] = {.bytes = bytes, .capacity = (bytes - sizeof(BlockPage)) / block_size};
+      constexpr auto bytes = internal::kHeapBlockPageBytes;
+      sizes[index] = (bytes - sizeof(BlockPage)) / block_size;
     }
     return sizes;
   }();
-  return kPageBytes[class_index];
+  return kCapacities[class_index];
 }
 
 void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
-  const auto& layout = BlockLayout(class_index);
-  const auto page_bytes = layout.bytes;
+  constexpr auto page_bytes = internal::kHeapBlockPageBytes;
+  const auto block_size = kSizeClasses[class_index];
+  const auto page_storage = [page_bytes](BlockPage* page) {
+    return std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes);
+  };
   auto& available = available_pages_[class_index];
   auto* page = available;
   if (page == nullptr) {
+    const auto initial_bytes = CommittedHeapPageBytes(sizeof(BlockPage) + block_size);
     page = empty_pages_[class_index];
     if (page != nullptr) {
       internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
       // 空页已经没有任何存活槽。丢弃旧空闲链并退还尾部提交，新的小工作集从页首开始。
       page->free_blocks = nullptr;
       page->initialized = 0;
-      const auto initial_bytes =
-          CommittedHeapPageBytes(sizeof(BlockPage) + kSizeClasses[class_index]);
       if (page->committed > initial_bytes) {
         const auto unused = page->committed - initial_bytes;
-        const auto tail = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes)
-                              .subspan(initial_bytes);
+        const auto tail = page_storage(page).subspan(initial_bytes);
         internal::DecommitHeapBlockPage(tail.data(), unused);
         page->committed = initial_bytes;
         committed_bytes_ -= unused;
       }
     } else {
-      auto* memory = internal::ReserveHeapBlockPage(page_bytes);
+      auto* memory = internal::ReserveHeapBlockPage();
       if (memory == nullptr) {
         return nullptr;
       }
-      const auto initial_bytes =
-          CommittedHeapPageBytes(sizeof(BlockPage) + kSizeClasses[class_index]);
       if (internal::CommitHeapBlockPage(memory, initial_bytes) !=
           internal::HeapPageCommit::Committed) {
-        internal::ReleaseHeapBlockPage(memory, page_bytes);
+        internal::ReleaseHeapBlockPage(memory);
         return nullptr;
       }
       page = std::construct_at(static_cast<BlockPage*>(memory));
@@ -610,19 +608,18 @@ void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
     }
     internal::PrependIntrusive(*page, available, &BlockPage::next, &BlockPage::previous_link);
   }
-  const auto block_size = kSizeClasses[class_index];
   void* memory = nullptr;
   if (auto* block = page->free_blocks) {
     page->free_blocks = block->next;
     memory = block;
     std::destroy_at(block);
   } else {
+    const auto storage = page_storage(page);
     const auto required_bytes = sizeof(BlockPage) + ((page->initialized + 1U) * block_size);
     if (required_bytes > page->committed) [[unlikely]] {
       const auto committed = CommittedHeapPageBytes(required_bytes);
       const auto extra_bytes = committed - page->committed;
-      const auto tail = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes)
-                            .subspan(page->committed);
+      const auto tail = storage.subspan(page->committed);
       if (internal::CommitHeapBlockPage(tail.data(), extra_bytes) !=
           internal::HeapPageCommit::Committed) {
         return nullptr;
@@ -630,25 +627,23 @@ void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
       page->committed = committed;
       committed_bytes_ += extra_bytes;
     }
-    auto storage = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes);
     memory = storage.subspan(sizeof(BlockPage) + (page->initialized * block_size)).data();
     ++page->initialized;
   }
   ++page->used;
   pooled_live_bytes_ += block_size;
-  if (page->used == layout.capacity) {
+  if (page->used == BlockCapacity(class_index)) {
     internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
   }
   return memory;
 }
 
 void Heap::ReleasePooledBlock(void* memory, std::size_t class_index) noexcept {
-  const auto& layout = BlockLayout(class_index);
-  const auto page_bytes = layout.bytes;
+  constexpr auto page_bytes = internal::kHeapBlockPageBytes;
   pooled_live_bytes_ -= kSizeClasses[class_index];
   const auto address = std::bit_cast<std::uintptr_t>(memory) & ~(page_bytes - 1U);
   auto* page = std::bit_cast<BlockPage*>(address);
-  const auto capacity = layout.capacity;
+  const auto capacity = BlockCapacity(class_index);
   if (page->used == capacity) {
     internal::PrependIntrusive(*page, available_pages_[class_index], &BlockPage::next,
                                &BlockPage::previous_link);
@@ -761,13 +756,11 @@ void Heap::MaybeCollect(std::size_t next_size) noexcept {
   }
 }
 
-void Heap::ReleasePage(BlockPage& page, std::size_t class_index) noexcept {
-  const auto& layout = BlockLayout(class_index);
-  const auto page_bytes = layout.bytes;
+void Heap::ReleasePage(BlockPage& page) noexcept {
   const auto committed = page.committed;
   internal::UnlinkIntrusive(page, &BlockPage::next, &BlockPage::previous_link);
   std::destroy_at(&page);
-  internal::ReleaseHeapBlockPage(&page, page_bytes);
+  internal::ReleaseHeapBlockPage(&page);
   committed_bytes_ -= committed;
 }
 
@@ -780,7 +773,7 @@ std::size_t Heap::ReleaseExcessCachedPages(std::size_t work_budget) noexcept {
     auto& head = empty_pages_[class_index];
     while (head != nullptr && committed_bytes_ - allocated_bytes_ > cache_budget &&
            work_budget != 0) {
-      ReleasePage(*head, class_index);
+      ReleasePage(*head);
       --work_budget;
     }
   }
@@ -815,10 +808,9 @@ void Heap::DestroyAll() noexcept {
   object_count_ = 0;
   ReleaseRetiredNativePrograms();
 
-  for (std::size_t index = 0; index < empty_pages_.size(); ++index) {
-    auto& page = empty_pages_[index];
+  for (auto& page : empty_pages_) {
     while (page != nullptr) {
-      ReleasePage(*page, index);
+      ReleasePage(*page);
     }
   }
   assert(allocated_bytes_ == 0);

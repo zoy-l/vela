@@ -29,7 +29,7 @@
 #include "base/streams.h"
 #include "compiler/cli/development_debugger.h"
 #include "compiler/cli/development_diagnostics.h"
-#include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
@@ -143,7 +143,7 @@ class DevelopmentConsole final {
   std::mutex mutex_;
   std::condition_variable changed_;
   bool files_changed_ = false;
-  compiler::DevelopmentFiles files_;
+  compiler::LocalDevelopmentFiles files_;
   Streams streams_;
   compiler::jit::CompileOptions compilation_;
   compiler::ProjectConfiguration configuration_;
@@ -410,8 +410,8 @@ void DevelopmentConsole::Command(const std::string& command) {
   if (command == ".hot" || command == ".reload" || command.starts_with(kLoadCommand)) {
     const auto previous = session_->snapshot();
     auto update = command.starts_with(kLoadCommand)
-                      ? compiler::DevelopmentFiles(command.substr(kLoadCommand.size()),
-                                                   configuration_.imports)
+                      ? compiler::LocalDevelopmentFiles(command.substr(kLoadCommand.size()),
+                                                        configuration_.imports)
                             .Capture(*previous)
                       : files_.Capture(*previous);
     if (!update) {

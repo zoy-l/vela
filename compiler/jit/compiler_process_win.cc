@@ -134,24 +134,17 @@ std::expected<std::shared_ptr<CompilerProcess>, std::string> CompilerProcess::St
   CompilerStreams streams;
   streams.input.reset(input_fd < 0 ? nullptr : _fdopen(input_fd, "wb"));
   streams.output.reset(output_fd < 0 ? nullptr : _fdopen(output_fd, "rb"));
-  if (!streams.input || !streams.output) {
-    if (!streams.input && input_fd >= 0) {
-      _close(input_fd);
-    } else if (!streams.input) {
-      CloseHandle(write_request);
-    }
-    if (!streams.output && output_fd >= 0) {
-      _close(output_fd);
-    } else if (!streams.output) {
-      CloseHandle(read_reply);
-    }
-    streams.input.reset();
-    streams.output.reset();
-    WaitForSingleObject(process.hProcess, INFINITE);
-    CloseHandle(process.hProcess);
-    return std::unexpected("cannot open compiler streams");
+  if (!streams.input && input_fd >= 0) {
+    _close(input_fd);
+  } else if (!streams.input) {
+    CloseHandle(write_request);
   }
-  return std::make_shared<CompilerProcess>(std::move(streams), process.hProcess);
+  if (!streams.output && output_fd >= 0) {
+    _close(output_fd);
+  } else if (!streams.output) {
+    CloseHandle(read_reply);
+  }
+  return FinishStart(std::move(streams), process.hProcess);
 }
 
 CompilerProcess::~CompilerProcess() {

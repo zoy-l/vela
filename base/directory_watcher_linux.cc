@@ -25,9 +25,7 @@ namespace {
 // 批量读取内核队列，避免为每个文件事件进行单独的系统调用。
 constexpr std::size_t kNotificationBufferBytes = 64 * 1024;
 
-std::string WatchError(std::string_view operation, int error) {
-  return std::string(operation) + ": " + std::error_code(error, std::generic_category()).message();
-}
+using internal::DirectoryWatchErrorMessage;
 
 std::expected<void, std::error_code> Subscribe(internal::DirectoryWatchState& state,
                                                const std::filesystem::path& directory,
@@ -77,52 +75,60 @@ std::expected<void, std::string> DirectoryWatcher::AddNative(const std::filesyst
   if (native_.events < 0) {
     const auto events = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     if (events < 0) {
-      return std::unexpected(WatchError("inotify_init1", errno));
+      return std::unexpected(DirectoryWatchErrorMessage("inotify_init1", errno));
     }
     const auto wakeup = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (wakeup < 0) {
       const auto error = errno;
       close(events);
-      return std::unexpected(WatchError("eventfd", error));
+      return std::unexpected(DirectoryWatchErrorMessage("eventfd", error));
     }
     native_.events = events;
     native_.wakeup = wakeup;
   }
   const auto subscribed = Subscribe(native_, directory, scope, subscription_id);
   if (!subscribed) {
-    return std::unexpected(WatchError("inotify_add_watch", subscribed.error().value()));
+    return std::unexpected(
+        DirectoryWatchErrorMessage("inotify_add_watch", subscribed.error().value()));
   }
-  if (scope == DirectoryWatchScope::Descendants) {
-    std::error_code error;
-    std::filesystem::recursive_directory_iterator iterator(directory, error);
-    const std::filesystem::recursive_directory_iterator end;
-    while (!error && iterator != end) {
-      const auto& entry = *iterator;
-      // 不追踪目录符号链接，避免递归越出订阅树或形成循环。
-      const auto status = entry.symlink_status(error);
-      if (!error && std::filesystem::is_directory(status)) {
-        const auto added = Subscribe(native_, entry.path(), scope, subscription_id);
-        if (!added) {
-          if (added.error() == std::errc::no_such_file_or_directory) {
-            Invalidate();
-          } else {
-            return std::unexpected(WatchError("inotify_add_watch", added.error().value()));
-          }
+  return {};
+}
+
+std::expected<void, std::string> DirectoryWatcher::AddNativeDescendants(
+    const std::filesystem::path& directory,
+    std::uint64_t subscription_id) {
+  std::error_code error;
+  std::filesystem::recursive_directory_iterator iterator(directory, error);
+  const std::filesystem::recursive_directory_iterator end;
+  while (!error && iterator != end) {
+    const auto& entry = *iterator;
+    // 不追踪目录符号链接，避免递归越出订阅树或形成循环。
+    const auto status = entry.symlink_status(error);
+    if (!error && std::filesystem::is_directory(status)) {
+      const std::scoped_lock lock(native_mutex_);
+      const auto added =
+          Subscribe(native_, entry.path(), DirectoryWatchScope::Descendants, subscription_id);
+      if (!added) {
+        if (added.error() == std::errc::no_such_file_or_directory) {
+          Invalidate();
+        } else {
+          return std::unexpected(
+              DirectoryWatchErrorMessage("inotify_add_watch", added.error().value()));
         }
-      }
-      if (error == std::errc::no_such_file_or_directory) {
-        Invalidate();
-        error.clear();
-      }
-      if (!error) {
-        iterator.increment(error);
       }
     }
     if (error == std::errc::no_such_file_or_directory) {
       Invalidate();
-    } else if (error) {
-      return std::unexpected(error.message());
+      error.clear();
     }
+    if (!error) {
+      iterator.increment(error);
+    }
+  }
+  if (error == std::errc::no_such_file_or_directory) {
+    Invalidate();
+  } else if (error) {
+    return std::unexpected(error.message());
   }
   return {};
 }
@@ -167,7 +173,7 @@ void DirectoryWatcher::ReadEvents() {
       if (error == EINTR) {
         continue;
       }
-      failure_ = WatchError("poll(inotify)", error);
+      failure_ = DirectoryWatchErrorMessage("poll(inotify)", error);
       Invalidate();
       return;
     }
@@ -181,7 +187,7 @@ void DirectoryWatcher::ReadEvents() {
       if (errno == EAGAIN || errno == EINTR) {
         continue;
       }
-      failure_ = WatchError("read(inotify)", errno);
+      failure_ = DirectoryWatchErrorMessage("read(inotify)", errno);
       Invalidate();
       return;
     }

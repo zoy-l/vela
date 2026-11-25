@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#include <llvm/ADT/StringRef.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Module.h>
@@ -29,30 +28,13 @@
 #include "base/file.h"
 #include "base/fingerprint.h"
 #include "compiler/cache_build_identity.h"
+#include "compiler/jit/object_buffer.h"
 #include "runtime/native/native_image.h"
 
 namespace vela::compiler::jit {
 namespace {
 
 constexpr std::string_view kMagic = "VELAJIT1";
-
-// ORC 拥有 payload 视图，同时持有完整缓存输入；校验后不再复制目标文件字节。
-class CachedObjectBuffer final : public llvm::MemoryBuffer {
- public:
-  CachedObjectBuffer(std::vector<std::byte> bytes, std::size_t offset) : bytes_(std::move(bytes)) {
-    const auto payload = std::span(bytes_).subspan(offset);
-    const void* storage = payload.data();
-    const llvm::StringRef text(static_cast<const char*>(storage), payload.size());
-    init(text.begin(), text.end(), false);
-  }
-  [[nodiscard]] llvm::StringRef getBufferIdentifier() const override {
-    return "vela.cached.object";
-  }
-  [[nodiscard]] BufferKind getBufferKind() const override { return MemoryBuffer_Malloc; }
-
- private:
-  std::vector<std::byte> bytes_;
-};
 
 std::filesystem::path CachePath(const std::filesystem::path& directory, std::string_view key) {
   return directory / (std::string(key) + ".vlobj");
@@ -74,7 +56,7 @@ CachedObject Decode(std::vector<std::byte> bytes, std::string_view expected_key)
     return invalid();
   }
   const auto offset = bytes.size() - payload->size();
-  auto object = std::make_unique<CachedObjectBuffer>(std::move(bytes), offset);
+  auto object = OwnObjectBytes(std::move(bytes), offset);
   auto parsed = llvm::object::ObjectFile::createObjectFile(object->getMemBufferRef());
   if (!parsed) {
     llvm::consumeError(parsed.takeError());

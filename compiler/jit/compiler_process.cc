@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <print>
 #include <span>
@@ -19,6 +20,16 @@ namespace vela::compiler::jit {
 
 CompilerProcess::CompilerProcess(CompilerStreams streams, CompilerProcessHandle process)
     : streams_(std::move(streams)), process_(process) {}
+
+std::expected<std::shared_ptr<CompilerProcess>, std::string> CompilerProcess::FinishStart(
+    CompilerStreams streams,
+    CompilerProcessHandle process) {
+  auto owner = std::make_shared<CompilerProcess>(std::move(streams), process);
+  if (!owner->streams_.input || !owner->streams_.output) {
+    return std::unexpected("cannot open compiler streams");
+  }
+  return owner;
+}
 
 std::expected<std::vector<std::byte>, std::string> CompilerProcess::Receive() const {
   return ReadCompilerFrame(streams_.output.get());
@@ -77,7 +88,7 @@ void CompilerProcess::ReadMessages() {
   }
   {
     const std::scoped_lock lock(response_mutex_);
-    failure_ = std::move(failure);
+    channel_ = std::unexpected(std::move(failure));
   }
   response_ready_.notify_all();
   const std::scoped_lock lock(callbacks_mutex_);
@@ -106,21 +117,18 @@ std::expected<std::vector<std::byte>, std::string> CompilerProcess::Exchange(
   const std::scoped_lock lock(mutex_);
   {
     const std::scoped_lock response_lock(response_mutex_);
-    if (failure_) {
-      return std::unexpected(*failure_);
+    if (!channel_) {
+      return std::unexpected(channel_.error());
     }
   }
   if (auto written = WriteCompilerFrame(streams_.input.get(), request); !written) {
     return std::unexpected(std::move(written.error()));
   }
   std::unique_lock response_lock(response_mutex_);
-  response_ready_.wait(response_lock, [this] { return response_ || failure_; });
+  response_ready_.wait(response_lock, [this] { return response_ || !channel_; });
   if (!response_) {
-    // wait 的谓词已保证 response_ 和 failure_ 至少一个有值。
-    if (failure_) {
-      return std::unexpected(*failure_);
-    }
-    std::unreachable();
+    // wait 已保证收到响应或通道失败；这里直接返回通道的终态错误。
+    return std::unexpected(channel_.error());
   }
   auto response = std::move(*response_);
   response_.reset();

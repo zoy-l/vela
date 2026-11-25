@@ -17,7 +17,7 @@
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "base/streams.h"
-#include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
@@ -56,14 +56,18 @@ int JitCacheCommand(std::span<char*> arguments, Streams streams) {
   if (!configuration) {
     return configuration.error().exit_code;
   }
-  compiler::DevelopmentFiles files(arguments.front(), configuration->imports);
+  compiler::LocalDevelopmentFiles files(arguments.front(), configuration->imports);
   auto update = files.Capture({});
   if (!update) {
     frontend::WriteDiagnostics(errors, update.error(), arguments.front());
     return kSourceErrorExitCode;
   }
-  compiler::SourceSession sources(files.entry(), configuration->diagnostics, {},
-                                  configuration->imports);
+  compiler::SourceSession sources({
+      .entry = files.entry(),
+      .diagnostics = configuration->diagnostics,
+      .reflection = {},
+      .imports = configuration->imports,
+  });
   auto source = sources.Prepare(std::move(*update));
   if (!source) {
     frontend::WriteDiagnostics(errors, source.error().diagnostics, files.entry());

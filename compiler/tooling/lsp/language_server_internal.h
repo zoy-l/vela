@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <yyjson.h>
 
 #include "base/json.h"
@@ -153,7 +154,7 @@ class LanguageServer final {
   absl::flat_hash_map<std::string, SemanticIndex> semantic_indices_;
   std::vector<std::string> workspace_roots_;
   std::optional<ReferenceIndex> reference_index_;
-  std::optional<std::vector<std::string>> workspace_sources_;
+  std::optional<absl::flat_hash_set<std::string>> workspace_sources_;
   compiler::SourceConfigurationCache configurations_;
   struct CompletionIndex final {
     std::string text;

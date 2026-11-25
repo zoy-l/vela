@@ -81,7 +81,6 @@ class Compiler {
   // 公共 API：创建独立进程编译器，宿主保留运行时与代码加载。
   [[nodiscard]] static std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics>
   CreateExternal(CompilerProcessOptions options);
-  Compiler() = default;
   Compiler(const Compiler&) = delete;
   Compiler& operator=(const Compiler&) = delete;
   Compiler(Compiler&&) = delete;
@@ -103,14 +102,23 @@ class Compiler {
       std::shared_ptr<const ir::Program> program,
       const CompileOptions& options,
       CodeReuseCache* reuse = nullptr) = 0;
-  [[nodiscard]] virtual CodeResourceCounts resource_counts() const noexcept = 0;
+  [[nodiscard]] CodeResourceCounts resource_counts() const noexcept;
 
  protected:
+  explicit Compiler(std::shared_ptr<CodeLinker> jit);
+  [[nodiscard]] const std::shared_ptr<CodeLinker>& linker() const noexcept { return jit_; }
+  [[nodiscard]] const std::shared_ptr<CodeResourceCounters>& resource_counters() const noexcept {
+    return counters_;
+  }
   friend class ::vela::compiler::DevelopmentSession;
   virtual std::expected<CompiledImage, frontend::Diagnostics> CompileSource(
       const std::shared_ptr<const CompiledSourceSnapshot>& source,
       const CompileOptions& options,
       CodeReuseCache* reuse);
+
+ private:
+  std::shared_ptr<CodeLinker> jit_;
+  std::shared_ptr<CodeResourceCounters> counters_;
 };
 
 }  // namespace vela::compiler::jit

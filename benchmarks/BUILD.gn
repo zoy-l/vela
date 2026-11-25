@@ -219,6 +219,7 @@ executable("vela_benchmarks") {
   deps = [
     ":jit_benchmark_support",
     ":reflection_native_inputs",
+    ":standard_api_native_inputs",
     ":standard_api_workloads",
     "//base:json",
     "//base:temporary_directory",
@@ -335,6 +336,9 @@ source_set("jit_benchmark_support") {
     "jit_benchmark.cc",
     "jit_benchmark.h",
     "process_memory.h",
+    "workload.h",
+    "workload_benchmark.cc",
+    "workload_benchmark.h",
   ]
   if (target_os == "win") {
     sources += [ "process_memory_win.cc" ]
@@ -411,22 +415,19 @@ standard_api_object = "$standard_api_directory/workload.o"
 if (target_os == "win") {
   standard_api_object = "$standard_api_directory/workload.obj"
 }
-standard_api_names = [
-  "input",
-  "math_atan2",
-  "math_cbrt",
-  "math_hypot",
-  "math_remainder",
-  "string_boundary",
-  "string_slice_bytes",
-  "string_replace_bytes",
-  "string_byte_offset",
-  "string_trim",
-]
+standard_api_manifest = read_file("standard_api_workloads.json", "json")
+standard_api_names = [ "input" ]
+foreach(workload, standard_api_manifest) {
+  standard_api_names += [ workload.name ]
+}
 action("standard_api_native_inputs") {
   testonly = true
   script = "//tools/standard_api_benchmarks.py"
-  inputs = [ "//tools/aot_benchmarks.py" ]
+  inputs = [
+    "//tools/aot_benchmarks.py",
+    "standard_api_workloads.json",
+    "workloads/entry.vela.inc",
+  ]
   outputs = [
     standard_api_object,
     "$standard_api_object.h",
@@ -434,12 +435,17 @@ action("standard_api_native_inputs") {
     "$standard_api_directory/main.vela",
     "$standard_api_directory/entries.h",
     "$standard_api_directory/build_metrics.json",
+    "$standard_api_directory/workloads.h",
   ]
   args = [
     "--compiler",
     rebase_path(aot_compiler, root_build_dir),
     "--output",
     rebase_path(standard_api_directory, root_build_dir),
+    "--cases",
+    rebase_path("standard_api_workloads.json", root_build_dir),
+    "--entry",
+    rebase_path("workloads/entry.vela.inc", root_build_dir),
   ]
   foreach(name, standard_api_names) {
     source = "workloads/$name.vela"

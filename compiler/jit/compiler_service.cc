@@ -227,8 +227,8 @@ std::expected<void, std::string> CreateSourceSession(BinaryReader& reader,
       return std::unexpected("duplicate source session");
     }
   } else if (!state.files
-                  .try_emplace(resource_id, std::make_unique<DevelopmentFiles>(
-                                                configuration->entry, configuration->imports))
+                  .try_emplace(resource_id, DevelopmentFiles::Create(configuration->entry,
+                                                                     configuration->imports))
                   .second) {
     return std::unexpected("duplicate file session");
   }
@@ -325,13 +325,10 @@ std::expected<void, std::string> TrackFileSources(BinaryReader& reader,
                                                   BinaryWriter& output,
                                                   std::uint64_t resource_id) {
   const auto payload = reader.Take(reader.remaining());
-  auto changes = DecodeSourceUpdate(*payload);
+  auto decoded = DecodeSourceUpdate(*payload);
+  auto update = decoded ? std::move(*decoded) : std::nullopt;
   const auto found = state.files.find(resource_id);
-  if (!changes || found == state.files.end()) {
-    return std::unexpected("invalid watched sources");
-  }
-  const auto& update = *changes;
-  if (!update) {
+  if (!update || found == state.files.end()) {
     return std::unexpected("invalid watched sources");
   }
   auto watched = found->second->WatchSources(update->changes);

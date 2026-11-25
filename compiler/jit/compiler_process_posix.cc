@@ -43,17 +43,13 @@ std::expected<std::shared_ptr<CompilerProcess>, std::string> CompilerProcess::St
   CompilerStreams streams;
   streams.input.reset(fdopen(request[1], "wb"));
   streams.output.reset(fdopen(reply[0], "rb"));
-  if (!streams.input || !streams.output) {
-    if (!streams.input)
-      close(request[1]);
-    if (!streams.output)
-      close(reply[0]);
-    streams.input.reset();
-    streams.output.reset();
-    waitpid(child, nullptr, 0);
-    return std::unexpected("cannot open compiler streams");
+  if (!streams.input) {
+    close(request[1]);
   }
-  return std::make_shared<CompilerProcess>(std::move(streams), static_cast<std::uintptr_t>(child));
+  if (!streams.output) {
+    close(reply[0]);
+  }
+  return FinishStart(std::move(streams), static_cast<std::uintptr_t>(child));
 }
 
 CompilerProcess::~CompilerProcess() {

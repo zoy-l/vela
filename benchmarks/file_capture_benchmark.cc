@@ -15,6 +15,7 @@
 #include "base/path.h"
 #include "benchmarks/temporary_directory.h"
 #include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 
@@ -146,7 +147,7 @@ void CaptureFiles(benchmark::State& state, FileActivity activity) {
     state.SkipWithError(written.error());
     return;
   }
-  compiler::DevelopmentFiles files(PathText(directory.path() / "main.vela"));
+  compiler::LocalDevelopmentFiles files(PathText(directory.path() / "main.vela"));
   state.counters["files"] = static_cast<double>(count);
   state.counters["changed_files"] = activity == FileActivity::Idle ? 0 : 1;
   if (activity == FileActivity::Idle) {

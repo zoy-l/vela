@@ -15,6 +15,20 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+namespace {
+
+bool HasScalarCallbackSignature(const ClassLayout* layout) {
+  const auto* signature = layout != nullptr ? layout->callable_type() : nullptr;
+  if (signature == nullptr || signature->parameters.size() != 1 || !signature->result) {
+    return false;
+  }
+  const auto& argument = signature->parameters.front().type;
+  const auto kind = argument.kind;
+  return !argument.nullable && !argument.dynamic && argument == *signature->result &&
+         (kind == ValueKind::Integer || kind == ValueKind::Double || kind == ValueKind::Boolean);
+}
+
+}  // namespace
 
 HostRoot::Storage::Storage(Isolate& owner, Value source) noexcept
     : isolate(&owner),
@@ -27,7 +41,7 @@ std::expected<HostRoot, ExecutionStatus> HostRoot::Create(Isolate& isolate, Valu
   const RootRange source_root(heap, &value, 1, std::nullopt);
   const auto* object = value.AsObjectOrNull();
   const auto* layout = object != nullptr ? Heap::ClassOf(*object) : nullptr;
-  const bool has_callback = layout != nullptr && layout->callable() != nullptr;
+  const bool has_callback = HasScalarCallbackSignature(layout);
   using Callback = ::vela::internal::BoundScalarCallback;
   const auto bytes = sizeof(Storage) + (has_callback ? sizeof(Callback) : 0);
   auto* memory = heap.AllocateNative(bytes);

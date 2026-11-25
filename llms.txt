@@ -9,8 +9,8 @@ Paths below are relative to the repository root.
 
 ## Start here
 
-- [Vela language, testing, and mocking reference](llms-full.txt): Self-contained
-  practical guide with executable examples, common mistakes, and validation commands.
+- [Vela language, testing, and mocking reference](llms-full.txt): Canonical references
+  assembled with `python -m tools.llms`. The tooling tests verify synchronization.
 - [Documentation index](docs/README.md): English and Simplified Chinese topic references.
 - [Runnable examples](examples/README.md): Existing programs and their expected results.
 - [Language roadmap](docs/en/roadmap.md): Implemented features and remaining acceptance work.
@@ -50,11 +50,6 @@ Paths below are relative to the repository root.
   stubbing, argument matching, capture, verification, and async call observation.
 - [Test SDK declarations](compiler/sdk/test.vela): Exact exported test and matcher APIs.
 - [Mock SDK declarations](compiler/sdk/mock.vela): Exact exported mocking APIs.
-
-Use `test()` for synchronous and asynchronous tests. Generate interface mocks with
-`vela mock`; configure and verify `.calls`, pass `.object` to application code,
-and manage history through `.control`. Every real mock call needs a stub, including
-void methods. Create a new `MockSession` inside each test or its `setUp`.
 
 ## Tools and host integration
 

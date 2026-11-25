@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "base/builtin.h"
 #include "base/callable.h"
@@ -152,6 +153,8 @@ class FunctionEmitter final {
   const ir::Instruction& CanonicalInstruction(std::size_t origin) const;
   llvm::Value* Payload(ir::RegisterId reg);
   llvm::Value* Reference(ir::RegisterId reg);
+  const std::string* StringConstant(ir::RegisterId reg) const;
+  std::optional<std::size_t> InlineFieldOffset(const SourceType& type);
   void Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type);
   void Check(llvm::Value* condition, ExecutionStatus failure);
   void CheckReference(llvm::Value* reference);
@@ -208,6 +211,7 @@ class FunctionEmitter final {
   void EmitHostBoundary(HostBorrow change);
   void EnterHostFrame();
   void LinkHostFrame();
+  void SetBorrowedCallerPosition();
   void RestoreHostFrame();
   void StoreExecutionState(Builder& builder, llvm::Value* frame, llvm::Value* depth);
   llvm::Value* ReleaseBorrowedHostFrame();
@@ -493,6 +497,7 @@ class FunctionEmitter final {
     std::uint32_t count;
   };
   absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
+  absl::flat_hash_map<std::string_view, std::optional<std::size_t>> inline_field_offsets_;
   bool leaf_entry_ = false;
   bool deferred_roots_ = false;
   bool delayed_root_registration_ = false;

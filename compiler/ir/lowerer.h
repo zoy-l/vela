@@ -164,6 +164,7 @@ class Lowerer final {
                                                       std::span<const std::uint32_t> supplied,
                                                       frontend::SourceLocation location);
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner);
+  [[nodiscard]] bool NeedsConstructorInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   struct ConstructorFieldMask final {
     std::uint32_t index;

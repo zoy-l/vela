@@ -99,8 +99,8 @@ copy while retaining the root
 after the source Persistent is reset. Shared slots remain read-only; output destinations use fresh
 mutable slots. `Local` borrows its Isolate directly and expires with its owning scope. Internal
 localization returns an execution status, with public `Error` construction at the API boundary.
-Callable host roots place their bound scalar descriptor in the same allocation; ordinary roots
-retain their existing size. The first localization borrows that descriptor through its shared root
+Roots for callbacks with one parameter and a matching scalar result place their bound descriptor
+in the same allocation. Other roots retain their existing size. The first localization borrows that descriptor through its shared root
 ownership. Other locals bind from their rooted callable. Descriptors retain addresses of mutable
 captures and observe their current values on every call.
 Scalar callback slow calls borrow the Isolate without retaining the caller's scope address; managed

@@ -923,11 +923,11 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
   if (found == references_.end()) {
     return std::nullopt;
   }
-  auto definition = DefinitionFor(found->second.symbol, encoding);
-  if (definition.path.starts_with(frontend::kStandardSourcePrefix)) {
+  const auto& symbol = symbols_[found->second.symbol];
+  if (sources_[symbol.key.first].path.starts_with(frontend::kStandardSourcePrefix)) {
     return std::nullopt;
   }
-  return definition;
+  return LocationFor(symbol.key, symbol.length, encoding);
 }
 
 Definition SemanticIndex::DefinitionFor(std::size_t index, PositionEncoding encoding) const {

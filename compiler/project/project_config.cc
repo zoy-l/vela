@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -553,9 +552,6 @@ std::expected<ProjectConfiguration, ConfigurationError> ReadConfigurationFile(
 }
 
 using ConfigurationResult = std::expected<ProjectConfiguration, ConfigurationError>;
-using DirectoryConfigurations = absl::flat_hash_map<std::filesystem::path,
-                                                    std::shared_ptr<const ConfigurationResult>,
-                                                    std::hash<std::filesystem::path>>;
 
 std::expected<std::filesystem::path, ConfigurationError> AbsoluteConfigurationPath(
     const std::filesystem::path& path) {

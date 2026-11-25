@@ -70,9 +70,9 @@ std::expected<ReferenceIndex*, std::string> LanguageServer::WorkspaceReferences(
         discovered.insert(PathText(source));
       }
     }
-    workspace_sources_.emplace(discovered.begin(), discovered.end());
+    workspace_sources_ = std::move(discovered);
   }
-  absl::flat_hash_set<std::string> paths(workspace_sources_->begin(), workspace_sources_->end());
+  auto paths = *workspace_sources_;
   for (const auto& [uri, document] : documents_) {
     paths.insert(document.path);
   }

@@ -19,10 +19,10 @@ namespace vela::runtime {
 namespace {
 
 TEST(HeapAllocationTest, BlockPagesHaveIndependentAlignedWritableStorage) {
-  constexpr auto kFirstPageBytes = internal::kMinimumHeapBlockPageBytes;
-  constexpr auto kSecondPageBytes = kFirstPageBytes * 2U;
-  auto* first = internal::ReserveHeapBlockPage(kFirstPageBytes);
-  auto* second = internal::ReserveHeapBlockPage(kSecondPageBytes);
+  constexpr auto kFirstPageBytes = internal::kHeapBlockPageBytes;
+  constexpr auto kSecondPageBytes = internal::kHeapBlockPageBytes;
+  auto* first = internal::ReserveHeapBlockPage();
+  auto* second = internal::ReserveHeapBlockPage();
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   ASSERT_EQ(internal::CommitHeapBlockPage(first, kFirstPageBytes),
@@ -40,16 +40,17 @@ TEST(HeapAllocationTest, BlockPagesHaveIndependentAlignedWritableStorage) {
   first_bytes.back() = kFirstValue;
   second_bytes.front() = kSecondValue;
   second_bytes.back() = kSecondValue;
-  internal::ReleaseHeapBlockPage(first, kFirstPageBytes);
+  internal::ReleaseHeapBlockPage(first);
   EXPECT_EQ(second_bytes.front(), kSecondValue);
   EXPECT_EQ(second_bytes.back(), kSecondValue);
-  internal::ReleaseHeapBlockPage(second, kSecondPageBytes);
+  internal::ReleaseHeapBlockPage(second);
 }
 
+#ifdef _WIN32
 TEST(HeapAllocationTest, ReservationCommitsNewPrefixesWithoutChangingPreviousStorage) {
-  constexpr auto kReservation = internal::kMinimumHeapBlockPageBytes * 2U;
+  constexpr auto kReservation = internal::kHeapBlockPageBytes;
   constexpr auto kInitial = internal::kHeapBlockCommitGranularity;
-  auto* memory = internal::ReserveHeapBlockPage(kReservation);
+  auto* memory = internal::ReserveHeapBlockPage();
   ASSERT_NE(memory, nullptr);
   ASSERT_EQ(internal::CommitHeapBlockPage(memory, kInitial), internal::HeapPageCommit::Committed);
   const std::span bytes(static_cast<std::byte*>(memory), kReservation);
@@ -70,8 +71,9 @@ TEST(HeapAllocationTest, ReservationCommitsNewPrefixesWithoutChangingPreviousSto
             internal::HeapPageCommit::Committed);
   bytes.back() = kLast;
   EXPECT_EQ(bytes.back(), kLast);
-  internal::ReleaseHeapBlockPage(memory, kReservation);
+  internal::ReleaseHeapBlockPage(memory);
 }
+#endif
 
 TEST(HeapAllocationTest, SparseInstancesCommitOnlyTheStorageNeededByTheirFirstSlots) {
   Isolate isolate;

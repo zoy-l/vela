@@ -24,6 +24,17 @@ inline constexpr std::uint32_t kContinuationMask = 0xC0;
   return (static_cast<std::uint8_t>(byte) & kContinuationMask) == kContinuationTag;
 }
 
+// 输入边界已保证合法 UTF-8；只分类首字节，不解码后续载荷。
+[[nodiscard]] constexpr std::uint32_t Utf8SequenceWidth(char byte) noexcept {
+  constexpr std::uint8_t kTwoByteLead = 0xc0;
+  constexpr std::uint8_t kThreeByteLead = 0xe0;
+  constexpr std::uint8_t kFourByteLead = 0xf0;
+  const auto first = static_cast<std::uint8_t>(byte);
+  return 1U + static_cast<std::uint32_t>(first >= kTwoByteLead) +
+         static_cast<std::uint32_t>(first >= kThreeByteLead) +
+         static_cast<std::uint32_t>(first >= kFourByteLead);
+}
+
 struct Utf8Point final {
   std::uint32_t value;
   std::size_t width;

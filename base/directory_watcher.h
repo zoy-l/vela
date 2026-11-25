@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -23,6 +24,10 @@
 #endif
 
 namespace vela {
+
+namespace internal {
+std::string DirectoryWatchErrorMessage(std::string_view operation, int error);
+}
 
 enum class FileChangeKind : std::uint8_t { Content, Identity };
 
@@ -77,6 +82,11 @@ class DirectoryWatcher final {
   [[nodiscard]] std::expected<void, std::string> AddNative(const std::filesystem::path& directory,
                                                            DirectoryWatchScope scope,
                                                            std::uint64_t subscription_id);
+#ifdef __linux__
+  [[nodiscard]] std::expected<void, std::string> AddNativeDescendants(
+      const std::filesystem::path& directory,
+      std::uint64_t subscription_id);
+#endif
   void RemoveNative(std::uint64_t subscription_id);
   void CloseNative();
 #ifndef __APPLE__

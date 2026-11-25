@@ -163,6 +163,18 @@ enum class Builtin : std::uint8_t {
   Count,
 };
 
+[[nodiscard]] constexpr bool IsArrayMetadataRead(Builtin builtin) noexcept {
+  switch (builtin) {
+    case Builtin::ArrayLength:
+    case Builtin::ArrayCapacity:
+    case Builtin::ArrayMutation:
+    case Builtin::ArrayCheckMutation:
+      return true;
+    default:
+      return false;
+  }
+}
+
 [[nodiscard]] constexpr std::size_t BuiltinArity(Builtin builtin) noexcept {
   switch (builtin) {
     case Builtin::NewMutableString:

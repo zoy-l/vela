@@ -515,11 +515,7 @@ class Heap final {
   }
 
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
-  struct BlockPageLayout final {
-    std::size_t bytes;
-    std::size_t capacity;
-  };
-  [[nodiscard]] static const BlockPageLayout& BlockLayout(std::size_t class_index) noexcept;
+  [[nodiscard]] static std::size_t BlockCapacity(std::size_t class_index) noexcept;
   [[nodiscard]] void* AllocatePooledBlock(std::size_t class_index) noexcept;
   void ReleasePooledBlock(void* memory, std::size_t class_index) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
@@ -593,7 +589,7 @@ class Heap final {
     std::size_t initialized = 0;
     std::size_t committed = 0;
   };
-  void ReleasePage(BlockPage& page, std::size_t class_index) noexcept;
+  void ReleasePage(BlockPage& page) noexcept;
   // 满页不在分配链中；最后一个对象归还后从可用链移至空页链，增量释放无需扫描活页。
   std::array<BlockPage*, kSizeClasses.size()> available_pages_{};
   std::array<BlockPage*, kSizeClasses.size()> empty_pages_{};

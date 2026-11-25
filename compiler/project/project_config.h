@@ -44,17 +44,18 @@ struct ProjectConfiguration final {
 
 enum class ConfigurationRequirement : std::uint8_t { Required, Optional };
 
+using DirectoryConfigurations = absl::flat_hash_map<
+    std::filesystem::path,
+    std::shared_ptr<const std::expected<ProjectConfiguration, ConfigurationError>>,
+    std::hash<std::filesystem::path>>;
+
 // 一次工作区检查内共享目录解析结果；新检查创建新缓存，磁盘配置不会被永久固定。
 class SourceConfigurationCache final {
  public:
   std::expected<ProjectConfiguration, ConfigurationError> Load(const std::filesystem::path& source);
 
  private:
-  absl::flat_hash_map<
-      std::filesystem::path,
-      std::shared_ptr<const std::expected<ProjectConfiguration, ConfigurationError>>,
-      std::hash<std::filesystem::path>>
-      directories_;
+  DirectoryConfigurations directories_;
 };
 
 [[nodiscard]] std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguration(

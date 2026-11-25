@@ -39,6 +39,16 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+SourceSessionConfiguration SessionConfiguration(const std::string& entry,
+                                                const DevelopmentOptions& options) {
+  return {
+      .entry = entry,
+      .diagnostics = options.diagnostics,
+      .reflection = options.reflection,
+      .imports = options.imports,
+  };
+}
+
 void AddTimings(DevelopmentTimings& total, const DevelopmentTimings& addition) {
   total.source += addition.source;
   total.code += addition.code;
@@ -175,12 +185,7 @@ DevelopmentSession::Create(std::string entry,
                            runtime::NativeBindings bindings,
                            DevelopmentOptions options,
                            std::unique_ptr<jit::Compiler> compiler) {
-  auto sources = compiler->CreateSources({
-      .entry = entry,
-      .diagnostics = options.diagnostics,
-      .reflection = options.reflection,
-      .imports = options.imports,
-  });
+  auto sources = compiler->CreateSources(SessionConfiguration(entry, options));
   if (!sources) {
     return std::unexpected(std::move(sources.error()));
   }
@@ -247,12 +252,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   const auto started = Clock::now();
   std::shared_ptr<SourceSession> replacement;
   if (operation == DevelopmentOperation::Reload) {
-    auto created = compiler_->CreateSources({
-        .entry = entry_,
-        .diagnostics = options_.diagnostics,
-        .reflection = options_.reflection,
-        .imports = options_.imports,
-    });
+    auto created = compiler_->CreateSources(SessionConfiguration(entry_, options_));
     if (!created) {
       result.status = DevelopmentStatus::CodeError;
       result.diagnostics = std::move(created.error());

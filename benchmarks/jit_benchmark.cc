@@ -19,7 +19,7 @@
 #include "base/native_program_mode.h"
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/process_memory.h"
-#include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
@@ -54,7 +54,7 @@ void ReportDuration(benchmark::State& state, const char* name, std::chrono::nano
 std::expected<std::shared_ptr<JitProgram>, std::string> CompileWorkload(const std::string& path,
                                                                         NativeCodeTier tier) {
   auto program = std::make_shared<JitProgram>();
-  compiler::DevelopmentFiles files(path);
+  compiler::LocalDevelopmentFiles files(path);
   const auto capturing = Clock::now();
   auto update = files.Capture(compiler::CompiledSourceSnapshot{});
   program->capture = Clock::now() - capturing;

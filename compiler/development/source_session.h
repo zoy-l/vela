@@ -114,11 +114,8 @@ struct SourceSessionConfiguration final {
 
 class SourceSession {
  public:
-  explicit SourceSession(const std::string& entry,
-                         frontend::DiagnosticOptions options = {},
-                         std::vector<frontend::ReflectionSelection> reflection = {},
-                         frontend::ModulePaths imports = {});
-  explicit SourceSession(const SourceSessionConfiguration& configuration);
+  explicit SourceSession(const std::string& entry);
+  explicit SourceSession(SourceSessionConfiguration configuration);
   SourceSession(const SourceSession&) = delete;
   SourceSession& operator=(const SourceSession&) = delete;
   SourceSession(SourceSession&&) = delete;

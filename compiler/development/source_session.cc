@@ -224,23 +224,23 @@ SourceCandidate::SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> b
                                  std::shared_ptr<const CompiledSourceSnapshot> prepared)
     : base_(std::move(base)), prepared_(std::move(prepared)) {}
 
-SourceSession::SourceSession(const SourceSessionConfiguration& configuration)
-    : SourceSession(configuration.entry,
-                    configuration.diagnostics,
-                    configuration.reflection,
-                    configuration.imports) {}
+SourceSession::SourceSession(const std::string& entry)
+    : SourceSession(SourceSessionConfiguration{
+          .entry = entry,
+          .diagnostics = {},
+          .reflection = {},
+          .imports = {},
+      }) {}
 
-SourceSession::SourceSession(const std::string& entry,
-                             frontend::DiagnosticOptions options,
-                             std::vector<frontend::ReflectionSelection> reflection,
-                             frontend::ModulePaths imports)
-    : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
+SourceSession::SourceSession(SourceSessionConfiguration configuration)
+    : identity_(std::make_shared<const SourceSessionIdentity>()),
+      options_(configuration.diagnostics) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
   initial->program = std::make_shared<const ir::Program>();
   initial->session = identity_;
-  initial->roots.push_back(NormalizePath(entry));
-  initial->reflection = std::move(reflection);
-  initial->modules.imports = std::move(imports);
+  initial->roots.push_back(NormalizePath(configuration.entry));
+  initial->reflection = std::move(configuration.reflection);
+  initial->modules.imports = std::move(configuration.imports);
   current_ = std::move(initial);
 }
 
@@ -249,7 +249,6 @@ SourceSession::SourceSession(const std::string& entry, External /*unused*/)
   auto initial = std::make_shared<CompiledSourceSnapshot>();
   initial->session = identity_;
   initial->roots.push_back(NormalizePath(entry));
-  initial->program.reset();
   current_ = std::move(initial);
 }
 

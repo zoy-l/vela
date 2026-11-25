@@ -1,7 +1,6 @@
 #include "runtime/heap/local_handle_stack.h"
 
 #include <expected>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -37,11 +36,7 @@ void LocalHandleStack::RewindPages() noexcept {
   while (top_ == current_->segments.data() && current_->previous != nullptr) {
     current_->top = top_;
     current_ = current_->previous;
-    auto* top = current_->top;
-    while (top != current_->segments.data() && std::prev(top)->count == 0) {
-      top = std::prev(top);
-    }
-    top_ = top;
+    top_ = TrimEmptySegments(current_->segments.data(), current_->top);
   }
 }
 

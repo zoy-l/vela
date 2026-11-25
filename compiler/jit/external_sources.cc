@@ -70,12 +70,11 @@ class ExternalSourceSession final : public SourceSession {
     }
     auto base = snapshot();
     auto request = jit::CompilerRequest(jit::CompilerCommand::PrepareSources, lease_->resource_id);
-    const auto payload = jit::EncodeSourceRequest({
-        .committed = base->compiler_token,
-        .update = std::move(update),
-        .retained = {retained.begin(), retained.end()},
-    });
-    request.Write(std::span(payload));
+    jit::EncodeSourceRequest(request, {
+                                          .committed = base->compiler_token,
+                                          .update = std::move(update),
+                                          .retained = {retained.begin(), retained.end()},
+                                      });
     auto response = lease_->process->Exchange(request.bytes());
     if (!response) {
       return failure(std::move(response.error()));
@@ -128,10 +127,7 @@ class ExternalDevelopmentFiles final : public DevelopmentFiles {
   ExternalDevelopmentFiles(std::shared_ptr<jit::CompilerProcess> process,
                            std::uint64_t resource_id,
                            std::string entry)
-      : DevelopmentFiles(entry),
-        process_(std::move(process)),
-        id_(resource_id),
-        entry_(std::move(entry)) {}
+      : process_(std::move(process)), id_(resource_id), entry_(std::move(entry)) {}
   ~ExternalDevelopmentFiles() override {
     process_->SetFileChanged(id_, {});
     process_->Release(jit::CompilerCommand::ReleaseFiles, id_);
@@ -190,16 +186,15 @@ class ExternalDevelopmentFiles final : public DevelopmentFiles {
   std::expected<void, frontend::Diagnostics> WatchSources(
       std::span<const SourceChange> changes) override {
     auto request = jit::CompilerRequest(jit::CompilerCommand::WatchFiles, id_);
-    const auto payload = jit::EncodeSourceUpdate(
-        SourceUpdate{.changes = {changes.begin(), changes.end()}, .added_roots = {}});
-    request.Write(std::span(payload));
+    jit::EncodeSourceUpdate(
+        request, SourceUpdate{.changes = {changes.begin(), changes.end()}, .added_roots = {}});
     auto response = Call(request);
     if (!response) {
       return std::unexpected(std::move(response.error()));
     }
     return {};
   }
-  std::string entry() const override { return entry_; }
+  [[nodiscard]] std::string entry() const override { return entry_; }
 
  private:
   std::expected<jit::FileOperationResponse, frontend::Diagnostics> Call(
@@ -226,19 +221,34 @@ class ExternalDevelopmentFiles final : public DevelopmentFiles {
 }  // namespace
 
 namespace jit {
+namespace {
+
+std::expected<void, frontend::Diagnostics> CreateSourceResource(
+    CompilerProcess& process,
+    CompilerCommand command,
+    std::uint64_t resource_id,
+    const SourceSessionConfiguration& configuration) {
+  auto request = CompilerRequest(command, resource_id);
+  EncodeSourceConfiguration(request, configuration);
+  auto created = process.Exchange(request.bytes());
+  if (!created) {
+    return std::unexpected(CompilationDiagnostic(std::move(created.error())));
+  }
+  return {};
+}
+
+}  // namespace
 
 std::expected<std::unique_ptr<DevelopmentFiles>, frontend::Diagnostics> CreateExternalFiles(
     std::shared_ptr<CompilerProcess> process,
     std::uint64_t resource_id,
     const std::string& entry,
     const frontend::ModulePaths& imports) {
-  auto request = CompilerRequest(CompilerCommand::CreateFiles, resource_id);
-  const auto payload = EncodeSourceConfiguration(
+  const auto created = CreateSourceResource(
+      *process, CompilerCommand::CreateFiles, resource_id,
       {.entry = entry, .diagnostics = {}, .reflection = {}, .imports = imports});
-  request.Write(std::span(payload));
-  auto created = process->Exchange(request.bytes());
   if (!created) {
-    return std::unexpected(CompilationDiagnostic(std::move(created.error())));
+    return std::unexpected(created.error());
   }
   return std::make_unique<ExternalDevelopmentFiles>(std::move(process), resource_id, entry);
 }
@@ -247,12 +257,10 @@ std::expected<std::shared_ptr<SourceSession>, frontend::Diagnostics> CreateExter
     std::shared_ptr<CompilerProcess> process,
     std::uint64_t resource_id,
     const SourceSessionConfiguration& configuration) {
-  auto request = jit::CompilerRequest(CompilerCommand::CreateSources, resource_id);
-  auto payload = EncodeSourceConfiguration(configuration);
-  request.Write(std::span(payload));
-  auto created = process->Exchange(request.bytes());
+  const auto created =
+      CreateSourceResource(*process, CompilerCommand::CreateSources, resource_id, configuration);
   if (!created) {
-    return std::unexpected(jit::CompilationDiagnostic(std::move(created.error())));
+    return std::unexpected(created.error());
   }
   return std::make_shared<ExternalSourceSession>(configuration.entry, std::move(process),
                                                  resource_id);

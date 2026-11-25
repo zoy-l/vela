@@ -92,6 +92,8 @@ struct NativeObjectFields final {
 NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, NativeProgramMode mode);
 llvm::LoadInst* LoadInstanceStorage(Builder& builder, llvm::Value* object);
 llvm::LoadInst* LoadInstanceUnready(Builder& builder, llvm::Value* storage);
+llvm::LoadInst* LoadObjectFieldOffset(Builder& builder, llvm::Value* object);
+llvm::Value* LoadInlineObjectFields(Builder& builder, llvm::Value* object);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* PayloadOf(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* MakeOptional(Builder& builder,

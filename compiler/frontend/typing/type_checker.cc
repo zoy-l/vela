@@ -850,28 +850,26 @@ void TypeChecker::EndScope() {
   scopes_.pop_back();
 }
 
-TypeChecker::CheckStatus TypeChecker::DeclareLocal(std::string_view name,
-                                                   const Type& type,
-                                                   SourceLocation location,
-                                                   BindingKind kind,
-                                                   const void* declaration) {
+const TypeChecker::LocalBinding* TypeChecker::DeclareLocal(std::string_view name,
+                                                           const Type& type,
+                                                           SourceLocation location,
+                                                           BindingKind kind,
+                                                           const void* declaration) {
   auto& scope = scopes_.back();
   if (name == kReceiverName) {
     AddDiagnostic(location, "'this' is reserved for the method receiver");
-    return CheckStatus::Failed;
+    return nullptr;
   }
   const auto binding_id = next_binding_id_++;
-  if (!scope
-           .try_emplace(name,
-                        LocalBinding{
-                            .type = type,
-                            .kind = kind,
-                            .id = binding_id,
-                            .scope = scopes_.size() - 1,
-                        })
-           .second) {
+  const auto [binding, inserted] = scope.try_emplace(name, LocalBinding{
+                                                               .type = type,
+                                                               .kind = kind,
+                                                               .id = binding_id,
+                                                               .scope = scopes_.size() - 1,
+                                                           });
+  if (!inserted) {
     AddDiagnostic(location, "duplicate local name '" + std::string(name) + "'");
-    return CheckStatus::Failed;
+    return nullptr;
   }
   if (captured_declarations_.contains(declaration)) {
     captured_mutables_.insert(binding_id);
@@ -879,7 +877,7 @@ TypeChecker::CheckStatus TypeChecker::DeclareLocal(std::string_view name,
   if (declaration != nullptr) {
     facts_.bindings.emplace(declaration, binding_id);
   }
-  return CheckStatus::Succeeded;
+  return &binding->second;
 }
 
 bool TypeChecker::IsAssignable(const Expression& expression) {
@@ -914,17 +912,16 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
                             ? EvaluateConstant(*statement.expression)
                             : std::nullopt;
   facts_.local_types.insert_or_assign(&statement, type);
-  const auto declared =
+  const auto* local =
       DeclareLocal(statement.name, type, statement.location, statement.binding, &statement);
-  if (declared == CheckStatus::Failed) {
+  if (local == nullptr) {
     return;
   }
-  const auto& local = *LookupLocal(statement.name);
   if (assignable) {
-    RefineAssignedLocal(local, initializer);
+    RefineAssignedLocal(*local, initializer);
   }
   if (constant) {
-    constant_bindings_.insert_or_assign(local.id, *constant);
+    constant_bindings_.insert_or_assign(local->id, *constant);
   }
 }
 
@@ -1375,23 +1372,23 @@ TypeChecker::Type TypeChecker::CheckRelationalTypes(const Expression& expression
 }
 
 TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
-  if (CheckAssignmentTarget(*expression.left) == CheckStatus::Failed) {
+  const auto& target = *expression.left;
+  const auto& value = *expression.right;
+  if (CheckAssignmentTarget(target) == CheckStatus::Failed) {
     return InvalidType();
   }
-  const auto binding = CheckAssignedBinding(*expression.left);
-  Type left = CheckExpression(*expression.left, nullptr);
+  const auto binding = CheckAssignedBinding(target);
+  Type left = CheckExpression(target, nullptr);
   if (binding) {
-    parameter_usage_.Write(*expression.left, binding->id);
-  }
-  if (expression.left->kind == Expression::Kind::Member) {
-    CheckMemberAssignment(*expression.left);
-  }
-  if (binding) {
+    parameter_usage_.Write(target, binding->id);
     left = binding->type;
   }
-  CheckBuiltinAssignment(*expression.left);
-  const Type right = CheckExpression(*expression.right, &left);
-  RecordConversion(*expression.right, left, right);
+  if (target.kind == Expression::Kind::Member) {
+    CheckMemberAssignment(target);
+  }
+  CheckBuiltinAssignment(target);
+  const Type right = CheckExpression(value, &left);
+  RecordConversion(value, left, right);
   const bool valid = IsValid(left) && IsValid(right);
   const bool assignable = valid && CanAssign(left, right);
   if (binding) {

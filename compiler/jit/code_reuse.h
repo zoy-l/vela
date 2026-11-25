@@ -64,10 +64,11 @@ struct CodeReusePlan final {
 };
 
 CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeReuseCache& cache);
-void PlanFunctionBindings(std::span<const std::string> symbols,
-                          std::size_t index,
-                          std::string_view suffix,
-                          CodeReusePlan& plan);
+enum class FunctionBinding : std::uint8_t { Compiled, Reused };
+FunctionBinding PlanFunctionBindings(std::span<const std::string> symbols,
+                                     std::size_t index,
+                                     std::string_view suffix,
+                                     CodeReusePlan& plan);
 void UpdateSourceCache(CodeReuseCache& reuse,
                        const CodeReusePlan& plan,
                        const runtime::NativeImage& image,

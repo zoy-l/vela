@@ -24,12 +24,13 @@ class ReferenceIndex final {
                                                        ReferenceDeclaration include) const;
 
  private:
-  using Key = std::tuple<std::string, std::size_t, std::size_t>;
+  using Key = std::tuple<std::size_t, std::size_t, std::size_t>;
   struct Occurrence final {
     Definition location;
     bool is_declaration = false;
   };
-  [[nodiscard]] static Key KeyFor(const Definition& location);
+  [[nodiscard]] Key KeyFor(const Definition& location);
+  absl::flat_hash_map<std::string, std::size_t> paths_;
   absl::flat_hash_map<Key, std::vector<Occurrence>> references_;
   absl::flat_hash_map<Key, absl::flat_hash_set<Key>> relations_;
 };

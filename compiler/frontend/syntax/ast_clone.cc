@@ -313,16 +313,15 @@ Program AstCloner::CloneProgram(const Program& source) {
   result.classes.reserve(source.classes.size());
   result.enums.reserve(source.enums.size());
   result.globals.reserve(source.globals.size());
-  result.imports = source.imports;
-  for (auto& imported : result.imports) {
-    imported.location = Relocate(imported.location);
-    imported.diagnostic_location = Relocate(imported.diagnostic_location);
-  }
-  result.unused_imports = source.unused_imports;
-  for (auto& imported : result.unused_imports) {
-    imported.location = Relocate(imported.location);
-    imported.diagnostic_location = Relocate(imported.diagnostic_location);
-  }
+  const auto relocate_imports = [this](auto imports) {
+    for (auto& imported : imports) {
+      imported.location = Relocate(imported.location);
+      imported.diagnostic_location = Relocate(imported.diagnostic_location);
+    }
+    return imports;
+  };
+  result.imports = relocate_imports(source.imports);
+  result.unused_imports = relocate_imports(source.unused_imports);
   result.sources = source.sources;
   result.import_sources = source.import_sources;
   result.file_resolutions = source.file_resolutions;

@@ -1,4 +1,5 @@
 #include "compiler/development/development_files.h"
+#include "compiler/development/development_files_local.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,6 +31,11 @@
 #include "compiler/frontend/syntax/ast.h"
 
 namespace vela::compiler {
+
+std::unique_ptr<DevelopmentFiles> DevelopmentFiles::Create(std::string entry,
+                                                           frontend::ModulePaths imports) {
+  return std::make_unique<LocalDevelopmentFiles>(std::move(entry), std::move(imports));
+}
 namespace {
 
 frontend::Diagnostics FileError(const std::string& path, std::string message) {
@@ -97,17 +103,17 @@ std::expected<absl::flat_hash_map<std::string, std::string>, frontend::Diagnosti
 
 }  // namespace
 
-DevelopmentFiles::DevelopmentFiles(std::string entry, frontend::ModulePaths imports)
+LocalDevelopmentFiles::LocalDevelopmentFiles(std::string entry, frontend::ModulePaths imports)
     : entry_(std::move(entry)), accepted_(std::make_shared<const CompiledSourceSnapshot>()) {
   cache_.imports = std::move(imports);
 }
 
-std::string DevelopmentFiles::entry() const {
+std::string LocalDevelopmentFiles::entry() const {
   const std::scoped_lock lock(mutex_);
   return entry_;
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::Track(const std::string& path) {
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::Track(const std::string& path) {
   if (!watcher_) {
     return {};
   }
@@ -137,7 +143,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Track(const std::st
   return WatchDirectories(path, directories);
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchDirectory(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::WatchDirectory(
     const std::string& path,
     const std::filesystem::path& directory,
     DirectoryWatchScope scope) {
@@ -160,7 +166,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchDirectory(
   return {};
 }
 
-void DevelopmentFiles::Detach(const std::string& path) {
+void LocalDevelopmentFiles::Detach(const std::string& path) {
   const auto found = subscriptions_.find(path);
   if (found != subscriptions_.end()) {
     for (const auto& directory : found->second) {
@@ -175,7 +181,8 @@ void DevelopmentFiles::Detach(const std::string& path) {
   }
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::Reference(const std::string& path) {
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::Reference(
+    const std::string& path) {
   if (path.starts_with(frontend::kSdkSourcePrefix)) {
     return {};
   }
@@ -183,7 +190,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Reference(const std
   return Track(path);
 }
 
-void DevelopmentFiles::Release(const std::string& path) {
+void LocalDevelopmentFiles::Release(const std::string& path) {
   const auto found = references_.find(path);
   if (found == references_.end() || --found->second != 0) {
     return;
@@ -196,7 +203,7 @@ void DevelopmentFiles::Release(const std::string& path) {
   ErasePending(path);
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchGroup(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::WatchGroup(
     const std::string& root,
     absl::flat_hash_set<std::string> paths) {
   auto& previous = watch_groups_.try_emplace(root).first->second;
@@ -218,7 +225,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchGroup(
   return {};
 }
 
-void DevelopmentFiles::ReleaseGroupPath(std::string_view root, const std::string& path) {
+void LocalDevelopmentFiles::ReleaseGroupPath(std::string_view root, const std::string& path) {
   const auto users = group_users_.find(path);
   users->second.erase(root);
   if (users->second.empty()) {
@@ -227,7 +234,7 @@ void DevelopmentFiles::ReleaseGroupPath(std::string_view root, const std::string
   Release(path);
 }
 
-void DevelopmentFiles::RetireWatchGroup(const std::string& root) {
+void LocalDevelopmentFiles::RetireWatchGroup(const std::string& root) {
   const auto found = watch_groups_.find(root);
   if (found == watch_groups_.end()) {
     return;
@@ -238,8 +245,8 @@ void DevelopmentFiles::RetireWatchGroup(const std::string& root) {
   watch_groups_.erase(found);
 }
 
-void DevelopmentFiles::RetainSyntax(const CompiledSourceSnapshot& snapshot,
-                                    const std::string& path) {
+void LocalDevelopmentFiles::RetainSyntax(const CompiledSourceSnapshot& snapshot,
+                                         const std::string& path) {
   const auto pending = pending_indices_.find(path);
   if (pending != pending_indices_.end() &&
       pending_.at(pending->second).text != *snapshot.sources.at(path)) {
@@ -251,8 +258,8 @@ void DevelopmentFiles::RetainSyntax(const CompiledSourceSnapshot& snapshot,
   }
 }
 
-frontend::Diagnostics DevelopmentFiles::AdoptSource(const CompiledSourceSnapshot& snapshot,
-                                                    const std::string& path) {
+frontend::Diagnostics LocalDevelopmentFiles::AdoptSource(const CompiledSourceSnapshot& snapshot,
+                                                         const std::string& path) {
   absl::flat_hash_set<std::string> paths;
   if (IsDiskSource(snapshot, path)) {
     paths.insert(path);
@@ -286,7 +293,7 @@ frontend::Diagnostics DevelopmentFiles::AdoptSource(const CompiledSourceSnapshot
   return diagnostics;
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::StartWatching(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::StartWatching(
     std::function<void()> changed) {
   const std::scoped_lock lock(mutex_);
   watcher_ = std::make_unique<DirectoryWatcher>(std::move(changed));
@@ -303,7 +310,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::StartWatching(
   return TrackReferences();
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::TrackReferences() {
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::TrackReferences() {
   for (const auto& [path, count] : references_) {
     static_cast<void>(count);
     const auto tracked = Track(path);
@@ -314,7 +321,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::TrackReferences() {
   return {};
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchSources(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::WatchSources(
     std::span<const SourceChange> changes) {
   const std::scoped_lock lock(mutex_);
   for (const auto& change : changes) {
@@ -329,7 +336,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchSources(
   return {};
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::Accept(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::Accept(
     std::shared_ptr<const CompiledSourceSnapshot> snapshot) {
   const std::scoped_lock lock(mutex_);
   if (snapshot == accepted_) {
@@ -351,7 +358,7 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Accept(
   return {};
 }
 
-std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles::ReadGraph(
+std::expected<frontend::CapturedSources, frontend::Diagnostics> LocalDevelopmentFiles::ReadGraph(
     const CompiledSourceSnapshot& previous) {
   while (true) {
     absl::flat_hash_set<std::string> paths{entry_};
@@ -396,9 +403,8 @@ std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles
   }
 }
 
-std::expected<DevelopmentFiles::GraphTracking, frontend::Diagnostics> DevelopmentFiles::TrackGraph(
-    const std::string& root,
-    const frontend::CapturedSources& graph) {
+std::expected<LocalDevelopmentFiles::GraphTracking, frontend::Diagnostics>
+LocalDevelopmentFiles::TrackGraph(const std::string& root, const frontend::CapturedSources& graph) {
   absl::flat_hash_set<std::string> paths{root};
   for (const auto& source : graph.sources) {
     paths.insert(source.path);
@@ -423,9 +429,9 @@ std::expected<DevelopmentFiles::GraphTracking, frontend::Diagnostics> Developmen
   return expanded ? GraphTracking::Expanded : GraphTracking::Existing;
 }
 
-std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles::ReadWatchedGraph(
-    const std::string& root,
-    std::span<const frontend::SourceInput> inputs) {
+std::expected<frontend::CapturedSources, frontend::Diagnostics>
+LocalDevelopmentFiles::ReadWatchedGraph(const std::string& root,
+                                        std::span<const frontend::SourceInput> inputs) {
   absl::flat_hash_map<std::string, std::string> texts;
   std::vector<frontend::SourceInput> captured(inputs.begin(), inputs.end());
   while (true) {
@@ -455,7 +461,7 @@ std::expected<frontend::CapturedSources, frontend::Diagnostics> DevelopmentFiles
   }
 }
 
-std::expected<SourceUpdate, frontend::Diagnostics> DevelopmentFiles::Capture(
+std::expected<SourceUpdate, frontend::Diagnostics> LocalDevelopmentFiles::Capture(
     const CompiledSourceSnapshot& previous) {
   const std::scoped_lock lock(mutex_);
   auto captured = CaptureAll(previous);
@@ -465,8 +471,8 @@ std::expected<SourceUpdate, frontend::Diagnostics> DevelopmentFiles::Capture(
   return std::move(captured->update);
 }
 
-std::expected<DevelopmentFiles::FullCapture, frontend::Diagnostics> DevelopmentFiles::CaptureAll(
-    const CompiledSourceSnapshot& previous) {
+std::expected<LocalDevelopmentFiles::FullCapture, frontend::Diagnostics>
+LocalDevelopmentFiles::CaptureAll(const CompiledSourceSnapshot& previous) {
   const auto recovering = std::exchange(rescan_incomplete_, true);
   // 重扫会退休不再使用的订阅，比较时也要计入由此删除的 dirty 条目。
   const auto pending_count = pending_.size();
@@ -518,7 +524,7 @@ std::expected<DevelopmentFiles::FullCapture, frontend::Diagnostics> DevelopmentF
   };
 }
 
-std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFiles::Rescan(
+std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> LocalDevelopmentFiles::Rescan(
     const CompiledSourceSnapshot& previous) {
   auto captured = CaptureAll(previous);
   if (!captured) {
@@ -530,7 +536,7 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   return std::move(captured->update);
 }
 
-void DevelopmentFiles::SetPending(std::string path, std::optional<std::string> text) {
+void LocalDevelopmentFiles::SetPending(std::string path, std::optional<std::string> text) {
   const auto [found, inserted] = pending_indices_.try_emplace(path, pending_.size());
   if (inserted) {
     pending_.push_back({.path = std::move(path), .text = std::move(text)});
@@ -539,7 +545,7 @@ void DevelopmentFiles::SetPending(std::string path, std::optional<std::string> t
   }
 }
 
-void DevelopmentFiles::ErasePending(const std::string& path) {
+void LocalDevelopmentFiles::ErasePending(const std::string& path) {
   const auto found = pending_indices_.find(path);
   if (found == pending_indices_.end()) {
     return;
@@ -554,7 +560,7 @@ void DevelopmentFiles::ErasePending(const std::string& path) {
   pending_.pop_back();
 }
 
-void DevelopmentFiles::PrunePending(const CompiledSourceSnapshot& previous) {
+void LocalDevelopmentFiles::PrunePending(const CompiledSourceSnapshot& previous) {
   std::vector<std::string> retired;
   std::size_t index = 0;
   while (index < pending_.size()) {
@@ -578,7 +584,7 @@ void DevelopmentFiles::PrunePending(const CompiledSourceSnapshot& previous) {
   }
 }
 
-SourceUpdate DevelopmentFiles::Pending(const CompiledSourceSnapshot& previous) {
+SourceUpdate LocalDevelopmentFiles::Pending(const CompiledSourceSnapshot& previous) {
   PrunePending(previous);
   SourceUpdate update;
   update.base_revision = previous.revision;
@@ -593,7 +599,7 @@ SourceUpdate DevelopmentFiles::Pending(const CompiledSourceSnapshot& previous) {
   return update;
 }
 
-std::optional<std::string_view> DevelopmentFiles::CapturedText(
+std::optional<std::string_view> LocalDevelopmentFiles::CapturedText(
     const CompiledSourceSnapshot& previous,
     const std::string& path) const {
   const auto pending = pending_indices_.find(path);
@@ -606,9 +612,9 @@ std::optional<std::string_view> DevelopmentFiles::CapturedText(
                                           : std::optional<std::string_view>(*source->second);
 }
 
-std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFiles::CaptureChanges(
-    const CompiledSourceSnapshot& previous,
-    std::span<const std::string> paths) {
+std::expected<std::optional<SourceUpdate>, frontend::Diagnostics>
+LocalDevelopmentFiles::CaptureChanges(const CompiledSourceSnapshot& previous,
+                                      std::span<const std::string> paths) {
   const absl::flat_hash_set<std::string> changed(paths.begin(), paths.end());
   auto read = ReadKnownFiles(changed, cache_);
   if (!read) {
@@ -657,7 +663,7 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   return Pending(previous);
 }
 
-std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFiles::Poll(
+std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> LocalDevelopmentFiles::Poll(
     std::chrono::milliseconds timeout) {
   const std::scoped_lock lock(mutex_);
   const auto& previous = *accepted_;
@@ -678,9 +684,9 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   return captured;
 }
 
-std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFiles::CaptureEvents(
-    const CompiledSourceSnapshot& previous,
-    const FileChanges& events) {
+std::expected<std::optional<SourceUpdate>, frontend::Diagnostics>
+LocalDevelopmentFiles::CaptureEvents(const CompiledSourceSnapshot& previous,
+                                     const FileChanges& events) {
   if (events.invalidated) {
     const auto rebound = watcher_->Rebind();
     if (!rebound) {
@@ -722,7 +728,7 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
   return CaptureChanges(previous, std::vector<std::string>(changed.begin(), changed.end()));
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::RefreshDirectory(
+std::expected<void, frontend::Diagnostics> LocalDevelopmentFiles::RefreshDirectory(
     const std::filesystem::path& native,
     absl::flat_hash_set<std::string>& changed) {
   const auto directory = directory_sources_.find(native);

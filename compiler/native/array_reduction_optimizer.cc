@@ -512,6 +512,26 @@ bool HasConsecutiveLanes(llvm::Value* value,
          HasConsecutiveLanes(right, active, has_seed);
 }
 
+struct ArrayLoopShape final {
+  std::size_t instructions = 0;
+  bool has_records = false;
+};
+
+std::optional<ArrayLoopShape> AnalyzeArrayLoopShape(const llvm::Loop& loop) {
+  ArrayLoopShape shape;
+  bool has_elements = false;
+  bool has_fields = false;
+  for (const auto* block : loop.blocks()) {
+    shape.instructions += block->size();
+    for (const auto& instruction : *block) {
+      has_elements |= HasStorageTag(instruction, MemoryRegion::Elements);
+      has_fields |= IsFloatingFieldStore(instruction);
+      shape.has_records |= instruction.getMetadata(kNativeRecordFieldMetadata) != nullptr;
+    }
+  }
+  return has_elements && !has_fields ? std::optional(shape) : std::nullopt;
+}
+
 class ArrayAccessUnrollHintsPass : public llvm::PassInfoMixin<ArrayAccessUnrollHintsPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
@@ -520,30 +540,25 @@ class ArrayAccessUnrollHintsPass : public llvm::PassInfoMixin<ArrayAccessUnrollH
     constexpr unsigned kRecordUnrollCount = 16;
     constexpr std::size_t kExpandedInstructionBudget = 512;
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
-    auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
     bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
-      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
-      if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop) ||
-          (trips != 0 && trips <= kPartialUnrollCount)) {
+      if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop)) {
         continue;
       }
-      std::size_t instructions = 0;
-      bool has_elements = false;
-      bool has_fields = false;
-      bool has_records = false;
-      for (const auto* block : loop->blocks()) {
-        instructions += block->size();
-        for (const auto& instruction : *block) {
-          has_elements |= HasStorageTag(instruction, MemoryRegion::Elements);
-          has_fields |= IsFloatingFieldStore(instruction);
-          has_records |= instruction.getMetadata(kNativeRecordFieldMetadata) != nullptr;
-        }
+      const auto shape = AnalyzeArrayLoopShape(*loop);
+      if (!shape) {
+        continue;
       }
-      const auto bounded_record = has_records && trips == 0 &&
+      const auto instructions = shape->instructions;
+      auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
+      if (trips != 0 && trips <= kPartialUnrollCount) {
+        continue;
+      }
+      const auto bounded_record = shape->has_records && trips == 0 &&
                                   instructions <= kExpandedInstructionBudget / kPartialUnrollCount;
       const auto large_known = trips != 0 && instructions > kExpandedInstructionBudget / trips;
-      if (has_elements && !has_fields && (bounded_record || large_known)) {
+      if (bounded_record || large_known) {
         // 受查数组访问的冷错误块会随全展开一起复制；限制体积，保留每次访问的检查。
         auto unroll = kPartialUnrollCount;
         if (bounded_record) {

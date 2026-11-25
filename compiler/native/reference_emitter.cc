@@ -216,16 +216,20 @@ void FunctionEmitter::ClearRoot(std::size_t slot) {
   clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
 }
 
+const std::string* FunctionEmitter::StringConstant(ir::RegisterId reg) const {
+  const auto constant = string_constant_registers_[reg];
+  return constant ? &program_.strings.at(*constant) : nullptr;
+}
+
 void FunctionEmitter::EmitStringBoundary(const ir::Instruction& instruction) {
   auto* string = Reference(instruction.lhs);
   CheckReference(string);
   auto* index = Payload(instruction.lhs + 1);
   llvm::Value* wide_length = nullptr;
   llvm::Value* data = nullptr;
-  if (const auto constant = string_constant_registers_[instruction.lhs]) {
-    const auto& text = program_.strings.at(*constant);
-    wide_length = builder_.getInt64(text.size());
-    data = builder_.CreateGlobalString(text);
+  if (const auto* text = StringConstant(instruction.lhs)) {
+    wide_length = builder_.getInt64(text->size());
+    data = builder_.CreateGlobalString(*text);
   } else {
     auto* length = LoadMemory(builder_.getInt32Ty(),
                               ByteAddress(string, runtime::NativeMemoryLayout::kObjectLength),
@@ -262,13 +266,12 @@ void FunctionEmitter::EmitStringCodePointAt(const ir::Instruction& instruction) 
   auto* string = Reference(instruction.lhs);
   CheckReference(string);
   auto* index = Payload(instruction.lhs + 1);
-  if (const auto constant = string_constant_registers_[instruction.lhs]) {
-    const auto& text = program_.strings.at(*constant);
-    if (Utf8Length(text) == text.size()) {
+  if (const auto* text = StringConstant(instruction.lhs)) {
+    if (Utf8Length(*text) == text->size()) {
       // 字面量的 ASCII 布局和长度在编译时已知，仍在原指令位置检查索引。
-      Check(builder_.CreateICmpULT(index, builder_.getInt64(text.size())),
+      Check(builder_.CreateICmpULT(index, builder_.getInt64(text->size())),
             ExecutionStatus::IndexOutOfBounds);
-      auto* data = builder_.CreateGlobalString(text);
+      auto* data = builder_.CreateGlobalString(*text);
       auto* point = builder_.CreateLoad(
           builder_.getInt8Ty(), builder_.CreateInBoundsGEP(builder_.getInt8Ty(), data, index));
       point->setMetadata(
@@ -602,9 +605,8 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
       return {};
     case Builtin::StringLength:
     case Builtin::StringByteLength: {
-      if (const auto constant = string_constant_registers_[instruction.lhs]) {
-        const auto& text = program_.strings.at(*constant);
-        const auto length = builtin == Builtin::StringLength ? Utf8Length(text) : text.size();
+      if (const auto* text = StringConstant(instruction.lhs)) {
+        const auto length = builtin == Builtin::StringLength ? Utf8Length(*text) : text->size();
         Store(instruction.dst, builder_.getInt64(length),
               {.kind = Kind::Int, .name = frontend::kIntTypeName});
         return {};

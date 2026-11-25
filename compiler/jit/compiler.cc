@@ -58,7 +58,6 @@ class LocalCompiler final : public Compiler {
       std::shared_ptr<const ir::Program> program,
       const CompileOptions& options,
       CodeReuseCache* reuse) override;
-  CodeResourceCounts resource_counts() const noexcept override;
   std::expected<std::shared_ptr<SourceSession>, frontend::Diagnostics> CreateSources(
       const SourceSessionConfiguration& configuration) override {
     return std::make_shared<SourceSession>(configuration);
@@ -66,12 +65,10 @@ class LocalCompiler final : public Compiler {
   std::expected<std::unique_ptr<DevelopmentFiles>, frontend::Diagnostics> CreateFiles(
       const std::string& entry,
       const frontend::ModulePaths& imports) override {
-    return std::make_unique<DevelopmentFiles>(entry, imports);
+    return DevelopmentFiles::Create(entry, imports);
   }
 
  private:
-  std::shared_ptr<CodeLinker> jit_;
-  std::shared_ptr<CodeResourceCounters> counters_;
   std::atomic_uint64_t next_module_{0};
 };
 namespace {
@@ -211,10 +208,7 @@ const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
 
 }  // namespace
 
-LocalCompiler::LocalCompiler(std::shared_ptr<CodeLinker> jit)
-    : jit_(std::move(jit)), counters_(std::make_shared<CodeResourceCounters>()) {
-  InstallResourceAccounting(*jit_, counters_);
-}
+LocalCompiler::LocalCompiler(std::shared_ptr<CodeLinker> jit) : Compiler(std::move(jit)) {}
 
 std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Compiler::Create() {
   auto created = CreateEngine();
@@ -222,10 +216,6 @@ std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Compiler::Create
     return std::unexpected(CompilationDiagnostic(llvm::toString(created.takeError())));
   }
   return std::make_unique<LocalCompiler>(std::move(*created));
-}
-
-CodeResourceCounts LocalCompiler::resource_counts() const noexcept {
-  return counters_->Snapshot();
 }
 
 std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
@@ -236,6 +226,8 @@ std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
     return std::unexpected(
         CompilationDiagnostic("On-demand compilation requires shared ownership of the program"));
   }
+  const auto& jit = linker();
+  const auto& counters = resource_counters();
   using Clock = std::chrono::steady_clock;
   CompileTimings timings;
   const auto generation_started = Clock::now();
@@ -262,8 +254,8 @@ std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
   }
-  assert(generated->module->getTargetTriple() == jit_->getTargetTriple());
-  assert(generated->module->getDataLayout() == jit_->getDataLayout());
+  assert(generated->module->getTargetTriple() == jit->getTargetTriple());
+  assert(generated->module->getDataLayout() == jit->getDataLayout());
   if (reuse != nullptr) {
     const auto planning = Clock::now();
     ApplyCodeReuse(*generated, *reuse, batch, reuse_plan);
@@ -278,20 +270,20 @@ std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
   }
   auto& cached = prepared->cached;
   const auto linking_started = Clock::now();
-  auto library = jit_->createJITDylib("vela_batch_" + std::to_string(batch));
+  auto library = jit->createJITDylib("vela_batch_" + std::to_string(batch));
   if (!library) {
     return std::unexpected(CompilationDiagnostic(llvm::toString(library.takeError())));
   }
-  library->addToLinkOrder(jit_->getMainJITDylib());
-  auto resource = std::make_shared<CodeBatch>(jit_, *library, counters_, compiled_functions);
-  BatchSymbols interned(*jit_);
+  library->addToLinkOrder(jit->getMainJITDylib());
+  auto resource = std::make_shared<CodeBatch>(jit, *library, counters, compiled_functions);
+  BatchSymbols interned(*jit);
   if (auto error = DefineReusedSymbols(interned, *library, *generated, reuse_plan)) {
     return std::unexpected(CompilationDiagnostic(llvm::toString(std::move(error))));
   }
-  if (auto error = jit_->addObjectFile(resource->tracker, std::move(cached.object))) {
+  if (auto error = jit->addObjectFile(resource->tracker, std::move(cached.object))) {
     return std::unexpected(CompilationDiagnostic(llvm::toString(std::move(error))));
   }
-  auto resolved = LookupImageSymbols(*jit_, interned, *library, *generated, entry_symbols,
+  auto resolved = LookupImageSymbols(*jit, interned, *library, *generated, entry_symbols,
                                      reuse_plan, image_data.get());
   if (!resolved) {
     return std::unexpected(CompilationDiagnostic(llvm::toString(resolved.takeError())));
@@ -304,7 +296,7 @@ std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
     using ImageEntry = const runtime::NativeImage* (*)();
     image = entry.toPtr<ImageEntry>()();
   }
-  auto owner = std::make_shared<ImageOwnership>(counters_, *image, std::move(image_data));
+  auto owner = std::make_shared<ImageOwnership>(counters, *image, std::move(image_data));
   owner->batch = resource;
   auto updated = RetainImageCode(interned, *resolved, resource, reuse_plan, *owner);
   timings.linking = Clock::now() - linking_started;
@@ -335,7 +327,8 @@ std::expected<CompiledImage, frontend::Diagnostics> LocalCompiler::Compile(
   if (options.materialization == Materialization::Eager) {
     return Compile(*program, options, reuse);
   }
-  return CompileOnDemand(jit_, counters_, next_module_.fetch_add(1), program, options, reuse);
+  return CompileOnDemand(linker(), resource_counters(), next_module_.fetch_add(1), program, options,
+                         reuse);
 }
 
 }  // namespace vela::compiler::jit

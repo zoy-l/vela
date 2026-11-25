@@ -692,30 +692,33 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::SleepFuture:
     case Opcode::PushRecord:
       return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};
-    case Opcode::BuiltinCall:
-      if (instruction.index == static_cast<std::uint32_t>(Builtin::NumericToInt) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::ScalarTextLength) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::NumericToDouble)) {
-        // 数值转换不调用用户代码，只有类型或范围错误的失败封套可能分配。
-        return {.may_fail = true};
-      }
-      if (instruction.index == static_cast<std::uint32_t>(Builtin::ArrayLength) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::MapGet) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::CollectionHas) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::CollectionSize) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringByteLength) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringIsCodePointBoundary) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringByteOffsetAt) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringStartsWith) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringEndsWith) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::StringCodePointAt) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCapacity) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayMutation) ||
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCheckMutation)) {
+    case Opcode::BuiltinCall: {
+      const auto builtin = static_cast<Builtin>(instruction.index);
+      if (IsArrayMetadataRead(builtin)) {
         return {.may_fail = true, .reads_state = true};
       }
+      switch (builtin) {
+        case Builtin::NumericToInt:
+        case Builtin::ScalarTextLength:
+        case Builtin::NumericToDouble:
+          // 只有类型或范围错误的失败封套可能分配。
+          return {.may_fail = true};
+        case Builtin::MapGet:
+        case Builtin::CollectionHas:
+        case Builtin::CollectionSize:
+        case Builtin::StringLength:
+        case Builtin::StringByteLength:
+        case Builtin::StringIsCodePointBoundary:
+        case Builtin::StringByteOffsetAt:
+        case Builtin::StringStartsWith:
+        case Builtin::StringEndsWith:
+        case Builtin::StringCodePointAt:
+          return {.may_fail = true, .reads_state = true};
+        default:
+          break;
+      }
       [[fallthrough]];
+    }
     case Opcode::Call:
     case Opcode::CallIndirect:
     case Opcode::CallVirtual:

@@ -223,15 +223,20 @@ auto Fields(Record& value) {
 }
 
 template <class Record>
-  requires std::is_same_v<std::remove_cv_t<Record>, ir::Program>
-auto Fields(Record& value) {
-  return std::tie(value.source_paths, value.classes, value.functions, value.strings,
-                  value.array_types, value.global_initializers, value.runtime_types,
-                  value.collection_types, value.members, value.layouts, value.revision,
-                  value.source_texts, value.declarations, value.interface_declarations,
+auto CompilationEnvironmentFields(Record& value) {
+  return std::tie(value.source_paths, value.classes, value.strings, value.array_types,
+                  value.global_initializers, value.runtime_types, value.collection_types,
+                  value.members, value.layouts, value.declarations, value.interface_declarations,
                   value.global_declarations, value.selector_declarations, value.native_mode,
                   value.global_flags, value.json_decode_plans, value.reflection_types,
                   value.reflection_members, value.attributes);
+}
+
+template <class Record>
+  requires std::is_same_v<std::remove_cv_t<Record>, ir::Program>
+auto Fields(Record& value) {
+  return std::tuple_cat(CompilationEnvironmentFields(value),
+                        std::tie(value.functions, value.revision, value.source_texts));
 }
 
 template <class Record>
@@ -406,30 +411,12 @@ BinaryWriter CompilerRequest(CompilerCommand command, std::uint64_t resource_id)
 }
 
 std::vector<std::byte> EncodeCompilationEnvironment(const ir::Program& program) {
-  // 与上方 ir::Program / ir::Function 字段表共同维护：这里有意排除函数体和调试文本，
-  // 保留类型、槽、常量和调用 ABI。新增字段时按其代码生成职责选择环境或函数体指纹。
-  // 两种指纹还绑定 kCompilerBuildIdentity；编译器/IR schema 变化不会跨构建复用旧缓存。
+  // 环境投影与完整 Program 编码共用字段表，排除函数体和调试文本。
+  // 两种指纹还绑定 kCompilerBuildIdentity，不跨编译器 schema 复用缓存。
   BinaryWriter writer;
   Encoder encoder(writer);
-  encoder.Write(program.source_paths);
-  encoder.Write(program.classes);
-  encoder.Write(program.strings);
-  encoder.Write(program.array_types);
-  encoder.Write(program.global_initializers);
-  encoder.Write(program.runtime_types);
-  encoder.Write(program.collection_types);
-  encoder.Write(program.members);
-  encoder.Write(program.layouts);
-  encoder.Write(program.declarations);
-  encoder.Write(program.interface_declarations);
-  encoder.Write(program.global_declarations);
-  encoder.Write(program.selector_declarations);
-  encoder.Write(program.native_mode);
-  encoder.Write(program.global_flags);
-  encoder.Write(program.json_decode_plans);
-  encoder.Write(program.reflection_types);
-  encoder.Write(program.reflection_members);
-  encoder.Write(program.attributes);
+  std::apply([&](const auto&... fields) { (encoder.Write(fields), ...); },
+             CompilationEnvironmentFields(program));
   for (const auto& function : program.functions) {
     encoder.Write(function.name);
     encoder.Write(function.return_type);
@@ -464,10 +451,8 @@ std::expected<FileOperationResponse, std::string> DecodeFileResponse(
     std::span<const std::byte> bytes) {
   return Decoder(bytes).Decode<FileOperationResponse>();
 }
-std::vector<std::byte> EncodeSourceUpdate(const std::optional<SourceUpdate>& update) {
-  BinaryWriter writer;
+void EncodeSourceUpdate(BinaryWriter& writer, const std::optional<SourceUpdate>& update) {
   Encoder(writer).Write(update);
-  return std::move(writer).Take();
 }
 std::expected<std::optional<SourceUpdate>, std::string> DecodeSourceUpdate(
     std::span<const std::byte> bytes) {
@@ -484,8 +469,11 @@ std::expected<FunctionCompilationDescription, std::string> DecodeFunctions(
 
 std::vector<std::byte> EncodeProgram(const ir::Program& program) {
   BinaryWriter writer;
-  Encoder(writer).Write(program);
+  EncodeProgram(writer, program);
   return std::move(writer).Take();
+}
+void EncodeProgram(BinaryWriter& writer, const ir::Program& program) {
+  Encoder(writer).Write(program);
 }
 std::expected<ir::Program, std::string> DecodeProgram(std::span<const std::byte> bytes) {
   return Decoder(bytes).Decode<ir::Program>();
@@ -497,20 +485,17 @@ std::vector<std::byte> EncodeFunction(const ir::Function& function) {
   return std::move(writer).Take();
 }
 
-std::vector<std::byte> EncodeSourceConfiguration(const SourceSessionConfiguration& configuration) {
-  BinaryWriter writer;
+void EncodeSourceConfiguration(BinaryWriter& writer,
+                               const SourceSessionConfiguration& configuration) {
   Encoder(writer).Write(configuration);
-  return std::move(writer).Take();
 }
 std::expected<SourceSessionConfiguration, std::string> DecodeSourceConfiguration(
     std::span<const std::byte> bytes) {
   return Decoder(bytes).Decode<SourceSessionConfiguration>();
 }
 
-std::vector<std::byte> EncodeSourceRequest(const SourcePreparationRequest& request) {
-  BinaryWriter writer;
+void EncodeSourceRequest(BinaryWriter& writer, const SourcePreparationRequest& request) {
   Encoder(writer).Write(request);
-  return std::move(writer).Take();
 }
 std::expected<SourcePreparationRequest, std::string> DecodeSourceRequest(
     std::span<const std::byte> bytes) {

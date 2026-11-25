@@ -94,7 +94,6 @@ std::int64_t ObserveStep(NativeContext& context, std::int64_t index) noexcept {
   auto& isolate = context.isolate();
   auto& control = isolate.native_control();
   auto* execution = control.state().host_execution;
-  if (execution == nullptr) { return -1; }
   const auto trace = execution->CaptureTrace();
   EXPECT_EQ(trace.size(), 3U);
   if (trace.size() == 3) {

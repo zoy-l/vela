@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -30,12 +31,24 @@
 namespace vela::compiler::native {
 namespace {
 
+std::unique_ptr<llvm::Module> ParseArrayAccessModule(std::string_view source,
+                                                     llvm::LLVMContext& context) {
+  std::string input = R"(
+target datalayout = "e-p:64:64"
+declare <4 x i64> @llvm.masked.gather.v4i64.v4p0(<4 x ptr>, <4 x i1>, <4 x i64>)
+)";
+  input.append(source).append(R"(
+!0 = !{!"Vela native storage"}
+!1 = !{!"array elements", !0}
+!2 = !{!1, !1, i64 0}
+)");
+  return test::ParseModule(input, context);
+}
+
 class ArrayReductionOptimizerTest : public testing::TestWithParam<bool> {};
 
 TEST(ArrayReductionShapeTest, ReplacesOnlyProvenContiguousActiveGatherLanes) {
   const auto prefix = std::string(R"(
-target datalayout = "e-p:64:64"
-declare <4 x i64> @llvm.masked.gather.v4i64.v4p0(<4 x ptr>, <4 x i1>, <4 x i64>)
 define <4 x i64> @read(ptr %values, <4 x i1> %mask) {
 entry:
   %address = getelementptr )");
@@ -45,9 +58,6 @@ entry:
   const auto end = std::string(R"(, <4 x i64> poison), !tbaa !2
   ret <4 x i64> %value
 }
-!0 = !{!"Vela native storage"}
-!1 = !{!"array elements", !0}
-!2 = !{!1, !1, i64 0}
 )");
   for (const auto offset : {0, 2}) {
     for (const auto masked : {false, true}) {
@@ -62,7 +72,7 @@ entry:
         source.append(suffix);
         source.append(masked ? "<4 x i1> %mask" : "<4 x i1> splat (i1 true)");
         source.append(end);
-        const auto module = test::ParseModule(source, context);
+        const auto module = ParseArrayAccessModule(source, context);
         ASSERT_NE(module, nullptr);
         auto& function = *module->getFunction("read");
         test::RunFunctionPasses(function, AddArrayReductionPasses);
@@ -86,9 +96,7 @@ TEST(ArrayReductionShapeTest, ChecksEveryPhiEntryAndBackedgeBeforeReplacingGathe
       const std::string seed =
           mixed_seed ? "<i64 0, i64 2, i64 4, i64 6>" : "<i64 8, i64 9, i64 10, i64 11>";
       const std::string step = mixed_step ? "<i64 4, i64 4, i64 8, i64 4>" : "splat (i64 4)";
-      const auto module = test::ParseModule(std::string(R"(
-target datalayout = "e-p:64:64"
-declare <4 x i64> @llvm.masked.gather.v4i64.v4p0(<4 x ptr>, <4 x i1>, <4 x i64>)
+      const auto module = ParseArrayAccessModule(std::string(R"(
 define <4 x i64> @read(ptr %values, i1 %choose, i1 %again) {
 entry:
   br i1 %choose, label %first, label %second
@@ -98,23 +106,20 @@ second:
   br label %loop
 loop:
   %indices = phi <4 x i64> [ <i64 0, i64 1, i64 2, i64 3>, %first ], [ )")
-                                                .append(seed)
-                                                .append(R"(, %second ], [ %next, %loop ]
+                                                     .append(seed)
+                                                     .append(R"(, %second ], [ %next, %loop ]
   %address = getelementptr inbounds i64, ptr %values, <4 x i64> %indices
   %value = call <4 x i64> @llvm.masked.gather.v4i64.v4p0(<4 x ptr> align 8 %address,
       <4 x i1> splat (i1 true), <4 x i64> poison), !tbaa !2
   %next = add <4 x i64> %indices, )")
-                                                .append(step)
-                                                .append(R"(
+                                                     .append(step)
+                                                     .append(R"(
   br i1 %again, label %loop, label %done
 done:
   ret <4 x i64> %value
 }
-!0 = !{!"Vela native storage"}
-!1 = !{!"array elements", !0}
-!2 = !{!1, !1, i64 0}
 )"),
-                                            context);
+                                                 context);
       ASSERT_NE(module, nullptr);
       auto& function = *module->getFunction("read");
       test::RunFunctionPasses(function, AddArrayReductionPasses);
@@ -127,9 +132,7 @@ done:
 
 TEST(ArrayReductionShapeTest, KeepsGatherAcrossNarrowIndexSignExtensionWrap) {
   llvm::LLVMContext context;
-  const auto module = test::ParseModule(R"(
-target datalayout = "e-p:64:64"
-declare <4 x i64> @llvm.masked.gather.v4i64.v4p0(<4 x ptr>, <4 x i1>, <4 x i64>)
+  const auto module = ParseArrayAccessModule(R"(
 define <4 x i64> @read(ptr %values) {
 entry:
   %address = getelementptr inbounds i64, ptr %values,
@@ -138,11 +141,8 @@ entry:
       <4 x i1> splat (i1 true), <4 x i64> poison), !tbaa !2
   ret <4 x i64> %value
 }
-!0 = !{!"Vela native storage"}
-!1 = !{!"array elements", !0}
-!2 = !{!1, !1, i64 0}
 )",
-                                        context);
+                                             context);
   ASSERT_NE(module, nullptr);
   test::RunFunctionPasses(*module->getFunction("read"), AddArrayReductionPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
@@ -154,7 +154,6 @@ entry:
 TEST(ArrayReductionShapeTest, LimitsArrayExpansionWithoutReplacingExplicitLoopHints) {
   for (const auto hinted : {false, true}) {
     std::string source = R"(
-target datalayout = "e-p:64:64"
 define i64 @read(ptr %values) {
 entry:
   br label %loop
@@ -172,12 +171,9 @@ loop:
 done:
   ret i64 %read0
 }
-!0 = !{!"Vela native storage"}
-!1 = !{!"array elements", !0}
-!2 = !{!1, !1, i64 0}
 )";
     llvm::LLVMContext context;
-    const auto module = test::ParseModule(source, context);
+    const auto module = ParseArrayAccessModule(source, context);
     ASSERT_NE(module, nullptr);
     if (hinted) {
       test::WithFunctionLoops(*module, [](auto&, const auto& loops) {

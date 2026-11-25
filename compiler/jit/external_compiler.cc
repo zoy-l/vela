@@ -30,6 +30,7 @@
 #include "compiler/jit/engine.h"
 #include "compiler/jit/external_sources.h"
 #include "compiler/jit/function_compiler.h"
+#include "compiler/jit/object_buffer.h"
 #include "compiler/native/native_image_data.h"
 #include "runtime/native/native_image.h"
 
@@ -58,9 +59,7 @@ class ExternalFunctions final : public FunctionCompiler {
     if (!bytes) {
       return std::unexpected(std::move(bytes.error()));
     }
-    const void* object_bytes = bytes->data();
-    const llvm::StringRef object(static_cast<const char*>(object_bytes), bytes->size());
-    return llvm::MemoryBuffer::getMemBufferCopy(object, "vela.compiler.object");
+    return OwnObjectBytes(std::move(*bytes));
   }
 
  private:
@@ -73,12 +72,7 @@ class ExternalCompiler final : public Compiler {
   ExternalCompiler(std::shared_ptr<CompilerProcess> process,
                    std::shared_ptr<CodeLinker> linker,
                    std::filesystem::path cache)
-      : process_(std::move(process)),
-        linker_(std::move(linker)),
-        cache_(std::move(cache)),
-        counters_(std::make_shared<CodeResourceCounters>()) {
-    InstallResourceAccounting(*linker_, counters_);
-  }
+      : Compiler(std::move(linker)), process_(std::move(process)), cache_(std::move(cache)) {}
   std::expected<CompiledImage, frontend::Diagnostics> Compile(const ir::Program& program,
                                                               const CompileOptions& options,
                                                               CodeReuseCache* reuse) override {
@@ -126,12 +120,9 @@ class ExternalCompiler final : public Compiler {
     request.Write(static_cast<std::uint8_t>(options.escape));
     request.Write(PathText(options.code_cache.value_or(cache_)));
     if (token == 0) {
-      const auto encoded = EncodeProgram(*program);
-      request.Write(std::span(encoded));
+      EncodeProgram(request, *program);
     } else {
-      {
-        request.Write(token);
-      }
+      request.Write(token);
     }
     auto response = process_->Exchange(request.bytes());
     if (!response) {
@@ -155,19 +146,16 @@ class ExternalCompiler final : public Compiler {
     }
     auto functions =
         std::make_shared<ExternalFunctions>(process_, resource_id, std::move(*description));
-    auto result =
-        LinkFunctions(linker_, counters_, resource_id, *data, options, reuse, std::move(functions));
+    auto result = LinkFunctions(linker(), resource_counters(), resource_id, *data, options, reuse,
+                                std::move(functions));
     if (result) {
       result->timings.generation = std::chrono::steady_clock::now() - started;
     }
     return result;
   }
-  CodeResourceCounts resource_counts() const noexcept override { return counters_->Snapshot(); }
 
   std::shared_ptr<CompilerProcess> process_;
-  std::shared_ptr<CodeLinker> linker_;
   std::filesystem::path cache_;
-  std::shared_ptr<CodeResourceCounters> counters_;
   std::atomic_uint64_t next_program_{0};
 };
 

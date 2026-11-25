@@ -12,7 +12,6 @@
 #include <expected>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,7 +43,10 @@ class LocalFunctionCompiler final : public FunctionCompiler {
   LocalFunctionCompiler(std::shared_ptr<const ir::Program> program,
                         native::BaselineCompilationPlan plan,
                         CompileOptions options)
-      : program_(std::move(program)), plan_(std::move(plan)), options_(std::move(options)) {
+      : program_(std::move(program)),
+        plan_(std::move(plan)),
+        options_(std::move(options)),
+        bodies_(program_->functions.size()) {
     symbols = std::move(plan_.symbols);
     for (const auto& entry : symbols) {
       names_.insert(entry.implementations.begin(), entry.implementations.end());
@@ -53,7 +55,6 @@ class LocalFunctionCompiler final : public FunctionCompiler {
                                 static_cast<std::uint8_t>(options_.optimization),
                                 static_cast<std::uint8_t>(options_.debugging),
                                 static_cast<std::uint8_t>(options_.escape));
-    bodies_.resize(program_->functions.size());
   }
 
   std::expected<std::unique_ptr<llvm::MemoryBuffer>, std::string> Compile(
@@ -89,8 +90,7 @@ class LocalFunctionCompiler final : public FunctionCompiler {
 
  private:
   std::string CacheKey(std::size_t function) {
-    const std::scoped_lock lock(mutex_);
-    if (!environment_) {
+    std::call_once(environment_ready_, [&] {
       BinaryWriter identity;
       identity.Write("Vela baseline function");
       identity.Write(kCompilerBuildIdentity);
@@ -108,11 +108,11 @@ class LocalFunctionCompiler final : public FunctionCompiler {
       identity.Write(static_cast<std::uint8_t>(options_.tier));
       identity.Write(static_cast<std::uint8_t>(options_.escape));
       environment_ = ContentFingerprint(identity.bytes());
-    }
+    });
 
     BinaryWriter identity;
-    identity.Write(environment_->low);
-    identity.Write(environment_->high);
+    identity.Write(environment_.low);
+    identity.Write(environment_.high);
     identity.Write(static_cast<std::uint64_t>(function));
     const auto body = BodyFingerprint(function);
     identity.Write(body.low);
@@ -131,19 +131,23 @@ class LocalFunctionCompiler final : public FunctionCompiler {
 
   Fingerprint BodyFingerprint(std::size_t index) {
     auto& body = bodies_[index];
-    if (!body) {
-      body = ContentFingerprint(EncodeFunction(program_->functions[index]));
-    }
-    return *body;
+    std::call_once(body.ready, [&] {
+      body.fingerprint = ContentFingerprint(EncodeFunction(program_->functions[index]));
+    });
+    return body.fingerprint;
   }
 
   std::shared_ptr<const ir::Program> program_;
   native::BaselineCompilationPlan plan_;
   CompileOptions options_;
   absl::flat_hash_set<std::string> names_;
-  std::mutex mutex_;
-  std::optional<Fingerprint> environment_;
-  std::vector<std::optional<Fingerprint>> bodies_;
+  struct Body final {
+    std::once_flag ready;
+    Fingerprint fingerprint;
+  };
+  std::once_flag environment_ready_;
+  Fingerprint environment_;
+  std::vector<Body> bodies_;
 };
 
 }  // namespace

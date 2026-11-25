@@ -9,11 +9,21 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
 
 namespace vela {
+
+std::string internal::DirectoryWatchErrorMessage(std::string_view operation, int error) {
+#ifdef _WIN32
+  const auto& category = std::system_category();
+#else
+  const auto& category = std::generic_category();
+#endif
+  return std::string(operation) + ": " + std::error_code(error, category).message();
+}
 
 DirectoryWatcher::DirectoryWatcher(std::function<void()> changed) : changed_(std::move(changed)) {}
 
@@ -30,7 +40,7 @@ bool DirectoryWatcher::IsWatching(const std::filesystem::path& directory,
 
 std::expected<void, std::string> DirectoryWatcher::Watch(const std::filesystem::path& directory,
                                                          DirectoryWatchScope scope) {
-  const std::scoped_lock lock(native_mutex_);
+  std::unique_lock lock(native_mutex_);
   const auto found = subscriptions_.find(directory);
   if (found != subscriptions_.end()) {
     if (found->second.Covers(scope)) {
@@ -47,7 +57,15 @@ std::expected<void, std::string> DirectoryWatcher::Watch(const std::filesystem::
   }
 #endif
   const auto subscription_id = next_subscription_++;
-  const auto added = AddNative(directory, scope, subscription_id);
+  auto added = AddNative(directory, scope, subscription_id);
+#ifdef __linux__
+  if (added && scope == DirectoryWatchScope::Descendants) {
+    // 先订阅根以覆盖拓扑变化；遍历文件系统时允许读取线程继续消费其他订阅。
+    lock.unlock();
+    added = AddNativeDescendants(directory, subscription_id);
+    lock.lock();
+  }
+#endif
   if (!added) {
     RemoveNative(subscription_id);
     return added;

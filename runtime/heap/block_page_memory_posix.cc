@@ -8,10 +8,11 @@
 
 namespace vela::runtime::internal {
 
-void* ReserveHeapBlockPage(std::size_t bytes) noexcept {
+void* ReserveHeapBlockPage() noexcept {
   // mmap 只承诺系统页对齐；预留额外地址空间后立即取消两端映射，
   // 不触碰或提交被裁去的区域，也不经过可能保留历史碎片的 malloc zone。
-  const auto reservation_bytes = bytes * 2U;
+  constexpr auto bytes = kHeapBlockPageBytes;
+  constexpr auto reservation_bytes = bytes * 2U;
   auto* memory = mmap(nullptr, reservation_bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (memory == MAP_FAILED) {
     return nullptr;
@@ -39,8 +40,8 @@ void DecommitHeapBlockPage(void* memory, std::size_t bytes) noexcept {
   madvise(memory, bytes, MADV_DONTNEED);
 }
 
-void ReleaseHeapBlockPage(void* memory, std::size_t bytes) noexcept {
-  munmap(memory, bytes);
+void ReleaseHeapBlockPage(void* memory) noexcept {
+  munmap(memory, kHeapBlockPageBytes);
 }
 
 }  // namespace vela::runtime::internal
