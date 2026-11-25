@@ -57,8 +57,15 @@ NativeControl::NativeControl(std::weak_ptr<std::counting_semaphore<>> wakeup)
     : queue_(std::make_shared<NativeSafepointQueue>()) {
   auto& control = queue_->control;
   control.requests = &queue_->requests;
-  if (const auto limit = CurrentNativeStackLimit()) {
-    control.callback_stack_limit = *limit;
+  if (const auto bounds = CurrentNativeStackBounds()) {
+    if (const auto limit = NativeStackLimit(*bounds)) {
+      control.callback_stack_limit = *limit;
+#ifdef _WIN32
+      if (IsOnNativeThreadStack()) {
+        control.thread_stack_size = bounds->upper - bounds->lower;
+      }
+#endif
+    }
   }
   queue_->wakeup = std::move(wakeup);
 }

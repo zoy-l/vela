@@ -9,7 +9,9 @@
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "runtime/async/future_composition.h"
+#include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/callable.h"
@@ -27,15 +29,87 @@ struct NativeFailureObserver final {
   void (*capture)(void*, NativeExecution&, ExecutionStatus);
 };
 
-// 已证明有界且无 GC 的成功调用只持有小型上下文；普通执行和错误资源由冷路径拥有。
-[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeArrayEntry(
-    NativeInstance& instance,
-    const NativeFunctionDescription& function,
-    const ArrayLayout& array,
-    std::span<const Value> input,
-    NativeHostEntry selected_host,
-    const NativeExecution* parent = nullptr,
-    const NativeFailureObserver* failure = nullptr);
+namespace internal {
+[[nodiscard]] inline HeapObject* MatchNativeArrayArgument(Value value,
+                                                          const ArrayLayout& layout) noexcept {
+  auto* object = value.AsObjectOrNull();
+  return object != nullptr && Heap::ArrayTypeOf(*object) == &layout ? object : nullptr;
+}
+}  // namespace internal
+
+// 捕获的实例保活函数描述和数组布局，并覆盖本适配器的寿命。
+class NativeArrayEntry final {
+ public:
+  NativeArrayEntry(NativeInstance& instance,
+                   const NativeFunctionDescription& function,
+                   const ArrayLayout& array,
+                   NativeHostEntry selected_host) noexcept;
+
+  // 有界入口成功时只构造小型上下文。普通执行和错误资源由冷路径拥有。
+  [[nodiscard, clang::always_inline]] std::expected<Value, ExecutionStatus> Invoke(
+      std::span<const Value> input,
+      const NativeExecution* parent = nullptr,
+      const NativeFailureObserver* failure = nullptr) const {
+    if (input.size() != 1) [[unlikely]] {
+      return Reject(input, parent, failure, ExecutionStatus::InvalidEntry);
+    }
+    auto* object = internal::MatchNativeArrayArgument(input.front(), *array_);
+    if (object == nullptr) [[unlikely]] {
+      return Reject(input, parent, failure, ExecutionStatus::InvalidCast);
+    }
+    if (host_ == nullptr || barrier_->phase != GcPhase::Idle) [[unlikely]] {
+      return Execute(input, parent, failure, nullptr, kNativeHostMiss, nullptr);
+    }
+    const auto limit = CachedNativeStackLimit(*control_);
+    if (limit == NativeControlState::kUnknownStackLimit) [[unlikely]] {
+      return InvokeWithCurrentStack(*object, input, parent, failure);
+    }
+    return InvokeHost(*object, input, parent, failure, limit);
+  }
+
+ private:
+  [[nodiscard, clang::always_inline]] std::expected<Value, ExecutionStatus> InvokeHost(
+      HeapObject& object,
+      std::span<const Value> input,
+      const NativeExecution* parent,
+      const NativeFailureObserver* failure,
+      std::uintptr_t limit) const {
+    NativeHostContext context{
+        .program = &instance_->program(),
+        .control = control_,
+        .depth = parent == nullptr ? 0 : parent->frame_count(),
+        .stack_limit = limit,
+    };
+    NativeValue output;
+    const auto status = host_(&context, &object, &output);
+    if (status == ToNativeStatus(ExecutionStatus::Returned)) [[likely]] {
+      return DecodeNativeValue(output);
+    }
+    return Execute(input, parent, failure, &context, status, &output);
+  }
+  [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeWithCurrentStack(
+      HeapObject& object,
+      std::span<const Value> input,
+      const NativeExecution* parent,
+      const NativeFailureObserver* failure) const;
+  [[nodiscard]] std::expected<Value, ExecutionStatus> Reject(std::span<const Value> input,
+                                                             const NativeExecution* parent,
+                                                             const NativeFailureObserver* failure,
+                                                             ExecutionStatus status) const;
+  [[nodiscard]] std::expected<Value, ExecutionStatus> Execute(std::span<const Value> input,
+                                                              const NativeExecution* parent,
+                                                              const NativeFailureObserver* failure,
+                                                              NativeHostContext* context,
+                                                              std::uint8_t status,
+                                                              const NativeValue* output) const;
+
+  NativeInstance* instance_;
+  const NativeFunctionDescription* function_;
+  const ArrayLayout* array_;
+  NativeHostEntry host_;
+  const GcBarrierState* barrier_;
+  const NativeControlState* control_;
+};
 
 [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
     NativeInstance& instance,

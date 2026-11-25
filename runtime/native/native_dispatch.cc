@@ -315,11 +315,10 @@ NativeVersionEntry::Storage::Storage(Value source, std::uint32_t target)
     return;
   }
   const auto& type = instance.layouts().types[parameter.type];
-  if (!type.nullable) {
-    array_parameter = type.array;
-  }
-  if (array_parameter != nullptr && function.host_entry_selector != nullptr) {
-    array_host_entry = function.host_entry_selector(instance.program().host_target);
+  if (!type.nullable && type.array != nullptr) {
+    const auto selector = function.host_entry_selector;
+    const auto host = selector != nullptr ? selector(instance.program().host_target) : nullptr;
+    array_entry.emplace(instance, function, *type.array, host);
   }
 }
 NativeVersionEntry::NativeVersionEntry(std::shared_ptr<const Storage> storage)
@@ -345,19 +344,6 @@ FunctionIdentity NativeVersionEntry::identity() const noexcept {
   const auto& version = storage_->version;
   const auto& state = Heap::NativeProgram(*version.state().AsObject());
   return state.image->function(version.function()).identity;
-}
-
-[[clang::always_inline]] std::expected<Value, ExecutionStatus> NativeVersionEntry::Invoke(
-    std::span<const Value> arguments,
-    const NativeExecution* parent,
-    const NativeFailureObserver* failure) const {
-  const auto& version = storage_->version;
-  auto& instance = storage_->instance;
-  if (const auto* array = storage_->array_parameter; array != nullptr) {
-    return InvokeNativeArrayEntry(instance, instance.image().function(version.function()), *array,
-                                  arguments, storage_->array_host_entry, parent, failure);
-  }
-  return InvokeNativeEntry(instance, version.function(), arguments, parent, failure);
 }
 
 [[clang::always_inline]] NativeInstance& NativeVersionEntry::BoundInstance() const noexcept {

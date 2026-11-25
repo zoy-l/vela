@@ -15,6 +15,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
@@ -105,10 +106,16 @@ class NativeVersionEntry final {
       std::uint32_t function);
   [[nodiscard]] NativeResolvedDeclaration Resolve() const noexcept;
   [[nodiscard]] FunctionIdentity identity() const noexcept;
-  [[nodiscard]] std::expected<Value, ExecutionStatus> Invoke(
+  [[nodiscard, clang::always_inline]] std::expected<Value, ExecutionStatus> Invoke(
       std::span<const Value> arguments,
       const NativeExecution* parent = nullptr,
-      const NativeFailureObserver* failure = nullptr) const;
+      const NativeFailureObserver* failure = nullptr) const {
+    const auto& bound = *storage_;
+    if (bound.array_entry) {
+      return bound.array_entry->Invoke(arguments, parent, failure);
+    }
+    return InvokeNativeEntry(bound.instance, bound.version.function(), arguments, parent, failure);
+  }
 
  private:
   friend class NativeNamedEntry;
@@ -118,8 +125,7 @@ class NativeVersionEntry final {
     Storage(Value source, std::uint32_t target);
     mutable NativeInstance instance;
     NativeFunctionRoot version;
-    const ArrayLayout* array_parameter = nullptr;
-    NativeHostEntry array_host_entry = nullptr;
+    std::optional<NativeArrayEntry> array_entry;
   };
   explicit NativeVersionEntry(std::shared_ptr<const Storage> storage);
   std::shared_ptr<const Storage> storage_;

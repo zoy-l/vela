@@ -18,16 +18,25 @@ struct NativeStackBounds final {
 
 [[nodiscard]] std::expected<NativeStackBounds, ExecutionStatus> CurrentNativeStackBounds() noexcept;
 
+#ifdef _WIN32
+[[nodiscard]] bool IsOnNativeThreadStack() noexcept;
+#endif
+
+[[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus> NativeStackLimit(
+    NativeStackBounds bounds) noexcept {
+  if (bounds.upper - bounds.lower <= kNativeStackReserveBytes) {
+    return std::unexpected(ExecutionStatus::StackOverflow);
+  }
+  return bounds.lower + kNativeStackReserveBytes;
+}
+
 [[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus>
 CurrentNativeStackLimit() noexcept {
   const auto bounds = CurrentNativeStackBounds();
   if (!bounds) {
     return std::unexpected(bounds.error());
   }
-  if (bounds->upper - bounds->lower <= kNativeStackReserveBytes) {
-    return std::unexpected(ExecutionStatus::StackOverflow);
-  }
-  return bounds->lower + kNativeStackReserveBytes;
+  return NativeStackLimit(*bounds);
 }
 
 }  // namespace vela::runtime

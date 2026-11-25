@@ -130,12 +130,6 @@ llvm::Value* Address(Builder& builder, llvm::Value* pointer, std::size_t offset)
   return builder.CreateConstGEP1_64(builder.getInt8Ty(), pointer, offset);
 }
 
-llvm::Value* Requests(Builder& builder, llvm::Value* context) {
-  auto* control = builder.CreateLoad(
-      builder.getPtrTy(), Address(builder, context, runtime::NativeMemoryLayout::kHostControl));
-  return LoadNativeRequests(builder, control);
-}
-
 void RecordHostTrace(Builder& builder,
                      llvm::Value* context,
                      llvm::Value* count,
@@ -212,15 +206,16 @@ void EmitHostWrapper(llvm::Module& module,
   Builder unmatched(miss);
   unmatched.CreateRet(unmatched.getInt8(runtime::kNativeHostMiss));
   auto* state = entry->getArg(0);
-  auto* stack_status = builder.CreateLoad(
-      builder.getInt8Ty(), Address(builder, state, NativeMemoryLayout::kHostStackStatus));
-  ReturnOnFailure(builder, *entry, stack_status);
+  state->addAttr(llvm::Attribute::NonNull);
   auto* object = entry->getArg(1);
+  auto* control = builder.CreateLoad(builder.getPtrTy(),
+                                     Address(builder, state, NativeMemoryLayout::kHostControl));
+  auto* requests = NativeRequestAddress(builder, control);
   auto* requested = llvm::BasicBlock::Create(context, "entry.observe", entry);
   auto* available = llvm::BasicBlock::Create(context, "entry.available", entry);
-  builder.CreateCondBr(builder.CreateICmpNE(Requests(builder, state), builder.getInt8(0)),
-                       requested, available,
-                       llvm::MDBuilder(context).createUnlikelyBranchWeights());
+  builder.CreateCondBr(
+      builder.CreateICmpNE(LoadNativeRequestBits(builder, requests), builder.getInt8(0)), requested,
+      available, llvm::MDBuilder(context).createUnlikelyBranchWeights());
   builder.SetInsertPoint(requested);
   RecordHostTrace(builder, state, builder.getInt32(1),
                   runtime::EncodeNativeTracePosition(
@@ -256,9 +251,10 @@ void EmitHostWrapper(llvm::Module& module,
   Builder allocation(&entry->getEntryBlock(), entry->getEntryBlock().begin());
   auto* result_type = ValueType(context, source.return_type);
   auto* result = allocation.CreateAlloca(result_type);
-  std::vector<llvm::Value*> arguments{
-      state, object, depth, Address(builder, state, NativeMemoryLayout::kHostTrace), result,
-  };
+  // 外部入口为返回观察保留追踪首槽；内联的子调用仍可用空指针跳过返回位置。
+  auto* trace = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), state,
+                                                   NativeMemoryLayout::kHostTrace);
+  std::vector<llvm::Value*> arguments{state, object, depth, trace, result};
   auto* invoke = llvm::BasicBlock::Create(context, "bounded", entry);
   builder.CreateCondBr(builder.CreateCall(function.host_guard, arguments), invoke, miss);
   builder.SetInsertPoint(invoke);
@@ -268,8 +264,9 @@ void EmitHostWrapper(llvm::Module& module,
   builder.CreateStore(EncodeValue(builder, value, source.return_type), entry->getArg(2));
   auto* observe = llvm::BasicBlock::Create(context, "return.observe", entry);
   auto* complete = llvm::BasicBlock::Create(context, "returned", entry);
-  builder.CreateCondBr(builder.CreateICmpNE(Requests(builder, state), builder.getInt8(0)), observe,
-                       complete, llvm::MDBuilder(context).createUnlikelyBranchWeights());
+  builder.CreateCondBr(
+      builder.CreateICmpNE(LoadNativeRequestBits(builder, requests), builder.getInt8(0)), observe,
+      complete, llvm::MDBuilder(context).createUnlikelyBranchWeights());
   builder.SetInsertPoint(observe);
   RecordHostTrace(builder, state, builder.getInt32(1), std::nullopt);
   builder.CreateRet(builder.getInt8(runtime::kNativeHostObserve));

@@ -100,6 +100,8 @@ llvm::Value* MakeOptional(Builder& builder,
                           const SourceType& type);
 void MarkInvariant(llvm::LoadInst& load);
 void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source);
+llvm::Value* NativeRequestAddress(Builder& builder, llvm::Value* control);
+llvm::Value* LoadNativeRequestBits(Builder& builder, llvm::Value* requests_address);
 llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control);
 llvm::Value* HasNonnegative31ArrayRange(Builder& builder, llvm::Value* array);
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type);

@@ -275,7 +275,8 @@ TEST(NativeAbiTest, ArrayEntryArgumentsPublishNestedReferencesDuringMarkAndSweep
         .identity = {},
     };
     const std::array arguments{input};
-    const auto result = InvokeNativeArrayEntry(**instance, function, *nested, arguments, nullptr);
+    const NativeArrayEntry entry(**instance, function, *nested, nullptr);
+    const auto result = entry.Invoke(arguments);
     ASSERT_TRUE(result);
     EXPECT_EQ(result->AsInteger(), 42);
     EXPECT_EQ(*head, &parent);

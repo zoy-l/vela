@@ -70,12 +70,16 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
   }
 }
 
-llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control) {
+llvm::Value* NativeRequestAddress(Builder& builder, llvm::Value* control) {
   auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), control,
                                              offsetof(runtime::NativeControlState, requests));
   auto* requests_address = builder.CreateLoad(builder.getPtrTy(), address);
   // Isolate 在线程执行期间持有固定请求字地址；每次探测仍需原子读取其值。
   MarkInvariant(*requests_address);
+  return requests_address;
+}
+
+llvm::Value* LoadNativeRequestBits(Builder& builder, llvm::Value* requests_address) {
   auto* requests = builder.CreateLoad(builder.getInt8Ty(), requests_address);
   requests->setMetadata(
       kNativePollReadyStateMetadata,
@@ -83,6 +87,10 @@ llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control) {
   // 慢路径用 acquire 消费请求；零值探测不读取跨线程发布的数据。
   requests->setAtomic(llvm::AtomicOrdering::Monotonic);
   return requests;
+}
+
+llvm::Value* LoadNativeRequests(Builder& builder, llvm::Value* control) {
+  return LoadNativeRequestBits(builder, NativeRequestAddress(builder, control));
 }
 
 llvm::Value* HasNonnegative31ArrayRange(Builder& builder, llvm::Value* array) {

@@ -344,6 +344,9 @@ executable("runtime_tests") {
     "testing/runtime_unittest.cc",
     "testing/thread_destruction_test_support.h",
   ]
+  if (target_os == "win") {
+    sources += [ "native/native_stack_unittest_win.cc" ]
+  }
   deps = [
     ":native_test_support",
     ":runtime",

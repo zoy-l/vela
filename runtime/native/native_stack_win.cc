@@ -3,6 +3,7 @@
 #include <windows.h>  // IWYU pragma: keep
 
 #include <basetsd.h>
+#include <fibersapi.h>
 #include <processthreadsapi.h>
 
 #include <cstdint>
@@ -11,6 +12,10 @@
 #include "base/execution_status.h"
 
 namespace vela::runtime {
+
+bool IsOnNativeThreadStack() noexcept {
+  return IsThreadAFiber() == 0;
+}
 
 std::expected<NativeStackBounds, ExecutionStatus> CurrentNativeStackBounds() noexcept {
   ULONG_PTR lower = 0;

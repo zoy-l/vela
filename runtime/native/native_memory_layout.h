@@ -56,7 +56,6 @@ struct NativeMemoryLayout final {
   static constexpr auto kHostControl = offsetof(NativeHostContext, control);
   static constexpr auto kHostDepth = offsetof(NativeHostContext, depth);
   static constexpr auto kHostStackLimit = offsetof(NativeHostContext, stack_limit);
-  static constexpr auto kHostStackStatus = offsetof(NativeHostContext, stack_status);
   static constexpr auto kHostTraceCount = offsetof(NativeHostContext, trace_count);
   static constexpr auto kHostTrace = offsetof(NativeHostContext, trace);
   static constexpr auto kContextHandles = offsetof(NativeContext, handles_);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -30,6 +31,9 @@ struct NativeControlState final {
   NativeExecution* host_execution = nullptr;
   std::uint64_t initializations = 0;
   std::uintptr_t callback_stack_limit = kUnknownStackLimit;
+#ifdef _WIN32
+  std::uintptr_t thread_stack_size = 0;
+#endif
 };
 
 inline constexpr std::size_t kNativeControlCacheLineBytes = 64;
@@ -45,15 +49,27 @@ struct alignas(kNativeControlCacheLineBytes) NativeSafepointQueue final {
   std::weak_ptr<std::counting_semaphore<>> wakeup;
 };
 
-[[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus> CurrentNativeStackLimit(
-    [[maybe_unused]] const NativeControlState& control) noexcept {
-#ifndef _WIN32
-  // POSIX Isolate 固定在创建线程，其原生栈边界在 Isolate 生命周期内不变。
-  const auto cached_limit = control.callback_stack_limit;
-  if (cached_limit != NativeControlState::kUnknownStackLimit) [[likely]] {
-    return cached_limit;
+[[nodiscard]] inline std::uintptr_t CachedNativeStackLimit(
+    const NativeControlState& control) noexcept {
+  const auto limit = control.callback_stack_limit;
+#ifdef _WIN32
+  // 普通线程栈覆盖 Isolate 的寿命。切到其他栈时查询当前边界。
+  std::byte stack_slot{};
+  const auto position = std::bit_cast<std::uintptr_t>(&stack_slot);
+  const auto lower = limit - kNativeStackReserveBytes;
+  if (position - lower >= control.thread_stack_size) [[unlikely]] {
+    return NativeControlState::kUnknownStackLimit;
   }
 #endif
+  return limit;
+}
+
+[[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus> CurrentNativeStackLimit(
+    const NativeControlState& control) noexcept {
+  const auto limit = CachedNativeStackLimit(control);
+  if (limit != NativeControlState::kUnknownStackLimit) [[likely]] {
+    return limit;
+  }
   return CurrentNativeStackLimit();
 }
 

@@ -348,13 +348,15 @@ TEST_F(NativeHostEntryTest, ColdGlobalsAndArrayBudgetsKeepCompleteResults) {
   auto array = Array(values);
   ASSERT_TRUE(array);
   const auto input = vela::internal::HandleAccess::Read(*array);
-  NativeHostContext cold(instance->program(), isolate.native_control().state(), 0, limit);
+  NativeHostContext cold{.program = &instance->program(),
+                         .control = &isolate.native_control().state(), .depth = 0,
+                         .stack_limit = *limit};
   NativeValue output;
   EXPECT_EQ(host(&cold, input.AsObject(), &output), kNativeHostMiss);
   auto first = Invoke("calculate", input);
   ASSERT_TRUE(first);
   EXPECT_EQ(first->AsInteger(), 6);
-  NativeHostContext warm(instance->program(), isolate.native_control().state(), 0, limit);
+  auto warm = cold;
   EXPECT_EQ(host(&warm, input.AsObject(), &output),
             ToNativeStatus(ExecutionStatus::Returned));
   EXPECT_EQ(DecodeNativeValue(output).AsInteger(), 6);
@@ -397,7 +399,9 @@ TEST_F(NativeHostEntryTest, SelectedKernelsKeepVectorTailsAndBudgetMisses) {
         isolate.heap().FinishCollection();
         const auto limit = CurrentNativeStackLimit();
         ASSERT_TRUE(limit);
-        NativeHostContext context(instance->program(), isolate.native_control().state(), 0, limit);
+        NativeHostContext context{.program = &instance->program(),
+                                  .control = &isolate.native_control().state(), .depth = 0,
+                                  .stack_limit = *limit};
         NativeValue output;
         const auto status = host(&context, input.AsObject(), &output);
         if (status == kNativeHostMiss) {
@@ -409,7 +413,8 @@ TEST_F(NativeHostEntryTest, SelectedKernelsKeepVectorTailsAndBudgetMisses) {
         Reset();
         isolate.heap().FinishCollection();
         const std::array arguments{input};
-        const auto result = InvokeNativeArrayEntry(*instance, function, *layout, arguments, host);
+        const NativeArrayEntry entry(*instance, function, *layout, host);
+        const auto result = entry.Invoke(arguments);
         ASSERT_TRUE(result);
         EXPECT_EQ(result->AsInteger(), expected);
         EXPECT_EQ(Read(), size == 0 ? -1 : terms.back());
@@ -456,8 +461,8 @@ TEST_F(NativeHostEntryTest, KernelFailuresCaptureOwnedErrorsBeforeExecutionRelea
               captured.result = std::unexpected(vela::internal::CaptureHostError(execution, status));
             },
         };
-        const auto result = InvokeNativeArrayEntry(*instance, function, *layout, arguments, host,
-                                                    nullptr, &failure);
+        const NativeArrayEntry entry(*instance, function, *layout, host);
+        const auto result = entry.Invoke(arguments, nullptr, &failure);
         ASSERT_FALSE(result);
         EXPECT_EQ(result.error(), ExecutionStatus::IntegerOverflow);
         ASSERT_EQ(capture.calls, 1U);
@@ -558,14 +563,17 @@ TEST_F(NativeHostEntryTest, LogicalAndPhysicalStackLimitsFailBeforeCalleeEffects
   const auto host = kernel->entry;
   for (const auto depth : {std::uint64_t{vela::kMaxCallFrames - 1},
                            std::uint64_t{vela::kMaxCallFrames}}) {
-    NativeHostContext context(instance->program(), isolate.native_control().state(), depth, limit);
+    NativeHostContext context{.program = &instance->program(),
+                              .control = &isolate.native_control().state(), .depth = depth,
+                              .stack_limit = *limit};
     NativeValue output;
     EXPECT_EQ(host(&context, input.AsObject(), &output),
               ToNativeStatus(ExecutionStatus::StackOverflow));
     EXPECT_EQ(Read(), -1);
   }
-  NativeHostContext context(instance->program(), isolate.native_control().state(), 0,
-                             std::numeric_limits<std::uintptr_t>::max());
+  NativeHostContext context{.program = &instance->program(),
+                            .control = &isolate.native_control().state(), .depth = 0,
+                            .stack_limit = std::numeric_limits<std::uintptr_t>::max()};
   NativeValue output;
   EXPECT_EQ(host(&context, input.AsObject(), &output),
             ToNativeStatus(ExecutionStatus::StackOverflow));
@@ -633,8 +641,8 @@ TEST_F(NativeHostEntryTest, CompletedEffectsAreNotReplayedAtReturnObservation) {
   parent.MaterializeFrame(frame, instance->FindFunction("read").value());
   auto* head = isolate.heap().native_stack_roots_head();
   const auto* previous = *head;
-  auto result = InvokeNativeArrayEntry(*instance, function, *layout, arguments, ObserveHostReturn,
-                                       &parent);
+  const NativeArrayEntry entry(*instance, function, *layout, ObserveHostReturn);
+  const auto result = entry.Invoke(arguments, &parent);
   ASSERT_TRUE(result);
   EXPECT_EQ(result->AsInteger(), 6);
   EXPECT_EQ(Heap::GetElement(*input.AsObject(), 0)->AsInteger(), 900);

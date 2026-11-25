@@ -70,22 +70,10 @@ inline constexpr std::uint8_t kNativeHostMiss = 255;
 // 有界入口独占本次上下文；它不是 NativeExecution，也不能传给普通运行时入口。
 // 只登记失败链或返回位置；读取追踪数组时以 trace_count 为准。
 struct NativeHostContext final {
-  NativeHostContext(NativeProgramState& source,
-                    const NativeControlState& control_state,
-                    std::uint64_t parent_depth,
-                    std::expected<std::uintptr_t, ExecutionStatus> limit) noexcept
-      : program(&source), control(&control_state), depth(parent_depth) {
-    if (limit) {
-      stack_limit = *limit;
-    } else {
-      stack_status = limit.error();
-    }
-  }
   NativeProgramState* program;
   const NativeControlState* control;
   std::uint64_t depth;
-  std::uintptr_t stack_limit = 0;
-  ExecutionStatus stack_status = ExecutionStatus::Returned;
+  std::uintptr_t stack_limit;
   std::uint32_t trace_count = 0;
   std::array<std::uint64_t, kNativeHostTraceCapacity> trace{};
 };
