@@ -27,6 +27,7 @@
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"

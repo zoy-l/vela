@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Attributes.h>
@@ -30,6 +31,8 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
@@ -1911,7 +1914,37 @@ export func update(values: Point[], initial: double): double {
   EXPECT_EQ(result->llvm_ir.find("field.shadow = alloca"), std::string::npos);
 }
 
-TEST(NativeCompilerTest, PreservesFloatingOrderAcrossControlBoundaries) {
+bool HasPackedFieldChunk(const llvm::Loop& loop) {
+  if (loop.getLoopDepth() != 2 || !loop.getSubLoops().empty()) {
+    return false;
+  }
+  // 分块计数和整轮除零检查是向量循环的两个出口。
+  llvm::SmallVector<llvm::BasicBlock*> exits;
+  loop.getExitingBlocks(exits);
+  if (exits.size() != 2) {
+    return false;
+  }
+  bool square_root = false;
+  bool divide = false;
+  for (const auto* block : loop.blocks()) {
+    for (const auto& instruction : *block) {
+      if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+          load != nullptr && load->isAtomic()) {
+        return false;
+      }
+      if (!instruction.getType()->isVectorTy()) {
+        continue;
+      }
+      if (const auto* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction)) {
+        square_root |= intrinsic->getIntrinsicID() == llvm::Intrinsic::sqrt;
+      }
+      divide |= instruction.getOpcode() == llvm::Instruction::FDiv;
+    }
+  }
+  return square_root && divide;
+}
+
+TEST(NativeCompilerTest, UnrollsFixedFieldLoopsBeforePollingTheEnclosingLoop) {
   const auto prepared = Prepare(R"(
 class Point { x: double; y: double; vx: double; vy: double; }
 export func update(scale: double): double {
@@ -1920,7 +1953,7 @@ export func update(scale: double): double {
                   Point(x: 5.0, y: 6.0, vx: 0.0, vy: 0.0),
                   Point(x: 7.0, y: 8.0, vx: 0.0, vy: 0.0),
                   Point(x: 9.0, y: 10.0, vx: 0.0, vy: 0.0)];
-  for (let round = 0; round < 64; round++) {
+  for (let round = 0; round < 2051; round++) {
     for (let i = 0; i < 5; i++) {
       const first = values[i];
       for (let j = i + 1; j < 5; j++) {
@@ -1948,6 +1981,14 @@ export func update(scale: double): double {
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   EXPECT_GT(native::test::CountLoopsCalling(*module, runtime::kNativeSafepointSymbol), 0U);
+  if (module->getTargetTriple().getArch() == llvm::Triple::x86_64) {
+    bool has_packed_chunk = false;
+    WithFunctionLoops(*module, [&](auto&, const auto& loops) {
+      has_packed_chunk |= std::ranges::any_of(
+          loops.getLoopsInPreorder(), [](const auto* loop) { return HasPackedFieldChunk(*loop); });
+    });
+    EXPECT_TRUE(has_packed_chunk);
+  }
 }
 
 TEST(NativeCompilerTest, KeepsUnitFieldUpdatesObservableAtControlBoundaries) {

@@ -867,7 +867,8 @@ class NativeObjectTest(CommandTestCase):
             "callback_entry": ["savedCallbacks"],
             "global_leaf_entry": ["repair"],
             "integer_loop_entry": ["assignArray", "callArray", "writeArray", "appendArray", "rootedArray"],
-            "field_loop_entry": ["floatPrepare", "floatUpdate", "floatRootUpdate"],
+            "field_loop_entry": ["floatPrepare", "floatUpdate", "floatRootUpdate",
+                                 "guardedPrefix", "guardedStatus"],
             "host_entry": HOST_ENTRY_EXTRA_EXPORTS,
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
@@ -1556,7 +1557,7 @@ export async func calculate(): Future<int> {
         compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
                             cwd=self.directory)
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 88 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 89 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

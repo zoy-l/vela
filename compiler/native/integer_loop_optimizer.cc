@@ -62,6 +62,7 @@
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
+#include "compiler/native/field_loop_optimizer.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/local_ssa.h"
 #include "compiler/native/loop_cloning.h"
@@ -319,36 +320,6 @@ llvm::Constant* PollReadyValue(llvm::Value* value, const llvm::DataLayout& layou
   return llvm::ConstantFoldInstOperands(instruction, operands, layout);
 }
 
-llvm::SmallPtrSet<llvm::BasicBlock*, kInlinePollBlocks> FindGuardFailures(
-    llvm::Function& function) {
-  llvm::SmallPtrSet<llvm::BasicBlock*, kInlinePollBlocks> failures;
-  llvm::SmallVector<llvm::BasicBlock*, kInlinePollBlocks> cold;
-  llvm::DenseMap<llvm::BasicBlock*, unsigned> remaining;
-  for (auto& current : function) {
-    auto* block = &current;
-    remaining.try_emplace(block, block->getTerminator()->getNumSuccessors());
-    if (std::ranges::any_of(*block, [](const auto& instruction) {
-          return instruction.getMetadata(kNativeGuardFailureMetadata) != nullptr;
-        })) {
-      failures.insert(block);
-      cold.push_back(block);
-    }
-  }
-  while (!cold.empty()) {
-    auto* block = cold.pop_back_val();
-    for (auto* predecessor : llvm::predecessors(block)) {
-      if (!failures.contains(predecessor)) {
-        auto& successors = remaining.find(predecessor)->second;
-        if (--successors == 0) {
-          failures.insert(predecessor);
-          cold.push_back(predecessor);
-        }
-      }
-    }
-  }
-  return failures;
-}
-
 void ProjectSuccessfulPhis(const llvm::Loop& loop, BoundedRegion& region) {
   const llvm::SmallPtrSet<llvm::BasicBlock*, kInlinePollBlocks> successful(region.blocks.begin(),
                                                                            region.blocks.end());
@@ -378,7 +349,7 @@ void ProjectSuccessfulPhis(const llvm::Loop& loop, BoundedRegion& region) {
 }
 
 BoundedRegion FindBoundedRegion(const llvm::Loop& loop,
-                                const llvm::SmallPtrSetImpl<llvm::BasicBlock*>& failures) {
+                                const llvm::SmallPtrSetImpl<const llvm::BasicBlock*>& failures) {
   BoundedRegion region;
   if (!loop.getSubLoops().empty()) {
     return region;
@@ -407,9 +378,8 @@ BoundedRegion FindBoundedRegion(const llvm::Loop& loop,
     const auto first_failed = failures.contains(branch->getSuccessor(0));
     const auto second_failed = failures.contains(branch->getSuccessor(1));
     if (branch->getMetadata(kNativeBoundedPollMetadata) != nullptr) {
-      auto* ready = llvm::dyn_cast_or_null<llvm::ConstantInt>(
-          PollReadyValue(branch->getCondition(), block->getModule()->getDataLayout()));
-      if (ready == nullptr) {
+      const auto ready = FindReadyPollEdge(*branch);
+      if (!ready) {
         if (first_failed == second_failed) {
           return {};
         }
@@ -420,10 +390,9 @@ BoundedRegion FindBoundedRegion(const llvm::Loop& loop,
         pending.push_back(branch->getSuccessor(ready_edge));
         continue;
       }
-      const auto ready_edge = static_cast<unsigned>(ready->isZero());
-      region.polls.push_back({.branch = branch, .ready_edge = ready_edge});
+      region.polls.push_back({.branch = branch, .ready_edge = *ready});
       // 标记的慢边负责请求处理；纯叶调用的正常计算不包含那里的运行时调用。
-      pending.push_back(branch->getSuccessor(ready_edge));
+      pending.push_back(branch->getSuccessor(*ready));
     } else if (first_failed || second_failed) {
       if (first_failed == second_failed) {
         return {};
@@ -946,6 +915,40 @@ struct BoundedLoopValues final {
   llvm::ValueToValueMapTy conditions;
 };
 
+enum class ChunkExit : std::uint8_t { Header, Latch };
+
+void BindChunkState(llvm::Loop& loop,
+                    llvm::BasicBlock& outer,
+                    BoundedLoopValues& values,
+                    llvm::BasicBlock& exit,
+                    ChunkExit exit_point) {
+  auto* header = loop.getHeader();
+  auto* preheader = loop.getLoopPreheader();
+  auto* latch = loop.getLoopLatch();
+  auto& mapped = values.instructions;
+  auto* fast_latch = llvm::cast<llvm::BasicBlock>(mapped.lookup(latch));
+  llvm::IRBuilder<> builder(&outer);
+  for (auto& phi : header->phis()) {
+    auto* state = builder.CreatePHI(phi.getType(), 3, phi.getName() + ".chunk");
+    state->addIncoming(phi.getIncomingValueForBlock(preheader), preheader);
+    state->addIncoming(phi.getIncomingValueForBlock(latch), latch);
+    auto* cloned = llvm::cast<llvm::PHINode>(mapped.lookup(&phi));
+    auto* fast_value =
+        exit_point == ChunkExit::Header ? cloned : cloned->getIncomingValueForBlock(fast_latch);
+    state->addIncoming(fast_value, &exit);
+    values.conditions.insert({&phi, state});
+    const auto initial = static_cast<unsigned>(phi.getBasicBlockIndex(preheader));
+    phi.setIncomingBlock(initial, &outer);
+    phi.setIncomingValue(initial, state);
+    phi.removeIncomingValue(latch, false);
+    const auto cloned_initial = static_cast<unsigned>(cloned->getBasicBlockIndex(preheader));
+    cloned->setIncomingBlock(cloned_initial, &outer);
+    cloned->setIncomingValue(cloned_initial, state);
+  }
+  preheader->getTerminator()->replaceSuccessorWith(header, &outer);
+  latch->getTerminator()->replaceSuccessorWith(header, &outer);
+}
+
 void ReplaceBoundedGuardInputs(const llvm::Loop& loop,
                                const BoundedRegion& region,
                                BoundedLoopValues& values) {
@@ -1038,39 +1041,18 @@ void StripMineBoundedLoop(const StripMinePlan& plan,
   const auto& counted = plan.counted;
   auto& loop = *counted.loop;
   auto* header = loop.getHeader();
-  auto* preheader = loop.getLoopPreheader();
-  auto* latch = loop.getLoopLatch();
   auto* function = header->getParent();
-  auto& context = function->getContext();
+  auto& context = header->getContext();
   auto* outer = llvm::BasicBlock::Create(context, "poll.chunk", function, header);
   auto* exit = llvm::BasicBlock::Create(context, "poll.chunk.exit", function);
   BoundedLoopValues values;
   auto& mapped = values.instructions;
   auto& conditions = values.conditions;
   CloneLoopBody(loop, mapped, ".bounded");
+  BindChunkState(loop, *outer, values, *exit, ChunkExit::Header);
   auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(header));
   llvm::IRBuilder<> guard(outer);
-  llvm::Value* start = nullptr;
-  for (auto& phi : header->phis()) {
-    auto* state = guard.CreatePHI(phi.getType(), 3, phi.getName() + ".chunk");
-    state->addIncoming(phi.getIncomingValueForBlock(preheader), preheader);
-    state->addIncoming(phi.getIncomingValueForBlock(latch), latch);
-    auto* cloned = llvm::cast<llvm::PHINode>(mapped.lookup(&phi));
-    state->addIncoming(cloned, exit);
-    conditions.insert({&phi, state});
-    const auto initial = static_cast<unsigned>(phi.getBasicBlockIndex(preheader));
-    phi.setIncomingBlock(initial, outer);
-    phi.setIncomingValue(initial, state);
-    phi.removeIncomingValue(latch, false);
-    const auto cloned_initial = static_cast<unsigned>(cloned->getBasicBlockIndex(preheader));
-    cloned->setIncomingBlock(cloned_initial, outer);
-    cloned->setIncomingValue(cloned_initial, state);
-    if (&phi == counted.index) {
-      start = state;
-    }
-  }
-  preheader->getTerminator()->replaceSuccessorWith(header, outer);
-  latch->getTerminator()->replaceSuccessorWith(header, outer);
+  auto* start = static_cast<llvm::Value*>(conditions.lookup(counted.index));
   auto* placeholder = guard.CreateBr(header);
   auto* full_bound =
       CopyPollCondition(counted.bound, loop, placeholder, conditions, region.projections);
@@ -1097,6 +1079,73 @@ void StripMineBoundedLoop(const StripMinePlan& plan,
   RemoveRecheckedBounds(plan, mapped);
 }
 
+unsigned FindLatchTripCount(llvm::Loop& loop, llvm::ScalarEvolution& evolution) {
+  if (!loop.isLoopSimplifyForm()) {
+    return 0;
+  }
+  const auto* latch = loop.getLoopLatch();
+  const auto* branch = llvm::dyn_cast<llvm::CondBrInst>(latch->getTerminator());
+  if (branch == nullptr || !loop.isLoopExiting(latch) ||
+      branch->getMetadata(kNativeBoundedPollMetadata) != nullptr) {
+    return 0;
+  }
+  // 只消费正常回边出口上的精确次数。失败可以提前离开，并保留各自的出口值。
+  return evolution.getSmallConstantTripCount(&loop, latch);
+}
+
+void StripMineLatchCountedLoop(llvm::Loop& loop,
+                               const BoundedRegion& region,
+                               unsigned trips,
+                               std::uint64_t limit) {
+  auto* header = loop.getHeader();
+  auto* preheader = loop.getLoopPreheader();
+  auto* latch = loop.getLoopLatch();
+  auto* function = header->getParent();
+  auto& context = header->getContext();
+  auto* outer = llvm::BasicBlock::Create(context, "poll.chunk", function, header);
+  auto* exit = llvm::BasicBlock::Create(context, "poll.chunk.exit", function);
+  BoundedLoopValues values;
+  auto& mapped = values.instructions;
+  CloneLoopBody(loop, mapped, ".bounded");
+  BindChunkState(loop, *outer, values, *exit, ChunkExit::Latch);
+  auto* fast_latch = llvm::cast<llvm::BasicBlock>(mapped.lookup(latch));
+  auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(header));
+  auto* condition = llvm::cast<llvm::CondBrInst>(fast_latch->getTerminator());
+  const auto exit_edge = condition->getSuccessor(0) == fast ? 1U : 0U;
+  auto* normal_exit = condition->getSuccessor(exit_edge);
+
+  llvm::IRBuilder<> guard(outer);
+  auto* remaining = guard.CreatePHI(guard.getInt64Ty(), 3, "poll.remaining");
+  remaining->addIncoming(guard.getInt64(trips), preheader);
+  llvm::IRBuilder<> slow_step(latch->getTerminator());
+  remaining->addIncoming(slow_step.CreateSub(remaining, slow_step.getInt64(1)), latch);
+  auto* budget = guard.getInt64(limit);
+  auto* final_chunk = guard.CreateICmpULE(remaining, budget);
+  auto* size = guard.CreateSelect(final_chunk, remaining, budget);
+  llvm::IRBuilder<> retry(exit);
+  remaining->addIncoming(retry.CreateSub(remaining, budget), exit);
+  retry.CreateCondBr(final_chunk, normal_exit, outer);
+  for (auto& phi : normal_exit->phis()) {
+    phi.replaceIncomingBlockWith(fast_latch, exit);
+  }
+
+  // 在内层只检查分块计数，最后一块从其末次迭代交付正常出口的 SSA 值。
+  llvm::IRBuilder<> iteration(&*fast->getFirstInsertionPt());
+  auto* left = iteration.CreatePHI(guard.getInt64Ty(), 2, "poll.chunk.remaining");
+  left->addIncoming(size, outer);
+  llvm::IRBuilder<> fast_step(condition);
+  auto* next = fast_step.CreateSub(left, fast_step.getInt64(1));
+  left->addIncoming(next, fast_latch);
+  condition->setCondition(
+      fast_step.CreateICmp(exit_edge == 0 ? llvm::CmpInst::ICMP_EQ : llvm::CmpInst::ICMP_NE, next,
+                           fast_step.getInt64(0)));
+  condition->setSuccessor(exit_edge, exit);
+  auto* branch = guard.CreateCondBr(guard.getTrue(), fast, header);
+  branch->setCondition(
+      WithoutPendingPolls(loop, guard.getTrue(), region, branch, values.conditions));
+  RemoveBoundedPolls(region.polls, mapped);
+}
+
 class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
@@ -1110,10 +1159,12 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
       llvm::Value* bounded;
       BoundedRegion region;
       std::optional<StripMinePlan> strip_mine;
+      unsigned latch_trips;
       std::uint64_t limit;
     };
     std::vector<Plan> plans;
-    const auto failures = FindGuardFailures(function);
+    llvm::SmallPtrSet<const llvm::BasicBlock*, kInlinePollBlocks> failures;
+    FindGuardFailureBlocks(function, failures);
     for (auto* loop : loops.getLoopsInPreorder()) {
       auto region = FindBoundedRegion(*loop, failures);
       auto& polls = region.polls;
@@ -1131,19 +1182,31 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
       }
       const auto counted = MatchCountedLoop(*loop, dominators, &stable);
       const auto limit = NativePollBudget(region.instructions);
-      if (counted && limit != 0) {
-        if (auto strip_mine = PlanStripMining(*counted, region)) {
-          plans.push_back({
-              .loop = loop,
-              .bounded = nullptr,
-              .region = std::move(region),
-              .strip_mine = std::move(strip_mine),
-              .limit = limit,
-          });
-          continue;
-        }
+      auto strip_mine = counted && limit != 0 ? PlanStripMining(*counted, region) : std::nullopt;
+      if (strip_mine) {
+        plans.push_back({
+            .loop = loop,
+            .bounded = nullptr,
+            .region = std::move(region),
+            .strip_mine = std::move(strip_mine),
+            .latch_trips = 0,
+            .limit = limit,
+        });
+        continue;
       }
       if (!region.guards.empty()) {
+        continue;
+      }
+      const auto latch_trips = FindLatchTripCount(*loop, evolution);
+      if (limit != 0 && latch_trips > limit) {
+        plans.push_back({
+            .loop = loop,
+            .bounded = nullptr,
+            .region = std::move(region),
+            .strip_mine = std::nullopt,
+            .latch_trips = latch_trips,
+            .limit = limit,
+        });
         continue;
       }
       auto* bounded = BoundedTripCount(*loop, evolution, counted, limit);
@@ -1153,6 +1216,7 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
             .bounded = bounded,
             .region = std::move(region),
             .strip_mine = std::nullopt,
+            .latch_trips = 0,
             .limit = limit,
         });
       }
@@ -1160,6 +1224,8 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
     for (const auto& plan : plans) {
       if (plan.strip_mine) {
         StripMineBoundedLoop(*plan.strip_mine, plan.region, plan.limit);
+      } else if (plan.latch_trips != 0) {
+        StripMineLatchCountedLoop(*plan.loop, plan.region, plan.latch_trips, plan.limit);
       } else {
         VersionBoundedLoop(*plan.loop, plan.bounded, plan.region);
       }
@@ -1837,6 +1903,42 @@ void MarkGuardFailure(llvm::Instruction& instruction) {
                           llvm::MDNode::get(instruction.getContext(), {}));
 }
 
+void FindGuardFailureBlocks(const llvm::Function& function,
+                            llvm::SmallPtrSetImpl<const llvm::BasicBlock*>& failures) {
+  llvm::SmallVector<const llvm::BasicBlock*, kInlinePollBlocks> cold;
+  llvm::DenseMap<const llvm::BasicBlock*, unsigned> remaining;
+  for (const auto& block : function) {
+    remaining.try_emplace(&block, block.getTerminator()->getNumSuccessors());
+    if (std::ranges::any_of(block, [](const auto& instruction) {
+          return instruction.getMetadata(kNativeGuardFailureMetadata) != nullptr;
+        })) {
+      failures.insert(&block);
+      cold.push_back(&block);
+    }
+  }
+  while (!cold.empty()) {
+    const auto* block = cold.pop_back_val();
+    for (const auto* predecessor : llvm::predecessors(block)) {
+      if (!failures.contains(predecessor)) {
+        auto& successors = remaining.find(predecessor)->second;
+        if (--successors == 0) {
+          failures.insert(predecessor);
+          cold.push_back(predecessor);
+        }
+      }
+    }
+  }
+}
+
+std::optional<unsigned> FindReadyPollEdge(const llvm::CondBrInst& branch) {
+  if (branch.getMetadata(kNativeBoundedPollMetadata) == nullptr) {
+    return std::nullopt;
+  }
+  const auto* ready = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+      PollReadyValue(branch.getCondition(), branch.getModule()->getDataLayout()));
+  return ready == nullptr ? std::nullopt : std::optional<unsigned>(ready->isZero());
+}
+
 void EmitBoundedLeafGuard(const GeneratedFunction& function,
                           std::span<const unsigned> array_parameters) {
   auto& body = *function.leaf;
@@ -1888,7 +1990,7 @@ void EmitBoundedLeafGuard(const GeneratedFunction& function,
   builder.CreateRet(BoundedDistance(builder, *counted, start, bound, limit));
 }
 
-void AddBoundedPollPasses(llvm::FunctionPassManager& passes) {
+void AddBoundedPollPasses(llvm::FunctionPassManager& passes, FieldLoopUnrolling fields) {
   passes.addPass(llvm::PromotePass());
   passes.addPass(llvm::LoopSimplifyPass());
   // 根槽清理不会修改数组头；用别名分析合并隔着这类写入的长度读取，
@@ -1912,6 +2014,10 @@ void AddBoundedPollPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(BoundedReductionPass());
   passes.addPass(llvm::SimplifyCFGPass());
+  if (fields == FieldLoopUnrolling::Enabled) {
+    // 展开固定内层后，分块才能在完整的单次外层迭代上合并请求检查。
+    AddFieldLoopUnrollPass(passes);
+  }
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::LCSSAPass());
   passes.addPass(BoundedPollPass());
@@ -1928,8 +2034,8 @@ void AddLateBoundedPollPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LCSSAPass());
 }
 
-void AddIntegerLoopPasses(llvm::FunctionPassManager& passes) {
-  AddBoundedPollPasses(passes);
+void AddIntegerLoopPasses(llvm::FunctionPassManager& passes, FieldLoopUnrolling fields) {
+  AddBoundedPollPasses(passes, fields);
   // 分块复制和 CFG 化简会让循环值直接流入外层 PHI；归约检查与改写依赖
   // 专属出口上的 LCSSA，必须在这些变换后重新建立该契约。
   passes.addPass(llvm::LCSSAPass());

@@ -1,20 +1,26 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <span>
 
 #include <cstdint>
 #include <string_view>
 
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/PassManager.h>
 
 namespace llvm {
+class BasicBlock;
+class CondBrInst;
+class Function;
 class Instruction;
 }
 
 namespace vela::compiler::native {
 
 struct GeneratedFunction;
+enum class FieldLoopUnrolling : std::uint8_t { Disabled, Enabled };
 
 inline constexpr std::string_view kNativeRootClearMetadata = "vela.root.clear";
 inline constexpr std::string_view kNativeBoundedPollMetadata = "vela.poll.bounded";
@@ -30,9 +36,12 @@ constexpr std::uint64_t NativePollBudget(std::uint64_t instructions) {
 }
 
 void MarkGuardFailure(llvm::Instruction& instruction);
+void FindGuardFailureBlocks(const llvm::Function& function,
+                            llvm::SmallPtrSetImpl<const llvm::BasicBlock*>& failures);
+[[nodiscard]] std::optional<unsigned> FindReadyPollEdge(const llvm::CondBrInst& branch);
 
-void AddIntegerLoopPasses(llvm::FunctionPassManager& passes);
-void AddBoundedPollPasses(llvm::FunctionPassManager& passes);
+void AddIntegerLoopPasses(llvm::FunctionPassManager& passes, FieldLoopUnrolling fields);
+void AddBoundedPollPasses(llvm::FunctionPassManager& passes, FieldLoopUnrolling fields);
 void AddLateBoundedPollPasses(llvm::FunctionPassManager& passes);
 void EmitBoundedLeafGuard(const GeneratedFunction& function,
                           std::span<const unsigned> array_parameters = {});

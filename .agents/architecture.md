@@ -384,9 +384,11 @@ descriptors, unresolved inheritance queries and other value contracts retain gen
 
 Counted loops may share request checks and stable reflection argument guards across bounded chunks.
 Both the iteration limit and successful-path instruction budget bound the observation delay.
-Placement also accepts a proven symbolic maximum backedge count after loop rotation or peeling;
-an oversized constant maximum leaves its poll marker available for later range proofs. Closed
-linked AOT rechecks these opportunities after general optimization before sinking loop stores.
+An exact normal exit count at the latch allows chunking after loop rotation, with the original
+values preserved on early exits and the final iteration. A proven symbolic maximum backedge count
+allows versioning when it fits the budget. Closed linked AOT fully unrolls small field loops before
+poll chunking when the iteration bound and code-size budget hold and the successful path has no
+runtime calls. Unrolling retains the original slow edges and host-binding dispatch.
 Guard loads must remain valid under every successful-path write; repeated writes of an already-checked
 kind tag preserve that fact. Guard checks retain their short-circuit order, and a failed guard enters
 the ordinary current iteration before any chunk effects. Each chunk reloads mutable arguments;
@@ -458,21 +460,21 @@ field-write prefixes and error positions remain intact.
 Closed linked AOT may stage scalar double field writes within an innermost loop that has one normal
 iteration path and no successful calls, collection or observation. Runtime disjointness guards cover
 every uncertain alias between written and readonly locations. A required first traversal executes
-with its original checks before its stable array-element pointers are reused. Field values are first
-read at their original guarded positions, carried in SSA within the iteration, and committed at the
-latch. Each early exit commits exactly the completed write prefix before entering the original error
-or recovery path; calculations and effects are never replayed. Kind and root writes are not staged,
-and their existing liveness and safety rules and all polling boundaries remain intact. Code-size
-budgets include peeling, cloning, alias checks and exit commits. Independent floating-point
-calculations may move earlier within the same iteration only when they have no memory effects,
-are safe to speculate, and their operands dominate the new position. Their operation dependencies,
-all guards and all field commits remain unchanged; the transformation does not permit reassociation.
+with its original checks before its stable array-element pointers are reused. Field updates are
+carried in SSA and committed at the latch. Ordinarily, an early exit commits the completed write
+prefix before entering the error or recovery path. The optimizer can combine double zero guards
+when they account for all non-latch exits, every write is staged and each speculated field load
+uses an address that was accessed on the executed entry path and remains valid. A single
+reduction checks for zero before writing to memory. A failed reduction discards the staged
+updates and runs the original iteration from its entry values, so the original failure edge
+observes exactly the writes completed before the first failing guard. Polling boundaries and
+floating-point operation order within each result are preserved. Code-size budgets cover peeling,
+cloning, alias checks and exit commits.
 
-After SIMD packing, scalar nonzero comparisons in floating-field loops may test binary64 bits
-with the sign bit shifted out. Both signed zeros still fail the division guard; subnormal values,
-NaNs and infinities retain their existing behavior. This late lowering preserves every guard's
-control-flow position, field-write prefix and failure trace while keeping the earlier packing
-opportunities for square roots and divisions.
+After SIMD packing, scalar nonzero comparisons in floating-field loops can test the binary64 bits
+with the sign bit shifted out, or use an unordered greater-than comparison for known nonnegative
+values. Both signed zeros fail the division guard. Subnormals, NaNs and infinities follow the
+original comparison.
 
 Development-session entry lookup caches a borrowed target from the current publication and validates
 its revision before reuse. Publication and stopping clear that cache before old state can retire;

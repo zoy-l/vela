@@ -4,6 +4,7 @@
 
 namespace vela::compiler::native {
 
+void AddFieldLoopUnrollPass(llvm::FunctionPassManager& passes);
 void AddFieldLoopPasses(llvm::FunctionPassManager& passes);
 void AddLateFieldGuardPasses(llvm::FunctionPassManager& passes);
 

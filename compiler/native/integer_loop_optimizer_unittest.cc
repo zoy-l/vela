@@ -42,6 +42,10 @@ namespace {
 
 enum class LoopComparison : std::uint8_t { Signed, SameSign, Unsigned };
 
+void AddIntegerReductionAndPollPasses(llvm::FunctionPassManager& passes) {
+  AddIntegerLoopPasses(passes, FieldLoopUnrolling::Disabled);
+}
+
 class BoundedLeafGuardTest : public testing::TestWithParam<bool> {};
 
 TEST_P(BoundedLeafGuardTest, RequiresARealExitAndCopiesOnlyInputsUsedByAcceptedGuards) {
@@ -164,7 +168,7 @@ failed:
       }
     }
   }
-  test::RunFunctionPasses(function, AddIntegerLoopPasses);
+  test::RunFunctionPasses(function, AddIntegerReductionAndPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t checked_updates = 0;
   for (const auto& block : function) {
@@ -220,7 +224,7 @@ TEST_P(BoundedReductionOptimizerTest, RequiresBoundsOnTheCountTermAndInitialValu
   llvm::SMDiagnostic diagnostic;
   const auto module = llvm::parseAssemblyString(source, diagnostic, context);
   ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
-  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerLoopPasses);
+  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerReductionAndPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t checked_updates = 0;
   for (const auto& block : *module->getFunction("sum")) {
@@ -272,7 +276,7 @@ failed:
 )",
                                                 diagnostic, context);
   ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
-  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerLoopPasses);
+  test::RunFunctionPasses(*module->getFunction("sum"), AddIntegerReductionAndPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   const auto* checked = module->getFunction("llvm.sadd.with.overflow.i64");
   ASSERT_NE(checked, nullptr);
@@ -349,7 +353,7 @@ TEST_P(BoundedPollOptimizerTest, TracksReadyStateAfterBranchInversionAndRejectsO
       }
     }
   }
-  test::RunFunctionPasses(function, AddIntegerLoopPasses);
+  test::RunFunctionPasses(function, AddIntegerReductionAndPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t bounded_loops = 0;
   test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
@@ -368,6 +372,10 @@ INSTANTIATE_TEST_SUITE_P(PollProofs,
                          testing::Combine(testing::Bool(), testing::Bool(), testing::Bool()));
 
 class BoundedPollExitTest : public testing::TestWithParam<void (*)(llvm::FunctionPassManager&)> {};
+
+void AddEarlyBoundedPollPasses(llvm::FunctionPassManager& passes) {
+  AddBoundedPollPasses(passes, FieldLoopUnrolling::Disabled);
+}
 
 TEST_P(BoundedPollExitTest, VersionsPostTestCountsAndKeepsCheckedArithmeticAndRequestHandling) {
   llvm::LLVMContext context;
@@ -490,9 +498,57 @@ done:
   });
 }
 
+TEST_P(BoundedPollExitTest, ChunksFixedLatchCountsWithNormalAndEarlyExitValues) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+declare void @process()
+define i64 @sum(ptr %values, ptr %requests.address) {
+entry:
+  br label %header
+header:
+  %index = phi i64 [ 0, %entry ], [ %next.index, %latch ]
+  %total = phi i64 [ 4, %entry ], [ %next.total, %latch ]
+  %requests = load atomic i8, ptr %requests.address monotonic, align 1, !vela.poll.ready.state !0
+  %pending = icmp ne i8 %requests, 0
+  br i1 %pending, label %process, label %calculate, !vela.poll.bounded !1
+process:
+  call void @process()
+  br label %calculate
+calculate:
+  %address = getelementptr i64, ptr %values, i64 %index
+  %value = load i64, ptr %address, align 8
+  %next.total = xor i64 %total, %value
+  %stop = icmp eq i64 %value, 0
+  br i1 %stop, label %done, label %latch
+latch:
+  %next.index = add nuw nsw i64 %index, 1
+  %finished = icmp eq i64 %next.index, 2051
+  br i1 %finished, label %done, label %header
+done:
+  %result = phi i64 [ %index, %calculate ], [ %next.total, %latch ]
+  ret i64 %result
+}
+!0 = !{i8 0}
+!1 = !{}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("sum");
+  test::RunFunctionPasses(function, GetParam());
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  EXPECT_GT(test::CountLoopsCalling(*module, "process"), 0U);
+  bool has_unpolled_chunk = false;
+  test::WithFunctionLoops(function, [&](auto&, const auto& loops) {
+    for (const auto* loop : loops.getLoopsInPreorder()) {
+      has_unpolled_chunk |= loop->getLoopDepth() == 2 && HasUnpolledArrayLoad(*loop);
+    }
+  });
+  EXPECT_TRUE(has_unpolled_chunk);
+}
+
 INSTANTIATE_TEST_SUITE_P(Phases,
                          BoundedPollExitTest,
-                         testing::Values(AddBoundedPollPasses, AddLateBoundedPollPasses));
+                         testing::Values(AddEarlyBoundedPollPasses, AddLateBoundedPollPasses));
 
 class BoundedPollBudgetTest : public testing::TestWithParam<bool> {};
 
@@ -513,7 +569,7 @@ TEST_P(BoundedPollBudgetTest, CountsFastWorkWithoutChargingColdRequestHandling) 
       }
     }
   }
-  test::RunFunctionPasses(function, AddIntegerLoopPasses);
+  test::RunFunctionPasses(function, AddIntegerReductionAndPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module));
   std::size_t chunk_guards = 0;
   for (const auto& block : function) {
@@ -762,7 +818,7 @@ done:
       break;
   }
   ASSERT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
-  test::RunFunctionPasses(function, AddBoundedPollPasses);
+  test::RunFunctionPasses(function, AddEarlyBoundedPollPasses);
   EXPECT_FALSE(llvm::verifyModule(*module, &llvm::errs()));
   bool unpolled = false;
   test::WithFunctionLoops(function, [&](auto&, const auto& loops) {

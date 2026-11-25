@@ -37,6 +37,31 @@ export func floatPrepare(aliased: bool): FloatBox[] {
 """ + _FLOAT_UPDATE.substitute(name="floatUpdate", root_calculation="") + _FLOAT_UPDATE.substitute(
     name="floatRootUpdate",
     root_calculation="      total += Math.sqrt(first.x * first.x + second.y * second.y);\n") + """\
+let guardedValues: FloatBox[] = [];
+export func guardedStatus(index: int): double { return guardedValues[index].y; }
+export func guardedPrefix(initial: double): double {
+  const values = [FloatBox(x: 1.0, y: 2.0), FloatBox(x: 3.0, y: 4.0),
+                  FloatBox(x: 5.0, y: 6.0), FloatBox(x: 7.0, y: 8.0), FloatBox(x: 9.0, y: 10.0)];
+  guardedValues = values;
+  let divisor = initial;
+  for (let round = 0; round < 2051; round++) {
+    for (let i = 0; i < 5; i++) {
+      const first = values[i];
+      for (let j = i + 1; j < 5; j++) {
+        const second = values[j];
+        const dx = first.x - second.x;
+        const root = Math.sqrt(dx * dx);
+        first.y += 1.0;
+        const amount = root / divisor;
+        first.x += amount;
+        second.x -= amount;
+        second.y += 2.0;
+        divisor -= 0.25;
+      }
+    }
+  }
+  return values[0].x;
+}
 func increase(box: Box, bound: int): void {
   for (let index = 0; index < bound; index++) { box.value += 1; }
 }
@@ -210,5 +235,45 @@ TEST_F(NativeFieldLoopTest, FloatingPrefixesPreserveAliasesAndEveryFailurePositi
 
 TEST_F(NativeFieldLoopTest, FloatingRootPrefixesPreserveBitsAndFailuresUnderGc) {
   ASSERT_NO_FATAL_FAILURE(ExpectFloatingFieldPrefixes("floatRootUpdate"));
+}
+
+TEST_F(NativeFieldLoopTest, BatchedDivisionFailureCommitsTheExactPrefixOfTheCurrentIteration) {
+  const auto update = instance->FindFunction("guardedPrefix");
+  const auto read = instance->FindFunction("guardedStatus");
+  ASSERT_TRUE(update);
+  ASSERT_TRUE(read);
+  const auto update_entry = image->function(*update).entry;
+  const auto read_entry = image->function(*read).entry;
+  struct Failure final {
+    double initial;
+    std::array<double, 5> fields;
+  };
+  // 第三轮和跨分块后的第三对失败，负零则在第一对失败。
+  for (const auto& [initial, expected] : std::array{
+           Failure{5.5, {13.0, 16.0, 20.0, 22.0, 26.0}},
+           Failure{2750.5, {4405.0, 5506.0, 6608.0, 7708.0, 8810.0}},
+           Failure{-0.0, {3.0, 4.0, 6.0, 8.0, 10.0}},
+       }) {
+    SCOPED_TRACE(initial);
+    {
+      NativeExecution execution(*instance);
+      const std::array arguments{Double(initial)};
+      NativeValue output;
+      ASSERT_EQ(Execute(update_entry, execution, arguments, output), ExecutionStatus::DivisionByZero);
+      ASSERT_NO_FATAL_FAILURE(ExpectPendingException(isolate, execution, ExecutionStatus::DivisionByZero,
+                                                     "division by zero"));
+      const auto& trace = execution.ExceptionDiagnostic().stack_trace;
+      ASSERT_FALSE(trace.empty());
+      EXPECT_EQ(trace.front().function, "guardedPrefix");
+    }
+    NativeExecution execution(*instance);
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+      const std::array arguments{Integer(static_cast<std::int64_t>(index))};
+      NativeValue output;
+      ASSERT_EQ(Execute(read_entry, execution, arguments, output), ExecutionStatus::Returned);
+      ASSERT_EQ(output.kind, NativeValueKind::Double);
+      EXPECT_EQ(std::bit_cast<double>(output.payload), expected[index]);
+    }
+  }
 }
 '''

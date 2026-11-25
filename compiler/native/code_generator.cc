@@ -246,6 +246,9 @@ void Optimize(llvm::Module& module,
   // LLVM 库接口默认关闭 SLP；独立字段计算可安全并行，浮点仍沿用严格 IEEE 语义。
   tuning.SLPVectorization = true;
   llvm::PassBuilder passes(&machine, tuning);
+  const auto field_unrolling = IsClosedLinkedProgram(mode, placement)
+                                   ? FieldLoopUnrolling::Enabled
+                                   : FieldLoopUnrolling::Disabled;
   passes.registerPeepholeEPCallback(
       [mode, placement](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         AddIntegerBitPasses(pipeline);
@@ -255,11 +258,11 @@ void Optimize(llvm::Module& module,
         }
       });
   passes.registerCGSCCOptimizerLateEPCallback(
-      [](llvm::CGSCCPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+      [field_unrolling](llvm::CGSCCPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         // 内联后、循环旋转前处理纯调用；旋转会把计数条件化简为退出相等判断。
         llvm::FunctionPassManager functions;
         AddInvariantCallPasses(functions);
-        AddBoundedPollPasses(functions);
+        AddBoundedPollPasses(functions, field_unrolling);
         pipeline.addPass(llvm::createCGSCCToFunctionPassAdaptor(std::move(functions)));
       });
   // 宿主调用约定随实例固定；允许克隆循环，将 direct/checked 分派移到循环外。
@@ -269,8 +272,8 @@ void Optimize(llvm::Module& module,
         pipeline.addPass(llvm::SimpleLoopUnswitchPass(true));
       });
   passes.registerScalarOptimizerLateEPCallback(
-      [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
-        AddIntegerLoopPasses(pipeline);
+      [field_unrolling](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        AddIntegerLoopPasses(pipeline, field_unrolling);
         AddInvariantCallPasses(pipeline);
       });
   passes.registerVectorizerStartEPCallback(
@@ -287,9 +290,9 @@ void Optimize(llvm::Module& module,
   passes.registerLoopAnalyses(loops);
   passes.crossRegisterProxies(loops, functions, calls, modules);
   llvm::FunctionPassManager integer_loops;
-  AddIntegerLoopPasses(integer_loops);
+  AddIntegerLoopPasses(integer_loops, field_unrolling);
   AddInvariantCallPasses(integer_loops);
-  AddBoundedPollPasses(integer_loops);
+  AddBoundedPollPasses(integer_loops, field_unrolling);
   if (IsClosedLinkedProgram(mode, placement)) {
     AddRecursiveLoopHints(integer_loops);
   }

@@ -8,9 +8,11 @@
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AssumptionCache.h>
+#include <llvm/Analysis/Loads.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
@@ -49,6 +51,7 @@
 #include <llvm/Transforms/Vectorize/SLPVectorizer.h>
 
 #include "compiler/native/array_reduction_optimizer.h"
+#include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/loop_cloning.h"
 #include "compiler/native/loop_hints.h"
 #include "compiler/native/memory_regions.h"
@@ -73,17 +76,35 @@ bool IsFieldLoopCandidate(const llvm::Function& function) {
 struct FieldLoopCost final {
   std::size_t instructions = 0;
   bool fields = false;
-  bool calls = false;
+  bool normal_calls = false;
 };
 
-FieldLoopCost MeasureFieldLoop(const llvm::Loop& loop) {
+FieldLoopCost MeasureFieldLoop(const llvm::Loop& loop,
+                               const llvm::SmallPtrSetImpl<const llvm::BasicBlock*>& failures) {
   FieldLoopCost cost;
+  // 体积预算计入完整副本。调用资格只检查守卫成功且无请求时可达的块。
   for (const auto* block : loop.blocks()) {
     cost.instructions += block->size();
+  }
+  llvm::SmallVector<llvm::BasicBlock*, kInlineFieldLocations> pending{loop.getHeader()};
+  llvm::SmallPtrSet<llvm::BasicBlock*, kInlineFieldLocations> visited;
+  while (!pending.empty()) {
+    auto* block = pending.pop_back_val();
+    if (!loop.contains(block) || failures.contains(block) || !visited.insert(block).second) {
+      continue;
+    }
     for (const auto& instruction : *block) {
       cost.fields |= IsFloatingFieldStore(instruction);
-      cost.calls |=
-          llvm::isa<llvm::CallBase>(instruction) && !llvm::isa<llvm::IntrinsicInst>(instruction);
+      if (llvm::isa<llvm::CallBase>(instruction) && !llvm::isa<llvm::IntrinsicInst>(instruction)) {
+        cost.normal_calls = true;
+        return cost;
+      }
+    }
+    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
+    if (const auto ready = branch == nullptr ? std::nullopt : FindReadyPollEdge(*branch)) {
+      pending.push_back(branch->getSuccessor(*ready));
+    } else {
+      pending.append(llvm::succ_begin(block), llvm::succ_end(block));
     }
   }
   return cost;
@@ -95,16 +116,19 @@ class FieldLoopHintsPass : public llvm::PassInfoMixin<FieldLoopHintsPass> {
                                      llvm::FunctionAnalysisManager& analyses) {
     const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    const auto function_size = function.getInstructionCount();
+    llvm::SmallPtrSet<const llvm::BasicBlock*, kInlineFieldLocations> failures;
+    FindGuardFailureBlocks(function, failures);
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto trips = evolution.getSmallConstantMaxTripCount(loop);
       if (trips == 0 || trips > kMaximumFieldLoopTrips) {
         continue;
       }
-      const auto cost = MeasureFieldLoop(*loop);
+      const auto cost = MeasureFieldLoop(*loop, failures);
       const auto instructions = cost.instructions;
-      if (!cost.fields || cost.calls || instructions * trips > kMaximumFieldLoopInstructions ||
-          function.getInstructionCount() + (instructions * (trips - 1)) >
-              4 * kMaximumFieldLoopInstructions) {
+      if (!cost.fields || cost.normal_calls ||
+          instructions * trips > kMaximumFieldLoopInstructions ||
+          function_size + (instructions * (trips - 1)) > 4 * kMaximumFieldLoopInstructions) {
         continue;
       }
       if (trips == 1) {
@@ -206,6 +230,13 @@ struct FieldLoopPlan final {
   llvm::SmallVector<std::pair<llvm::Value*, llvm::Value*>, kInlineFieldLocations> disjoint;
 };
 
+struct FieldGuard final {
+  llvm::CondBrInst* branch;
+  unsigned success_edge;
+};
+
+using FieldGuards = llvm::SmallVector<FieldGuard, kInlineFieldLocations>;
+
 llvm::MemoryLocation Location(const llvm::Instruction* instruction) {
   if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(instruction)) {
     return llvm::MemoryLocation::get(load);
@@ -257,6 +288,114 @@ bool CanStageMemory(const llvm::Loop& loop) {
     return llvm::isa<llvm::UncondBrInst, llvm::CondBrInst>(block->getTerminator()) &&
            std::ranges::all_of(*block, CanStageInstruction);
   });
+}
+
+using ExecutedFieldAccesses = llvm::DenseMap<const llvm::Value*, llvm::Align>;
+
+void RecordExecutedFieldAccess(const llvm::Instruction& instruction, ExecutedFieldAccesses& seen) {
+  if (!HasStorageTag(instruction, MemoryRegion::FieldPayloads)) {
+    return;
+  }
+  const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+  const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+  if ((load == nullptr || !load->getType()->isDoubleTy()) &&
+      (store == nullptr || !store->getValueOperand()->getType()->isDoubleTy())) {
+    return;
+  }
+  const auto* pointer = load != nullptr ? load->getPointerOperand() : store->getPointerOperand();
+  const auto alignment = load != nullptr ? load->getAlign() : store->getAlign();
+  auto& prior = seen[pointer];
+  prior = std::max(prior, alignment);
+}
+
+ExecutedFieldAccesses FindExecutedFieldAccesses(const llvm::BasicBlock& preheader) {
+  ExecutedFieldAccesses seen;
+  std::size_t inspected = 0;
+  // 沿已执行的唯一前驱回溯首轮，只采用可能改变存储生命周期的操作之后的访问。
+  for (const auto* block = &preheader; block != nullptr; block = block->getSinglePredecessor()) {
+    if (!llvm::isa<llvm::UncondBrInst, llvm::CondBrInst>(block->getTerminator())) {
+      break;
+    }
+    for (const auto& instruction : llvm::reverse(*block)) {
+      if (++inspected > kMaximumFieldLoopInstructions) {
+        return seen;
+      }
+      if (instruction.isTerminator()) {
+        continue;
+      }
+      if (!CanStageInstruction(instruction)) {
+        return seen;
+      }
+      RecordExecutedFieldAccess(instruction, seen);
+    }
+  }
+  return seen;
+}
+
+bool CanSpeculateFieldInstruction(const llvm::Instruction& instruction,
+                                  const ExecutedFieldAccesses& seen) {
+  if (instruction.isTerminator() || llvm::isa<llvm::PHINode>(instruction)) {
+    return true;
+  }
+  if (const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+    const auto found = seen.find(load->getPointerOperand());
+    return load->getType()->isDoubleTy() && HasStorageTag(*load, MemoryRegion::FieldPayloads) &&
+           found != seen.end() && found->second >= load->getAlign() &&
+           !llvm::mustSuppressSpeculation(*load);
+  }
+  return llvm::isSafeToSpeculativelyExecute(&instruction);
+}
+
+std::optional<FieldGuard> MatchFieldGuard(llvm::CondBrInst& branch, const llvm::Loop& loop) {
+  const auto* compare = llvm::dyn_cast<llvm::FCmpInst>(branch.getCondition());
+  const auto success = static_cast<unsigned>(!loop.contains(branch.getSuccessor(0)));
+  const auto expected = success == 0 ? llvm::CmpInst::FCMP_UNE : llvm::CmpInst::FCMP_OEQ;
+  if (compare == nullptr || compare->getPredicate() != expected ||
+      !compare->getOperand(0)->getType()->isDoubleTy()) {
+    return std::nullopt;
+  }
+  const auto* zero = llvm::dyn_cast<llvm::ConstantFP>(compare->getOperand(1));
+  if (zero == nullptr || !zero->isZero()) {
+    return std::nullopt;
+  }
+  return FieldGuard{.branch = &branch, .success_edge = success};
+}
+
+FieldGuards FindFieldGuardBatch(const FieldLoopPlan& plan) {
+  const auto& loop = *plan.loop;
+  const auto* latch = loop.getLoopLatch();
+  FieldGuards guards;
+  for (auto* block : plan.blocks) {
+    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
+    if (block == latch || branch == nullptr) {
+      continue;
+    }
+    const auto guard = MatchFieldGuard(*branch, loop);
+    if (!guard) {
+      return {};
+    }
+    guards.push_back(*guard);
+  }
+  if (guards.size() < 2) {
+    return {};
+  }
+  const auto seen = FindExecutedFieldAccesses(*loop.getLoopPreheader());
+  const auto* first_guard = guards.front().branch->getParent();
+  bool speculative = false;
+  for (const auto* block : plan.blocks) {
+    if (!std::ranges::all_of(*block, [&](const auto& instruction) {
+          if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+            // 只有已纳入暂存计划的写入能在失败后丢弃，包括标签和根槽在内的其他写入都不行。
+            return !IsAdministrative(*store);
+          }
+          return (!speculative && llvm::isa<llvm::LoadInst>(instruction)) ||
+                 CanSpeculateFieldInstruction(instruction, seen);
+        })) {
+      return {};
+    }
+    speculative |= block == first_guard;
+  }
+  return guards;
 }
 
 bool HasStablePointer(const llvm::Value* pointer,
@@ -615,6 +754,7 @@ FieldStaging StageFieldAccesses(const FieldLoopPlan& plan,
   for (std::size_t index = 0; index < plan.fields.size(); ++index) {
     const auto& field = plan.fields[index];
     auto* shadow = allocation.CreateAlloca(allocation.getDoubleTy(), nullptr, "field.shadow");
+    const auto alignment = shadow->getAlign();
     staged.shadows.push_back(shadow);
     for (auto* access : field.accesses) {
       auto* cloned = llvm::cast<llvm::Instruction>(mapped.lookup(access));
@@ -626,9 +766,12 @@ FieldStaging StageFieldAccesses(const FieldLoopPlan& plan,
           initialize.CreateStore(load, shadow);
         } else {
           load->setOperand(0, shadow);
+          load->setAlignment(alignment);
         }
       } else {
-        llvm::cast<llvm::StoreInst>(cloned)->setOperand(1, shadow);
+        auto* store = llvm::cast<llvm::StoreInst>(cloned);
+        store->setOperand(1, shadow);
+        store->setAlignment(alignment);
         staged.written_fields.insert({access, index});
       }
     }
@@ -680,8 +823,69 @@ void FlushFieldExitPrefixes(const FieldLoopPlan& plan,
   }
 }
 
+llvm::Value* BuildFieldGuardCheck(llvm::ArrayRef<llvm::Value*> values, llvm::IRBuilder<>& builder) {
+  // 按 128 位向量合并失败掩码，归约只生成一次标量分支。
+  constexpr unsigned kLanes = 2;
+  auto* vector_type = llvm::FixedVectorType::get(builder.getDoubleTy(), kLanes);
+  auto* zero = llvm::Constant::getNullValue(vector_type);
+  auto* mask_type = llvm::FixedVectorType::get(builder.getInt1Ty(), kLanes);
+  llvm::Value* failures = llvm::Constant::getNullValue(mask_type);
+  for (std::size_t index = 0; index < values.size(); index += kLanes) {
+    auto* second = index + 1 < values.size() ? values[index + 1]
+                                             : llvm::ConstantFP::get(builder.getDoubleTy(), 1);
+    auto* pair = builder.CreateInsertElement(vector_type, values[index], builder.getInt32(0));
+    pair = builder.CreateInsertElement(pair, second, builder.getInt32(1));
+    // 后续本不会求值的 lane 不能淹没已确定的零。NaN 和原 UNE 一样通过。
+    auto* failed = builder.CreateFCmpOEQ(builder.CreateFreeze(pair), zero);
+    failures = builder.CreateOr(failures, failed);
+  }
+  return builder.CreateNot(builder.CreateOrReduce(failures));
+}
+
+llvm::BasicBlock* BatchFieldGuards(const FieldLoopPlan& plan,
+                                   const FieldGuards& guards,
+                                   const llvm::ValueToValueMapTy& mapped,
+                                   llvm::BasicBlock& fast_latch) {
+  auto* header = plan.loop->getHeader();
+  auto* commit =
+      fast_latch.splitBasicBlock(fast_latch.getTerminator()->getIterator(), "fields.commit");
+  auto* jump = fast_latch.getTerminator();
+  llvm::IRBuilder<> builder(jump);
+  llvm::SmallVector<llvm::Value*, kInlineFieldLocations> guard_values;
+  for (const auto& guard : guards) {
+    auto* branch = llvm::cast<llvm::CondBrInst>(mapped.lookup(guard.branch));
+    const auto* condition = llvm::cast<llvm::FCmpInst>(branch->getCondition());
+    guard_values.push_back(condition->getOperand(0));
+    auto* block = branch->getParent();
+    branch->getSuccessor(1 - guard.success_edge)->removePredecessor(block);
+    llvm::UncondBrInst::Create(branch->getSuccessor(guard.success_edge), branch->getIterator());
+    branch->eraseFromParent();
+  }
+  const auto* first_guard = guards.front().branch->getParent();
+  bool speculative = false;
+  for (const auto* original : plan.blocks) {
+    if (speculative) {
+      auto* block = llvm::cast<llvm::BasicBlock>(mapped.lookup(original));
+      for (auto& instruction : *block) {
+        instruction.dropUBImplyingAttrsAndMetadata();
+      }
+    }
+    speculative |= original == first_guard;
+  }
+  // 失败边只交付本轮入口值。原循环从未修改的字段重跑本轮并处理首个失败。
+  for (auto& phi : header->phis()) {
+    phi.addIncoming(mapped.lookup(&phi), &fast_latch);
+  }
+  auto* ready = BuildFieldGuardCheck(guard_values, builder);
+  builder.CreateCondBr(ready, commit, header,
+                       llvm::MDBuilder(header->getContext()).createLikelyBranchWeights());
+  jump->eraseFromParent();
+  return commit;
+}
+
 void StageFieldLoop(const FieldLoopPlan& plan) {
   auto& loop = *plan.loop;
+  const auto guards = FindFieldGuardBatch(plan);
   auto* function = loop.getHeader()->getParent();
   auto& context = function->getContext();
   llvm::IRBuilder<> guard(loop.getLoopPreheader()->getTerminator());
@@ -724,12 +928,15 @@ void StageFieldLoop(const FieldLoopPlan& plan) {
     annotate(*stored, index);
   };
   auto* fast_latch = llvm::cast<llvm::BasicBlock>(mapped.lookup(loop.getLoopLatch()));
-  llvm::IRBuilder<> commit(fast_latch->getTerminator());
+  auto* commit_block =
+      guards.empty() ? fast_latch : BatchFieldGuards(plan, guards, mapped, *fast_latch);
+  llvm::IRBuilder<> commit(commit_block->getTerminator());
   for (std::size_t index = 0; index < field_count; ++index) {
     flush_shadow(commit, index);
   }
-  FlushFieldExitPrefixes(plan, mapped, staged, flush_shadow);
-  // 标签和清根保持原位置；所有可观察出口均已提交当前写入前缀。
+  if (guards.empty()) {
+    FlushFieldExitPrefixes(plan, mapped, staged, flush_shadow);
+  }
 }
 
 class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
@@ -827,31 +1034,46 @@ class FieldCalculationSchedulePass : public llvm::PassInfoMixin<FieldCalculation
   }
 };
 
-class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
+class FieldLoopUnrollPass : public llvm::PassInfoMixin<FieldLoopUnrollPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
                                      llvm::FunctionAnalysisManager& analyses) {
     if (!IsFieldLoopCandidate(function)) {
       return llvm::PreservedAnalyses::all();
     }
+    llvm::FunctionPassManager canonicalize;
+    canonicalize.addPass(llvm::LoopSimplifyPass());
+    canonicalize.addPass(llvm::LCSSAPass());
+    llvm::FunctionPassManager unroll;
+    unroll.addPass(llvm::LoopUnrollPass(llvm::LoopUnrollOptions(3, true)
+                                            .setPartial(false)
+                                            .setRuntime(false)
+                                            .setPeeling(false)
+                                            .setUpperBound(true)));
+    unroll.addPass(llvm::InstCombinePass());
+    unroll.addPass(llvm::SimplifyCFGPass());
+    unroll.addPass(llvm::EarlyCSEPass(true));
     auto preserved = llvm::PreservedAnalyses::all();
     for (unsigned round = 0; round < kMaximumNestedUnrollRounds; ++round) {
-      llvm::FunctionPassManager hints;
-      hints.addPass(llvm::LoopSimplifyPass());
-      hints.addPass(llvm::LCSSAPass());
-      hints.addPass(FieldLoopHintsPass());
-      const auto selected = hints.run(function, analyses);
-      preserved.intersect(selected);
+      preserved.intersect(canonicalize.run(function, analyses));
+      const auto selected = FieldLoopHintsPass::run(function, analyses);
       if (selected.areAllPreserved()) {
         break;
       }
-      llvm::FunctionPassManager preparation;
-      preparation.addPass(
-          llvm::LoopUnrollPass(llvm::LoopUnrollOptions(3, true).setUpperBound(true)));
-      preparation.addPass(llvm::InstCombinePass());
-      preparation.addPass(llvm::SimplifyCFGPass());
-      preparation.addPass(llvm::EarlyCSEPass(true));
-      preserved.intersect(preparation.run(function, analyses));
+      analyses.invalidate(function, selected);
+      preserved.intersect(selected);
+      preserved.intersect(unroll.run(function, analyses));
+    }
+    return preserved;
+  }
+};
+
+class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    if (!IsFieldLoopCandidate(function)) {
+      return llvm::PreservedAnalyses::all();
     }
     llvm::FunctionPassManager preparation;
     preparation.addPass(ScalarFieldAccessPass());
@@ -871,7 +1093,7 @@ class FieldLoopPipeline : public llvm::PassInfoMixin<FieldLoopPipeline> {
     // GVN 可以折叠 LCSSA PHI；克隆前重新封闭所有出口值，才能逐边修复共享出口。
     preparation.addPass(llvm::LoopSimplifyPass());
     preparation.addPass(llvm::LCSSAPass());
-    preserved.intersect(preparation.run(function, analyses));
+    auto preserved = preparation.run(function, analyses);
     llvm::FunctionPassManager transform;
     transform.addPass(FieldLoopPass());
     transform.addPass(llvm::PromotePass());
@@ -915,9 +1137,16 @@ class LateFieldGuardPass : public llvm::PassInfoMixin<LateFieldGuardPass> {
       }
     }
     for (auto* guard : guards) {
-      llvm::IRBuilder<> builder(guard);
+      auto* operand = guard->getOperand(0);
+      if (llvm::cannotBeOrderedLessThanZero(operand,
+                                            llvm::SimplifyQuery(function.getDataLayout(), guard))) {
+        // 非负值的非零测试可用一次包含 unordered 的大小比较，NaN 仍走成功边。
+        guard->setPredicate(llvm::CmpInst::FCMP_UGT);
+        continue;
+      }
       // 在 SLP 完成后再改写，保留先前平方根与除法的打包机会；两个零仅符号位不同。
-      auto* bits = builder.CreateBitCast(guard->getOperand(0), builder.getInt64Ty());
+      llvm::IRBuilder<> builder(guard);
+      auto* bits = builder.CreateBitCast(operand, builder.getInt64Ty());
       auto* shifted = builder.CreateShl(bits, 1);
       guard->replaceAllUsesWith(builder.CreateICmpNE(shifted, builder.getInt64(0)));
       guard->eraseFromParent();
@@ -927,6 +1156,10 @@ class LateFieldGuardPass : public llvm::PassInfoMixin<LateFieldGuardPass> {
 };
 
 }  // namespace
+
+void AddFieldLoopUnrollPass(llvm::FunctionPassManager& passes) {
+  passes.addPass(FieldLoopUnrollPass());
+}
 
 void AddFieldLoopPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(FieldLoopPipeline());
