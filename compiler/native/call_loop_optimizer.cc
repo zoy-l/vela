@@ -1,5 +1,7 @@
 #include "compiler/native/call_loop_optimizer.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 
 #include <llvm/Analysis/LoopInfo.h>
@@ -12,14 +14,14 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Scalar/LoopUnrollPass.h>
 
+#include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/loop_hints.h"
 
 namespace vela::compiler::native {
 namespace {
 
-constexpr unsigned kCallLoopUnrollCount = 4;
-// 余数路径至多再复制 count - 1 次；预算覆盖主循环和余数，而非只计算主循环。
-constexpr unsigned kMaximumLoopCopies = (2 * kCallLoopUnrollCount) - 1;
+constexpr unsigned kMaximumCallLoopUnrollCount = 8;
+constexpr unsigned kMinimumCallLoopUnrollCount = 4;
 constexpr std::size_t kMaximumExpandedInstructions = 1024;
 
 bool HasInvariantIndirectCall(const llvm::Loop& loop) {
@@ -43,19 +45,25 @@ class CallLoopHintsPass : public llvm::PassInfoMixin<CallLoopHintsPass> {
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
     bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
+      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
       if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop) ||
-          !HasInvariantIndirectCall(*loop) ||
-          evolution.getSmallConstantMaxTripCount(loop) < kCallLoopUnrollCount) {
+          !HasInvariantIndirectCall(*loop) || (trips != 0 && trips < kMinimumCallLoopUnrollCount) ||
+          (trips == 0 && !function.hasFnAttribute(kNativeArrayReductionCandidateAttribute))) {
         continue;
       }
       std::size_t instructions = 0;
       for (const auto* block : loop->blocks()) {
         instructions += block->size();
       }
-      if (instructions * kMaximumLoopCopies <= kMaximumExpandedInstructions) {
+      // 余数路径至多再复制 count - 1 次；预算同时覆盖主循环及余数。
+      const auto budget = ((kMaximumExpandedInstructions / instructions) + 1) / 2;
+      const auto maximum = std::min<std::size_t>(
+          {kMaximumCallLoopUnrollCount, trips == 0 ? kMaximumCallLoopUnrollCount : trips, budget});
+      const auto count = std::bit_floor(maximum);
+      if (count >= kMinimumCallLoopUnrollCount) {
         // 通用优化完成后再展开，保留每次调用、错误出口及观察边界，
         // 只摊薄间接调用循环的计数与回跳；不同时复制嵌套遍历。
-        SetLoopUnrollCount(*loop, kCallLoopUnrollCount, LoopUnrollHints::Retain);
+        SetLoopUnrollCount(*loop, static_cast<unsigned>(count), LoopUnrollHints::Retain);
         changed = true;
       }
     }
@@ -67,7 +75,8 @@ class CallLoopHintsPass : public llvm::PassInfoMixin<CallLoopHintsPass> {
 
 void AddCallLoopPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(CallLoopHintsPass());
-  passes.addPass(llvm::LoopUnrollPass(llvm::LoopUnrollOptions(3, true)));
+  passes.addPass(
+      llvm::LoopUnrollPass(llvm::LoopUnrollOptions(3, true).setPartial(true).setRuntime(true)));
 }
 
 }  // namespace vela::compiler::native

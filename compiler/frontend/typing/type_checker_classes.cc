@@ -148,6 +148,8 @@ void TypeChecker::ResolveClass(const Class& class_declaration, ClassInfo& info) 
   info.constructor.return_type = info.type;
   ResolveClassRelations(class_declaration, info);
   ResolveClassMembers(class_declaration, info);
+  info.constructor_kind = class_declaration.constructor_kind;
+  info.constructor.member_owner = info.type.name;
 }
 
 void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInfo& info) {
@@ -314,14 +316,13 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(
     const ClassInfo& class_info,
     const Expression& expression,
     std::span<const std::optional<Type>> checked_arguments) {
-  if (class_info.declaration->constructor_kind == ConstructorKind::Unavailable) {
+  if (class_info.constructor_kind == ConstructorKind::Unavailable) {
     AddDiagnostic(expression.location, "external class has no public constructor");
     return InvalidType();
   }
   CheckAccess(class_info.constructor.visibility, class_info.type.name, expression.location);
   for (const CallArgument& argument : expression.arguments) {
-    if (class_info.declaration->constructor_kind == ConstructorKind::Generated &&
-        argument.name.empty()) {
+    if (class_info.constructor_kind == ConstructorKind::Generated && argument.name.empty()) {
       AddDiagnostic(argument.location, "generated constructor arguments must be named");
     }
   }
@@ -549,7 +550,7 @@ void TypeChecker::CheckClassBody(const Class& source, const ClassInfo& info) {
   }
   const auto* base = info.base_class ? &classes_.at(*info.base_class) : nullptr;
   const bool explicit_super = explicit_super_constructors_.contains(info.type.name);
-  if (base != nullptr && !explicit_super &&
+  if (base != nullptr && !explicit_super && !info.HasInheritedConstructor() &&
       std::ranges::any_of(base->constructor.parameters, [&](const auto& parameter) {
         return !base->constructor.optional_parameters.contains(parameter.name);
       })) {

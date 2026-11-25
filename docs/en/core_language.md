@@ -398,9 +398,36 @@ an uninitialized field, calling an instance method, or exposing `this` before
 initialization is rejected. `private` is scoped to the declaring class. Private
 members remain inaccessible through dynamic dispatch as well as static access.
 
-A derived constructor does not inherit the base class's constructor arguments. When
-the base has required parameters, the derived constructor must pass them through
-an explicit `super(...)` call:
+A derived class that declares no constructor and has no constructor parameters of
+its own inherits the complete base constructor signature and forwards its arguments
+automatically. Parameter names, types, required arguments and defaults are preserved.
+Generated field constructors still require named arguments; explicit constructors
+also accept positional arguments. This applies through generic substitution and
+multiple inheritance levels, including class names used as constructor values:
+
+```typescript
+class Component<P> {
+  props: P;
+}
+
+class ProgressBar extends Component<int> {
+  private animation: double = 0.0;
+}
+
+const bar = ProgressBar(props: 42);
+const create: (int) => ProgressBar = ProgressBar;
+```
+
+Private and static fields do not create constructor parameters, so they do not
+prevent signature inheritance. The derived class initializes its own instance field
+defaults before entering base construction. Omitted defaults are evaluated once by
+the base class in their original declaration environment. Private constructors
+cannot be inherited.
+
+A derived class with a `constructor { ... }` body, an explicit parameter constructor,
+or public instance fields uses its own constructor signature. When the base has
+required parameters, that constructor must supply them through an explicit
+`super(...)` call:
 
 ```typescript
 class Counter {
@@ -418,10 +445,10 @@ class BonusCounter extends Counter {
 const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
 ```
 
-When every base parameter has a default, or the base has no required parameters,
-the derived constructor may omit `super()`. The base constructor then runs
-implicitly before the derived constructor body. Omitting `super(...)` when the
-base has a required parameter is a compile-time error.
+When using its own constructor signature, a derived class may omit `super()` if the
+base has no required parameters. The base constructor then runs implicitly before
+the derived constructor body. In this case, omitting `super(...)` when the base has
+a required parameter is a compile-time error.
 
 A derived class must initialize its own instance fields before entering the base
 constructor, because a virtual call from that constructor can select a derived

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -947,10 +948,10 @@ export func select(value: int): int {
   llvm::LLVMContext context;
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
-  for (const auto* name : {"vela_aot_entry_0", "vela_aot_entry_1"}) {
+  for (const auto* name : {"vela_aot_body_0", "vela_aot_body_1"}) {
     const auto* function = module->getFunction(name);
     ASSERT_NE(function, nullptr);
-    // LLVM 可合并两种语法生成的相同常量表；检查实际查表加载，不绑定私有表名。
+    // 装箱入口共享实参转换，查表优化属于 typed 主体；LLVM 可合并两种语法的常量表。
     EXPECT_TRUE(std::ranges::any_of(llvm::instructions(*function), [](const auto& instruction) {
       const auto* load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
       if (load == nullptr) {
@@ -1285,7 +1286,8 @@ export func calculate(count: int): int {
       }
       const auto frame_store_count = calls.frame_stores.size();
       EXPECT_GE(frame_store_count, 1U) << result->llvm_ir;
-      EXPECT_LE(frame_store_count, 2U) << result->llvm_ir;
+      // 展开后每个静态调用仍保留自己的逻辑位置；约束每次调用的写入，避免依赖展开倍数。
+      EXPECT_LE(frame_store_count, calls.direct.size() * 2U) << result->llvm_ir;
     }
   });
   EXPECT_GT(direct_loops, 0U) << result->llvm_ir;
@@ -1437,6 +1439,85 @@ export func main(): int {
       functions, [](const auto& function) { return function.name == "Base.read"; }));
 }
 
+TEST(NativeCompilerTest, StringByteOperationsUseTypedEntriesAndLiteralLengths) {
+  const auto prepared = Prepare(R"(
+export func boundary(text: string, index: int): bool { return text.isCodePointBoundary(index); }
+export func offset(text: string, index: int): int? { return text.byteOffsetAt(index); }
+export func slice(text: string, start: int, end: int): string { return text.sliceBytes(start, end); }
+export func trim(text: string): string { return text.trim(); }
+export func lengths(): int { const text = 'A中😀\0'; return text.byteLength; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result =
+      Compile(prepared.program, {
+                                    .optimization = NativeOptimization::None,
+                                    .exports = {"boundary", "offset", "slice", "trim", "lengths"},
+                                    .preserve_ir = true,
+                                });
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  const auto& text = result->llvm_ir;
+  EXPECT_EQ(text.find("@vela_native_v1_builtin"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_string_byte_offset"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_string_slice_bytes"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_string_trim"), std::string::npos);
+  llvm::LLVMContext context;
+  const auto module = ParseModule(text, context);
+  ASSERT_NE(module, nullptr);
+  const auto length = std::ranges::find(result->program.functions, "lengths", &ir::Function::name);
+  ASSERT_NE(length, result->program.functions.end());
+  const auto index = static_cast<std::size_t>(length - result->program.functions.begin());
+  const auto* body = module->getFunction("vela_aot_body_" + std::to_string(index));
+  ASSERT_NE(body, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(llvm::instructions(body), [](const auto& instruction) {
+    const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+    const auto* value =
+        store == nullptr ? nullptr : llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand());
+    return value != nullptr && value->getBitWidth() == 64 && value->equalsInt(9);
+  }));
+}
+
+TEST(NativeCompilerTest, LiteralAsciiCodePointsCarryTheirRangeAndKeepUnicodeDispatch) {
+  const auto prepared = Prepare(R"(
+export func ascii(index: int): int {
+  const output = String();
+  output.append('A\0Z'[index]);
+  return output.toString().length;
+}
+export func unicode(index: int): int {
+  const output = String();
+  output.append('A中😀'[index]);
+  return output.toString().length;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result = Compile(prepared.program, {
+                                                    .optimization = NativeOptimization::None,
+                                                    .exports = {"ascii", "unicode"},
+                                                    .preserve_ir = true,
+                                                });
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  for (const auto& entry : result->exports) {
+    const auto* body = module->getFunction("vela_aot_body_" + std::to_string(entry.function));
+    ASSERT_NE(body, nullptr);
+    const auto is_unicode = entry.name == "unicode";
+    EXPECT_EQ(std::ranges::any_of(*body,
+                                  [](const auto& block) {
+                                    return block.getName().starts_with("string.index.unicode");
+                                  }),
+              is_unicode);
+    const auto has_ascii_range =
+        std::ranges::any_of(llvm::instructions(body), [](const auto& item) {
+          const auto* load = llvm::dyn_cast<llvm::LoadInst>(&item);
+          return load != nullptr && load->getType()->isIntegerTy(CHAR_BIT) &&
+                 load->getMetadata(llvm::LLVMContext::MD_range) != nullptr;
+        });
+    EXPECT_EQ(has_ascii_range, !is_unicode);
+  }
+}
+
 TEST(NativeCompilerTest, NumericParsingUsesTheSharedParserWithoutGenericBuiltinDispatch) {
   const auto prepared = Prepare(R"(
 export func integer(text: string, radix: int?): int { return int.parse(text, radix: radix); }
@@ -1553,9 +1634,41 @@ export func sum(): int {
   ASSERT_NE(module, nullptr);
   const auto entry = std::ranges::find(result->exports, "sum", &NativeExport::name);
   ASSERT_NE(entry, result->exports.end());
-  const auto* function = module->getFunction("vela_aot_entry_" + std::to_string(entry->function));
+  const auto* function = module->getFunction("vela_aot_body_" + std::to_string(entry->function));
   ASSERT_NE(function, nullptr);
   EXPECT_TRUE(HasVectorIntegerAddition(*function)) << result->llvm_ir;
+}
+
+TEST(NativeCompilerTest, UsesContiguousLoadsForClosedGlobalSumOfSquares) {
+  const auto prepared = Prepare(R"(
+let values: int[] = [];
+export func prepare(count: int, seed: int): void {
+  values.clear(); values.reserve(count);
+  let state = seed;
+  for (let index = 0; index < count; index++) {
+    state = (state * 1664525 + 1013904223) & 0x7fffffff;
+    values.push(state & 1023);
+  }
+}
+export func sum(): int {
+  const data = values;
+  const count = data.length;
+  let total = 0;
+  for (let index = 0; index < count; index++) {
+    const value = data[index]; total += value * value;
+  }
+  return total;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result =
+      Compile(prepared.program, {.exports = {"prepare", "sum"}, .preserve_ir = true});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  const auto* gather = module->getFunction("llvm.masked.gather.v8i64.v8p0");
+  EXPECT_TRUE(gather == nullptr || gather->use_empty()) << result->llvm_ir;
 }
 
 TEST(NativeCompilerTest, RetainsGenerationOptionsAndSkipsUnoptimizedTargetPlanning) {

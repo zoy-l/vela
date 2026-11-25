@@ -155,7 +155,7 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
                                       const std::string& name) {
   const auto& declaration = *owner.declaration;
   const auto location = declaration.location;
-  const bool generated = declaration.constructor_kind == frontend::ConstructorKind::Generated;
+  const bool generated = owner.constructor_kind == frontend::ConstructorKind::Generated;
   const auto count = static_cast<std::uint32_t>(owner.constructor.parameters.size());
   auto function = PrepareConstructorFactory(owner, name);
   BeginFunctionBody(function, &declaration);

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -285,9 +286,10 @@ frontend::Diagnostics DevelopmentFiles::AdoptSource(const CompiledSourceSnapshot
   return diagnostics;
 }
 
-std::expected<void, frontend::Diagnostics> DevelopmentFiles::StartWatching() {
+std::expected<void, frontend::Diagnostics> DevelopmentFiles::StartWatching(
+    std::function<void()> changed) {
   const std::scoped_lock lock(mutex_);
-  watcher_ = std::make_unique<DirectoryWatcher>();
+  watcher_ = std::make_unique<DirectoryWatcher>(std::move(changed));
   std::error_code error;
   const auto entry = std::filesystem::weakly_canonical(Utf8Path(entry_), error);
   if (error) {
@@ -669,7 +671,7 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
     return captured;
   }
   const auto& update = **captured;
-  // efsw 可以重复通知同一次保存；仍需发送把未接纳编辑撤销到基线的空更新。
+  // 原生事件可以重复通知同一次保存；仍需发送把未接纳编辑撤销到基线的空更新。
   if (!had_pending && update.IsEmpty()) {
     return std::nullopt;
   }

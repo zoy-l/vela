@@ -193,17 +193,23 @@ NativeObjectFields LoadObjectFields(Builder& builder, llvm::Value* object, Nativ
     return value;
   };
   auto* inline_count = address(object, NativeMemoryLayout::kObjectFieldCount);
-  llvm::Value* fields = address(object, sizeof(runtime::HeapObject));
+  llvm::Value* fields = address(object, NativeMemoryLayout::kInlineObjectFields);
   llvm::Value* count = nullptr;
   if (mode == NativeProgramMode::Closed) {
     auto* physical = load(builder.getInt32Ty(), inline_count, MemoryRegion::HeapHeader);
     MarkInvariant(*physical);
     count = physical;
   } else {
-    auto* payload = LoadInstanceStorage(builder, object);
+    auto* field_offset =
+        load(builder.getInt8Ty(), address(object, NativeMemoryLayout::kObjectInlineFieldOffset),
+             MemoryRegion::HeapHeader);
+    MarkInvariant(*field_offset);
+    // 混合表示的选择尚未确认 reloadable；内联首字段与该载荷槽重叠，不能添加 header TBAA。
+    auto* payload = builder.CreateLoad(builder.getPtrTy(),
+                                       address(object, NativeMemoryLayout::kObjectNativePayload));
     // 调用方已建立普通脚本实例契约，不含宿主对象或 callable 环境。
     // 此时 native_payload 仅在可重载实例中持有字段块；从物理存储读取字段数也支持派生类。
-    auto* indirect = builder.CreateIsNotNull(payload);
+    auto* indirect = builder.CreateICmpEQ(field_offset, builder.getInt8(0));
     fields =
         builder.CreateSelect(indirect, address(payload, sizeof(runtime::InstanceStorage)), fields);
     auto* count_address = builder.CreateSelect(
@@ -697,6 +703,66 @@ std::vector<llvm::Value*> ExternalArguments(Builder& builder,
   return arguments;
 }
 
+struct WrapperResult final {
+  llvm::Value* result;
+  llvm::Value* status;
+  llvm::Value* destination;
+};
+
+void ReturnWrapperResult(Builder& builder,
+                         llvm::Function& entry,
+                         const SourceType& type,
+                         WrapperResult output) {
+  const auto [result, status, destination] = output;
+  ReturnOnFailure(builder, entry, status);
+  llvm::Value* value = builder.getFalse();
+  if (type.kind != Kind::Void) {
+    value = builder.CreateLoad(ValueType(builder.getContext(), type), result);
+  }
+  builder.CreateStore(EncodeValue(builder, value, type), destination);
+  builder.CreateRet(status);
+}
+
+llvm::Function* ExternalAdapter(llvm::Module& module,
+                                const ir::Function& source,
+                                const GeneratedFunction& function) {
+  auto name = std::string("vela.external.adapter");
+  const auto append_type = [&](const SourceType& type) {
+    name += '_' + std::to_string(std::to_underlying(type.kind));
+    name += type.nullable ? 'n' : 'v';
+  };
+  for (std::size_t index = 0; index < source.parameter_count; ++index) {
+    append_type(source.value_types[index]);
+  }
+  name += "_result";
+  append_type(source.return_type);
+  if (auto* existing = module.getFunction(name)) {
+    return existing;
+  }
+  auto& context = module.getContext();
+  const auto parameters = function.entry->getFunctionType()->params();
+  std::vector<llvm::Type*> signature(parameters.begin(), parameters.end());
+  signature.push_back(llvm::PointerType::getUnqual(context));
+  auto* adapter = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getInt8Ty(context), signature, false),
+      llvm::GlobalValue::InternalLinkage, name, module);
+  adapter->setSection(function.entry->getSection());
+  // 封闭映像的装箱边界共享实参检查与转换；函数体地址在调用时传入，避免按函数
+  // 重复验证代码或把整个 typed 主体再次内联进宿主入口。内部 typed 调用保持原样。
+  adapter->addFnAttr(llvm::Attribute::NoInline);
+  Builder builder(llvm::BasicBlock::Create(context, "entry", adapter));
+  auto arguments = ExternalArguments(builder, *adapter, source);
+  auto* result_type = ValueType(context, source.return_type);
+  Builder allocation(&adapter->getEntryBlock(), adapter->getEntryBlock().begin());
+  auto* result = allocation.CreateAlloca(result_type);
+  arguments.push_back(result);
+  auto* status =
+      builder.CreateCall(function.body->getFunctionType(), adapter->getArg(4), arguments);
+  ReturnWrapperResult(builder, *adapter, source.return_type,
+                      {.result = result, .status = status, .destination = adapter->getArg(3)});
+  return adapter;
+}
+
 }  // namespace
 
 void EmitWrapper(llvm::Module& module,
@@ -708,6 +774,21 @@ void EmitWrapper(llvm::Module& module,
                  NativeEntryContract contract) {
   const auto& source = program.functions[function_index];
   const auto external = contract == NativeEntryContract::External;
+  if (external && IsClosedLinkedProgram(program.native_mode, placement) &&
+      source.native_symbol.empty()) {
+    auto* adapter = ExternalAdapter(module, source, function);
+    auto* entry = function.entry;
+    Builder builder(llvm::BasicBlock::Create(module.getContext(), "entry", entry));
+    std::vector<llvm::Value*> arguments;
+    for (auto& argument : entry->args()) {
+      arguments.push_back(&argument);
+    }
+    arguments.push_back(function.body);
+    auto* status = builder.CreateCall(adapter, arguments);
+    status->setTailCallKind(llvm::CallInst::TCK_Tail);
+    builder.CreateRet(status);
+    return;
+  }
   const auto bounded = !external && function.scalar_field_body != nullptr;
   auto* body = bounded ? function.scalar_field_body : function.body;
   auto* entry = external ? function.entry : function.reflection_entry;
@@ -764,14 +845,9 @@ void EmitWrapper(llvm::Module& module,
   } else {
     status = builder.CreateCall(body, arguments);
   }
-  ReturnOnFailure(builder, *entry, status);
-  llvm::Value* value = builder.getFalse();
-  if (source.return_type.kind != Kind::Void) {
-    value = builder.CreateLoad(result_type, result);
-  }
-  builder.CreateStore(EncodeValue(builder, value, source.return_type),
-                      entry->getArg(external ? 3 : 4));
-  builder.CreateRet(status);
+  ReturnWrapperResult(
+      builder, *entry, source.return_type,
+      {.result = result, .status = status, .destination = entry->getArg(external ? 3 : 4)});
 }
 
 }  // namespace vela::compiler::native

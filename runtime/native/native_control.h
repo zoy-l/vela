@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
@@ -20,15 +21,6 @@ class NativeExecution;
 class NativeDebugger;
 enum class NativeSafepointError : std::uint8_t { AlreadyPending, Stopped };
 
-struct NativeSafepointQueue final {
-  std::mutex mutex;
-  std::deque<absl::AnyInvocable<void()>> actions;
-  // 各请求来源独占一个位；生成代码通过 acquire 读取同一状态，不能丢失并发投递。
-  std::atomic<std::uint8_t> requests{0};
-  bool closed = false;
-  std::weak_ptr<std::counting_semaphore<>> wakeup;
-};
-
 // 请求地址随队列固定；借用深度只由 Isolate 线程读写，生成代码与运行时共用这一状态。
 struct NativeControlState final {
   static constexpr auto kUnknownStackLimit = std::numeric_limits<std::uintptr_t>::max();
@@ -38,6 +30,19 @@ struct NativeControlState final {
   NativeExecution* host_execution = nullptr;
   std::uint64_t initializations = 0;
   std::uintptr_t callback_stack_limit = kUnknownStackLimit;
+};
+
+inline constexpr std::size_t kNativeControlCacheLineBytes = 64;
+
+// 请求字和热控制字段共处同一缓存行，避免依赖宿主栈帧的物理布局。
+struct alignas(kNativeControlCacheLineBytes) NativeSafepointQueue final {
+  NativeControlState control;
+  // 各请求来源独占一个位；慢路径用 acquire 消费已发布的数据。
+  std::atomic<std::uint8_t> requests{0};
+  std::mutex mutex;
+  std::deque<absl::AnyInvocable<void()>> actions;
+  bool closed = false;
+  std::weak_ptr<std::counting_semaphore<>> wakeup;
 };
 
 [[nodiscard]] inline std::expected<std::uintptr_t, ExecutionStatus> CurrentNativeStackLimit(
@@ -76,7 +81,7 @@ class NativeControl final {
   NativeControl(NativeControl&&) = delete;
   NativeControl& operator=(NativeControl&&) = delete;
   [[nodiscard]] NativeSafepointEndpoint endpoint() const;
-  [[nodiscard]] NativeControlState& state() noexcept { return state_; }
+  [[nodiscard]] NativeControlState& state() noexcept { return queue_->control; }
   void SetDebugger(NativeDebugger* debugger) noexcept;
   void RequestStop() const noexcept;
   void EnterInitialization() noexcept;
@@ -84,6 +89,7 @@ class NativeControl final {
   [[nodiscard]] ExecutionStatus Poll() const noexcept;
   [[nodiscard]] bool HasHostBorrow() const noexcept;
   [[nodiscard]] bool IsStopRequested() const noexcept;
+  [[nodiscard]] bool HasReadySafepoint() const noexcept;
   [[nodiscard]] bool CanPublish() const noexcept;
   [[nodiscard]] bool IsInitializing() const noexcept;
   [[nodiscard]] bool IsProcessingSafepoint() const noexcept { return processing_; }
@@ -94,8 +100,8 @@ class NativeControl final {
   [[nodiscard]] ExecutionStatus ProcessSafepoint(NativeExecution* execution = nullptr);
 
  private:
+  [[nodiscard]] bool CanProcessSafepoint() const noexcept;
   std::shared_ptr<NativeSafepointQueue> queue_;
-  NativeControlState state_;
   absl::AnyInvocable<void()> pending_;
   bool processing_ = false;
   NativeDebugger* debugger_ = nullptr;

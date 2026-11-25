@@ -266,18 +266,16 @@ void Lowerer::DescribeReflectionClass(const frontend::Class& owner) {
 void Lowerer::DescribeReflectionConstructor(const frontend::Class& owner,
                                             const frontend::ClassDescriptor& descriptor,
                                             std::uint32_t type) {
-  if (owner.constructor_kind == frontend::ConstructorKind::Unavailable) {
+  if (descriptor.constructor_kind == frontend::ConstructorKind::Unavailable) {
     return;
   }
-  const auto visibility =
-      owner.constructor ? owner.constructor->visibility : frontend::Visibility::Public;
   reflection::Member constructor{
       .declaration = declarations_->named_functions.at(
           MethodKey(owner.name, DeclarationKind::Method, frontend::kConstructorName)),
       .declaring_type = type,
       .name = std::string(reflection::kConstructorName),
       .kind = MemberKind::Constructor,
-      .flags = MemberFlags(visibility, frontend::MemberStorage::Instance),
+      .flags = MemberFlags(descriptor.constructor.visibility, frontend::MemberStorage::Instance),
       .type = type,
       .target = program_.classes.at(class_ids_.at(owner.name)).constructor,
       .getter = {},
@@ -287,7 +285,7 @@ void Lowerer::DescribeReflectionConstructor(const frontend::Class& owner,
       .type_arguments = {},
   };
   constructor.signature.result = type;
-  if (owner.constructor_kind == frontend::ConstructorKind::Generated) {
+  if (descriptor.constructor_kind == frontend::ConstructorKind::Generated) {
     for (std::size_t index = 0; index < constructor.signature.parameters.size(); ++index) {
       if (constructor.signature.parameters.at(index).optional) {
         constructor.default_parameters.push_back(static_cast<std::uint32_t>(index));

@@ -37,13 +37,28 @@ func main(): int { return build(Counter).value; }
 )",
                              R"(
 class Base<P> { value: P; }
-class Counter extends Base<int> {
-  constructor(value: int) { super(value: value); }
-}
+class Counter extends Base<int> {}
 func build<P, C extends Base<P>>(value: P, factory: (P) => C): C {
   return factory(value);
 }
 func main(): int { return build(value: 42, factory: Counter).value; }
+)",
+                             R"(
+class Base<P> { value: P; }
+// 未显式应用的泛型构造值需要从工厂上下文反推 T；非泛型 Counter 无此推断步骤。
+class Counter<T> extends Base<T> {}
+func build<P, C extends Base<P>>(value: P, factory: (P) => C): C {
+  return factory(value);
+}
+func main(): int { return build(value: 42, factory: Counter).value; }
+)",
+                             R"(
+class Base {
+  value: int;
+  constructor(value: int = 42) { this.value = value; }
+}
+class Counter extends Base {}
+func main(): int { const create: () => Counter = Counter; return create().value; }
 )",
                              R"(
 class Counter { value: int; }

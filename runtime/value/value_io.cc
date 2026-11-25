@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <ostream>
 #include <span>
@@ -18,6 +19,12 @@ namespace {
 
 constexpr int kMinimumFixedExponent = -6;
 constexpr int kMaximumFixedExponent = 21;
+
+template <class T>
+std::string_view FormatNumber(T value, std::span<char, kScalarTextCapacity> buffer) {
+  const auto converted = std::to_chars(buffer.data(), std::to_address(buffer.end()), value);
+  return {buffer.data(), static_cast<std::size_t>(converted.ptr - buffer.data())};
+}
 
 std::span<char> WriteArrayNumberDigits(std::span<const char> digits,
                                        int exponent,
@@ -117,16 +124,23 @@ std::string_view FormatScalar(Value value, std::span<char, kScalarTextCapacity> 
   if (value.IsBoolean()) {
     return value.AsBoolean() ? "true" : "false";
   }
-  const auto converted =
-      value.IsInteger()
-          ? std::to_chars(buffer.data(), std::to_address(buffer.end()), value.AsInteger())
-          : std::to_chars(buffer.data(), std::to_address(buffer.end()), value.AsDouble());
-  return {buffer.data(), static_cast<std::size_t>(converted.ptr - buffer.data())};
+  return value.IsInteger() ? FormatNumber(value.AsInteger(), buffer)
+                           : FormatNumber(value.AsDouble(), buffer);
 }
 
 std::size_t ScalarTextLength(Value value) {
   std::array<char, kScalarTextCapacity> buffer{};
   return FormatScalar(value, buffer).size();
+}
+
+std::size_t ScalarTextLength(std::int64_t value) {
+  std::array<char, kScalarTextCapacity> buffer{};
+  return FormatNumber(value, buffer).size();
+}
+
+std::size_t ScalarTextLength(double value) {
+  std::array<char, kScalarTextCapacity> buffer{};
+  return FormatNumber(value, buffer).size();
 }
 
 void WriteValue(std::ostream& output, Value value) {

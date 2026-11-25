@@ -101,6 +101,7 @@ void AppendProgram(Program& destination, Program source) {
   std::ranges::move(source.classes, std::back_inserter(destination.classes));
   std::ranges::move(source.functions, std::back_inserter(destination.functions));
   std::ranges::move(source.imports, std::back_inserter(destination.imports));
+  std::ranges::move(source.unused_imports, std::back_inserter(destination.unused_imports));
   std::ranges::move(source.aliases, std::back_inserter(destination.aliases));
   std::ranges::move(source.interfaces, std::back_inserter(destination.interfaces));
   std::ranges::move(source.globals, std::back_inserter(destination.globals));
@@ -210,6 +211,7 @@ void Parser::ParseDeclaration(Program& program) {
 }
 
 std::optional<Program::Import> Parser::ParseImport() {
+  const auto begin = Previous();
   if (!Match(TokenKind::StringLiteral)) {
     AddDiagnostic(Peek().location, "expected string path after import");
     return std::nullopt;
@@ -230,7 +232,14 @@ std::optional<Program::Import> Parser::ParseImport() {
     AddDiagnostic(path.location, "import path cannot contain a null byte");
     return std::nullopt;
   }
-  return Program::Import{.path = path.lexeme, .location = path.location, .alias = std::move(alias)};
+  const auto& end = Previous();
+  return Program::Import{
+      .path = path.lexeme,
+      .location = path.location,
+      .alias = std::move(alias),
+      .diagnostic_location = begin.location,
+      .diagnostic_length = end.offset + end.length - begin.offset,
+  };
 }
 
 void Parser::AnnotatePrevious(TokenRole role) {

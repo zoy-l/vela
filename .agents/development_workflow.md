@@ -15,6 +15,9 @@ constraints.
 
 ## Change discipline
 
+- Do not add or increment version numbers unless the user explicitly requests a version change.
+  This applies to product, package, extension, and document versions; updating, repackaging, or
+  reinstalling an artifact does not authorize a version change.
 - Change underlying semantics at the production source, migrate consumers along the call chain,
   and remove obsolete paths.
 - Use structured parsing and generation interfaces for structured data. Avoid fragile string

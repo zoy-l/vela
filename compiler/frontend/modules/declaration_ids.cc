@@ -15,6 +15,18 @@
 #include "compiler/frontend/syntax/ast.h"
 
 namespace vela::frontend {
+DeclarationIds DeclarationIds::FromRecords(std::vector<DeclarationRecord> records) {
+  DeclarationIds result;
+  result.records_ = std::move(records);
+  for (std::size_t index = 0; index < result.records_.size(); ++index) {
+    const auto& record = result.records_[index];
+    result.update_ = std::max(result.update_, record.seen);
+    if (!record.retired) {
+      result.active_.emplace(record.key, DeclarationId{index});
+    }
+  }
+  return result;
+}
 namespace {
 
 std::string ContractText(const TypeName& type,

@@ -391,6 +391,77 @@ struct NativeDirectArgument<T*> final {
   static T* Decode(Type value) noexcept { return value; }
 };
 
+template <class R, bool NeedsScope, class... Args>
+struct NativeCheckedAdapter {
+  using Result = NativeReturn<R>::Type;
+  using Target = R (*)(NativeContext&, Args...) noexcept;
+  struct EmptyScope final {
+    explicit EmptyScope(NativeContext& /*unused*/) noexcept {}
+  };
+  using Scope = std::conditional_t<NeedsScope, NativeContextScope, EmptyScope>;
+
+  static NativeResult InvokeDecoded(Target target, NativeContext& context, Args... arguments) {
+    if constexpr (std::is_void_v<R>) {
+      target(context, std::forward<Args>(arguments)...);
+      return Value::Null();
+    } else {
+      auto result = target(context, std::forward<Args>(arguments)...);
+      if constexpr (std::is_same_v<R, std::expected<Result, vela::Error>>) {
+        if (!result) {
+          return std::unexpected(std::move(result.error()));
+        }
+        if constexpr (std::is_void_v<Result>) {
+          return Value::Null();
+        } else {
+          return NativeCodec<Result>::Encode(context, std::move(*result));
+        }
+      } else {
+        return NativeCodec<Result>::Encode(context, std::move(result));
+      }
+    }
+  }
+
+  template <std::size_t Index, class... Decoded>
+  static NativeResult InvokeArguments(
+      Target target,
+      NativeExecution& execution,
+      std::uint32_t function,
+      std::tuple<typename NativeAbiCodec<Args>::Argument...>& arguments,
+      Decoded&&... decoded) {
+    if constexpr (Index == sizeof...(Args)) {
+      return InvokeDecoded(target, execution.context(), std::forward<Decoded>(decoded)...);
+    } else {
+      using Argument = std::tuple_element_t<Index, std::tuple<Args...>>;
+      auto next = NativeAbiCodec<Argument>::DecodeChecked(execution, function, Index,
+                                                          std::get<Index>(arguments));
+      if (!next) {
+        return std::unexpected(std::move(next.error()));
+      }
+      return InvokeArguments<Index + 1>(target, execution, function, arguments,
+                                        std::forward<Decoded>(decoded)..., std::move(*next));
+    }
+  }
+
+  // 宿主入口按原生签名共享解码、作用域和结果校验；目标函数通过类型化指针传入。
+  // 不内联回逐函数 thunk，避免相同 codec 在数百个绑定中重复生成。
+  [[clang::noinline]] static std::uint8_t Call(Target target,
+                                               NativeExecution* execution,
+                                               std::uint32_t function,
+                                               NativeAbiCodec<Args>::Argument... arguments,
+                                               NativeAbiCodec<Result>::Type* output) {
+    auto& context = execution->context();
+    Scope scope(context);
+    auto abi = std::tuple<typename NativeAbiCodec<Args>::Argument...>(arguments...);
+    auto result = CompleteNativeResult(*execution, function,
+                                       InvokeArguments<0>(target, *execution, function, abi));
+    if (!result) {
+      return static_cast<std::uint8_t>(result.error());
+    }
+    *output = NativeAbiCodec<Result>::Encode(*result);
+    return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+  }
+};
+
 template <auto Function, class R, class... Args>
 struct NativeAdapterBase {
   using Result = NativeReturn<R>::Type;
@@ -420,10 +491,8 @@ struct NativeAdapterBase {
 #else
   static constexpr bool kNativeStringViews = false;
 #endif
-  struct EmptyScope final {
-    explicit EmptyScope(NativeContext& /*unused*/) noexcept {}
-  };
-  using Scope = std::conditional_t<kNeedsScope, NativeContextScope, EmptyScope>;
+  using Checked = NativeCheckedAdapter<R, kNeedsScope, Args...>;
+  using Scope = Checked::Scope;
 
   static std::vector<NativeType> Parameters() { return {NativeCodec<Args>::kType...}; }
 
@@ -435,61 +504,11 @@ struct NativeAdapterBase {
     }
   }
 
-  static NativeResult InvokeDecoded(NativeContext& context, Args... arguments) {
-    if constexpr (std::is_void_v<R>) {
-      InvokeFunction(context, std::forward<Args>(arguments)...);
-      return Value::Null();
-    } else {
-      auto result = InvokeFunction(context, std::forward<Args>(arguments)...);
-      if constexpr (std::is_same_v<R, std::expected<Result, vela::Error>>) {
-        if (!result) {
-          return std::unexpected(std::move(result.error()));
-        }
-        if constexpr (std::is_void_v<Result>) {
-          return Value::Null();
-        } else {
-          return NativeCodec<Result>::Encode(context, std::move(*result));
-        }
-      } else {
-        return NativeCodec<Result>::Encode(context, std::move(result));
-      }
-    }
-  }
-
   static std::uint8_t AotCall(NativeExecution* execution,
                               std::uint32_t function,
                               NativeAbiCodec<Args>::Argument... arguments,
                               NativeAbiCodec<Result>::Type* output) {
-    auto& context = execution->context();
-    Scope scope(context);
-    auto abi = std::tuple<typename NativeAbiCodec<Args>::Argument...>(arguments...);
-    auto result =
-        CompleteNativeResult(*execution, function, InvokeArguments<0>(*execution, function, abi));
-    if (!result) {
-      return static_cast<std::uint8_t>(result.error());
-    }
-    *output = NativeAbiCodec<Result>::Encode(*result);
-    return static_cast<std::uint8_t>(ExecutionStatus::Returned);
-  }
-
-  template <std::size_t Index, class... Decoded>
-  static NativeResult InvokeArguments(
-      NativeExecution& execution,
-      std::uint32_t function,
-      std::tuple<typename NativeAbiCodec<Args>::Argument...>& arguments,
-      Decoded&&... decoded) {
-    if constexpr (Index == sizeof...(Args)) {
-      return InvokeDecoded(execution.context(), std::forward<Decoded>(decoded)...);
-    } else {
-      using Argument = std::tuple_element_t<Index, std::tuple<Args...>>;
-      auto next = NativeAbiCodec<Argument>::DecodeChecked(execution, function, Index,
-                                                          std::get<Index>(arguments));
-      if (!next) {
-        return std::unexpected(std::move(next.error()));
-      }
-      return InvokeArguments<Index + 1>(execution, function, arguments,
-                                        std::forward<Decoded>(decoded)..., std::move(*next));
-    }
+    return Checked::Call(&InvokeFunction, execution, function, arguments..., output);
   }
 
   static R DirectCall(NativeContext& context,
@@ -536,7 +555,15 @@ class NativeFunction final {
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
   enum class AotCallKind : std::uint8_t { Checked, Direct, NativeStringViews, Contextless };
-  enum class Intrinsic : std::uint8_t { None, SquareRoot };
+  enum class Intrinsic : std::uint8_t {
+    None,
+    SquareRoot,
+    Atan2,
+    CubeRoot,
+    Hypotenuse,
+    Remainder,
+    Round,
+  };
   struct AotEntry final {
     AotEntrySlot slot = nullptr;
     AotEntrySlot unscoped_slot = nullptr;

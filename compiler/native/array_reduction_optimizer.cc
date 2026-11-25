@@ -13,10 +13,13 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/Analysis/VectorUtils.h>
 #include <llvm/IR/Analysis.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
@@ -39,6 +42,7 @@
 #include <llvm/Transforms/Vectorize/LoopVectorize.h>
 
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/loop_hints.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/array_storage.h"
@@ -460,6 +464,162 @@ void EmitTrials(const ArrayReduction& reduction) {
   select.CreateCondBr(select.CreateAnd(narrow, safe_initial), certified, scanned);
 }
 
+bool HasConsecutiveLanes(llvm::Value* value,
+                         llvm::SmallPtrSetImpl<llvm::Value*>& active,
+                         bool& has_seed) {
+  if (const auto* constant = llvm::dyn_cast<llvm::Constant>(value)) {
+    const auto* type = llvm::dyn_cast<llvm::FixedVectorType>(value->getType());
+    if (type == nullptr) {
+      return false;
+    }
+    const auto* first =
+        llvm::dyn_cast_or_null<llvm::ConstantInt>(constant->getAggregateElement(0U));
+    if (first == nullptr) {
+      return false;
+    }
+    for (unsigned lane = 1; lane < type->getNumElements(); ++lane) {
+      const auto* item =
+          llvm::dyn_cast_or_null<llvm::ConstantInt>(constant->getAggregateElement(lane));
+      if (item == nullptr || item->getValue() != first->getValue() + lane) {
+        return false;
+      }
+    }
+    has_seed = true;
+    return true;
+  }
+  if (auto* phi = llvm::dyn_cast<llvm::PHINode>(value)) {
+    if (!active.insert(phi).second) {
+      return true;
+    }
+    const auto valid = std::ranges::all_of(phi->incoming_values(), [&](auto& incoming) {
+      return HasConsecutiveLanes(incoming.get(), active, has_seed);
+    });
+    active.erase(phi);
+    return valid;
+  }
+  const auto* operation = llvm::dyn_cast<llvm::BinaryOperator>(value);
+  if (operation == nullptr) {
+    return false;
+  }
+  auto* left = operation->getOperand(0);
+  auto* right = operation->getOperand(1);
+  if ((operation->getOpcode() == llvm::Instruction::Add ||
+       operation->getOpcode() == llvm::Instruction::Sub) &&
+      llvm::getSplatValue(right) != nullptr) {
+    return HasConsecutiveLanes(left, active, has_seed);
+  }
+  return operation->getOpcode() == llvm::Instruction::Add && llvm::getSplatValue(left) != nullptr &&
+         HasConsecutiveLanes(right, active, has_seed);
+}
+
+class ArrayAccessUnrollHintsPass : public llvm::PassInfoMixin<ArrayAccessUnrollHintsPass> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    constexpr unsigned kPartialUnrollCount = 4;
+    constexpr unsigned kRecordUnrollCount = 16;
+    constexpr std::size_t kExpandedInstructionBudget = 512;
+    const auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
+    auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    bool changed = false;
+    for (auto* loop : loops.getLoopsInPreorder()) {
+      const auto trips = evolution.getSmallConstantMaxTripCount(loop);
+      if (!loop->getSubLoops().empty() || HasLoopUnrollHints(*loop) ||
+          (trips != 0 && trips <= kPartialUnrollCount)) {
+        continue;
+      }
+      std::size_t instructions = 0;
+      bool has_elements = false;
+      bool has_fields = false;
+      bool has_records = false;
+      for (const auto* block : loop->blocks()) {
+        instructions += block->size();
+        for (const auto& instruction : *block) {
+          has_elements |= HasStorageTag(instruction, MemoryRegion::Elements);
+          has_fields |= IsFloatingFieldStore(instruction);
+          has_records |= instruction.getMetadata(kNativeRecordFieldMetadata) != nullptr;
+        }
+      }
+      const auto bounded_record = has_records && trips == 0 &&
+                                  instructions <= kExpandedInstructionBudget / kPartialUnrollCount;
+      const auto large_known = trips != 0 && instructions > kExpandedInstructionBudget / trips;
+      if (has_elements && !has_fields && (bounded_record || large_known)) {
+        // 受查数组访问的冷错误块会随全展开一起复制；限制体积，保留每次访问的检查。
+        auto unroll = kPartialUnrollCount;
+        if (bounded_record) {
+          while (unroll < kRecordUnrollCount &&
+                 instructions <=
+                     kExpandedInstructionBudget / (static_cast<std::size_t>(unroll) * 2)) {
+            unroll *= 2;
+          }
+        }
+        SetLoopUnrollCount(*loop, unroll, LoopUnrollHints::Retain);
+        changed = true;
+      }
+    }
+    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+  }
+};
+
+class ConsecutiveArrayLoadPass : public llvm::PassInfoMixin<ConsecutiveArrayLoadPass> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    const auto& layout = function.getParent()->getDataLayout();
+    bool changed = false;
+    for (auto current = llvm::inst_begin(function); current != llvm::inst_end(function);) {
+      auto* gather = llvm::dyn_cast<llvm::IntrinsicInst>(&*current++);
+      if (gather == nullptr || gather->getIntrinsicID() != llvm::Intrinsic::masked_gather ||
+          !HasStorageTag(*gather, MemoryRegion::Elements)) {
+        continue;
+      }
+      const auto* mask = llvm::dyn_cast<llvm::Constant>(gather->getArgOperand(1));
+      auto* address = llvm::dyn_cast<llvm::GetElementPtrInst>(gather->getArgOperand(0));
+      auto* type = llvm::dyn_cast<llvm::FixedVectorType>(gather->getType());
+      if (address == nullptr || address->getNumIndices() != 1 || !address->isInBounds() ||
+          !address->getPointerOperand()->getType()->isPointerTy() || type == nullptr ||
+          mask == nullptr || !mask->isAllOnesValue() ||
+          layout.getTypeAllocSize(address->getSourceElementType()) !=
+              layout.getTypeAllocSize(type->getElementType())) {
+        continue;
+      }
+      auto* indices = address->getOperand(1);
+      // 窄索引的回绕会跨越 GEP 的符号扩展边界，不能据其模整数 lane 差推导连续地址。
+      if (indices->getType()->getScalarSizeInBits() !=
+          layout.getIndexSizeInBits(address->getPointerAddressSpace())) {
+        continue;
+      }
+      constexpr unsigned kInlineGatherProvenanceValues = 8;
+      llvm::SmallPtrSet<llvm::Value*, kInlineGatherProvenanceValues> active;
+      bool has_seed = false;
+      if (!HasConsecutiveLanes(indices, active, has_seed) || !has_seed) {
+        continue;
+      }
+      // 每个 PHI 入口及回边都保持相邻 lane 差为一；全有效 mask 和 inbounds 证明
+      // 这一整段均可读。恢复连续加载，避免 LLVM 对 byte 数组 GEP 选择硬件 gather。
+      llvm::IRBuilder<> builder(gather);
+      auto* first = builder.CreateExtractElement(indices, builder.getInt32(0));
+      auto* pointer = builder.CreateInBoundsGEP(address->getSourceElementType(),
+                                                address->getPointerOperand(), first);
+      auto* loaded =
+          builder.CreateAlignedLoad(type, pointer, gather->getParamAlign(0).valueOrOne());
+      loaded->copyMetadata(*gather);
+      gather->replaceAllUsesWith(loaded);
+      gather->eraseFromParent();
+      changed = true;
+    }
+    if (!changed) {
+      return llvm::PreservedAnalyses::all();
+    }
+    analyses.invalidate(function, llvm::PreservedAnalyses::none());
+    llvm::FunctionPassManager cleanup;
+    cleanup.addPass(llvm::InstCombinePass());
+    cleanup.addPass(llvm::DCEPass());
+    cleanup.run(function, analyses);
+    return llvm::PreservedAnalyses::none();
+  }
+};
+
 class ArrayReductionPass : public llvm::PassInfoMixin<ArrayReductionPass> {
  public:
   static llvm::PreservedAnalyses run(llvm::Function& function,
@@ -523,6 +683,8 @@ void AddArrayReductionPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::LCSSAPass());
   passes.addPass(ArrayReductionPass());
+  passes.addPass(ConsecutiveArrayLoadPass());
+  passes.addPass(ArrayAccessUnrollHintsPass());
   passes.addPass(llvm::LCSSAPass());
 }
 

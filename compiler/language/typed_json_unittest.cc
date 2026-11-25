@@ -33,6 +33,31 @@ TEST_P(TypedJSONProgramTest, RestoresWithoutCompilerState) {
   test::ExpectRestoredAnswer(GetParam());
 }
 
+INSTANTIATE_TEST_SUITE_P(InheritedSignatures,
+                         TypedJSONProgramTest,
+                         testing::Values(
+                             R"(class Root<T> { value: T; bonus: int = 2; }
+class Middle<U> extends Root<U> {}
+class Leaf extends Middle<int> {}
+func main(): int {
+  const first = JSON.parse<Leaf>('{"value":40}');
+  const second = JSON.parse<Leaf>('{"value":41,"bonus":1}');
+  return first.value + first.bonus == 42 ? second.value + second.bonus : 0;
+})",
+                             R"(let calls = 0;
+func initial(): int { calls++; return 40; }
+class Root {
+  value: int;
+  constructor(initial: int = initial(), bonus: int = 2) { this.value = initial + bonus; }
+}
+class Middle extends Root {}
+class Leaf extends Middle {}
+func main(): int {
+  const first = JSON.parse<Leaf>('{}');
+  const second = JSON.parse<Leaf>('{"initial":41,"bonus":1}');
+  return calls == 1 && first.value == 42 ? second.value : 0;
+})"));
+
 INSTANTIATE_TEST_SUITE_P(
     DecodeContracts,
     TypedJSONProgramTest,

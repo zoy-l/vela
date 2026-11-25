@@ -4,11 +4,8 @@
 #include <cstddef>
 #include <memory>
 
-namespace llvm::orc {
-class LLJIT;
-}
-
 namespace vela::compiler::jit {
+class CodeLinker;
 
 struct CodeResourceCounts final {
   std::size_t batches = 0;
@@ -26,6 +23,7 @@ struct CodeResourceCounts final {
 };
 
 struct CodeResourceCounters final {
+  CodeResourceCounts Snapshot() const noexcept;
   std::atomic_size_t batches{0};
   std::atomic_size_t functions{0};
   std::atomic_size_t images{0};
@@ -39,7 +37,6 @@ struct CodeResourceCounters final {
 
 // 只核算已成功链接的资源（包括缓存命中）；链接失败和退休会撤销登记。
 // 相互独立的 JITDylib 可以并发物化。
-void InstallResourceAccounting(llvm::orc::LLJIT& jit,
-                               std::shared_ptr<CodeResourceCounters> counters);
+void InstallResourceAccounting(CodeLinker& jit, std::shared_ptr<CodeResourceCounters> counters);
 
 }  // namespace vela::compiler::jit

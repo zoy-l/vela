@@ -6,8 +6,6 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/heap/intrusive_link_internal.h"
-
 namespace vela::runtime {
 
 std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
@@ -34,23 +32,6 @@ std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
       return "HostAccess";
   }
   std::unreachable();
-}
-
-ExternalResource::ExternalResource(ExternalResources& owner, ExternalResourceKind kind) noexcept
-    : references_(1) {
-  // 构造尚未向其他线程发布句柄；初始引用不需要共享复制使用的原子读改写。
-  Attach(owner, kind);
-}
-
-ExternalResource::~ExternalResource() {
-  internal::UnlinkIntrusive(*this, &ExternalResource::next_, &ExternalResource::previous_link_);
-}
-
-void ExternalResource::Attach(ExternalResources& owner, ExternalResourceKind kind) noexcept {
-  kind_ = kind;
-  identity_ = owner.next_identity_++;
-  internal::PrependIntrusive(*this, owner.first_, &ExternalResource::next_,
-                             &ExternalResource::previous_link_);
 }
 
 void ExternalResource::Retain() noexcept {

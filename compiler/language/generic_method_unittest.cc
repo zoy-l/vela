@@ -104,7 +104,7 @@ class Operations {
 let calls: int = 0;
 func make(): Operations { calls += 1; return Operations(); }
 func apply<T>(operation: (T) => T, value: T): T { return operation(value); }
-func choose<T>(items: T[], value: T): T { return value; }
+func choose<T>(_items: T[], value: T): T { return value; }
 func main(): int {
   const owner = Operations();
   const first = apply(owner.identity, 10);

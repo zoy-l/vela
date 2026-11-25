@@ -23,10 +23,13 @@
 #include "compiler/frontend/flow/capture_analysis.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/generics/specialization.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
+#include "compiler/frontend/typing/unused_imports.h"
+#include "compiler/frontend/typing/unused_parameters.h"
 
 namespace vela::frontend {
 
@@ -58,8 +61,9 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   RegisterTemplateParameters(program);
   ResolveInterfaces(program);
   ResolveDeclarations(program);
-  ResolveGlobals(program);
+  // 全局初始化可能调用继承构造或方法；先完成类契约，再检查初始化表达式。
   CheckImplementations(program);
+  ResolveGlobals(program);
   for (const auto& alias : program.aliases) {
     static_cast<void>(ResolveType(
         {
@@ -133,6 +137,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   for (auto& diagnostic : BuildJSONDecodePlans(model)) {
     AddDiagnostic(diagnostic.location, std::move(diagnostic.message));
   }
+  ReportUnused(program);
   // 模板与其特化的声明解析可能在同一源码位置给出相同诊断，只保留首次出现。
   absl::flat_hash_set<std::tuple<std::string, std::uint32_t, std::uint32_t, std::string>> reported;
   std::erase_if(diagnostics_, [&](const Diagnostic& diagnostic) {
@@ -146,6 +151,20 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
       .function_count = program.functions.size(),
       .model = std::move(model),
   };
+}
+
+void TypeChecker::ReportUnused(const Program& program) {
+  if (!HasErrors(diagnostics_)) {
+    auto unused = parameter_usage_.DiagnosticsFor(program);
+    for (auto& diagnostic : UnusedImportDiagnostics(program)) {
+      unused.push_back(std::move(diagnostic));
+    }
+    for (auto& diagnostic : unused) {
+      if (IsFileModule(diagnostic.source_path)) {
+        diagnostics_.push_back(std::move(diagnostic));
+      }
+    }
+  }
 }
 
 void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
@@ -1361,6 +1380,9 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   }
   const auto binding = CheckAssignedBinding(*expression.left);
   Type left = CheckExpression(*expression.left, nullptr);
+  if (binding) {
+    parameter_usage_.Write(*expression.left, binding->id);
+  }
   if (expression.left->kind == Expression::Kind::Member) {
     CheckMemberAssignment(*expression.left);
   }

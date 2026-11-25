@@ -196,12 +196,12 @@ TEST_F(ReplLanguageTest, RetiredEntryLambdasRemainCallableWithoutAccumulatingCur
   Execute("{ let n = 40; saved = (): int => { n = n + 1; return n; }; }");
   // 先退休创建闭包的交互入口，再比较后续同形提交的当前程序规模。
   Execute("saved();");
-  const auto count = session().snapshot()->program.functions.size();
+  const auto count = session().snapshot()->program->functions.size();
   constexpr int kSubmissions = 300;
   for (int index = 1; index < kSubmissions; ++index) {
     Execute("saved();");
   }
-  EXPECT_EQ(session().snapshot()->program.functions.size(), count);
+  EXPECT_EQ(session().snapshot()->program->functions.size(), count);
   session().isolate().heap().Collect();
   Execute("saved()");
   EXPECT_EQ(output().str(), "341\n");
@@ -210,9 +210,9 @@ TEST_F(ReplLanguageTest, RetiredEntryLambdasRemainCallableWithoutAccumulatingCur
 TEST_F(ReplLanguageTest, ImplicitConstructorsRemainAvailableAfterTheCallingEntryRetires) {
   Execute("class Box { value: int = 42; }");
   Execute("Box().value");
-  const auto functions = session().snapshot()->program.functions.size();
+  const auto functions = session().snapshot()->program->functions.size();
   Execute("print(1);");
-  EXPECT_EQ(session().snapshot()->program.functions.size(), functions);
+  EXPECT_EQ(session().snapshot()->program->functions.size(), functions);
   Execute("Box(value: 40).value + 2");
   EXPECT_EQ(output().str(), "42\n1\n42\n");
 }

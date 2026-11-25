@@ -55,6 +55,25 @@ const auto kSignatures = [] {
       {Builtin::StringLength, MakeBuiltinSignature(integer, {})},
       {Builtin::StringByteLength, MakeBuiltinSignature(integer, {})},
       {
+          Builtin::StringIsCodePointBoundary,
+          MakeBuiltinSignature(boolean, {{.name = "byteOffset", .type = integer}}),
+      },
+      {
+          Builtin::StringReplaceBytes,
+          MakeBuiltinSignature(text,
+                               {
+                                   {.name = "start", .type = integer},
+                                   {.name = "end", .type = integer},
+                                   {.name = "inserted", .type = text},
+                               }),
+      },
+      {
+          Builtin::StringByteOffsetAt,
+          MakeBuiltinSignature(MakeNullableType(integer),
+                               {{.name = "codePointIndex", .type = integer}}),
+      },
+      {Builtin::StringTrim, MakeBuiltinSignature(text, {})},
+      {
           Builtin::StringSlice,
           MakeBuiltinSignature(text,
                                {
@@ -277,7 +296,7 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
-  if (builtin == Builtin::StringGraphemeSlice) {
+  if (builtin == Builtin::StringGraphemeSlice || builtin == Builtin::StringSliceBytes) {
     return kSignatures.at(Builtin::StringSlice);
   }
   if (builtin == Builtin::ArrayCapacity || builtin == Builtin::CollectionSize) {
@@ -365,6 +384,11 @@ std::span<const std::pair<std::string_view, Builtin>> BuiltinMethods(Kind receiv
         {"toLowerCase", Builtin::StringToLowerCase},
         {"toUpperCase", Builtin::StringToUpperCase},
         {"slice", Builtin::StringSlice},
+        {"isCodePointBoundary", Builtin::StringIsCodePointBoundary},
+        {"sliceBytes", Builtin::StringSliceBytes},
+        {"replaceBytes", Builtin::StringReplaceBytes},
+        {"byteOffsetAt", Builtin::StringByteOffsetAt},
+        {"trim", Builtin::StringTrim},
         {"indexOf", Builtin::StringIndexOf},
         {"includes", Builtin::StringIncludes},
         {"startsWith", Builtin::StringStartsWith},

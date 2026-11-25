@@ -1,9 +1,11 @@
 #include "compiler/jit/code_resources.h"
+#include "compiler/jit/code_batch.h"
 
 #include <atomic>
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <utility>
 
 #include <absl/container/flat_hash_map.h>
@@ -11,12 +13,12 @@
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/LinkGraphLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/Shared/MemoryFlags.h>
-#include <llvm/Support/Casting.h>
+#include <llvm/ExecutionEngine/Orc/SymbolStringPool.h>
 #include <llvm/Support/Error.h>
+#include "compiler/jit/engine.h"
 
 namespace vela::compiler::jit {
 namespace {
@@ -140,10 +142,58 @@ class ResourceAccounting final : public llvm::orc::LinkGraphLinkingLayer::Plugin
 
 }  // namespace
 
-void InstallResourceAccounting(llvm::orc::LLJIT& jit,
-                               std::shared_ptr<CodeResourceCounters> counters) {
-  llvm::cast<llvm::orc::ObjectLinkingLayer>(jit.getObjLinkingLayer())
-      .addPlugin(std::make_shared<ResourceAccounting>(std::move(counters)));
+void InstallResourceAccounting(CodeLinker& jit, std::shared_ptr<CodeResourceCounters> counters) {
+  jit.getObjLinkingLayer().addPlugin(std::make_shared<ResourceAccounting>(std::move(counters)));
+}
+
+CodeResourceCounts CodeResourceCounters::Snapshot() const noexcept {
+  return {
+      .batches = batches.load(std::memory_order_relaxed),
+      .functions = functions.load(std::memory_order_relaxed),
+      .images = images.load(std::memory_order_relaxed),
+      .image_data_bytes = image_data_bytes.load(std::memory_order_relaxed),
+      .executable_bytes = executable_bytes.load(std::memory_order_relaxed),
+      .read_only_bytes = read_only_bytes.load(std::memory_order_relaxed),
+      .writable_bytes = writable_bytes.load(std::memory_order_relaxed),
+      .constant_payload_bytes = constant_payload_bytes.load(std::memory_order_relaxed),
+      .debug_payload_bytes = debug_payload_bytes.load(std::memory_order_relaxed),
+  };
+}
+
+CodeBatch::CodeBatch(std::shared_ptr<CodeLinker> source,
+                     llvm::orc::JITDylib& library,
+                     std::shared_ptr<CodeResourceCounters> counts,
+                     std::size_t count)
+    : jit(std::move(source)),
+      dylib(library),
+      tracker(library.createResourceTracker()),
+      counters(std::move(counts)),
+      functions(count) {
+  counters->batches.fetch_add(1, std::memory_order_relaxed);
+  counters->functions.fetch_add(count, std::memory_order_relaxed);
+}
+
+CodeBatch::~CodeBatch() {
+  auto& session = jit->getExecutionSession();
+  if (!tracker->isDefunct()) {
+    if (auto error = tracker->remove()) {
+      session.reportError(std::move(error));
+    }
+  }
+  if (auto error = session.removeJITDylib(dylib)) {
+    session.reportError(std::move(error));
+  }
+  counters->functions.fetch_sub(functions.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+  counters->batches.fetch_sub(1, std::memory_order_relaxed);
+}
+
+llvm::orc::SymbolStringPtr BatchSymbols::Get(std::string_view name) {
+  const auto [found, inserted] = symbols_.try_emplace(name);
+  if (inserted) {
+    found->second = jit_->mangleAndIntern(llvm::StringRef(name.data(), name.size()));
+  }
+  return found->second;
 }
 
 }  // namespace vela::compiler::jit

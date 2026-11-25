@@ -1,0 +1,701 @@
+# Vela: language, tests, and mocks
+
+> Practical reference for AI assistants writing `.vela` source. Covers core
+> syntax, common standard APIs, `sdk:test`, and `sdk:mock` with runnable examples.
+
+Vela is a statically typed embedded scripting language for native C++ applications.
+It is in active development. This guide describes current supported usage; detailed
+contracts are linked from [llms.txt](llms.txt) and [the documentation index](docs/README.md).
+Check the relevant topic before using an API not shown here. Application-specific
+host functions must come from the application's declarations.
+
+## A complete program
+
+```vela
+class Counter {
+  value: int;
+  step: int = 1;
+
+  next(): int {
+    this.value += this.step;
+    return this.value;
+  }
+}
+
+func main(): void {
+  const counter = Counter(value: 40, step: 2);
+  print('answer: ${counter.next()}'); // answer: 42
+}
+```
+
+Statements use semicolons; blocks use braces. Top-level functions use `func`.
+Methods omit `func`. Type annotations follow names: `name: Type`. Call constructors
+as `Counter(...)` without `new`. `print(value)` writes one value and a newline.
+Execution starts at `main`; an async main returns `Future<T>`. The CLI prints a
+non-void main result and waits for a returned Future. Successful execution exits 0,
+including when an integer main result is nonzero. Unhandled execution errors exit 1.
+
+## Values, bindings, and numeric rules
+
+| Spelling | Meaning |
+| --- | --- |
+| `int` | Signed 64-bit integer; integer arithmetic is checked |
+| `double` | IEEE 754 binary64 floating-point value |
+| `bool` | `true` or `false`; conditions require bool |
+| `string` | Immutable validated UTF-8 text |
+| `void` | No result; not a storable value |
+| `T?` | T or null |
+| `T[]` | Mutable, growable, invariant array of T |
+| `dynamic` | Explicitly dynamic value; operations and typed conversions are checked |
+
+Use `let` for rebinding and `const` for a fixed binding. Both allow local type
+inference and require initializers. Const does not freeze an object or collection.
+Locals are visible only after their initializer. Nested scopes may shadow outer
+bindings. Function signatures and type declarations can refer to later declarations.
+
+```vela
+func main(): void {
+  let count: int = 40;
+  count += 2;
+  const fraction: double = count.toDouble() / 2.0;
+  const whole: int = 42.9.toInt();
+  const hex: int = 0x2a;
+  const binary: int = 0b101010;
+  const octal: int = 0o52;
+  print(fraction); // 21
+  print(whole + hex + binary + octal); // 168
+}
+```
+
+Int and double never mix implicitly in arithmetic, assignments, arguments, or
+returns. Use `toInt()` / `toDouble()`; `as` is a type check, not a numeric conversion.
+Double-to-int truncates toward zero and rejects non-finite or out-of-range values.
+Write `1.0` for a double literal, `1` for int. Use `int.parse(text)` or
+`int.tryParse(text)` for numeric text; tryParse returns null for invalid text.
+No truthiness, `undefined`, `number`, `any`, union types, or general rest/spread
+syntax is provided. Integer literals support decimal, hex, binary, and octal;
+digit separators and numeric suffixes are unsupported.
+
+## Functions, lambdas, and generics
+
+```vela
+type IntOperation = (int) => int;
+
+func add(left: int, right: int = 2): int {
+  return left + right;
+}
+
+func apply(value: int, operation: IntOperation): int {
+  return operation(value);
+}
+
+func identity<T>(value: T): T {
+  return value;
+}
+
+func main(): void {
+  const twice: IntOperation = value => value * 2;
+  const increment = (value: int) => value + 1;
+  print(add(right: 2, left: 40)); // 42
+  print(apply(21, twice)); // 42
+  print(increment(identity(41))); // 42
+}
+```
+
+Function declarations require parameter and return types. Function type annotations
+contain types only, such as `(int, int) => int`; calls through function values use
+positional arguments. Lambdas use `=>` with an expression or block body. Context can
+supply lambda parameter types; otherwise annotate them. A block lambda with an
+explicit result uses `(value: int): int => { return value + 1; }`.
+
+Ordinary declared calls support named arguments. Supplied arguments evaluate in
+source order, followed by omitted defaults in parameter order. Null is a value
+and does not request a default. Captured mutable bindings are shared by closures;
+bound method values retain their receiver.
+
+Functions, classes, interfaces, aliases, and methods can declare type parameters.
+Use `T extends SomeInterface` for a bound. Type arguments can be inferred at calls
+when constraints establish them; use explicit `<...>` otherwise. Type annotations
+remain complete. Aliases are transparent, not new nominal types. Containers such
+as `T[]`, `Map<K, V>`, and `Set<T>` are invariant. See
+[generics](docs/en/generics.md) and [inference](docs/en/type_inference.md).
+
+## Nullability and checked dynamic values
+
+```vela
+func describe(name: string?): string {
+  if (name == null) { return 'anonymous'; }
+  return name.toUpperCase();
+}
+
+func main(): void {
+  const name: string? = null;
+  print(describe(name)); // anonymous
+  print(name?.length ?? 0); // 0
+  const values: int[]? = null;
+  print(values?.[0] ?? 42); // 42: index access is skipped
+  const mixed: dynamic[] = [42, 'Vela'];
+  const answer = mixed[0] as int;
+  print(answer); // 42
+}
+```
+
+`T?` allows null; it does not make a field constructor argument optional. Use an
+initializer/default when omission is intended. A bare null initializer needs an
+explicit nullable type. `int?[]` is an array of nullable ints; `int[]?` is a nullable
+array of ints. An existing `int[]` cannot become `int?[]` by assignment.
+
+Null checks refine stable locals and parameters. Fields and indexed elements are
+not promoted; copy them into a local before checking. `?.` and `?.[index]` skip
+access and argument/index evaluation for null receivers. `??` evaluates its right
+operand only when the left is null. `??=` and postfix non-null assertions are
+unsupported. Use `is Type` for a checked type test and `as Type` for a checked cast.
+Dynamic retains the actual value type and does not permit numeric coercion or
+arbitrary object properties. Prefer explicit casts or `is` refinement at dynamic
+boundaries; implicit dynamic-to-concrete conversions produce warnings.
+
+## Control flow, enums, and matching
+
+```vela
+enum Mode { off, on }
+
+func label(mode: Mode): string {
+  return match (mode) {
+    Mode.off => 'off',
+    Mode.on => 'on',
+  };
+}
+
+func main(): void {
+  let total = 0;
+  for (let index = 0; index < 3; index++) {
+    if (index == 1) { continue; }
+    total += index;
+  }
+  for (const value in [20, 22]) { total += value; }
+  while (total < 45) { total++; }
+  switch (total) {
+    case 45:
+      print(label(Mode.on)); // on
+      break;
+    default:
+      print('unexpected');
+  }
+  print(total > 0 ? 'positive' : 'zero'); // positive
+}
+```
+
+Use `if`, `else`, `while`, C-style `for`, collection `for (const value in collection)`,
+`break`, `continue`, `switch`, and `return`. Collection loops bind one read-only
+name; arrays and Sets yield values, Maps yield a snapshot of keys. No `for...of`
+or loop destructuring exists. Enum members must be qualified as `Mode.on`.
+
+Switch selectors use non-null int, bool, string, or enum types. Labels must be
+same-type constants. Empty labels can share a body; a non-empty branch must exit
+before a following label. Match is an exhaustive expression: arms use `=>`, `_`
+is a wildcard, and `let value` binds the selected value. Nullable matches can use
+`null => ...` followed by `let value => ...`. Pattern guards and destructuring
+are unsupported. Non-void functions must return on every finite path.
+
+Operators include arithmetic, comparisons, `==` / `!=`, `&&` / `||` / `!`, bitwise
+operators, shifts including `>>>`, compound assignments, prefix/postfix `++` / `--`,
+and conditional `condition ? left : right`. Equality uses `==`, not `===`.
+
+## Classes and interfaces
+
+```vela
+interface Measurable {
+  measure(): int;
+}
+
+class Counter implements Measurable {
+  private current: int = 0;
+
+  constructor(initial: int) {
+    this.current = initial;
+  }
+
+  get value(): int { return this.current; }
+  set value(next: int): void { this.current = next; }
+  measure(): int { return this.current; }
+}
+
+class BonusCounter extends Counter {
+  constructor(initial: int) { super(initial); }
+  override measure(): int { return super.measure() + 2; }
+}
+
+func main(): void {
+  const counter = BonusCounter(40);
+  const measured: Measurable = counter;
+  print(measured.measure()); // 42
+  counter.value = 41;
+  print(counter.value); // 41
+}
+```
+
+Members are public by default; use `private` for private members and `static` for
+class members. Access fields with `this.field` inside methods. Interfaces use
+method signatures and require explicit `implements`; matching shape alone does
+not implement an interface. Classes support single inheritance and multiple
+implemented interfaces. Overrides use `override`; `super.method()` calls the base
+implementation. Interface inheritance and interface properties are unsupported.
+
+Without an explicit constructor parameter list, public instance fields become named
+constructor parameters. Fields without initializers are required; initialized fields
+supply defaults. Private/static fields do not become constructor parameters.
+`constructor { ... }` adds a body after generated field initialization.
+`constructor(...) { ... }` instead defines the complete parameter list and must
+initialize required fields. `constructor()` explicitly declares zero parameters.
+See [construction and inheritance](docs/en/core_language.md).
+
+## Strings and collections
+
+```vela
+func main(): void {
+  const values: int[] = [];
+  values.push(20, 22);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const labels = values.map(value => value.toString());
+  print(labels.join(', ')); // 20, 22
+
+  const scores: Map<string, int> = {'Vela': total};
+  scores.set('other', 7);
+  for (const key in scores) { print('${key}: ${scores.get(key) ?? 0}'); }
+
+  const names = Set<string>();
+  names.add('Vela');
+  print(names.has('Vela')); // true
+
+  const text = 'A中😀';
+  print(text.length); // 3 code points
+  print(text.byteLength); // 8 bytes
+  const builder = String();
+  builder.append('Hello, ');
+  builder.append('Vela');
+  print(builder.toString()); // Hello, Vela
+}
+```
+
+Both single and double quotes support `${expression}` interpolation; backticks are
+not string delimiters. Interpolation accepts primitive/null values, not arbitrary
+objects or arrays. Strings index and slice by Unicode code point. Use `byteLength`
+for UTF-8 bytes and grapheme APIs for user-perceived characters. Lowercase `string`
+is immutable text; capitalized `String` is a mutable builder.
+
+| Type | Common API |
+| --- | --- |
+| `string` | `length`, `byteLength`, indexing, `slice(start, end)`, `includes(text)`, `indexOf(text)`, `startsWith(prefix)`, `endsWith(suffix)`, `toUpperCase()`, `toLowerCase()` |
+| `T[]` | `length`, `capacity`, `push(...)`, `pop()`, `shift()`, `unshift(...)`, `splice(...)`, `slice()`, `clear()`, `reserve(n)`, `join(separator)` |
+| Array algorithms | `map`, `forEach`, `some`, `every`, `findIndex`, `reduce(callback, initialValue)`, `sort(compare)` |
+| `Set<T>` | `size`, `add(value)`, `has(value)`, `delete(value)`, `clear()`, `values()`, `union`, `intersection`, `difference` |
+| `Map<K, V>` | `size`, `set(key, value)`, `get(key)`, `has(key)`, `delete(key)`, `clear()`, `keys()`, `values()` |
+
+Array pop/shift and Map get return nullable results. Reduce requires an initial
+value. Empty array literals need an element type from context. Arrays have read-only
+length; assigning an out-of-bounds element does not grow them. Set/Map use `.size`.
+Collection snapshots preserve insertion order; Map/Set language equality compares
+identity, while test `equals` performs deep collection matching.
+
+Map literals use `{keyExpression: valueExpression}`. Quote string keys: `{'name': 42}`;
+`{name: 42}` reads a variable named name. Empty `{}` needs a Map type context.
+Mixed values need an explicit dynamic value context. A Map-returning expression
+lambda needs parentheses: `value => ({'answer': value})`. Object/Set literals,
+field shorthand, destructuring, and collection spread are unsupported.
+
+## Modules and standard globals
+
+```vela
+// File: lib/math.vela
+export func triple(value: int): int { return value * 3; }
+```
+
+```vela
+// File: module_main.vela
+import 'lib/math' as math;
+
+func main(): void {
+  print(math.triple(14)); // 42
+  print(Math.sqrt(9.0)); // 3
+}
+```
+
+Each file has its own top-level scope. Export declarations explicitly. Use
+`import 'relative/path';` to import exports directly or `as prefix` for qualified
+names. Relative paths resolve from the importing file; extensionless imports select
+`.vela` directly, with no index-file probing. Imports are not implicit re-exports.
+No JavaScript named-import braces or namespace declaration blocks exist.
+
+Math, Random, performance, Date, DateParts, JSON, and Error are default globals.
+Common operations are `Math.sqrt(9.0)`, `Math.random()`, `Random.nextInt(10)`,
+`performance.now()` (double monotonic milliseconds), and `Date.now()` (int Unix
+milliseconds). Math numeric inputs use double. Do not add `std:` imports.
+Testing and mocking require explicit `sdk:test` and `sdk:mock` imports.
+
+`JSON.parse(text)` returns dynamic: objects are `Map<string, dynamic>`, arrays are
+`dynamic[]`. Read object keys with `.get('key')`, not invented field access.
+`JSON.stringify(value)` encodes supported values. `JSON.parse<T>(text)` and
+`JSON.safeParse<T>(text)` require explicit target types; the latter returns a
+result whose `success` selects `value` or `error`. See [typed JSON](docs/en/typed_json.md).
+RegExp, ByteArray, ByteData, reflection, date conversion, and other specialized
+APIs have dedicated contracts linked from [llms.txt](llms.txt).
+
+## Exceptions and asynchronous work
+
+```vela
+async func load(value: int): Future<int> {
+  await sleep(1);
+  if (value < 0) { throw Error(message: 'negative value'); }
+  return value;
+}
+
+async func main(): Future<void> {
+  const values = await Future.wait([load(20), load(22)]);
+  print(values[0] + values[1]); // 42
+  try {
+    await load(-1);
+  } catch (error: Error) {
+    print(error.message); // negative value
+  } finally {
+    print('finished');
+  }
+}
+```
+
+Throw a non-null class/interface object, not a string or number. Error is a default
+class; custom throwable classes need no Error base. Use `catch (name: Type)`, a
+final `catch (name: dynamic)`, or a binding-free `catch { ... }`. Finally runs on
+ordinary control-flow exit and exception unwinding.
+
+Async functions and lambdas return `Future<T>` and use `await` inside async bodies.
+Async lambdas use `async (): Future<void> => { ... }`. Calls execute synchronously
+until return, error, or await; async does not create a thread. Use Future, not
+Promise. APIs include `Future.value`, `Future.wait`, `Future.microtask`,
+`Completer<T>()`, `sleep(milliseconds)`, and `Timer.after(milliseconds, callback)`.
+Await propagates failed Futures through ordinary catch/finally. Program entry
+completion stops background tasks; await work required by the program's result.
+See [async contracts](docs/en/async_tasks.md) before adding composition or timers.
+
+## Test project and commands
+
+Tests use the embedded `sdk:test` source library. The Vela runner executes tests;
+`python -m tools.vl test` tests the compiler's C++ implementation instead.
+Create a strict JSON `vela.json` at the application project root:
+
+```json
+{
+  "test": {
+    "paths": ["tests"],
+    "filename": "*_test.vela",
+    "timeout": "30s",
+    "concurrency": 2,
+    "tags": {"unit": {}}
+  }
+}
+```
+
+```text
+vela test
+vela test tests/language_test.vela
+vela test --plain-name "arithmetic"
+vela test --tags "unit && !slow"
+vela test --reporter json
+vela test --list
+```
+
+The runner finds the nearest vela.json upwards from the working directory, or uses
+`--config FILE`. A `test` object is required. Without CLI paths, test.paths must
+be explicit and nonempty; there is no implicit test directory. CLI paths replace
+configured paths. Config paths are relative to the config; CLI paths to the current
+directory. Directly selected files need not match the filename glob. Config rejects
+comments, trailing commas, duplicate keys, and unknown fields.
+
+Each suite has an independent Isolate and module state. Tests within a suite run
+sequentially; concurrency is between suites. `--list` executes registration but no
+test bodies or hooks. JSON reporting is newline-delimited events, not one JSON
+array; use the final `done` event for final counts. No selected tests is a failure;
+all selected tests explicitly skipped is success.
+
+## Test registration, lifecycle, and assertions
+
+```vela
+// File: tests/language_test.vela
+import 'sdk:test';
+
+func main(): void {
+  group('arithmetic', () => {
+    let values: int[] = [];
+    setUp(() => { values = [20, 22]; });
+    tearDown(() => { values.clear(); });
+
+    test('sum', () => {
+      expect(values.reduce((sum, value) => sum + value, 0), equals(42));
+      expect(values, hasLength(2));
+    });
+
+    test('Future result', async (): Future<void> => {
+      await expectLater(Future.value(42), completion(equals(42)));
+    });
+
+    test('callback', () => {
+      const done = expectAsync1<int>((value: int): void => {
+        expect(value, equals(42));
+      });
+      done(42);
+    });
+
+    test('original exception', () => {
+      const problem = Error(message: 'invalid');
+      expect((): void => { throw problem; }, throwsA(same(problem)));
+    });
+  }, tags: ['unit']);
+}
+```
+
+Main registers the test tree. Group bodies run synchronously and must return void.
+Use the same `test(description, body)` for sync and async tests; there is no
+`testAsync`. A test or lifecycle callback must be callable with zero arguments.
+Ordinary return values are ignored; returned Futures are awaited. Registration
+APIs take dynamic callbacks, so annotate lambda parameters when context is absent.
+
+| API | Purpose |
+| --- | --- |
+| `test(description, body, ...)` | Register a test |
+| `group(description, body, ...)` | Register a nested group synchronously |
+| `setUp(callback)`, `tearDown(callback)` | Before/after each test in scope |
+| `setUpAll(callback)`, `tearDownAll(callback)` | Once before/after selected group tests |
+| `addTearDown(callback)` | Dynamic cleanup in the active test/setup scope |
+| `expect(actual, matcher, reason: ...)` | Synchronous check or tracked async expectation |
+| `expectLater(actual, matcher, reason: ...)` | Tracked expectation returning Future<void> |
+| `fail(message)` | Throw TestFailure |
+| `expectAsync0(callback, count: ..., max: ...)` | Track a zero-argument callback |
+| `expectAsync1<T>(callback, count: ..., max: ...)` | Track a one-argument callback; specify T |
+
+Test/group metadata accepts `skip: true` or a reason string, `tags: 'unit'` or an
+array of strings, and `timeout: Timeout(milliseconds: 1000)`, `Timeout.factor(2.0)`,
+or `Timeout.none()`. Timeout is an inactivity limit, not preemptive interruption
+of synchronous code or a host call.
+
+Setups run outer to inner in registration order. Dynamic cleanup runs last-in-first-out,
+then teardowns run inner to outer in reverse registration order. Callbacks and their
+Futures are awaited sequentially. Cleanup still runs after a test failure.
+`addTearDown` in setUpAll belongs to the group; otherwise it belongs to the active
+test. Async expectations remain attached to their originating test even when the
+caller omits await. Prefer await when subsequent code depends on their completion.
+
+| Matcher | Usage |
+| --- | --- |
+| `equals(value)` | Deep equality for arrays, Maps, and Sets; ordinary objects retain identity semantics |
+| `same(value)` | Identity comparison |
+| `isNull`, `isNotNull`, `isTrue`, `isFalse`, `isEmpty`, `isNotEmpty` | Matcher constants, with no parentheses |
+| `greaterThan(value)`, `lessThan(value)` | Same-kind numeric comparisons |
+| `closeTo(3.0, 0.01)` | Double tolerance; no int/double coercion |
+| `contains(value)`, `hasLength(n)` | String/collection matching |
+| `orderedEquals(values)`, `unorderedEquals(values)` | Ordered or one-to-one unordered matching |
+| `isNot(matcher)`, `allOf([a, b])`, `anyOf([a, b])` | Composition; allOf/anyOf take arrays |
+| `predicate(callback, description)` | `(dynamic) => bool` predicate |
+| `throwsA(matcher)` | A zero-argument function throwing, or a Future failing, with the matched original object |
+| `completes`, `completion(matcher)` | Successful Future completion, optionally matching its result |
+
+Passing a plain expected value to expect wraps it as equals. Test equals does not
+change the language's `==` semantics. Custom synchronous matchers implement
+`Matcher.match(actual: dynamic): MatchResult`; async matchers implement
+`AsyncMatcher.matchAsync(actual: dynamic): Future<MatchResult>`.
+Exact declarations are in [the test SDK](compiler/sdk/test.vela).
+
+## Generate and use interface mocks
+
+Define dependencies as exported interfaces and generate ordinary Vela source:
+
+```vela
+// File: lib/user_repository.vela
+export interface UserRepository {
+  load(id: int): Future<string>;
+  save(id: int, name: string): void;
+}
+```
+
+```text
+vela mock lib/user_repository.vela --interface UserRepository -o tests/user_repository.mocks.vela
+vela mock lib/user_repository.vela --interface UserRepository -o tests/user_repository.mocks.vela --check
+```
+
+Generation is explicit; compilation, testing, and LSP do not regenerate files.
+Run `--check` in CI to detect a missing or stale generated module. Select at least
+one exported interface with `--interface`; repeat the option for multiple interfaces.
+
+```vela
+// File: tests/repository_test.vela
+import 'sdk:test';
+import 'sdk:mock' as mock;
+import '../lib/user_repository' as api;
+import './user_repository.mocks.vela' as generated;
+
+async func refresh(repository: api.UserRepository, id: int): Future<string> {
+  const name = await repository.load(id);
+  repository.save(id: id, name: name);
+  return name;
+}
+
+func main(): void {
+  test('loads and saves a user', async (): Future<void> => {
+    const session = mock.MockSession();
+    const repository = generated.MockUserRepository(session: session);
+
+    mock.when(repository.calls.load(42)).thenAnswer(
+      async (invocation: mock.MockInvocation): Future<string> => {
+        expect(invocation.argument('id'), equals(42));
+        return 'Alice';
+      }
+    );
+    mock.when(repository.calls.save(42, 'Alice')).thenDo(
+      (invocation: mock.MockInvocation): void => {
+        expect(invocation.argumentAt(1), equals('Alice'));
+      }
+    );
+
+    expect(await refresh(repository.object, 42), equals('Alice'));
+    mock.verifyInOrder([
+      repository.calls.load(42),
+      repository.calls.save(42, 'Alice'),
+    ]);
+    mock.verifyNoMoreInteractions(repository.control);
+  });
+}
+```
+
+The generated wrapper exposes `.object` with the real interface type, `.calls`
+for call patterns, and `.control` for history management. Constructing a pattern
+does not execute or record a business call. Configure with
+`mock.when(repository.calls.load(...))`, not a real `.object.load(...)` call or a
+Mockito-style recording closure.
+
+Create MockSession in a test or its setUp, never in registration or setUpAll for
+sharing across tests. It belongs to that test and closes automatically after all
+its cleanup callbacks. Explicit `session.close()` closes it early. Calls,
+configuration, and verification cannot cross test scopes. One session can hold
+multiple mocks for cross-mock ordering.
+
+The generator supports exported non-generic interfaces with ordinary methods,
+including concrete generic types, nullable values, function types, void, and
+Future results. Open generic interfaces and generic methods are unsupported.
+Classes, constructors, static methods, top-level functions, and builtins cannot
+be patched at runtime; inject interfaces or function values instead.
+
+## Stub responses and argument matching
+
+| Response | Contract |
+| --- | --- |
+| `thenReturn(value)` | Fixed non-Future, non-void result; reused on every matching call |
+| `thenReturnInOrder(values)` | Nonempty finite sequence; exhaustion fails |
+| `thenThrow(error)` | Synchronously throw the original throwable object |
+| `thenAnswer(callback)` | One MockInvocation argument; return the declared value/Future |
+| `thenDo(callback)` | Void method only; one MockInvocation argument, synchronous void result |
+
+Every real call requires a stub, including void calls. Missing stubs fail with
+MockMissingStub. Complete every when builder with one response. The last configured
+matching stub wins. Exhausting a sequence fails rather than selecting an older stub.
+For Future methods, use thenAnswer to create the Future in the actual call context;
+thenReturn does not accept Futures. ThenThrow still throws synchronously for a Future
+method; return a failed Future from thenAnswer when asynchronous failure is intended.
+
+Patterns accept ordinary values (deep equals), synchronous sdk:test matchers, or
+`mock.any` (including null). Named and positional call forms normalize to the same
+declared parameter order. Use `same(value)` for reference identity. Capture patterns
+`mock.captureAny` and `mock.captureThat(matcher)` are only valid for verification,
+not stubbing or untilCalled. Async matchers are unsupported for arguments.
+
+MockInvocation provides `argumentAt(index)`, `argument(name)`, `arguments`,
+`sequence`, `methodName`, and source/identity metadata. Argument arrays are shallow
+copies; object arguments remain shared references. Later mutation can affect later
+deep matching. Extract a snapshot explicitly in a response when needed.
+
+## Function mocks, capture, and asynchronous observation
+
+```vela
+// File: tests/function_mock_test.vela
+import 'sdk:test';
+import 'sdk:mock' as mock;
+
+func apply(value: int, operation: (int) => int): int {
+  return operation(value);
+}
+
+func main(): void {
+  test('function dependency and capture', () => {
+    const function = mock.MockFunction1<int, int>(mock.MockSession());
+    mock.when(function.query(mock.any)).thenReturn(42);
+    expect(apply(7, function.function), equals(42));
+    const result = mock.verify(function.query(mock.captureAny)).called(1);
+    expect(result.captured, equals([7]));
+    mock.verifyNoMoreInteractions(function.control);
+  });
+
+  test('observe a call', async (): Future<void> => {
+    const function = mock.MockFunction0<int>(mock.MockSession());
+    mock.when(function.query()).thenReturn(42);
+    const observed = mock.untilCalled(function.query());
+    expect(function.function(), equals(42));
+    const invocation = await observed;
+    expect(invocation.arguments, isEmpty);
+    mock.verify(function.query()).called(1);
+    mock.verifyNoMoreInteractions(function.control);
+  });
+}
+```
+
+Use MockFunction0<R>, MockFunction1<A, R>, or MockFunction2<A, B, R> for typed
+function dependencies; `.function` is the callable, `.query(...)` creates patterns,
+and `.control` manages history. Supply type arguments explicitly or through a
+complete contextual type. R cannot be void. Void equivalents are MockVoidFunction0,
+MockVoidFunction1<A>, and MockVoidFunction2<A, B>; configure them with thenDo.
+Use a generated interface for larger function signatures.
+
+| Verification API | Contract |
+| --- | --- |
+| `mock.verify(call).called(n)` | Exactly n unverified calls; n may also be a count Matcher |
+| `mock.verifyNever(call)` | Zero matching unverified calls |
+| `mock.verifyInOrder([call1, call2])` | Ordered distinct unverified calls in one session |
+| `mock.verifyZeroInteractions(control)` | No history at all, including verified calls |
+| `mock.verifyNoMoreInteractions(control)` | No remaining unverified calls |
+| `mock.clearInteractions(control)` | Clear history, keep stubs and sequence position |
+| `mock.reset(control)` | Clear history/stubs and invalidate pending operations for that mock |
+| `mock.untilCalled(call)` | Future<MockInvocation> for earliest matching history or the next matching call |
+
+Successful verification consumes matching records; failure consumes nothing.
+Called(0) consumes nothing. In-order verification commits only if the complete
+sequence succeeds; unrelated intermediate calls remain unverified. Captures are
+published only on successful verification, flattened by call order then parameter
+order. Do not verify the same consumed calls again with a different operation.
+
+UntilCalled also sees verified history and does not consume calls. It completes
+when the invocation is recorded, not when its response or Future finishes. Await
+the method result separately when completion matters. It is tracked by the test
+even if not awaited. Reset fails pending waits with MockReset; close fails them
+with MockSessionClosed. Clearing history leaves future-call waits registered.
+Usage, missing-stub, exhausted-sequence, and verification errors use the test
+failure channel. See [mock contracts](docs/zh-CN/testing.md#12-mock-扩展) and
+[SDK declarations](compiler/sdk/mock.vela) for exact behavior.
+
+## Validate generated Vela code
+
+```text
+vela check app.vela
+vela run app.vela
+vela check tests/repository_test.vela
+vela test --config vela.json
+vela fmt --check .
+```
+
+Use the installed vela executable, or the repository build at
+`out/debug/vela.exe` / `out/release/vela.exe` on Windows. Check source and imports,
+run programs with known outputs, generate/check mocks before their tests, and run
+the Vela test runner. Syntax/type checking alone does not execute tests or validate
+stub responses. Production AOT rejects sdk:test and sdk:mock imports; keep them in
+development/test modules.
+
+Before completing generated code, check the recurring mistakes: use func, postfix
+types, explicit numeric conversion, ClassName(...) construction, qualified enum
+members, collection for-in, Future<T>, explicit SDK imports, synchronous groups,
+per-test mock sessions, `.calls` patterns, and explicit void stubs. Consult the
+current contract instead of inventing missing APIs from another language.

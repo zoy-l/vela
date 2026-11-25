@@ -17,6 +17,7 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Utils/LoopUtils.h>
 
+#include "compiler/native/array_reduction_optimizer.h"
 #include "compiler/native/loop_hints.h"
 #include "compiler/test_support/native_pass_test_support.h"
 
@@ -110,6 +111,67 @@ done:
 }
 )",
                                         context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("invoke");
+  test::RunFunctionPasses(function, AddCallLoopPasses);
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  EXPECT_EQ(IndirectCallCount(function), 8U);
+}
+
+TEST(CallLoopOptimizerTest, ExpandsGeneratedRuntimeCountsAndKeepsFailureExits) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+define i64 @invoke(ptr %target, i64 %count) {
+entry:
+  %empty = icmp eq i64 %count, 0
+  br i1 %empty, label %done, label %loop
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %latch ]
+  %result = call i64 %target(i64 %index)
+  %failed = icmp slt i64 %result, 0
+  br i1 %failed, label %failure, label %latch
+latch:
+  %next = add nuw i64 %index, 1
+  %more = icmp ult i64 %next, %count
+  br i1 %more, label %loop, label %done
+failure:
+  ret i64 %index
+done:
+  ret i64 %count
+}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("invoke");
+  function.addFnAttr(kNativeArrayReductionCandidateAttribute);
+  test::RunFunctionPasses(function, AddCallLoopPasses);
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  EXPECT_GT(IndirectCallCount(function), 1U);
+}
+
+TEST(CallLoopOptimizerTest, ReducesUnrollCountToFitTheCombinedLoopBudget) {
+  std::string source = R"(
+define void @invoke(ptr %target, ptr %slot) {
+entry:
+  br label %loop
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  call void %target()
+)";
+  constexpr std::size_t kPaddingInstructions = 100;
+  for (std::size_t index = 0; index < kPaddingInstructions; ++index) {
+    source += "  %padding" + std::to_string(index) + " = load volatile i64, ptr %slot\n";
+  }
+  source += R"(
+  %next = add nuw nsw i64 %index, 1
+  %more = icmp ult i64 %next, 64
+  br i1 %more, label %loop, label %done
+done:
+  ret void
+}
+)";
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(source, context);
   ASSERT_NE(module, nullptr);
   auto& function = *module->getFunction("invoke");
   test::RunFunctionPasses(function, AddCallLoopPasses);

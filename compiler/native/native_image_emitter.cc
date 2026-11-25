@@ -232,12 +232,13 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              offsetof(NativeClassDescription, constructor),
                                              offsetof(NativeClassDescription, enum_members),
                                          });
-  array_ =
-      RecordType<NativeArrayDescription>("vela.array", std::to_array<llvm::Type*>({text_, type_}),
-                                         std::array{
-                                             offsetof(NativeArrayDescription, name),
-                                             offsetof(NativeArrayDescription, element),
-                                         });
+  array_ = RecordType<NativeArrayDescription>("vela.array",
+                                              std::to_array<llvm::Type*>({text_, type_, word_}),
+                                              std::array{
+                                                  offsetof(NativeArrayDescription, name),
+                                                  offsetof(NativeArrayDescription, element),
+                                                  offsetof(NativeArrayDescription, record_fields),
+                                              });
   collection_ = RecordType<NativeCollectionDescription>(
       "vela.collection", std::to_array<llvm::Type*>({text_, type_, type_, word_}),
       std::array{
@@ -457,7 +458,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
       std::to_array<llvm::Type*>({
           word_,  word_,  text_,  text_,  table_, table_, table_, table_, table_, table_,
           table_, table_, table_, table_, table_, table_, table_, wide_,  table_, table_,
-          table_, table_, table_, word_,  table_, table_, table_, table_, table_,
+          table_, table_, table_, word_,  table_, table_, table_, table_, table_, table_,
       }),
       std::array{
           offsetof(NativeImage, abi_version),
@@ -489,6 +490,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeImage, reflection_types),
           offsetof(NativeImage, reflection_members),
           offsetof(NativeImage, attributes),
+          offsetof(NativeImage, imported_functions),
       });
 }
 
@@ -629,7 +631,8 @@ llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> cl
 llvm::Constant* ImageEmitter::Arrays(std::span<const NativeArrayDescription> arrays) {
   std::vector<llvm::Constant*> constants;
   for (const auto& type : arrays) {
-    constants.push_back(Record(array_, {Text(type.name.text()), Type(type.element)}));
+    constants.push_back(
+        Record(array_, {Text(type.name.text()), Type(type.element), Word(type.record_fields)}));
   }
   return Table(array_, constants);
 }
@@ -808,6 +811,7 @@ std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(const NativeImage
                                          ReflectionTypes(image.reflection_types.values()),
                                          ReflectionMembers(image.reflection_members.values()),
                                          Attributes(image.attributes.values()),
+                                         Numbers(image.imported_functions.values()),
                                      });
   auto* storage = new llvm::GlobalVariable(module_, image_, true, llvm::GlobalValue::PrivateLinkage,
                                            description, "vela.image");

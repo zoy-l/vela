@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/test_support/checker_test_support.h"
@@ -179,9 +180,13 @@ func main(): int {
       {.path = "lib.vela", .text = "export func value(input: int): int { return input; }"},
   });
   runtime::Isolate isolate;
-  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
-  ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(**compiled);
+  auto compiled = test::CompileModules(sources, "main.vela", isolate, {});
+  ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+  ASSERT_EQ(compiled.diagnostics.size(), 2U);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    EXPECT_EQ(diagnostic.code, frontend::DiagnosticCode::UnusedImport);
+  }
+  const auto result = test::ExecuteInteger(*compiled.instance);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }

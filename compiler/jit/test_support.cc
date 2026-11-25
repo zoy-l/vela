@@ -54,7 +54,7 @@ std::expected<CompiledImage, frontend::Diagnostics> CompileText(Compiler& compil
   if (!candidate) {
     return std::unexpected(candidate.error().diagnostics);
   }
-  return compiler.Compile(candidate->snapshot().program,
+  return compiler.Compile(*candidate->snapshot().program,
                           {.tier = tier, .preserve_ir = preservation == IRPreservation::Preserve});
 }
 
@@ -66,7 +66,7 @@ std::expected<CompiledUpdate, std::string> CompileUpdate(Compiler& compiler,
   if (!candidate) {
     return std::unexpected(frontend::DiagnosticsText(candidate.error().diagnostics));
   }
-  auto code = compiler.Compile(candidate->snapshot().program, {.tier = tier});
+  auto code = compiler.Compile(*candidate->snapshot().program, {.tier = tier});
   if (!code) {
     return std::unexpected(frontend::DiagnosticsText(code.error()));
   }
@@ -91,7 +91,7 @@ testing::AssertionResult PublishSource(Compiler& compiler,
                                        runtime::Isolate& isolate,
                                        const SourceCandidate& candidate,
                                        NativeCodeTier tier) {
-  const auto compiled = compiler.Compile(candidate.snapshot().program, {.tier = tier});
+  const auto compiled = compiler.Compile(*candidate.snapshot().program, {.tier = tier});
   if (!compiled) {
     return testing::AssertionFailure() << frontend::DiagnosticsText(compiled.error());
   }
@@ -168,7 +168,7 @@ testing::AssertionResult ReturnsInteger(const runtime::NativeNamedEntry& entry,
 testing::AssertionResult RequiresReload(Compiler& compiler,
                                         runtime::Isolate& isolate,
                                         const SourceCandidate& candidate) {
-  const auto code = compiler.Compile(candidate.snapshot().program);
+  const auto code = compiler.Compile(*candidate.snapshot().program);
   if (!code) {
     return testing::AssertionFailure() << frontend::DiagnosticsText(code.error());
   }

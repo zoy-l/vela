@@ -119,9 +119,9 @@ TEST(MapLiteralTypeTest, UsesAliasesNestedContextsAndSharedGenericInference) {
   const auto checked = CheckTestSource(R"(
 type Values<T> = Map<string, T>;
 func identity<T>(value: T): T { return value; }
-func apply<T>(values: Map<string, T>, fallback: T): T { return fallback; }
+func apply<T>(_values: Map<string, T>, fallback: T): T { return fallback; }
 func make<K, V>(key: K, value: V): Map<K, V> { return {key: value}; }
-func callbacks<T>(operations: Map<string, (T) => T>, value: T): T { return value; }
+func callbacks<T>(_operations: Map<string, (T) => T>, value: T): T { return value; }
 func main(): void {
   const empty: Values<int>? = {};
   const nested: Map<string, int[][]> = {'items': [[], [1]]};

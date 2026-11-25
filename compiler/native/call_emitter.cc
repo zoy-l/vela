@@ -23,6 +23,7 @@
 #include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
@@ -113,26 +114,30 @@ std::optional<CallableTarget> FunctionEmitter::CallTarget(std::size_t index) con
   return direct_calls_.empty() ? std::nullopt : direct_calls_.at(index);
 }
 
-llvm::BasicBlock* FunctionEmitter::EmitSquareRootCall(const ir::Instruction& instruction,
-                                                      std::uint32_t target) {
+llvm::BasicBlock* FunctionEmitter::EmitIntrinsicCall(const ir::Instruction& instruction,
+                                                     std::uint32_t target) {
   const auto& callee = program_.functions.at(target);
   llvm::BasicBlock* intrinsic_done = nullptr;
-  if (generated_[target].square_root) {
-    auto* operand = Payload(instruction.lhs);
-    auto* matches = SquareRootCondition(*imports_.at(target), operand);
+  const auto intrinsic = generated_[target].math_intrinsic;
+  if (intrinsic != runtime::NativeFunction::Intrinsic::None) {
+    std::vector<llvm::Value*> operands;
+    operands.reserve(callee.parameter_count);
+    for (std::size_t index = 0; index < callee.parameter_count; ++index) {
+      operands.push_back(Payload(static_cast<ir::RegisterId>(instruction.lhs + index)));
+    }
+    auto* matches = IntrinsicCondition(*imports_.at(target), operands.front(), intrinsic);
     if (program_.native_mode == NativeProgramMode::Reloadable || roots_.debug_values) {
       matches = builder_.CreateAnd(
           matches, builder_.CreateICmpEQ(LoadSafepointRequests(), builder_.getInt8(0)));
     }
     auto& context = module_.getContext();
-    auto* calculate = llvm::BasicBlock::Create(context, "call.sqrt", body_);
+    auto* calculate = llvm::BasicBlock::Create(context, "call.math", body_);
     auto* bound = llvm::BasicBlock::Create(context, "call.binding", body_);
-    intrinsic_done = llvm::BasicBlock::Create(context, "call.sqrt.done", body_);
+    intrinsic_done = llvm::BasicBlock::Create(context, "call.math.done", body_);
     auto* branch = builder_.CreateCondBr(matches, calculate, bound);
     MarkClosedInvariantCall(*branch);
     builder_.SetInsertPoint(calculate);
-    Store(instruction.dst, builder_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, operand),
-          callee.return_type);
+    Store(instruction.dst, EmitMathIntrinsic(intrinsic, operands), callee.return_type);
     builder_.CreateBr(intrinsic_done);
     builder_.SetInsertPoint(bound);
     PrepareInlineRuntimeCall();
@@ -276,7 +281,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   }
   // 即使被调用方使用延迟叶入口，调用者也必须占用深度预算并保留失败时的调用链。
   PrepareTraceFrame();
-  auto* intrinsic_done = EmitSquareRootCall(instruction, selected.function);
+  auto* intrinsic_done = EmitIntrinsicCall(instruction, selected.function);
   if (tier_ == NativeCodeTier::Baseline && IsNamedBaselineCall(callee, program_.native_mode)) {
     for (std::size_t index = 0; index < callee.parameter_count; ++index) {
       const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);

@@ -5,9 +5,13 @@ source_set("base") {
     "async_operation.h",
     "binary.cc",
     "binary.h",
+    "binary_codec.h",
+    "binary_fields.h",
     "builtin.h",
     "byte_access.h",
     "callable.h",
+    "command_line.cc",
+    "command_line.h",
     "declaration.h",
     "diagnostic.cc",
     "diagnostic.h",
@@ -55,11 +59,25 @@ source_set("directory_watcher") {
     "directory_watcher.cc",
     "directory_watcher.h",
   ]
+  if (target_os == "win") {
+    sources += [
+      "directory_watcher_win.cc",
+      "directory_watcher_win.h",
+    ]
+  } else if (target_os == "mac") {
+    sources += [
+      "directory_watcher_mac.cc",
+      "directory_watcher_mac.h",
+    ]
+    frameworks = [ "CoreServices.framework" ]
+  } else {
+    sources += [
+      "directory_watcher_linux.cc",
+      "directory_watcher_linux.h",
+    ]
+  }
   deps = [ ":base" ]
-  public_deps = [
-    "//third_party:abseil",
-    "//third_party:efsw",
-  ]
+  public_deps = [ "//third_party:abseil" ]
 }
 
 source_set("json") {

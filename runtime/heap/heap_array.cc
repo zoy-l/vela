@@ -107,9 +107,13 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   }
   const auto storage = ElementBytes(*object, layout, length);
   if (contents.empty()) {
-    VisitElementStorage(layout, storage, [](auto elements) {
-      std::uninitialized_value_construct_n(elements.data(), elements.size());
-    });
+    if (layout.record_fields != 0) {
+      std::uninitialized_value_construct_n(storage.data(), storage.size());
+    } else {
+      VisitElementStorage(layout, storage, [](auto elements) {
+        std::uninitialized_value_construct_n(elements.data(), elements.size());
+      });
+    }
   } else {
     std::memcpy(storage.data(), contents.data(), contents.size());
   }
@@ -261,6 +265,23 @@ std::expected<std::uint32_t, ArrayAccessError> Heap::PushArray(HeapObject& array
   if (value.IsReference()) {
     WriteBarrier(array, value);
   }
+  return array.length;
+}
+
+std::expected<std::uint32_t, ArrayAccessError> Heap::PushRecordArray(HeapObject& array,
+                                                                     HeapObject& value) noexcept {
+  // AOT 资格证明保证布局、完整初始化和唯一消费；扩容前保留普通构造结果的根。
+  const auto grown = GrowArray(array, Value::Object(&value));
+  if (!grown) {
+    return std::unexpected(grown.error());
+  }
+  const auto& layout = *array.array_layout();
+  const auto bytes = layout.element_size();
+  const auto storage = internal::ArrayBytes(array, layout);
+  std::memcpy(storage.subspan(static_cast<std::size_t>(array.length) * bytes).data(),
+              ObjectFieldStorage(value).data(), bytes);
+  ++array.length;
+  ++internal::ArrayBuffer(array).mutation;
   return array.length;
 }
 

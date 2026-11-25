@@ -95,7 +95,7 @@ TEST_F(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFina
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const std::array<std::array<std::int64_t, 4>, 13> cases{{
       {0, 7, -1, 7}, {0, maximum, 0, maximum}, {0, 0, 1000, 1000},
-      {0, minimum, maximum, -1}, {1, maximum, maximum, 0},
+      {0, minimum, 2049, minimum + 2049}, {1, maximum, 2049, maximum - 2049},
       {1, 42, -1, 42}, {2, maximum - 3, 10, maximum - 1},
       {2, maximum, 1, maximum - 1}, {3, minimum + 3, 10, minimum + 1},
       {3, minimum, 1, minimum + 1}, {4, maximum - 3, 10, 3},

@@ -136,6 +136,10 @@ source_set("frontend") {
     "frontend/typing/type_name.cc",
     "frontend/typing/type_name.h",
     "frontend/typing/type_names.h",
+    "frontend/typing/unused_imports.cc",
+    "frontend/typing/unused_imports.h",
+    "frontend/typing/unused_parameters.cc",
+    "frontend/typing/unused_parameters.h",
   ]
   public_deps = [
     ":sdk_contracts",
@@ -245,20 +249,24 @@ source_set("tooling") {
     "tooling/lsp/language_server_documents.cc",
     "tooling/lsp/language_server_internal.h",
     "tooling/lsp/language_server_queries.cc",
+    "tooling/lsp/language_server_references.cc",
     "tooling/mock/mock_command.cc",
     "tooling/mock/mock_generator.cc",
     "tooling/mock/mock_generator.h",
     "tooling/semantic/semantic_arguments.cc",
     "tooling/semantic/semantic_completion.cc",
     "tooling/semantic/semantic_declarations.cc",
-    "tooling/semantic/semantic_diagnostics.cc",
     "tooling/semantic/semantic_generics.cc",
     "tooling/semantic/semantic_hover.cc",
     "tooling/semantic/semantic_index.cc",
     "tooling/semantic/semantic_index.h",
+    "tooling/semantic/semantic_references.cc",
+    "tooling/semantic/semantic_references.h",
     "tooling/semantic/semantic_rename.cc",
     "tooling/semantic/semantic_syntax.h",
     "tooling/semantic/semantic_tokens.cc",
+    "tooling/source_files.cc",
+    "tooling/source_files.h",
     "tooling/source_text.cc",
     "tooling/source_text.h",
   ]
@@ -340,6 +348,9 @@ source_set("testing") {
 
 source_set("source_session") {
   sources = [
+    "development/development_changes.h",
+    "development/reflection_changes.cc",
+    "development/reflection_changes.h",
     "development/source_session.cc",
     "development/source_session.h",
   ]
@@ -375,16 +386,12 @@ source_set("native") {
     "native/call_targets.h",
     "native/code_generator.cc",
     "native/code_generator.h",
-    "native/compile_options.h",
     "native/debug_emitter.cc",
     "native/deoptimization_emitter.cc",
-    "native/development_builtin.h",
     "native/escape_analysis.cc",
-    "native/escape_analysis.h",
     "native/escape_dataflow.h",
     "native/escape_rewriter.cc",
     "native/field_access.cc",
-    "native/field_access.h",
     "native/field_loop_optimizer.cc",
     "native/field_loop_optimizer.h",
     "native/frame_emitter.cc",
@@ -421,12 +428,9 @@ source_set("native") {
     "native/memory_regions.h",
     "native/native_frame_plan.cc",
     "native/native_frame_plan.h",
-    "native/native_image_data.cc",
-    "native/native_image_data.h",
     "native/native_image_emitter.cc",
     "native/native_image_emitter.h",
     "native/native_roots.cc",
-    "native/native_roots.h",
     "native/native_values.cc",
     "native/native_values.h",
     "native/recursive_inliner.cc",
@@ -443,6 +447,8 @@ source_set("native") {
   ]
   public_deps = [
     ":ir",
+    ":native_contracts",
+    ":native_image_data",
     "//runtime",
     "//third_party:llvm",
   ]
@@ -455,48 +461,145 @@ source_set("jit") {
   sources = [
     "jit/code_cache.cc",
     "jit/code_cache.h",
-    "jit/code_cache_status.h",
     "jit/code_inputs.cc",
-    "jit/code_inputs.h",
-    "jit/code_resources.cc",
-    "jit/code_resources.h",
-    "jit/code_reuse.cc",
-    "jit/code_reuse.h",
     "jit/compiler.cc",
-    "jit/compiler.h",
-    "jit/engine.cc",
-    "jit/engine.h",
-    "jit/platform_support.h",
-    "jit/runtime_symbols.cc",
-    "jit/runtime_symbols.h",
+    "jit/compiler_service.cc",
+    "jit/local_engine.cc",
+    "jit/local_function_compiler.cc",
+    "jit/object_compilation.cc",
+    "jit/object_compilation.h",
     "jit/source_compiler.cc",
     "jit/source_compiler.h",
   ]
-  deps = [ ":cache_build_identity" ]
+  deps = [
+    ":cache_build_identity",
+    ":development_core",
+  ]
   public_deps = [
+    ":compiler_protocol",
+    ":jit_loading",
     ":native",
     ":testing_runtime",
     "//runtime",
     "//third_party:llvm_jit",
+  ]
+}
+
+source_set("native_contracts") {
+  sources = [
+    "native/compile_options.h",
+    "native/development_builtin.h",
+    "native/escape_analysis.h",
+    "native/field_access.h",
+    "native/function_symbols.h",
+    "native/native_roots.h",
+  ]
+  public_deps = [ ":ir" ]
+}
+
+source_set("jit_contracts") {
+  sources = [
+    "jit/code_cache_status.h",
+    "jit/code_inputs.h",
+    "jit/code_resources.h",
+    "jit/code_reuse.h",
+    "jit/compiler.h",
+    "jit/function_compiler.h",
+    "jit/lazy_compiler.h",
+  ]
+  public_configs = [ "//third_party:llvm_headers" ]
+  public_deps = [
+    ":native_contracts",
+    ":native_image_data",
+    "//runtime",
+  ]
+}
+
+source_set("native_image_data") {
+  sources = [
+    "native/native_image_data.cc",
+    "native/native_image_data.h",
+  ]
+  sources += [ "native/native_image_codec.cc" ]
+  include_dirs = [ root_gen_dir ]
+  deps = [ "//runtime:native_build_identity" ]
+  public_deps = [
+    ":ir",
+    "//runtime",
+    "//third_party:llvm_loader",
+  ]
+}
+
+source_set("jit_loading") {
+  sources = [
+    "jit/code_batch.h",
+    "jit/code_resources.cc",
+    "jit/code_reuse.cc",
+    "jit/engine.cc",
+    "jit/engine.h",
+    "jit/image_ownership.cc",
+    "jit/image_ownership.h",
+    "jit/lazy_compiler.cc",
+    "jit/platform_support.h",
+    "jit/runtime_symbols.cc",
+    "jit/runtime_symbols.h",
+    "jit/source_compilation.cc",
   ]
   if (target_os == "win") {
     sources += [ "jit/platform_support_win.cc" ]
   } else {
     sources += [ "jit/platform_support_eh_frame.cc" ]
   }
+  public_deps = [
+    ":jit_contracts",
+    ":native_image_data",
+    ":source_session",
+    ":testing_runtime",
+    "//third_party:llvm_loader",
+  ]
 }
 
-source_set("development") {
+source_set("compiler_protocol") {
+  sources = [
+    "jit/compiler_protocol.cc",
+    "jit/compiler_protocol.h",
+  ]
+  public_configs = [ "//third_party:llvm_headers" ]
+  public_deps = [
+    ":jit_contracts",
+    ":source_session",
+  ]
+}
+
+source_set("jit_external") {
+  sources = [
+    "jit/compiler_process.cc",
+    "jit/compiler_process.h",
+    "jit/external_compiler.cc",
+    "jit/external_sources.cc",
+    "jit/external_sources.h",
+  ]
+  if (target_os == "win") {
+    sources += [ "jit/compiler_process_win.cc" ]
+  } else {
+    sources += [ "jit/compiler_process_posix.cc" ]
+  }
+  include_dirs = [ root_gen_dir ]
+  deps = [ ":cache_build_identity" ]
+  public_deps = [
+    ":compiler_protocol",
+    ":development_core",
+    ":jit_loading",
+  ]
+}
+
+source_set("development_core") {
   sources = [
     "//include/vela/development.h",
     "development/development_files.cc",
     "development/development_files.h",
-    "development/development_repl.cc",
-    "development/development_repl.h",
     "development/development_session.cc",
     "development/development_session.h",
-    "development/reflection_changes.cc",
-    "development/reflection_changes.h",
   ]
   if (target_os == "win") {
     sources += [ "development/development_watch_win.cc" ]
@@ -504,10 +607,30 @@ source_set("development") {
     sources += [ "development/development_watch.cc" ]
   }
   public_deps = [
-    ":jit",
-    ":repl_source",
+    ":jit_loading",
     ":source_session",
     "//base:directory_watcher",
+  ]
+}
+
+source_set("development") {
+  sources = [
+    "development/development_repl.cc",
+    "development/development_repl.h",
+    "development/local_session.cc",
+  ]
+  public_deps = [
+    ":development_core",
+    ":jit",
+    ":repl_source",
+  ]
+}
+
+static_library("vela_development_client") {
+  complete_static_lib = true
+  deps = [
+    ":development_core",
+    ":jit_external",
   ]
 }
 
@@ -567,10 +690,12 @@ executable("vela_jit_tests") {
     "jit/code_reuse_unittest.cc",
     "jit/compiler_unittest.cc",
     "jit/debugger_unittest.cc",
+    "jit/external_compiler_unittest.cc",
     "jit/gc_barrier_unittest.cc",
     "jit/generated_native_class_unittest.cc",
     "jit/host_call_unittest.cc",
     "jit/host_type_unittest.cc",
+    "jit/lazy_compiler_unittest.cc",
     "jit/native_class_unittest.cc",
     "jit/native_storage_unittest.cc",
     "jit/recursion_unittest.cc",
@@ -587,6 +712,7 @@ executable("vela_jit_tests") {
     ":checkpoint_publication",
     ":development",
     ":jit",
+    ":jit_external",
     ":program_test_support",
     ":source_session",
     ":test_sources",
@@ -613,6 +739,8 @@ source_set("aot") {
     "aot/native_type_optimizer.h",
     "aot/reachability.cc",
     "aot/reachability.h",
+    "aot/record_array_optimizer.cc",
+    "aot/record_array_optimizer.h",
   ]
   public_deps = [ ":native" ]
   deps = [
@@ -644,6 +772,7 @@ executable("vela_aot_tests") {
   sources = [
     "aot/native_compiler_unittest.cc",
     "aot/reachability_unittest.cc",
+    "aot/record_array_optimizer_unittest.cc",
     "aot/repeated_field_unittest.cc",
     "native/array_analysis_unittest.cc",
     "native/array_capacity_analysis_unittest.cc",
@@ -651,6 +780,7 @@ executable("vela_aot_tests") {
     "native/call_loop_optimizer_unittest.cc",
     "native/call_targets_unittest.cc",
     "native/closed_array_analysis_unittest.cc",
+    "native/code_generator_unittest.cc",
     "native/escape_analysis_unittest.cc",
     "native/field_access_unittest.cc",
     "native/global_analysis_unittest.cc",
@@ -679,15 +809,22 @@ executable("vela_aot_tests") {
 }
 
 executable("vela") {
-  sources = [ "cli/vela_main.cc" ]
+  sources = [
+    "cli/jit_cache_command.cc",
+    "cli/jit_cache_command.h",
+    "cli/vela_main.cc",
+  ]
   deps = [
     ":aot_driver",
     ":build_info",
     ":development_tools",
     ":interactive",
+    ":jit",
+    ":project_configuration",
     ":standard_streams",
     ":testing",
     ":tooling",
+    "//base:json",
   ]
 }
 
@@ -715,6 +852,7 @@ executable("vela_frontend_tests") {
     "tooling/semantic/map_literal_unittest.cc",
     "tooling/semantic/semantic_diagnostics_unittest.cc",
     "tooling/semantic/semantic_generics_unittest.cc",
+    "tooling/semantic/semantic_references_unittest.cc",
     "tooling/source_text_unittest.cc",
   ]
   deps = [

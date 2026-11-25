@@ -23,7 +23,6 @@
 #include <llvm/IR/ConstantRange.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
@@ -33,6 +32,7 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Pass.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
@@ -65,12 +65,12 @@
 #include "compiler/native/field_loop_optimizer.h"
 #include "compiler/native/function_declarations.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/function_symbols.h"
 #include "compiler/native/global_analysis.h"
 #include "compiler/native/host_entry_emitter.h"
 #include "compiler/native/integer_bit_optimizer.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/invariant_call_optimizer.h"
-#include "compiler/native/local_ssa.h"
 #include "compiler/native/native_image_data.h"
 #include "compiler/native/native_image_emitter.h"
 #include "compiler/native/native_roots.h"
@@ -183,7 +183,9 @@ bool HasVersionAssumptions(const ir::Function& function, const ir::Program& prog
 }
 
 std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
-    NativeCodePlacement placement) {
+    NativeCodePlacement placement,
+    NativeOptimization optimization,
+    const CpuProfile& cpu) {
   InitializeTarget();
   // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
   // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
@@ -204,14 +206,31 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
     constexpr unsigned kDarwinArm64LoopAlignment = 16;
     options.LoopAlignment = kDarwinArm64LoopAlignment;
   }
-  const auto cpu = TargetCpu(placement);
+  // 基线保留局部 SSA 与轻量机器码整理，限制物理栈溢出槽。
+  auto codegen_optimization = llvm::CodeGenOptLevel::Default;
+  if (optimization == NativeOptimization::None) {
+    codegen_optimization = llvm::CodeGenOptLevel::None;
+  } else if (optimization == NativeOptimization::Baseline) {
+    codegen_optimization = llvm::CodeGenOptLevel::Less;
+  }
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
       triple, cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
-      llvm::CodeGenOptLevel::Default, placement == NativeCodePlacement::Dynamic));
+      codegen_optimization, placement == NativeCodePlacement::Dynamic));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
   }
   return machine;
+}
+
+std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
+    NativeCodePlacement placement,
+    NativeOptimization optimization) {
+  return CreateTarget(placement, optimization, TargetCpu(placement));
+}
+
+EscapeOptimization EffectiveEscape(NativeDebugging debugging, EscapeOptimization escape) {
+  // 逐指令观察需要规范对象和 IR 值。
+  return debugging == NativeDebugging::Instructions ? EscapeOptimization::Disabled : escape;
 }
 
 void Optimize(llvm::Module& module,
@@ -354,13 +373,46 @@ GeneratedFunction AddRecoveryEntries(llvm::Module& module,
   return optimized;
 }
 
+bool HasResumeEntry(const ir::Function& function) {
+  return function.is_async &&
+         std::ranges::any_of(function.instructions, [](const auto& instruction) {
+           return instruction.opcode == Opcode::Await;
+         });
+}
+
+enum class FunctionRole : std::uint8_t { Prefix, Body, Entry, Reflection, Resume, Borrowed };
+constexpr std::string_view kBaselineModuleName = "vela_jit";
+
+std::string FunctionSymbol(const std::string& module, FunctionRole role, std::size_t index) {
+  constexpr std::array<std::string_view, 6> kRoles{
+      "_", "_body_", "_entry_", "_reflection_", "_resume_", "_borrowed_",
+  };
+  auto symbol = module;
+  symbol.append(kRoles[static_cast<std::size_t>(role)]);
+  symbol.append(std::to_string(index));
+  return symbol;
+}
+
+std::vector<std::optional<BorrowedFunction>> FunctionBorrows(const ir::Program& program,
+                                                             EscapeOptimization escape) {
+  return escape == EscapeOptimization::Enabled
+             ? PlanBorrows(program)
+             : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
+}
+
+void InitializeModule(NativeModule& output, const std::string& name) {
+  output.context = std::make_unique<llvm::LLVMContext>();
+  output.module = std::make_unique<llvm::Module>(name, *output.context);
+  auto& module = *output.module;
+  module.setTargetTriple(output.machine->getTargetTriple());
+  module.setDataLayout(output.machine->createDataLayout());
+  module.setCodeModel(output.machine->getCodeModel());
+}
+
 llvm::Function* AddResumeEntry(llvm::Module& module,
                                const ir::Function& function,
                                const std::string& symbol) {
-  if (!function.is_async ||
-      !std::ranges::any_of(function.instructions, [](const auto& instruction) {
-        return instruction.opcode == Opcode::Await;
-      })) {
+  if (!HasResumeEntry(function)) {
     return nullptr;
   }
   auto& context = module.getContext();
@@ -634,9 +686,9 @@ void AddLeafEntry(llvm::Module& module,
   }
 }
 
-std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
-                                          const NativeCallPlan& calls,
-                                          std::span<const std::uint8_t> reused) {
+std::vector<std::size_t> NeededFunctions(const ir::Program& program,
+                                         const NativeCallPlan& calls,
+                                         std::span<const std::uint8_t> reused) {
   const auto count = program.functions.size();
   std::vector<std::uint8_t> needed(count, reused.empty() ? 1 : 0);
   for (std::size_t index = 0; index < reused.size(); ++index) {
@@ -648,7 +700,13 @@ std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
     ForEachDirectCallee(function, calls.direct_calls[index],
                         [&](std::size_t callee) { needed.at(callee) = 1; });
   }
-  return needed;
+  std::vector<std::size_t> indices;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (needed[index] != 0) {
+      indices.push_back(index);
+    }
+  }
+  return indices;
 }
 
 void AddCallbackLeafEntries(llvm::Module& module,
@@ -681,6 +739,20 @@ void AddCallbackLeafEntries(llvm::Module& module,
   baseline.integer_callback = current.integer_callback;
 }
 
+void ApplyInliningAttributes(GeneratedFunction& baseline,
+                             GeneratedFunction& current,
+                             InliningPlan plan,
+                             NativeProgramMode mode) {
+  if (!plan.enabled) {
+    return;
+  }
+  baseline.body->addFnAttr(llvm::Attribute::AlwaysInline);
+  current.body->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (mode == NativeProgramMode::Closed) {
+    baseline.reflection_entry->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
+}
+
 std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     llvm::Module& module,
     const ir::Program& program,
@@ -689,65 +761,65 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     NativeDebugging debugging,
     NativeCodePlacement placement,
     std::span<const std::optional<BorrowedFunction>> borrows,
-    std::span<const std::uint8_t> needed) {
+    std::span<const std::size_t> needed) {
   FunctionDeclarations declarations;
   auto& generated = declarations.baseline;
   auto& optimized = declarations.optimized;
   auto& borrowable = declarations.borrowable;
   const auto count = program.functions.size();
-  generated.reserve(count);
-  optimized.reserve(count);
+  generated.resize(count);
+  optimized.resize(count);
   borrowable.resize(count);
   auto& context = module.getContext();
   const auto bind_scalars =
       debugging == NativeDebugging::Safepoints &&
       (program.native_mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized);
-  for (std::size_t index = 0; index < count; ++index) {
-    const auto& function = program.functions.at(index);
-    const auto operand = bind_scalars ? ScalarCallbackOperand(function) : std::nullopt;
-    if (needed[index] == 0) {
-      generated.push_back({.inline_scalar = operand});
-      optimized.push_back({.inline_scalar = operand});
-      continue;
+  if (bind_scalars) {
+    for (std::size_t index = 0; index < count; ++index) {
+      const auto operand = ScalarCallbackOperand(program.functions[index]);
+      generated[index].inline_scalar = operand;
+      optimized[index].inline_scalar = operand;
     }
+  }
+  for (const auto index : needed) {
+    const auto& function = program.functions.at(index);
+    const auto operand = generated[index].inline_scalar;
     const auto body_type = BodySignature(module, function);
     if (!body_type) {
       return std::unexpected(MakeDiagnostics(program, body_type.error(), &function));
     }
-    const auto ordinal = std::to_string(index);
-    const auto symbol = [&](std::string_view role) {
-      auto name = module_name;
-      name.append(role);
-      name.append(ordinal);
-      return name;
-    };
-    const auto prefix = symbol("_");
+    const auto symbol = [&](FunctionRole role) { return FunctionSymbol(module_name, role, index); };
+    const auto prefix = symbol(FunctionRole::Prefix);
     auto* body = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                        symbol("_body_"), module);
+                                        symbol(FunctionRole::Body), module);
     auto* pointer = llvm::PointerType::getUnqual(context);
     auto* wrapper_type = llvm::FunctionType::get(
         llvm::Type::getInt8Ty(context),
         {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
     auto* entry = llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage,
-                                         symbol("_entry_"), module);
+                                         symbol(FunctionRole::Entry), module);
     auto* reflection_type = llvm::FunctionType::get(
         llvm::Type::getInt8Ty(context), {pointer, pointer, pointer, pointer, pointer}, false);
     auto* reflection = llvm::Function::Create(reflection_type, llvm::GlobalValue::InternalLinkage,
-                                              symbol("_reflection_"), module);
-    if (placement == NativeCodePlacement::Linked && module.getTargetTriple().isOSBinFormatMachO()) {
+                                              symbol(FunctionRole::Reflection), module);
+    const auto& target = module.getTargetTriple();
+    if (placement == NativeCodePlacement::Linked &&
+        (target.isOSBinFormatMachO() || target.isOSBinFormatCOFF())) {
       // 边界包装与 typed 主体分段，避免执行内部调用时一并驻留未调用的包装。
-      // 只改变 Mach-O 的代码放置，不把动态回调标记为 cold 或改变其调用契约。
-      constexpr auto* kBoundarySection = "__TEXT,__vela_entry,regular,pure_instructions";
-      entry->setSection(kBoundarySection);
-      reflection->setSection(kBoundarySection);
+      // COFF 的 $ 后缀只参与链接排序；两种格式都不改变回调的调用契约或冷热属性。
+      const auto* section = target.isOSBinFormatCOFF()
+                                ? ".text$vela_entry"
+                                : "__TEXT,__vela_entry,regular,pure_instructions";
+      entry->setSection(section);
+      reflection->setSection(section);
     }
-    auto* resume = AddResumeEntry(module, function, symbol("_resume_"));
+    auto* resume = AddResumeEntry(module, function, symbol(FunctionRole::Resume));
     GeneratedFunction baseline{
         .body = body,
         .entry = entry,
         .reflection_entry = reflection,
         .resume = resume,
-        .square_root = IsSquareRootImport(function, program.layouts),
+        .math_intrinsic = FindMathIntrinsic(function, program.layouts),
         .inline_scalar = operand,
     };
     auto current = baseline;
@@ -759,13 +831,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     const auto inlining =
         PlanInlining(function, index, program.native_mode, debugging, placement, tier);
     AddCallbackLeafEntries(module, prefix, function, inlining.leaf, baseline, current);
-    if (inlining.enabled) {
-      body->addFnAttr(llvm::Attribute::AlwaysInline);
-      current.body->addFnAttr(llvm::Attribute::AlwaysInline);
-      if (program.native_mode == NativeProgramMode::Closed) {
-        reflection->addFnAttr(llvm::Attribute::AlwaysInline);
-      }
-    }
+    ApplyInliningAttributes(baseline, current, inlining, program.native_mode);
     if (program.native_mode == NativeProgramMode::Reloadable && tier == NativeCodeTier::Optimized &&
         CanUseScalarFieldBody(function, program.native_mode, debugging)) {
       current.scalar_field_body = llvm::Function::Create(
@@ -774,7 +840,7 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     }
     if (const auto& borrow = borrows[index]) {
       baseline.borrowed = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                                 symbol("_borrowed_"), module);
+                                                 symbol(FunctionRole::Borrowed), module);
       borrowable.at(index) = borrow->type;
       current.borrowed = baseline.borrowed;
     }
@@ -782,8 +848,8 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
         body, current.body, current.leaf, baseline.borrowed, current.scalar_field_body,
     };
     SetTypedArguments(typed_entries, function);
-    generated.push_back(baseline);
-    optimized.push_back(current);
+    generated[index] = baseline;
+    optimized[index] = current;
   }
   return declarations;
 }
@@ -1173,12 +1239,109 @@ CpuProfile TargetCpu(NativeCodePlacement placement) {
   return {.name = llvm::sys::getHostCPUName().str(), .features = std::move(joined)};
 }
 
+std::expected<std::string, std::string> TargetDataLayout() {
+  auto target = CreateTarget(NativeCodePlacement::Dynamic, NativeOptimization::None);
+  if (!target) {
+    return std::unexpected(std::move(target.error()));
+  }
+  return (*target)->createDataLayout().getStringRepresentation();
+}
+
 NativeModule::NativeModule(NativeProgramMode mode,
                            NativeCodePlacement placement,
                            NativeOptimization optimization)
     : mode(mode), placement(placement), optimization(optimization) {}
 NativeModule::~NativeModule() = default;
 NativeModule::NativeModule(NativeModule&&) noexcept = default;
+
+std::expected<BaselineCompilationPlan, frontend::Diagnostics> PlanBaselineCompilation(
+    const ir::Program& program,
+    NativeDebugging debugging,
+    EscapeOptimization escape,
+    NativeOptimization optimization) {
+  escape = EffectiveEscape(debugging, escape);
+  BaselineCompilationPlan plan(debugging, escape, optimization);
+  plan.cpu = TargetCpu(NativeCodePlacement::Dynamic);
+  plan.calls = PlanNativeCalls(program, NativeCodeTier::Baseline, debugging);
+  plan.fields = FindFieldTargets(program);
+  plan.arrays = AnalyzeArrayAccess(program, ArrayAnalysisMode::Elements);
+  plan.borrows = FunctionBorrows(program, escape);
+  auto target = CreateTarget(NativeCodePlacement::Dynamic, optimization, plan.cpu);
+  if (!target) {
+    return std::unexpected(MakeDiagnostics(program, target.error(), nullptr));
+  }
+  plan.data_layout = (*target)->createDataLayout().getStringRepresentation();
+  for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    const auto& function = program.functions[index];
+    const auto symbol = [&](FunctionRole role) {
+      return FunctionSymbol(std::string(kBaselineModuleName), role, index);
+    };
+    auto external = symbol(FunctionRole::Entry);
+    auto reflection = symbol(FunctionRole::Reflection);
+    auto typed = symbol(FunctionRole::Body);
+    FunctionEntrySymbols entries{
+        .external = external,
+        .reflection = reflection,
+        .typed = typed,
+        .implementations =
+            {
+                std::move(typed),
+                std::move(external),
+                std::move(reflection),
+            },
+    };
+    if (HasResumeEntry(function)) {
+      entries.implementations.push_back(symbol(FunctionRole::Resume));
+    }
+    if (plan.borrows[index]) {
+      entries.implementations.push_back(symbol(FunctionRole::Borrowed));
+    }
+    plan.symbols.push_back(std::move(entries));
+    std::vector<std::size_t> needed{index};
+    ForEachDirectCallee(function, plan.calls.direct_calls[index],
+                        [&](std::size_t callee) { needed.push_back(callee); });
+    std::ranges::sort(needed);
+    const auto duplicates = std::ranges::unique(needed);
+    needed.erase(duplicates.begin(), duplicates.end());
+    plan.needed.push_back(std::move(needed));
+  }
+  return plan;
+}
+
+std::expected<NativeModule, frontend::Diagnostics> GenerateBaselineFunction(
+    const ir::Program& program,
+    const BaselineCompilationPlan& plan,
+    std::size_t function) {
+  const auto debugging = plan.debugging;
+  const auto escape = plan.escape;
+  const auto optimization = plan.optimization;
+  NativeModule output(program.native_mode, NativeCodePlacement::Dynamic, optimization);
+  auto target = CreateTarget(NativeCodePlacement::Dynamic, optimization, plan.cpu);
+  if (!target) {
+    return std::unexpected(MakeDiagnostics(program, target.error(), nullptr));
+  }
+  output.machine = std::move(*target);
+  InitializeModule(output, std::string(kBaselineModuleName));
+  auto& module = *output.module;
+  auto declarations = DeclareFunctions(
+      module, program, std::string(kBaselineModuleName), NativeCodeTier::Baseline, debugging,
+      NativeCodePlacement::Dynamic, plan.borrows, plan.needed[function]);
+  if (!declarations) {
+    return std::unexpected(std::move(declarations.error()));
+  }
+  auto dependencies = plan.calls.dependencies[function];
+  const GlobalAccessFacts globals;
+  const auto emitted = EmitDeclaredFunction(
+      module, program, plan.calls, plan.fields, plan.arrays.generic[function], plan.arrays.closed,
+      globals, llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context)),
+      function, *declarations, dependencies, debugging, NativeCodeTier::Baseline, escape,
+      NativeCodePlacement::Dynamic, plan.borrows);
+  if (!emitted) {
+    return std::unexpected(MakeDiagnostics(program, emitted.error(), &program.functions[function]));
+  }
+  SetModuleTargetAttributes(output);
+  return output;
+}
 
 std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& program,
                                                             const NativeCallPlan& calls,
@@ -1190,29 +1353,20 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                                                             NativeCodePlacement placement,
                                                             NativeOptimization optimization,
                                                             std::span<const std::uint8_t> reused) {
-  if (debugging == NativeDebugging::Instructions) {
-    // 逐指令检查需要真实对象与规范 IR 值，不让标量替换隐藏可观察的对象字段。
-    escape = EscapeOptimization::Disabled;
-  }
+  escape = EffectiveEscape(debugging, escape);
   const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
     return std::unexpected(MakeDiagnostics(program, std::move(message), function));
   };
-  auto target = CreateTarget(placement);
+  auto target = CreateTarget(placement, optimization);
   if (!target) {
     return diagnostic(target.error());
   }
   NativeModule output(program.native_mode, placement, optimization);
-  output.context = std::make_unique<llvm::LLVMContext>();
   output.machine = std::move(*target);
   output.body_dependencies = calls.dependencies;
-  output.module = std::make_unique<llvm::Module>(module_name, *output.context);
+  InitializeModule(output, module_name);
   auto& module = *output.module;
-  module.setTargetTriple(output.machine->getTargetTriple());
-  module.setDataLayout(output.machine->createDataLayout());
-  module.setCodeModel(output.machine->getCodeModel());
-  const auto borrows = escape == EscapeOptimization::Enabled
-                           ? PlanBorrows(program)
-                           : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
+  const auto borrows = FunctionBorrows(program, escape);
   auto declarations = DeclareFunctions(module, program, module_name, tier, debugging, placement,
                                        borrows, NeededFunctions(program, calls, reused));
   if (!declarations) {
@@ -1300,15 +1454,25 @@ std::expected<void, std::string> Finalize(NativeModule& generated) {
     EmitTargetVersions(module, generated.target_functions, generated.function_symbols);
     generated.target_functions.clear();
     Optimize(module, *generated.machine, generated.mode, generated.placement);
-  } else {
-    // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的
-    // 临时值全部留在物理栈上，绕过大帧的有界外部存储。
+  } else if (generated.optimization == NativeOptimization::Baseline) {
+    // 基线只整理本函数的 SSA 和控制流，不做模块内联、向量化或推测性特化。
+    llvm::LoopAnalysisManager loops;
+    llvm::FunctionAnalysisManager functions;
+    llvm::CGSCCAnalysisManager calls;
+    llvm::ModuleAnalysisManager modules;
+    llvm::PassBuilder passes(generated.machine.get());
+    passes.registerLoopAnalyses(loops);
+    passes.registerFunctionAnalyses(functions);
+    passes.registerCGSCCAnalyses(calls);
+    passes.registerModuleAnalyses(modules);
+    passes.crossRegisterProxies(loops, functions, calls, modules);
+    auto canonicalization = passes.buildFunctionSimplificationPipeline(
+        llvm::OptimizationLevel::O1, llvm::ThinOrFullLTOPhase::None);
     for (auto& function : module) {
       if (function.isDeclaration()) {
         continue;
       }
-      llvm::DominatorTree dominators(function);
-      PromoteLocalAllocations(function, dominators);
+      canonicalization.run(function, functions);
     }
   }
   if (llvm::verifyModule(module, &verifier)) {

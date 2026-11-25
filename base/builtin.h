@@ -23,6 +23,11 @@ enum class Builtin : std::uint8_t {
   StringLength,
   StringByteLength,
   StringSlice,
+  StringIsCodePointBoundary,
+  StringSliceBytes,
+  StringReplaceBytes,
+  StringByteOffsetAt,
+  StringTrim,
   StringIndexOf,
   StringIncludes,
   StringStartsWith,
@@ -193,6 +198,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::MutableStringToString:
     case Builtin::StringLength:
     case Builtin::StringByteLength:
+    case Builtin::StringTrim:
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble:
     case Builtin::ArrayLength:
@@ -234,6 +240,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::MutableStringAppend:
     case Builtin::MutableStringAppendCodePoint:
     case Builtin::StringCodePointAt:
+    case Builtin::StringIsCodePointBoundary:
+    case Builtin::StringByteOffsetAt:
     case Builtin::StringIndexOf:
     case Builtin::StringIncludes:
     case Builtin::StringStartsWith:
@@ -257,6 +265,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
+    case Builtin::StringSliceBytes:
     case Builtin::JsonTypedParse:
     case Builtin::DynamicBinary:
     case Builtin::DynamicCall:
@@ -283,6 +292,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::MockInspect:
       return 3;
     case Builtin::ArrayFill:
+    case Builtin::StringReplaceBytes:
     case Builtin::JsonSafeParse:
     case Builtin::NewRegExp:
     case Builtin::RegExpAllMatches:

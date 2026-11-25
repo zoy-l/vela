@@ -37,6 +37,7 @@ from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
                                      SOURCE as GLOBAL_STORAGE_SOURCE,
                                      LEAF_SOURCE as GLOBAL_LEAF_SOURCE)
 from tools.aot_c_fixture import host_source as c_host_source
+from tools.aot_record_array_fixture import SOURCE as RECORD_ARRAY_SOURCE, HOST_TESTS as RECORD_ARRAY_TESTS
 
 
 HOST_TESTS = r'''
@@ -908,6 +909,146 @@ class NativeObjectTest(CommandTestCase):
         executed = self.command([executable]).stdout
         self.assertIn("[==========] 15 tests from 1 test suite ran.", executed)
 
+    def test_inherited_constructors_preserve_defaults_generics_and_factories(self) -> None:
+        object_file, manifest = self.emit("inherited_constructors", """
+external func collect(): void;
+let calls = 0;
+func initial(): int { calls++; collect(); return 40; }
+class Base<T> {
+  value: T;
+  values: int[] = [];
+  constructor { collect(); }
+}
+class Leaf<U> extends Base<U> { private state: int = 1; }
+class Explicit {
+  value: int;
+  constructor(value: int = initial(), answer: int = value + 2) { this.value = answer; collect(); }
+}
+class Middle extends Explicit {}
+class Child extends Middle {}
+func build<P, C extends Base<P>>(value: P, factory: (P) => C): C { return factory(value); }
+export func calculate(): int {
+  const generated = build(value: 40, factory: Leaf);
+  generated.values.push(2);
+  const omitted = Child();
+  const supplied = Child(answer: 42, value: 0);
+  const decoded = JSON.parse<Leaf<int>>('{"value":42}');
+  collect();
+  return calls == 1 && omitted.value == 42 && supplied.value == 42 && decoded.value == 42
+      ? generated.value + generated.values[0] : 0;
+}
+""")
+        host = r'''
+#include <gtest/gtest.h>
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+
+extern "C" const vela::runtime::NativeImage* INHERITED_IMAGE() noexcept;
+
+void CollectInherited(vela::runtime::NativeContext& context) noexcept {
+  context.isolate().heap().Collect();
+}
+
+TEST(InheritedConstructorAotTest, ExecutesWithoutCompilerStateUnderGcPressure) {
+  vela::runtime::Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(
+      vela::runtime::NativeFunction::Bind<CollectInherited>("collect")));
+  const auto instance = vela::runtime::NativeInstance::Instantiate(isolate, *INHERITED_IMAGE());
+  ASSERT_TRUE(instance) << instance.error().message;
+  const auto entry = (*instance)->FindFunction("calculate");
+  ASSERT_TRUE(entry);
+  const auto result = vela::runtime::ExecuteNativeFunction(**instance, *entry);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+'''
+        source = self.directory / "inherited_constructors_host.cc"
+        source.write_text('#include "' + object_file.name + '.h"\n'
+                          + host.replace("INHERITED_IMAGE", manifest["image"]),
+                          encoding="utf-8", newline="\n")
+        executable = self.directory / executable_name("inherited_constructors")
+        compile_native_host(self, [source], executable,
+                            [object_file, *native_test_libraries(self.output)],
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
+        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+
+    def test_math_and_utf8_byte_apis_link_and_execute_without_compiler_state(self) -> None:
+        object_file, manifest = self.emit("math_string_bytes", r"""
+external func collect(): void;
+export func calculate(): int {
+  const value = 'A中😀e\u0301\0';
+  const slice: (int, int) => string = value.sliceBytes;
+  const replace: (int, int, string) => string = value.replaceBytes;
+  const offset: (int) => int? = value.byteOffsetAt;
+  const trim: () => string = ' \u3000中\u0085'.trim;
+  const angle: (double, double) => double = Math.atan2;
+  collect();
+  if (slice(1, 8) != '中😀' || replace(1, 4, value) != 'AA中😀e\u0301\0😀e\u0301\0' ||
+      value.isCodePointBoundary(2) || !value.isCodePointBoundary(value.byteLength) ||
+      offset(2) != 4 || offset(6) != 12 || offset(-1) != null || trim() != '中' ||
+      Math.abs(angle(1.0, -1.0) - Math.PI * 0.75) > 0.000000000001 ||
+      Math.abs(Math.cbrt(-8.0) + 2.0) > 0.000000000001 || Math.hypot(3.0, 4.0) != 5.0 ||
+      Math.remainder(7.0, 2.0) != -1.0 || Math.remainder(-4.0, 2.0).toString() != '-0') {
+    return 0;
+  }
+  try { value.replaceBytes(2, 4, 'invalid'); }
+  catch (error: Error) { return error.code == 'IndexOutOfBounds' ? 42 : 0; }
+  return 0;
+}
+""")
+        host = r'''
+#include <gtest/gtest.h>
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+
+extern "C" const vela::runtime::NativeImage* API_IMAGE() noexcept;
+void CollectApi(vela::runtime::NativeContext& context) noexcept {
+  context.isolate().heap().Collect();
+}
+TEST(StandardApiAotTest, ExecutesMathAndStringContractsUnderGcPressure) {
+  vela::runtime::Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(vela::runtime::NativeFunction::Bind<CollectApi>("collect")));
+  const auto instance = vela::runtime::NativeInstance::Instantiate(isolate, *API_IMAGE());
+  ASSERT_TRUE(instance) << instance.error().message;
+  const auto entry = (*instance)->FindFunction("calculate");
+  ASSERT_TRUE(entry);
+  const auto result = vela::runtime::ExecuteNativeFunction(**instance, *entry);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+'''
+        source = self.directory / "math_string_bytes_host.cc"
+        source.write_text('#include "' + object_file.name + '.h"\n'
+                          + host.replace("API_IMAGE", manifest["image"]),
+                          encoding="utf-8", newline="\n")
+        executable = self.directory / executable_name("math_string_bytes")
+        compile_native_host(self, [source], executable,
+                            [object_file, *native_test_libraries(self.output)],
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
+        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+
+    def test_private_record_arrays_execute_without_compiler_state(self) -> None:
+        object_file, manifest = self.emit("record_arrays", RECORD_ARRAY_SOURCE)
+        source = self.directory / "record_arrays_host.cc"
+        source.write_text('#include "' + object_file.name + '.h"\n'
+                          + RECORD_ARRAY_TESTS.replace("RECORD_IMAGE", manifest["image"]),
+                          encoding="utf-8", newline="\n")
+        executable = self.directory / executable_name("record_arrays")
+        compile_native_host(self, [source], executable,
+                            [object_file, *native_test_libraries(self.output)],
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
+        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+
     def test_statically_linked_optimized_native_contracts_without_vm(self) -> None:
         fixtures = {
             "INTEGER_ENTRY": """
@@ -1415,7 +1556,7 @@ export async func calculate(): Future<int> {
         compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
                             cwd=self.directory)
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 86 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 88 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout

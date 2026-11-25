@@ -47,7 +47,7 @@ std::expected<HostConstruction, HostObjectError> Heap::PrepareHostConstruction(
       std::construct_at(StorageAfter<ConstructedHostStorage>(*object), std::move(extra), destroy);
   void* payload = StorageAfter<std::byte>(*storage);
   auto capacity = static_cast<std::size_t>(allocation.size) - kPrefix;
-  object->native_payload = std::align(alignment, size, payload, capacity);
+  object->SetNativePayload(std::align(alignment, size, payload, capacity));
   return HostConstruction(*this, *object);
 }
 
@@ -71,7 +71,7 @@ std::expected<HeapObject*, HostObjectError> Heap::PublishHostConstruction(
 
 void Heap::DiscardHostConstruction(HeapObject& object) noexcept {
   auto* storage = StorageAfter<ConstructedHostStorage>(object);
-  storage->destroy(object.native_payload);
+  storage->destroy(object.native_payload());
   std::destroy_at(storage);
   const auto size = object.allocation_size;
   const auto class_index = object.size_class;
@@ -129,7 +129,7 @@ std::expected<HeapObject*, HostObjectError> Heap::WrapHostObject(
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
   object->kind = ObjectKind::Host;
   object->layout = &layout;
-  object->native_payload = pointer;
+  object->SetNativePayload(pointer);
   std::construct_at(StorageAfter<HostObjectStorage>(*object), std::move(storage));
   host_index_.Insert(*object);
   Publish(*object, allocation);
@@ -140,7 +140,7 @@ void Heap::ReleaseHostObject(HeapObject& object) noexcept {
   host_index_.Erase(object);
   if (object.auxiliary_length != 0U) {
     auto* storage = StorageAfter<ConstructedHostStorage>(object);
-    storage->destroy(object.native_payload);
+    storage->destroy(object.native_payload());
     std::destroy_at(storage);
   } else {
     std::destroy_at(StorageAfter<HostObjectStorage>(object));

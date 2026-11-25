@@ -4,7 +4,7 @@
 
 ## 编码与类型
 
-`string` 是不可变且合法的 UTF-8 字节序列。源文件、运行时存储及控制台输出统一采用 UTF-8 编码。字符串中允许包含内嵌的 NUL 字节（`\0`），且不会因此截断字符串。字符串的长度、索引、切片边界和检索结果均以 Unicode 标量值（码点，code point）为单位进行计算，而非字节数或字素簇。语言中不设立独立的 `char` 类型。
+`string` 是不可变且合法的 UTF-8 字节序列。源文件、运行时存储及控制台输出统一采用 UTF-8 编码。字符串中允许包含内嵌的 NUL 字节（`\0`），且不会因此截断字符串。`length`、索引、`slice` 边界和检索结果以 Unicode 标量值（码点，code point）为单位进行计算，而非字节数或字素簇。语言中不设立独立的 `char` 类型。
 
 对于字符串 `"A中😀e\u0301"`，其 `length` 为 5，而 `byteLength` 为 11。末尾的 `e` 与组合重音符号各自作为独立码点计数。Vela 不进行 Unicode 规范化归一化处理；相等性比较精确比对编码后的实际字节序列。
 
@@ -48,6 +48,36 @@ const emoji = '\u{1F600}';
 上述方法中的参数均为必填项。传参支持位置实参或命名实参，且即使命名实参颠倒了参数顺序，表达式也始终严格按源码书写顺序求值。索引必须满足 `0 <= index < length`；切片范围必须满足 `0 <= start <= end <= length`。超出范围将返回运行时可恢复的 `IndexOutOfBounds` 状态。语言不支持负数索引、自动截断纠正或隐式数值转换。字符串的索引访问结果和 `length` 属性不可被赋值修改。`String` 是保留的内置类名。语言不设立全局的 `join` 函数；用户代码可以自由声明同名符号。数组操作数在分隔符之前完成求值，各自仅求值一次。数组元素类型必须同构：`[1, 2].join(',')` 合法；`[name, 42, true]` 非法。混合类型建议直接使用插值 `'${name} / ${42} / ${true}'`，无需创建临时数组。
 
 `indexOf` 和 `includes` 对多字节模式采用 KMP 算法，保证在重复前缀输入下仍具有线性 O(n) 搜索时间。短模式跳转表使用栈内存；超过 64 字节的模式将分配临时原生前缀跳转表并在分配失败时显式报错。前缀与后缀检查直接比对字节序列；UTF-8 的自同步特性确保这些字节比对严格落在合法的 Unicode 码点边界上。
+
+## UTF-8 字节范围接口
+
+以下都是内置 `string` 的实例方法；现有索引、`slice` 和搜索结果仍以码点为单位。
+
+```vela
+const value: string = 'A中😀';
+const offset: int? = value.byteOffsetAt(2); // 4
+const part: string = value.sliceBytes(1, 8); // 中😀
+const changed: string = value.replaceBytes(1, 4, '好'); // A好😀
+```
+
+| 方法 | 返回类型 | 契约 |
+| --- | --- | --- |
+| `isCodePointBoundary(byteOffset: int)` | `bool` | O(1) 判断字节偏移是否为码点边界；0 和 byteLength 有效，负数、越界和续字节位置返回 false |
+| `sliceBytes(start: int, end: int)` | `string` | 复制半开字节范围 `[start, end)` |
+| `replaceBytes(start: int, end: int, inserted: string)` | `string` | 一次分配构造前缀、插入内容和后缀，不分配中间字符串 |
+| `byteOffsetAt(codePointIndex: int)` | `int?` | 码点下标转字节偏移；length 映射到 byteLength，负数或超出 length 返回 null，不分配字符串 |
+| `trim()` | `string` | 去除两端 Unicode White_Space，保留内部空白、NUL、BOM 和零宽空格 |
+
+`sliceBytes` 和 `replaceBytes` 要求 `0 <= start <= end <= byteLength` 且两端均为码点边界；
+非法范围抛出 `IndexOutOfBounds`，不截断或修复。空范围允许切片或插入；码点边界不要求是字素簇边界。
+输入和结果始终为合法 UTF-8，保留末尾与内嵌 NUL。
+`byteOffsetAt` 复用字符串现有的位置缓存，连续正序或倒序访问均摊 O(1)，任意跳读最坏 O(n)。
+`trim` 采用 Unicode White_Space 属性，包含 U+0085，不把 U+FEFF 或 U+200B 当作空白；
+全部为空白时返回空字符串，内容不变时可复用原字符串。五个方法均支持命名实参、绑定方法值和普通空安全调用。
+
+公共宿主 API 位于 `<vela/strings.h>`：`StringIsCodePointBoundary`、`StringSliceBytes`、
+`StringReplaceBytes`、`StringByteOffsetAt`、`StringTrim`，复用相同 builtin 与错误契约。
+输入借用及结果保根沿用 HandleScope 规则，别名输入也在结果分配期间保持有效。
 
 ## 编译、内存分配与垃圾回收
 

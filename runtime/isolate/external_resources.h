@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "runtime/heap/intrusive_link_internal.h"
 namespace vela::runtime {
 
 enum class ExternalResourceKind : std::uint8_t {
@@ -53,13 +54,22 @@ class ExternalResources final {
 class ExternalResource final {
  public:
   ExternalResource() = default;
-  ExternalResource(ExternalResources& owner, ExternalResourceKind kind) noexcept;
-  ~ExternalResource();
+  ExternalResource(ExternalResources& owner, ExternalResourceKind kind) noexcept : references_(1) {
+    Attach(owner, kind);
+  }
+  ~ExternalResource() {
+    internal::UnlinkIntrusive(*this, &ExternalResource::next_, &ExternalResource::previous_link_);
+  }
   ExternalResource(const ExternalResource&) = delete;
   ExternalResource& operator=(const ExternalResource&) = delete;
   ExternalResource(ExternalResource&&) = delete;
   ExternalResource& operator=(ExternalResource&&) = delete;
-  void Attach(ExternalResources& owner, ExternalResourceKind kind) noexcept;
+  void Attach(ExternalResources& owner, ExternalResourceKind kind) noexcept {
+    kind_ = kind;
+    identity_ = owner.next_identity_++;
+    internal::PrependIntrusive(*this, owner.first_, &ExternalResource::next_,
+                               &ExternalResource::previous_link_);
+  }
   void Retain() noexcept;
   void Release() noexcept;
   [[nodiscard]] std::size_t references() const noexcept;

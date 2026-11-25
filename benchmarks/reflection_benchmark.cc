@@ -84,7 +84,7 @@ class ScriptProgram final {
       if (!candidate) {
         return std::unexpected(frontend::DiagnosticsText(candidate.error().diagnostics));
       }
-      auto result = compiler.Compile(candidate->snapshot().program, options.compilation);
+      auto result = compiler.Compile(*candidate->snapshot().program, options.compilation);
       if (!result) {
         return std::unexpected(frontend::DiagnosticsText(result.error()));
       }

@@ -1,0 +1,22 @@
+import 'input' as data;
+
+const unit = 'A中😀e\u0301Z\0';
+const text = unit + unit + unit + unit;
+
+func run(): int {
+  let checksum = 0;
+  for (const value in data.values) {
+    const start = value % 2 * unit.byteLength + 1;
+    const result = text.sliceBytes(start, start + 2 * unit.byteLength);
+    if (!result.startsWith('中') || !result.endsWith('A')) {
+      return -1;
+    }
+    checksum += result.byteLength + result.length;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

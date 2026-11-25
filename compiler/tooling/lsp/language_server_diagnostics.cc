@@ -15,7 +15,6 @@
 #include <yyjson.h>
 
 #include "base/json.h"
-#include "base/path.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -79,8 +78,12 @@ class DiagnosticCollection final {
  public:
   DiagnosticCollection(PositionEncoding encoding,
                        frontend::ModuleCache& modules,
-                       SemanticIndices& indices)
-      : encoding_(encoding), modules_(&modules), indices_(&indices) {}
+                       SemanticIndices& indices,
+                       compiler::SourceConfigurationCache& configurations)
+      : configurations_(&configurations),
+        encoding_(encoding),
+        modules_(&modules),
+        indices_(&indices) {}
   void AddOpenDocument(std::string_view uri, const ServerDocument& document) {
     overlays_.push_back({.path = document.path, .text = document.source.text()});
     open_sources_.emplace(document.path, OpenSource{.uri = uri, .source = &document.source});
@@ -94,6 +97,7 @@ class DiagnosticCollection final {
   void CollectDiagnostics(std::span<const frontend::Diagnostic> diagnostics,
                           std::span<const frontend::SourceFile> files,
                           std::string_view path);
+  compiler::SourceConfigurationCache* configurations_;
   PositionEncoding encoding_;
   std::vector<frontend::SourceInput> overlays_;
   absl::flat_hash_map<std::string_view, OpenSource> open_sources_;
@@ -108,22 +112,12 @@ void DiagnosticCollection::Collect(std::string_view uri, const ServerDocument& d
   if (const auto cached = indices_->find(uri); cached != indices_->end()) {
     const auto& index = cached->second;
     CollectDiagnostics(index.diagnostics(), index.source_files(), path);
-    CollectDiagnostics(index.UnusedDiagnostics(), index.source_files(), path);
     return;
   }
-  const auto options = compiler::LoadSourceConfiguration(Utf8Path(path));
-  if (!options) {
-    const frontend::Diagnostics diagnostics{compiler::ConfigurationDiagnostic(options.error())};
-    CollectDiagnostics(diagnostics, {}, path);
-    return;
-  }
-  modules_->imports = options->imports;
-  auto loaded = frontend::LoadProgram(path, *modules_, overlays_, frontend::SourceLoadMode::Editor);
   const auto& index =
-      indices_->try_emplace(std::string(uri), std::move(loaded), options->diagnostics)
+      indices_->try_emplace(std::string(uri), path, *modules_, overlays_, configurations_)
           .first->second;
   CollectDiagnostics(index.diagnostics(), index.source_files(), path);
-  CollectDiagnostics(index.UnusedDiagnostics(), index.source_files(), path);
 }
 
 void DiagnosticCollection::CollectDiagnostics(std::span<const frontend::Diagnostic> diagnostics,
@@ -174,13 +168,16 @@ void LanguageServer::ClearDiagnostics(std::string_view uri) {
 }
 
 void LanguageServer::PublishDiagnostics(std::optional<std::string_view> changed_path) {
-  absl::erase_if(semantic_indices_, [changed_path](const auto& entry) {
-    return !changed_path || entry.second.DependsOn(*changed_path);
+  configurations_ = {};
+  reference_index_.reset();
+  absl::erase_if(semantic_indices_, [&](const auto& entry) {
+    const auto invalid = !changed_path || entry.second.DependsOn(*changed_path);
+    return invalid;
   });
   absl::erase_if(completion_indices_, [changed_path](const auto& entry) {
     return !changed_path || entry.second.index.DependsOn(*changed_path);
   });
-  DiagnosticCollection collected(encoding_, modules_, semantic_indices_);
+  DiagnosticCollection collected(encoding_, modules_, semantic_indices_, configurations_);
   std::vector<std::string_view> entries;
   for (const auto& [uri, document] : documents_) {
     collected.AddOpenDocument(uri, document);
@@ -208,6 +205,10 @@ void LanguageServer::PublishDiagnostics(std::optional<std::string_view> changed_
             opened == documents_.end() ? std::nullopt : std::optional(opened->second.version),
         .diagnostics = buckets.at(uri),
     };
+    std::ranges::sort(next.diagnostics, {}, [](const EditorDiagnostic& diagnostic) {
+      const auto& start = diagnostic.range.start;
+      return std::tie(start.line, start.character, diagnostic.message);
+    });
     const auto previous = published_.find(uri);
     if (previous != published_.end() && previous->second == next) {
       continue;

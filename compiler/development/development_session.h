@@ -15,6 +15,7 @@
 
 #include "base/declaration.h"
 #include "base/execution_status.h"
+#include "compiler/development/development_changes.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -66,17 +67,6 @@ struct DevelopmentTimings final {
   SourceTimings frontend;
 };
 
-struct DevelopmentChanges final {
-  std::size_t compiled_functions = 0;
-  std::vector<DeclarationId> registered_types;
-  std::vector<DeclarationId> withdrawn_types;
-  std::vector<DeclarationId> registered_members;
-  std::vector<DeclarationId> withdrawn_members;
-  std::vector<DeclarationId> changed_members;
-  std::vector<DeclarationId> deleted_types;
-  std::vector<DeclarationId> deleted_members;
-};
-
 struct DevelopmentResult final {
   DevelopmentStatus status = DevelopmentStatus::Prepared;
   DevelopmentOperation operation = DevelopmentOperation::Load;
@@ -109,13 +99,13 @@ class DevelopmentCandidate final {
                        SourceUpdate update,
                        SourceCandidate source,
                        jit::CompiledImage code,
-                       std::unique_ptr<SourceSession> replacement,
+                       std::shared_ptr<SourceSession> replacement,
                        DevelopmentResult result);
   std::shared_ptr<const DevelopmentSessionIdentity> session_;
   SourceUpdate update_;
   SourceCandidate source_;
   jit::CompiledImage code_;
-  std::unique_ptr<SourceSession> replacement_;
+  std::shared_ptr<SourceSession> replacement_;
   DevelopmentResult result_;
 };
 
@@ -137,12 +127,18 @@ struct DevelopmentOptions final {
 };
 
 // 会话独占源码提交与 Isolate 切换。宿主在所属线程操作，外部根仍须先释放才能 Reload。
+// 公共 API：嵌入宿主使用 Create、Prepare、Submit、Pump 和命名入口接入热重载。
 // Prepare 可在隔离工作线程编译，不访问 Isolate；其线程须在会话销毁前退出。
 // 其他操作在所属线程执行。Submit 的提交动作由精确安全点消费，Invoke/Pump 完成停止收尾。
 class DevelopmentSession final {
  public:
   [[nodiscard]] static std::expected<std::unique_ptr<DevelopmentSession>, frontend::Diagnostics>
   Create(std::string entry, runtime::NativeBindings bindings = {}, DevelopmentOptions options = {});
+  [[nodiscard]] static std::expected<std::unique_ptr<DevelopmentSession>, frontend::Diagnostics>
+  Create(std::string entry,
+         runtime::NativeBindings bindings,
+         DevelopmentOptions options,
+         std::unique_ptr<jit::Compiler> compiler);
   ~DevelopmentSession();
   DevelopmentSession(const DevelopmentSession&) = delete;
   DevelopmentSession& operator=(const DevelopmentSession&) = delete;
@@ -199,7 +195,8 @@ class DevelopmentSession final {
   DevelopmentSession(std::string entry,
                      runtime::NativeBindings bindings,
                      DevelopmentOptions options,
-                     std::unique_ptr<jit::Compiler> compiler);
+                     std::unique_ptr<jit::Compiler> compiler,
+                     std::shared_ptr<SourceSession> sources);
   void AtSafepoint();
   void Publish();
   void BeginReload();

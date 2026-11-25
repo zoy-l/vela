@@ -1,17 +1,19 @@
 #pragma once
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/jit/code_cache_status.h"
 #include "compiler/jit/code_resources.h"
@@ -21,11 +23,21 @@
 #include "compiler/native/native_roots.h"
 #include "runtime/native/native_image.h"
 
-namespace llvm::orc {
-class LLJIT;
+namespace vela::compiler {
+class SourceSession;
+class DevelopmentFiles;
+class DevelopmentSession;
+struct SourceSessionConfiguration;
+struct CompiledSourceSnapshot;
 }
 
 namespace vela::compiler::jit {
+
+frontend::Diagnostics CompilationDiagnostic(std::string message);
+
+inline constexpr std::string_view kCodeCacheOption = "--code-cache=";
+
+enum class Materialization : std::uint8_t { Eager, OnDemand };
 
 struct CompileOptions final {
   NativeOptimization optimization = NativeOptimization::Release;
@@ -34,6 +46,7 @@ struct CompileOptions final {
   std::optional<std::filesystem::path> code_cache = std::nullopt;
   bool preserve_ir = false;
   native::EscapeOptimization escape = native::EscapeOptimization::Enabled;
+  Materialization materialization = Materialization::Eager;
 };
 
 struct CompileTimings final {
@@ -56,21 +69,48 @@ struct CompiledImage final {
 
 // 编译不访问 Isolate；未发布结果可以丢弃。映像最后引用在 Isolate 线程释放时退休 ORC
 // 资源，且可晚于 Compiler 本身；AOT runtime 无需链接这些 LLVM 类型。
-class Compiler final {
+struct CompilerProcessOptions final {
+  std::filesystem::path executable;
+  std::filesystem::path cache;
+};
+
+// 公共 API：嵌入宿主通过此接口选择本地或进程外编译及源码文件会话。
+class Compiler {
  public:
   [[nodiscard]] static std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Create();
+  // 公共 API：创建独立进程编译器，宿主保留运行时与代码加载。
+  [[nodiscard]] static std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics>
+  CreateExternal(CompilerProcessOptions options);
+  Compiler() = default;
+  Compiler(const Compiler&) = delete;
+  Compiler& operator=(const Compiler&) = delete;
+  Compiler(Compiler&&) = delete;
+  Compiler& operator=(Compiler&&) = delete;
+  virtual ~Compiler() = default;
+  virtual std::expected<std::shared_ptr<SourceSession>, frontend::Diagnostics> CreateSources(
+      const SourceSessionConfiguration& configuration) = 0;
+  // 公共 API：按编译器归属创建文件会话，外部编译器将监视与捕获留在编译进程。
+  [[nodiscard]] virtual std::expected<std::unique_ptr<DevelopmentFiles>, frontend::Diagnostics>
+  CreateFiles(const std::string& entry, const frontend::ModulePaths& imports) = 0;
   // program 来自 IR preparation；reuse 仅用于拥有版本身份的 Reloadable 程序。
-  [[nodiscard]] std::expected<CompiledImage, frontend::Diagnostics> Compile(
+  // 本地引用入口只支持同步发射；OnDemand 必须使用下面的共享所有权重载。
+  [[nodiscard]] virtual std::expected<CompiledImage, frontend::Diagnostics> Compile(
       const ir::Program& program,
       const CompileOptions& options = {},
-      CodeReuseCache* reuse = nullptr);
-  [[nodiscard]] CodeResourceCounts resource_counts() const noexcept;
+      CodeReuseCache* reuse = nullptr) = 0;
+  // 按需发射持有源程序的不可变所有权；源码会话可借助 aliasing shared_ptr 共享当前快照。
+  [[nodiscard]] virtual std::expected<CompiledImage, frontend::Diagnostics> Compile(
+      std::shared_ptr<const ir::Program> program,
+      const CompileOptions& options,
+      CodeReuseCache* reuse = nullptr) = 0;
+  [[nodiscard]] virtual CodeResourceCounts resource_counts() const noexcept = 0;
 
- private:
-  explicit Compiler(std::shared_ptr<llvm::orc::LLJIT> jit);
-  std::shared_ptr<llvm::orc::LLJIT> jit_;
-  std::shared_ptr<CodeResourceCounters> counters_;
-  std::atomic_uint64_t next_module_{0};
+ protected:
+  friend class ::vela::compiler::DevelopmentSession;
+  virtual std::expected<CompiledImage, frontend::Diagnostics> CompileSource(
+      const std::shared_ptr<const CompiledSourceSnapshot>& source,
+      const CompileOptions& options,
+      CodeReuseCache* reuse);
 };
 
 }  // namespace vela::compiler::jit

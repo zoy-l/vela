@@ -16,6 +16,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "compiler/native/root_store_optimizer.h"
+#include "runtime/native/native_function.h"
 #include "runtime/native/native_symbols.h"
 
 #include <algorithm>
@@ -82,7 +83,8 @@ bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
          (placement_ == NativeCodePlacement::Linked &&
           ir::IsBuiltinCall(instruction, Builtin::MutableStringAppendCodePoint)) ||
          instruction.opcode == Opcode::GetGlobal || IsLeafCall(target, index) ||
-         (target && generated_[target->function].square_root);
+         (target &&
+          generated_[target->function].math_intrinsic != runtime::NativeFunction::Intrinsic::None);
 }
 
 void FunctionEmitter::CacheRuntimeCalls() {
@@ -175,13 +177,20 @@ void FunctionEmitter::PrepareRuntimeCall() {
 }
 
 void FunctionEmitter::PrepareObservableCall() {
+  bool write_position = true;
   if (host_trace_active_ != nullptr) {
     const auto target = CallTarget(instruction_index_);
-    if (!target || !CanInlineImportCall(program_.functions[target->function])) {
+    if (target && CanInlineImportCall(program_.functions[target->function])) {
+      write_position = borrowed_caller_position_ == nullptr;
+    } else {
       ReleaseBorrowedHostFrame();
     }
   }
-  SetPosition();
+  if (write_position) {
+    SetPosition();
+  } else {
+    PrepareTraceFrame();
+  }
   StoreRoots(instruction_index_);
   PrepareCallCheckpoint();
 }
@@ -263,7 +272,7 @@ llvm::Value* FunctionEmitter::Poll() {
     branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(process);
-  ReleaseBorrowedHostFrame();
+  auto* host_frame = ReleaseBorrowedHostFrame();
   SetPosition();
   if (source_.native_symbol.empty()) {
     StoreRoots(instruction_index_);
@@ -276,6 +285,7 @@ llvm::Value* FunctionEmitter::Poll() {
   if (checkpoint_ != nullptr) {
     RecoverIfInvalidated();
   }
+  ResumeBorrowedHostFrame(host_frame);
   builder_.CreateBr(ready);
   builder_.SetInsertPoint(ready);
   return builder_.CreateNot(required);

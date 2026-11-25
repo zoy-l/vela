@@ -92,7 +92,8 @@ SemanticIndex& LanguageServer::IndexFor(std::string_view uri, const ServerDocume
     return found->second;
   }
   const auto overlays = OverlaysFor(uri);
-  return semantic_indices_.try_emplace(std::string(uri), opened.path, modules_, overlays)
+  return semantic_indices_
+      .try_emplace(std::string(uri), opened.path, modules_, overlays, &configurations_)
       .first->second;
 }
 
@@ -205,6 +206,10 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     Error(call.identity, kInvalidParams, offset.error());
     return;
   }
+  if (query == SymbolQuery::References) {
+    References(call, IndexFor(uri, opened), *offset);
+    return;
+  }
   if (query == SymbolQuery::Rename) {
     Rename(call, IndexFor(uri, opened), *offset);
     return;
@@ -241,11 +246,7 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     } else if (query == SymbolQuery::Hover) {
       result = JsonHover(document, index.FindHover(*offset, encoding_));
     } else if (const auto definition = index.FindDefinition(*offset, encoding_)) {
-      result = yyjson_mut_obj(document);
-      const auto target = SourceUri(definition->path);
-      AddJsonField(document, result, protocol::kUri,
-                   yyjson_mut_strncpy(document, target.data(), target.size()));
-      AddJsonField(document, result, protocol::kRange, JsonRange(document, definition->range));
+      result = JsonLocation(document, *definition);
     }
   }
   AddJsonField(document, response.root(), protocol::kResult, result);

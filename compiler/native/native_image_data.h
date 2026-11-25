@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <llvm/Support/Allocator.h>
@@ -14,6 +16,7 @@
 namespace vela::compiler::native {
 
 class NativeImageBuilder;
+class NativeImageDecoder;
 
 // AOT 和 JIT 共用描述生产者。描述表不依赖 LLVM 常量或机器码批次，所有借用字节
 // 由本对象拥有；JIT 只在发布前填写链接完成的入口，AOT 将同一描述序列化到目标文件。
@@ -33,11 +36,15 @@ class NativeImageData final {
 
  private:
   friend class NativeImageBuilder;
+  friend class NativeImageDecoder;
   llvm::BumpPtrAllocator storage_;
   std::vector<runtime::NativeFunctionDescription> functions_;
   runtime::NativeImage image_;
 };
 
 [[nodiscard]] std::shared_ptr<NativeImageData> DescribeNativeImage(const ir::Program& program);
+[[nodiscard]] std::vector<std::byte> EncodeNativeImage(const runtime::NativeImage& image);
+[[nodiscard]] std::expected<std::shared_ptr<NativeImageData>, std::string> DecodeNativeImage(
+    std::span<const std::byte> bytes);
 
 }  // namespace vela::compiler::native

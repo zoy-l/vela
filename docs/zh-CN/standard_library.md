@@ -49,9 +49,17 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 ## 数学库 Math
 
-所有数学函数的输入参数与数值返回值均为 `double`；在需要的地方请使用显式的 `toDouble()` 或 `toInt()`。`Math` 对象的静态成员包括 `PI`、`E`、`random`、`sqrt`、`log`、`exp`、`sin`、`cos`、`tan`、`floor`、`ceil`、`round`、`trunc`、`abs`、`pow`、`min`、`max`、`clamp`、`isFinite` 以及 `isNaN`。二元数学函数接收 2 个参数；clamp 接收 `(value, lower, upper)` 3 个参数。`round` 采用半数远离零（round-half-away-from-zero）舍入规则。基础超越函数调用平台 C++ 数学库，其最低有效位可能存在微小平台差异。
+所有数学函数的输入参数与数值返回值均为 `double`；在需要的地方请使用显式的 `toDouble()` 或 `toInt()`。`Math` 对象的静态成员包括 `PI`、`E`、`random`、`sqrt`、`log`、`exp`、`sin`、`cos`、`tan`、`atan2`、`cbrt`、`hypot`、`remainder`、`floor`、`ceil`、`round`、`trunc`、`abs`、`pow`、`min`、`max`、`clamp`、`isFinite` 以及 `isNaN`。二元数学函数接收 2 个参数；clamp 接收 `(value, lower, upper)` 3 个参数。`round` 采用半数远离零（round-half-away-from-zero）舍入规则。基础超越函数调用平台 C++ 数学库，其最低有效位可能存在微小平台差异。
 
 传入负数的 sqrt、传入非正数的 log 以及无序/包含 NaN 的 clamp 边界会抛出可被捕获的运行时异常。其它定义域越界或数值溢出结果保持 IEEE 标准的 NaN 或正负无穷大，允许脚本通过 `isNaN`/`isFinite` 显式判断。min/max 与 clamp 遵循 fmin/fmax 语义；当恰好有一个操作数为 NaN 时，有效数值优先胜出。不发生任何隐式类型提升。`Math`、`Random`、`performance` 和 `Date` 仅暴露静态接口，不可被实例化构造；数学常量不可在脚本中被赋值修改。宿主显式注册的原生函数优先于默认绑定，且必须匹配其声明的静态签名。
+
+`Math.atan2(y: double, x: double): double` 返回弧度角，保留四象限与有符号零。
+`Math.cbrt(value: double): double` 计算实数立方根，接受负数。
+`Math.hypot(x: double, y: double): double` 避免中间平方造成无谓溢出或下溢，无穷大优先于 NaN。
+`Math.remainder(value: double, divisor: double): double` 返回 `value - divisor*n`，
+n 为精确商最接近的整数，恰好居中时取偶数；与 `%`/fmod 不同，例如 `remainder(7.0, 2.0)` 为 -1.0。
+除数为零或被除数为无穷大时返回 NaN；有限数对无穷大取余保持原值。四个方法采用 IEEE NaN/无穷大结果，
+不为定义域另抛异常，支持命名参数、函数值及相同的 JIT/AOT 调用契约。
 
 ## 集合操作与高阶方法
 

@@ -103,11 +103,6 @@ struct NativeCallableContract final {
     const NativeInstance& caller,
     Value callable);
 
-// 受信任的脚本驱动可调用内部声明；参数仍按真实签名校验并填充省略的可选实参。
-[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeFunction(
-    NativeExecution& execution,
-    std::uint32_t function,
-    std::span<const Value> arguments = {});
 [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeCallable(
     NativeExecution& execution,
     Value callable,
@@ -149,6 +144,27 @@ BoxNativeEnumResult(const NativeInstance& instance, std::uint32_t type, Value va
     std::uint32_t function,
     std::span<const NativeValue> arguments) {
   return InvokeNativeTarget(execution, execution.instance().image().function(function), arguments);
+}
+
+// 受信任的脚本驱动可调用内部声明；参数仍按真实签名校验并填充省略的可选实参。
+[[nodiscard]] inline std::expected<Value, ExecutionStatus> InvokeNativeFunction(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const Value> arguments = {}) {
+  const auto functions = execution.instance().image().functions.values();
+  if (function >= functions.size()) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  const auto& description = functions.subspan(function).front();
+  if (description.hidden_parameters != 0) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  if (description.parameter_count == 0 && arguments.empty()) {
+    // 无参数的命名入口已验证目标，无需构造闭包调用描述。
+    return InvokeNativeTarget(execution, description, {});
+  }
+  return InvokeResolvedNativeCallable(
+      execution, {.target = {.function = function}, .function = &description}, arguments);
 }
 
 // indirect 参数区首槽预留给闭包环境或绑定接收者；显式实参从第二槽开始。

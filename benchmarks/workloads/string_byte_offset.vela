@@ -1,0 +1,17 @@
+import 'input' as data;
+
+const unit = 'A中😀e\u0301Z\0';
+const text = unit + unit + unit + unit;
+
+func run(): int {
+  let checksum = 0;
+  for (const value in data.values) {
+    checksum += text.byteOffsetAt(value % (text.length + 2) - 1) ?? -1;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

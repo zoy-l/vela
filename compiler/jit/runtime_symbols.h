@@ -2,12 +2,9 @@
 
 #include <llvm/Support/Error.h>
 
-namespace llvm::orc {
-class LLJIT;
-}
-
 namespace vela::compiler::jit {
+class CodeLinker;
 
-[[nodiscard]] llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit);
+[[nodiscard]] llvm::Error DefineRuntimeSymbols(CodeLinker& jit);
 
 }  // namespace vela::compiler::jit

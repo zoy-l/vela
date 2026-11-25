@@ -180,9 +180,12 @@ void BindGlobalIdentities(Program& program,
     global_slots.emplace(declaration, index);
   }
   for (const auto& global : source.globals) {
+    auto& flags = program.global_flags.at(global_slots.at(bindings.globals.at(global.name)));
     if (global.binding == frontend::BindingKind::Constant) {
-      program.global_flags.at(global_slots.at(bindings.globals.at(global.name))) =
-          static_cast<std::uint32_t>(GlobalFlag::Constant);
+      flags |= static_cast<std::uint32_t>(GlobalFlag::Constant);
+    }
+    if (global.export_kind == frontend::ExportKind::Local) {
+      flags |= static_cast<std::uint32_t>(GlobalFlag::ModuleLocal);
     }
   }
   for (const auto& owner : source.classes) {

@@ -114,10 +114,8 @@ std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& own
   if (native_mode_ == NativeProgramMode::Reloadable) {
     return 0;
   }
-  const auto& source = *owner.declaration;
-  const bool has_optional_fields =
-      source.constructor_kind == frontend::ConstructorKind::Generated &&
-      !owner.constructor.optional_parameters.empty();
+  const bool has_optional_fields = owner.constructor_kind == frontend::ConstructorKind::Generated &&
+                                   !owner.constructor.optional_parameters.empty();
   return has_optional_fields
              ? static_cast<std::uint32_t>((owner.field_order.size() + kConstructorMaskBits - 1) /
                                           kConstructorMaskBits)
@@ -139,7 +137,7 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
     }
     const auto index = owner.fields.at(field.name).index;
     if (native_mode_ == NativeProgramMode::Reloadable &&
-        source.constructor_kind == frontend::ConstructorKind::Generated) {
+        owner.constructor_kind == frontend::ConstructorKind::Generated) {
       // 显式实参已按稳定字段身份写入对象；读取只为尚未提供的槽运行当前初始化器。
       const auto value = EmitTemporary({
           .opcode = Opcode::GetField,
@@ -184,9 +182,32 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
       BindJump(*provided);
     }
   }
+  LowerBaseConstructor(owner);
+}
+
+void Lowerer::LowerBaseConstructor(const frontend::ClassDescriptor& owner) {
+  const auto& source = *owner.declaration;
   if (source.base_class && !model_.explicit_super_constructors.contains(owner.type.name)) {
     const auto& base = model_.classes.at(source.base_class->name);
-    static_cast<void>(LowerConstructorCall({}, {}, source.location, base, 0));
+    if (owner.HasInheritedConstructor()) {
+      const auto count = owner.constructor_kind == frontend::ConstructorKind::Generated
+                             ? ConstructorMaskCount(base)
+                             : static_cast<std::uint32_t>(base.constructor.parameters.size()) *
+                                   (base.constructor.HasDefaults() ? 2U : 1U);
+      std::vector<RegisterId> arguments;
+      arguments.reserve(count);
+      for (std::uint32_t index = 0; index < count; ++index) {
+        arguments.push_back(index + 1);
+      }
+      // 字段实参已写入接收者；这里只转发字段掩码或显式参数及 presence，不提前求值父类默认值。
+      if (HasInstanceInitialization(base) ||
+          (base.constructor_kind == frontend::ConstructorKind::Generated &&
+           native_mode_ == NativeProgramMode::Reloadable)) {
+        EmitConstructorInitialization(base, 0, arguments, source.location);
+      }
+    } else {
+      static_cast<void>(LowerConstructorCall({}, {}, source.location, base, 0));
+    }
   }
 }
 
@@ -294,8 +315,7 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
       evaluated.push_back({.reg = saved, .type = value.type});
     }
     const auto& fields = declarations_->classes.at(expected.name);
-    const auto generated =
-        info.declaration->constructor_kind == frontend::ConstructorKind::Generated;
+    const auto generated = info.constructor_kind == frontend::ConstructorKind::Generated;
     construction.emplace(
         Construction{.type = fields.declaration, .supplied = {}, .generated = generated});
     if (generated) {
@@ -350,9 +370,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
     const frontend::ClassDescriptor& info,
     RegisterId object,
     std::span<const LoweredValue> evaluated) {
-  const auto& source = *info.declaration;
   const auto& signature = info.constructor;
-  const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
+  const bool generated = info.constructor_kind == frontend::ConstructorKind::Generated;
   const auto masks = ConstructorMaskCount(info);
   auto arguments = generated ? std::vector<RegisterId>{}
                              : PrepareConstructorArguments(signature, argument_order, location);

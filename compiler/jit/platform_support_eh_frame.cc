@@ -8,19 +8,19 @@
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
-#include <llvm/ExecutionEngine/Orc/Debugging/DebuggerSupport.h>
+#include <llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h>
+#include <llvm/ExecutionEngine/Orc/Debugging/ELFDebugObjectPlugin.h>
 #include <llvm/ExecutionEngine/Orc/EHFrameRegistrationPlugin.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h>
 #include <llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h>
-#include <llvm/Support/Casting.h>
 #include <llvm/Support/Error.h>
+#include "compiler/jit/engine.h"
 
 namespace vela::compiler::jit {
 
-llvm::Error InstallPlatformSupport(llvm::orc::LLJIT& jit) {
+llvm::Error InstallPlatformSupport(CodeLinker& jit) {
   llvm::orc::SymbolMap symbols;
   const auto bind = [&](llvm::StringRef name, auto* entry) {
     symbols.try_emplace(jit.mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(entry),
@@ -38,8 +38,21 @@ llvm::Error InstallPlatformSupport(llvm::orc::LLJIT& jit) {
   if (!frames) {
     return frames.takeError();
   }
-  llvm::cast<llvm::orc::ObjectLinkingLayer>(jit.getObjLinkingLayer()).addPlugin(std::move(*frames));
-  return llvm::orc::enableDebuggerSupport(jit);
+  auto& objects = jit.getObjLinkingLayer();
+  objects.addPlugin(std::move(*frames));
+  if (jit.getTargetTriple().isOSBinFormatMachO()) {
+    auto debugger = llvm::orc::GDBJITDebugInfoRegistrationPlugin::Create(
+        jit.getExecutionSession(), jit.getMainJITDylib(), jit.getTargetTriple());
+    if (!debugger) {
+      return debugger.takeError();
+    }
+    objects.addPlugin(std::move(*debugger));
+    return llvm::Error::success();
+  }
+  auto error = llvm::Error::success();
+  objects.addPlugin(std::make_shared<llvm::orc::ELFDebugObjectPlugin>(jit.getExecutionSession(),
+                                                                      false, true, error));
+  return error;
 }
 
 }  // namespace vela::compiler::jit

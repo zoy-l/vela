@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -10,12 +11,62 @@
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_memory_layout.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
+
+TEST(InstanceStorageTest, InlineFieldsReuseTheMetadataTailAndKeepSixScalarFieldsInOneSmallBlock) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  constexpr std::uint32_t kFieldCount = 6;
+  const auto* layout = isolate.CreateClassLayout(kFieldCount, {});
+  const auto baseline = heap.allocated_bytes();
+  const std::array fields{
+      Value::Double(1.0), Value::Double(2.0), Value::Double(3.0),
+      Value::Double(4.0), Value::Double(5.0), Value::Double(6.0),
+  };
+  auto* object = heap.AllocateInstance(*layout, fields);
+  ASSERT_NE(object, nullptr);
+  const auto value = Value::Object(object);
+  const RootRange root(heap, &value, 1);
+  const auto header = std::as_bytes(std::span(object, 1));
+  EXPECT_EQ(ObjectFieldStorage(*object).data(),
+            header.subspan(NativeMemoryLayout::kInlineObjectFields).data());
+  EXPECT_LT(NativeMemoryLayout::kInlineObjectFields, sizeof(HeapObject));
+  EXPECT_LE(heap.allocated_bytes() - baseline, 96U);
+  for (std::uint32_t field = 0; field < fields.size(); ++field) {
+    EXPECT_EQ(Heap::LoadField(*object, field).AsDouble(), fields[field].AsDouble());
+    ASSERT_TRUE(heap.SetField(*object, field, Value::Integer(field)));
+  }
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 1U);
+  EXPECT_EQ(Heap::ClassOf(*object), layout);
+  for (std::uint32_t field = 0; field < fields.size(); ++field) {
+    EXPECT_EQ(Heap::LoadField(*object, field).AsInteger(), field);
+  }
+}
+
+TEST(InstanceStorageTest, ReferenceInReusedMetadataSlotIsTracedThroughCollection) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const std::array reference_fields{std::uint32_t{0}};
+  const auto* layout = isolate.CreateClassLayout(1, reference_fields);
+  auto value = Value::Object(heap.AllocateInstance(*layout));
+  ASSERT_NE(value.AsObject(), nullptr);
+  const RootRange root(heap, &value, 1);
+  const auto child = Value::String(heap.AllocateString("first field root"));
+  ASSERT_TRUE(heap.SetField(*value.AsObject(), 0, child));
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 2U);
+  EXPECT_EQ(Heap::LoadField(*value.AsObject(), 0).AsString()->value(), "first field root");
+  ASSERT_TRUE(heap.SetField(*value.AsObject(), 0, Value::Null()));
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 1U);
+}
 
 TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKeepObjectsAlive) {
   Isolate isolate;

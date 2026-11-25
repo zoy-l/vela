@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/binary.h"
+#include "base/command_line.h"
 #include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/fingerprint.h"
@@ -54,10 +55,10 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
       emit = argument.substr(kEmitOption.size());
     } else if (argument.starts_with(kExportOption)) {
       result.options.exports.emplace_back(argument.substr(kExportOption.size()));
-    } else if (argument.starts_with(kTargetSupportOption)) {
-      result.support_path = Utf8Path(argument.substr(kTargetSupportOption.size()));
-    } else if (argument.starts_with("--config=")) {
-      result.configuration = Utf8Path(argument.substr(std::string_view("--config=").size()));
+    } else if (auto path = ReadPathOption(argument, kTargetSupportOption)) {
+      result.support_path = std::move(*path);
+    } else if (auto path = ReadPathOption(argument, kConfigurationOption)) {
+      result.configuration = std::move(path);
     } else if (!argument.starts_with('-') && result.source.empty()) {
       result.source = argument;
     } else {
@@ -149,14 +150,15 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
 
 int BuildCommand(std::span<char*> arguments, std::ostream& errors) {
   constexpr std::string_view kVerify = "--verify-manifest=";
-  if (arguments.size() == 1 && std::string_view(arguments.front()).starts_with(kVerify)) {
-    const auto verified =
-        VerifyNativeLibrary(Utf8Path(std::string_view(arguments.front()).substr(kVerify.size())));
-    if (!verified) {
-      errors << "vela: " << verified.error() << '\n';
-      return kSourceErrorExitCode;
+  if (arguments.size() == 1) {
+    if (auto path = ReadPathOption(arguments.front(), kVerify)) {
+      const auto verified = VerifyNativeLibrary(*path);
+      if (!verified) {
+        errors << "vela: " << verified.error() << '\n';
+        return kSourceErrorExitCode;
+      }
+      return 0;
     }
-    return 0;
   }
   auto parsed = ParseArguments(arguments);
   if (!parsed) {

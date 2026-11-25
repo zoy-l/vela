@@ -20,6 +20,17 @@ bool CanAnalyzeSynchronousFunction(const Function& function) {
   return function.native_symbol.empty() && !function.is_async && function.handlers.empty();
 }
 
+bool IsTrivialConstructor(const Function& function) {
+  if (!function.is_generated_constructor || function.parameter_count != 1 ||
+      !CanAnalyzeSynchronousFunction(function)) {
+    return false;
+  }
+  return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
+    return instruction.opcode == Opcode::Return ||
+           (instruction.opcode == Opcode::LoadNull && instruction.dst >= function.parameter_count);
+  });
+}
+
 std::vector<RegisterAccess> AnalyzeRegisterAccesses(const Function& function,
                                                     std::span<const Function> functions) {
   std::vector<RegisterAccess> accesses;
@@ -148,6 +159,7 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::SetField:
       return {.uses = {Field::Destination, Field::Left}, .use_count = 2};
     case Opcode::SetIndex:
+    case Opcode::SetRecordField:
       return {.uses = {Field::Destination, Field::Left, Field::Right}, .use_count = 3};
     case Opcode::Print:
     case Opcode::SetGlobal:
@@ -212,6 +224,9 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::EqualString:
     case Opcode::NotEqualString:
     case Opcode::GetIndex:
+    case Opcode::CheckRecordIndex:
+    case Opcode::GetRecordField:
+    case Opcode::PushRecord:
       return {.defines_value = true, .uses = {Field::Left, Field::Right}, .use_count = 2};
   }
   std::unreachable();
@@ -651,7 +666,12 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {.may_fail = true};
     case Opcode::CheckedCast:
     case Opcode::GetIndex:
+    case Opcode::CheckRecordIndex:
       return {.may_fail = true, .reads_state = true};
+    case Opcode::GetRecordField:
+      return {.reads_state = true};
+    case Opcode::SetRecordField:
+      return {.writes_state = true};
     case Opcode::GetField:
       if (instruction.field_declaration) {
         return {
@@ -670,6 +690,7 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::NewInstance:
     case Opcode::NewFuture:
     case Opcode::SleepFuture:
+    case Opcode::PushRecord:
       return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};
     case Opcode::BuiltinCall:
       if (instruction.index == static_cast<std::uint32_t>(Builtin::NumericToInt) ||
@@ -684,6 +705,10 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
           instruction.index == static_cast<std::uint32_t>(Builtin::CollectionSize) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::StringByteLength) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringIsCodePointBoundary) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringByteOffsetAt) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringStartsWith) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringEndsWith) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::StringCodePointAt) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCapacity) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayMutation) ||

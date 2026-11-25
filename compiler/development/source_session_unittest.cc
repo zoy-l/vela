@@ -67,8 +67,8 @@ TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExis
   ASSERT_TRUE(session.Commit(*first));
   const auto accepted = session.snapshot();
   const auto field =
-      std::ranges::find(accepted->program.reflection_members, "value", &reflection::Member::name);
-  ASSERT_NE(field, accepted->program.reflection_members.end());
+      std::ranges::find(accepted->program->reflection_members, "value", &reflection::Member::name);
+  ASSERT_NE(field, accepted->program->reflection_members.end());
   const auto identity = field->declaration;
   auto invalid_selection = selection;
   invalid_selection.members.front().name = "missing";
@@ -89,7 +89,7 @@ TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExis
   ASSERT_TRUE(withdrawn);
   ASSERT_TRUE(session.Commit(*withdrawn));
   EXPECT_TRUE(session.snapshot()->reflection.empty());
-  EXPECT_TRUE(session.snapshot()->program.reflection_members.empty());
+  EXPECT_TRUE(session.snapshot()->program->reflection_members.empty());
   const auto restored = session.Prepare({
       .base_revision = 2,
       .changes = {},
@@ -97,7 +97,7 @@ TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExis
       .reflection = std::vector{selection},
   });
   ASSERT_TRUE(restored);
-  const auto& members = restored->snapshot().program.reflection_members;
+  const auto& members = restored->snapshot().program->reflection_members;
   const auto current = std::ranges::find(members, "value", &reflection::Member::name);
   ASSERT_NE(current, members.end());
   EXPECT_EQ(current->declaration, identity);
@@ -134,7 +134,7 @@ TEST(SourceSessionTest, ExternalClassesWithoutPublicConstructorsDoNotGainGenerat
       .added_roots = {},
   });
   ASSERT_TRUE(candidate);
-  const auto& program = candidate->snapshot().program;
+  const auto& program = *candidate->snapshot().program;
   EXPECT_NE(Class(program, "Counter"), nullptr);
   EXPECT_NE(Function(program, "identity"), nullptr);
   EXPECT_EQ(Function(program, "Counter.$constructor"), nullptr);
@@ -163,8 +163,8 @@ TEST(SourceSessionTest, FailedCandidateDoesNotConsumeIdentitiesOrReplaceAccepted
       .added_roots = {},
   });
   ASSERT_TRUE(valid);
-  const auto* old_function = Function(baseline->program, "answer");
-  const auto* new_function = Function(valid->snapshot().program, "answer");
+  const auto* old_function = Function(*baseline->program, "answer");
+  const auto* new_function = Function(*valid->snapshot().program, "answer");
   ASSERT_NE(old_function, nullptr);
   ASSERT_NE(new_function, nullptr);
   EXPECT_EQ(old_function->identity.declaration, new_function->identity.declaration);
@@ -187,7 +187,7 @@ TEST(SourceSessionTest, GenericContractChangesAreReportedBeforeRetainedSpecializ
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto* specialized = Function(first->snapshot().program, "read<Box<int>>");
+  const auto* specialized = Function(*first->snapshot().program, "read<Box<int>>");
   ASSERT_NE(specialized, nullptr);
   const std::array retained{specialized->identity.declaration};
   for (const auto& source : std::array<std::string, 3>{
@@ -282,7 +282,7 @@ func main(): int { return Box<int>().map(Item()) + read(Item()); }
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto* method = Function(first->snapshot().program, "Box<int>.map<Item>");
+  const auto* method = Function(*first->snapshot().program, "Box<int>.map<Item>");
   ASSERT_NE(method, nullptr);
   const std::array retained{method->identity.declaration};
   const auto renamed = session.Prepare(
@@ -305,7 +305,7 @@ func read<R extends Reader<int>>(value: R): int { return value.read(); }
       },
       retained);
   ASSERT_TRUE(renamed);
-  const auto* current = Function(renamed->snapshot().program, "Box<int>.map<Item>");
+  const auto* current = Function(*renamed->snapshot().program, "Box<int>.map<Item>");
   ASSERT_NE(current, nullptr);
   EXPECT_EQ(current->identity.declaration, method->identity.declaration);
 }
@@ -362,14 +362,14 @@ TEST(SourceSessionTest, ReorderedAndInheritedFieldsKeepTheirDeclarationIdentitie
       .added_roots = {},
   });
   ASSERT_TRUE(next);
-  const auto* before = Class(old_snapshot->program, "Child");
-  const auto* after = Class(next->snapshot().program, "Child");
+  const auto* before = Class(*old_snapshot->program, "Child");
+  const auto* after = Class(*next->snapshot().program, "Child");
   ASSERT_NE(before, nullptr);
   ASSERT_NE(after, nullptr);
   EXPECT_EQ(before->declaration, after->declaration);
   EXPECT_EQ(Field(*old_snapshot, *before, "first"), Field(next->snapshot(), *after, "first"));
   EXPECT_EQ(Field(*old_snapshot, *before, "second"), Field(next->snapshot(), *after, "second"));
-  const auto* base = Class(next->snapshot().program, "Base");
+  const auto* base = Class(*next->snapshot().program, "Base");
   ASSERT_NE(base, nullptr);
   EXPECT_EQ(Field(next->snapshot(), *base, "added"), Field(next->snapshot(), *after, "added"));
 }
@@ -381,7 +381,7 @@ TEST(SourceSessionTest, DeletedAndReintroducedDeclarationsNeverReuseTheirOldIden
       .added_roots = {},
   });
   ASSERT_TRUE(first);
-  const auto* target = Function(first->snapshot().program, "target");
+  const auto* target = Function(*first->snapshot().program, "target");
   ASSERT_NE(target, nullptr);
   const auto original = target->identity.declaration;
   ASSERT_TRUE(session.Commit(*first));
@@ -403,7 +403,7 @@ TEST(SourceSessionTest, DeletedAndReintroducedDeclarationsNeverReuseTheirOldIden
       .added_roots = {},
   });
   ASSERT_TRUE(restored);
-  const auto* replacement = Function(restored->snapshot().program, "target");
+  const auto* replacement = Function(*restored->snapshot().program, "target");
   ASSERT_NE(replacement, nullptr);
   EXPECT_NE(replacement->identity.declaration, original);
 }
@@ -436,8 +436,8 @@ TEST(SourceSessionTest, PrimitiveGenericArgumentsAreIndependentOfBuiltinNamespac
       .added_roots = {},
   });
   ASSERT_TRUE(next);
-  const auto* before = Function(first->snapshot().program, "same<int>");
-  const auto* after = Function(next->snapshot().program, "same<int>");
+  const auto* before = Function(*first->snapshot().program, "same<int>");
+  const auto* after = Function(*next->snapshot().program, "same<int>");
   ASSERT_NE(before, nullptr);
   ASSERT_NE(after, nullptr);
   EXPECT_EQ(before->identity.declaration, after->identity.declaration);
@@ -480,8 +480,8 @@ TEST(SourceSessionTest, ImportAliasesAndLoadOrderDoNotChangeNominalSpecializatio
   const auto specialized = [](const ir::Function& function) {
     return function.name.starts_with("same<");
   };
-  const auto& before = first->snapshot().program.functions;
-  const auto& after = next->snapshot().program.functions;
+  const auto& before = first->snapshot().program->functions;
+  const auto& after = next->snapshot().program->functions;
   const auto old_function = std::ranges::find_if(before, specialized);
   const auto new_function = std::ranges::find_if(after, specialized);
   ASSERT_NE(old_function, before.end());
@@ -508,8 +508,8 @@ TEST(SourceSessionTest, UninstantiatedGenericDeclarationsKeepIdentitiesWithoutEm
       .added_roots = {},
   });
   ASSERT_TRUE(absent);
-  EXPECT_EQ(Function(absent->snapshot().program, "same<int>"), nullptr);
-  EXPECT_EQ(Class(absent->snapshot().program, "Box<int>"), nullptr);
+  EXPECT_EQ(Function(*absent->snapshot().program, "same<int>"), nullptr);
+  EXPECT_EQ(Class(*absent->snapshot().program, "Box<int>"), nullptr);
   ASSERT_TRUE(session.Commit(*absent));
   const auto restored = session.Prepare({
       .base_revision = 2,
@@ -545,7 +545,7 @@ TEST(SourceSessionTest, RetainedGenericMembersRegenerateOnlyTheirRequiredSpecial
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto* method = Function(first->snapshot().program, "Box<int>.read");
+  const auto* method = Function(*first->snapshot().program, "Box<int>.read");
   ASSERT_NE(method, nullptr);
   const std::array retained{method->identity.declaration};
   const auto next = session.Prepare(
@@ -562,10 +562,10 @@ TEST(SourceSessionTest, RetainedGenericMembersRegenerateOnlyTheirRequiredSpecial
       },
       retained);
   ASSERT_TRUE(next);
-  const auto* current = Function(next->snapshot().program, "Box<int>.read");
+  const auto* current = Function(*next->snapshot().program, "Box<int>.read");
   ASSERT_NE(current, nullptr);
   EXPECT_EQ(current->identity.declaration, method->identity.declaration);
-  EXPECT_EQ(Class(next->snapshot().program, "Box<string>"), nullptr);
+  EXPECT_EQ(Class(*next->snapshot().program, "Box<string>"), nullptr);
 }
 
 TEST(SourceSessionTest, RetainedNestedTypeArgumentsRebindAcrossAliasesAndRemovedImports) {
@@ -588,7 +588,7 @@ TEST(SourceSessionTest, RetainedNestedTypeArgumentsRebindAcrossAliasesAndRemoved
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto& functions = first->snapshot().program.functions;
+  const auto& functions = first->snapshot().program->functions;
   const auto target = std::ranges::find_if(functions, [](const auto& function) {
     return function.name.find(".count<") != std::string::npos;
   });
@@ -608,7 +608,7 @@ TEST(SourceSessionTest, RetainedNestedTypeArgumentsRebindAcrossAliasesAndRemoved
       },
       retained);
   ASSERT_TRUE(next);
-  const auto& updated = next->snapshot().program.functions;
+  const auto& updated = next->snapshot().program->functions;
   const auto current = std::ranges::find_if(updated, [&](const auto& function) {
     return function.identity.declaration == target->identity.declaration;
   });
@@ -639,8 +639,8 @@ func unused(): string { return Box<int>().identity('unused'); }
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto* identity = Function(first->snapshot().program, "Box<string>.identity<int>");
-  const auto* copy = Function(first->snapshot().program, "Box<string>.copy<int>");
+  const auto* identity = Function(*first->snapshot().program, "Box<string>.identity<int>");
+  const auto* copy = Function(*first->snapshot().program, "Box<string>.copy<int>");
   ASSERT_NE(identity, nullptr);
   ASSERT_NE(copy, nullptr);
   const std::array retained{identity->identity.declaration, copy->identity.declaration};
@@ -652,13 +652,13 @@ func unused(): string { return Box<int>().identity('unused'); }
       },
       retained);
   ASSERT_TRUE(next);
-  const auto* current = Function(next->snapshot().program, "Box<string>.identity<int>");
-  const auto* static_current = Function(next->snapshot().program, "Box<string>.copy<int>");
+  const auto* current = Function(*next->snapshot().program, "Box<string>.identity<int>");
+  const auto* static_current = Function(*next->snapshot().program, "Box<string>.copy<int>");
   ASSERT_NE(current, nullptr);
   ASSERT_NE(static_current, nullptr);
   EXPECT_EQ(current->identity.declaration, identity->identity.declaration);
   EXPECT_EQ(static_current->identity.declaration, copy->identity.declaration);
-  EXPECT_EQ(Class(next->snapshot().program, "Box<int>"), nullptr);
+  EXPECT_EQ(Class(*next->snapshot().program, "Box<int>"), nullptr);
 }
 
 TEST(SourceSessionTest, RetainedGenericSelectorsRebuildEveryRetainedImplementation) {
@@ -686,7 +686,7 @@ func main(): int {
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto& before = first->snapshot().program;
+  const auto& before = *first->snapshot().program;
   ASSERT_FALSE(before.selector_declarations.empty());
   const auto selector = before.selector_declarations.front();
   const auto* owner = Class(before, "Implementation<int>");
@@ -700,7 +700,7 @@ func main(): int {
       },
       retained);
   ASSERT_TRUE(next);
-  const auto& after = next->snapshot().program;
+  const auto& after = *next->snapshot().program;
   ASSERT_EQ(after.selector_declarations.size(), before.selector_declarations.size());
   const auto* implementation = Function(after, "Implementation<int>.map<string>");
   ASSERT_NE(implementation, nullptr);
@@ -765,8 +765,8 @@ TEST(SourceSessionTest, DeletingUninstantiatedTemplateMembersRetiresTheirConcret
   });
   ASSERT_TRUE(first);
   ASSERT_TRUE(session.Commit(*first));
-  const auto* old_class = Class(first->snapshot().program, "Box<int>");
-  const auto* old_method = Function(first->snapshot().program, "Box<int>.read");
+  const auto* old_class = Class(*first->snapshot().program, "Box<int>");
+  const auto* old_method = Function(*first->snapshot().program, "Box<int>.read");
   ASSERT_NE(old_class, nullptr);
   ASSERT_NE(old_method, nullptr);
   const auto removed_field = Field(first->snapshot(), *old_class, "count");
@@ -790,8 +790,8 @@ TEST(SourceSessionTest, DeletingUninstantiatedTemplateMembersRetiresTheirConcret
       .added_roots = {},
   });
   ASSERT_TRUE(restored);
-  const auto* new_class = Class(restored->snapshot().program, "Box<int>");
-  const auto* new_method = Function(restored->snapshot().program, "Box<int>.read");
+  const auto* new_class = Class(*restored->snapshot().program, "Box<int>");
+  const auto* new_method = Function(*restored->snapshot().program, "Box<int>.read");
   ASSERT_NE(new_class, nullptr);
   ASSERT_NE(new_method, nullptr);
   EXPECT_EQ(new_class->declaration, old_class->declaration);
@@ -833,8 +833,8 @@ TEST(SourceSessionTest, CompactGlobalAndSelectorIndexesMapToStableDeclarationsAf
       .added_roots = {},
   });
   ASSERT_TRUE(next);
-  const auto& before = first->snapshot().program;
-  const auto& after = next->snapshot().program;
+  const auto& before = *first->snapshot().program;
+  const auto& after = *next->snapshot().program;
   ASSERT_EQ(before.global_declarations.size(), 2U);
   ASSERT_EQ(after.global_declarations.size(), 3U);
   EXPECT_EQ(before.global_declarations.front(), after.global_declarations.at(2));
@@ -889,8 +889,8 @@ TEST(SourceSessionTest, LambdasBelongToTheirOuterVersionAndKeepOldSourceSnapshot
   });
   ASSERT_TRUE(next);
   ASSERT_TRUE(session.Commit(*next));
-  const auto& old_functions = previous->program.functions;
-  const auto& new_functions = next->snapshot().program.functions;
+  const auto& old_functions = previous->program->functions;
+  const auto& new_functions = next->snapshot().program->functions;
   const auto local = [](const ir::Function& function) { return function.identity.local; };
   const auto old_lambda = std::ranges::find(old_functions, 1U, local);
   const auto new_lambda = std::ranges::find(new_functions, 1U, local);

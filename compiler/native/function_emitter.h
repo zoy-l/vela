@@ -34,6 +34,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/host_callback.h"
+#include "runtime/native/native_function.h"
 
 namespace llvm {
 class Function;
@@ -65,7 +66,7 @@ struct GeneratedFunction final {
   llvm::Function* host_wide_entry = nullptr;
   llvm::Function* host_entry_selector = nullptr;
   bool budgeted_recursion = false;
-  bool square_root = false;
+  runtime::NativeFunction::Intrinsic math_intrinsic = runtime::NativeFunction::Intrinsic::None;
   std::optional<runtime::NativeInlineScalarOperand> inline_scalar;
   [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
     return tier == NativeCodeTier::Optimized && recovery != nullptr;
@@ -131,6 +132,7 @@ class FunctionEmitter final {
         kind_(kind),
         tier_(tier),
         builder_(module.getContext()),
+        string_constant_registers_(FindStringConstants(source_, program_.functions)),
         array_access_(facts.arrays),
         global_access_(*facts.global_access),
         roots_(roots),
@@ -204,10 +206,12 @@ class FunctionEmitter final {
   llvm::Value* LoadSafepointRequests();
   enum class HostBorrow : std::uint8_t { Enter, Exit };
   void EmitHostBoundary(HostBorrow change);
-  void EnterHostFrame(llvm::Value* depth);
+  void EnterHostFrame();
+  void LinkHostFrame();
   void RestoreHostFrame();
   void StoreExecutionState(Builder& builder, llvm::Value* frame, llvm::Value* depth);
-  void ReleaseBorrowedHostFrame();
+  llvm::Value* ReleaseBorrowedHostFrame();
+  void ResumeBorrowedHostFrame(llvm::Value* was_active);
   llvm::Value* EmitHostPointer(llvm::Value* wrapper, const SourceType& type);
   llvm::Value* EmitDirectHostCall(const ir::Function& callee,
                                   llvm::Value* entries,
@@ -262,7 +266,13 @@ class FunctionEmitter final {
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
   void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
-  llvm::Value* SquareRootCondition(llvm::Value& entries, llvm::Value* operand);
+  std::expected<void, std::string> EmitScalarToString(const ir::Instruction& instruction);
+  void EmitScalarTextLength(const ir::Instruction& instruction);
+  llvm::Value* IntrinsicCondition(llvm::Value& entries,
+                                  llvm::Value* operand,
+                                  runtime::NativeFunction::Intrinsic expected);
+  llvm::Value* EmitMathIntrinsic(runtime::NativeFunction::Intrinsic intrinsic,
+                                 std::span<llvm::Value* const> operands);
   void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
@@ -322,8 +332,13 @@ class FunctionEmitter final {
                                    ir::RegisterId reg,
                                    const layout::Type& element);
   void EmitIndex(const ir::Instruction& instruction);
+  void EmitIndexRead(const ir::Instruction& instruction,
+                     llvm::Value* address,
+                     const layout::Type& element);
+  void EmitRecordField(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitStringCodePointAt(const ir::Instruction& instruction);
+  void EmitStringBoundary(const ir::Instruction& instruction);
   void EmitAppendCodePoint(const ir::Instruction& instruction);
   void EmitMapBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitLocatedMapBuiltin(const ir::Instruction& instruction, Builtin builtin, llvm::Value* map);
@@ -368,7 +383,7 @@ class FunctionEmitter final {
   void EmitLeafCall(const ir::Instruction& instruction,
                     CallableTarget selected,
                     std::span<llvm::Value* const> arguments);
-  llvm::BasicBlock* EmitSquareRootCall(const ir::Instruction& instruction, std::uint32_t target);
+  llvm::BasicBlock* EmitIntrinsicCall(const ir::Instruction& instruction, std::uint32_t target);
   std::vector<llvm::Value*> CallArguments(const ir::Instruction& instruction,
                                           CallableTarget selected,
                                           std::optional<std::size_t> borrowed);
@@ -441,6 +456,7 @@ class FunctionEmitter final {
   llvm::Value* arguments_ = nullptr;
   llvm::Value* host_parent_ = nullptr;
   llvm::Value* host_trace_active_ = nullptr;
+  llvm::Value* borrowed_caller_position_ = nullptr;
   llvm::Value* entry_depth_ = nullptr;
   llvm::Value* global_owner_ = nullptr;
   llvm::Value* global_values_ = nullptr;

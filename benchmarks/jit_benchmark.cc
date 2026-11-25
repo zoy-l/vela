@@ -78,7 +78,7 @@ std::expected<std::shared_ptr<JitProgram>, std::string> CompileWorkload(const st
   const auto& snapshot = candidate->snapshot();
   program->frontend = snapshot.timings;
   const auto compiling = Clock::now();
-  auto code = (*compiler)->Compile(snapshot.program, {.tier = tier});
+  auto code = (*compiler)->Compile(*snapshot.program, {.tier = tier});
   program->compilation = Clock::now() - compiling;
   if (!code) {
     return std::unexpected(frontend::DiagnosticsText(code.error()));

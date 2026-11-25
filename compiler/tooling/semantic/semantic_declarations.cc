@@ -5,10 +5,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "base/builtin.h"
 
 #include "compiler/frontend/builtins/standard_environment.h"
+#include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/documentation/builtin_documentation.h"
@@ -161,6 +164,23 @@ void SemanticIndex::CollectDeclarations() {
     DeclareSymbol(declaration, CompletionKind::Enum, [] { return "enum"; });
     CollectEnumMembers(declaration);
   }
+  CollectInheritedParameters();
+}
+
+void SemanticIndex::CollectInheritedParameters() {
+  for (const auto& [name, owner] : model_.classes) {
+    if (!owner.HasInheritedConstructor()) {
+      continue;
+    }
+    const auto child = names_.find(name);
+    const auto base = names_.find(owner.constructor.member_owner);
+    if (child != names_.end() && base != names_.end()) {
+      if (const auto* parameters = ParameterSymbols(base->second)) {
+        auto inherited = *parameters;
+        parameters_.insert_or_assign(child->second, std::move(inherited));
+      }
+    }
+  }
 }
 
 void SemanticIndex::CollectClass(const frontend::Class& declaration) {
@@ -169,6 +189,16 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
                         : CompletionKind::Class;
   const auto class_symbol =
       DeclareSymbol(declaration, kind, [&] { return ClassCompletion(declaration).detail; });
+  if (const auto* checked = FindClassDescriptor(declaration);
+      checked != nullptr && checked->HasInheritedConstructor()) {
+    const auto origin = program_.origins.find(declaration.name);
+    if (!declaration.type_parameters.empty() ||
+        (!checked->type.is_abstract &&
+         (origin == program_.origins.end() || origin->second.arguments.empty()))) {
+      // 初次声明先于类型检查；工厂只创建新符号，此处更新检查后才得到的继承签名。
+      symbols_[class_symbol].completion.detail = ClassCompletion(declaration).detail;
+    }
+  }
   for (const auto& field : declaration.fields) {
     const auto field_symbol = DeclareMember(declaration.name, field, CompletionKind::Field,
                                             [&] { return TypeText(field.type); });
@@ -264,6 +294,21 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
   }
 }
 
+const frontend::ClassDescriptor* SemanticIndex::FindClassDescriptor(
+    const frontend::Class& declaration) const {
+  auto name = declaration.name;
+  if (!declaration.type_parameters.empty()) {
+    std::vector<frontend::TypeName> arguments;
+    arguments.reserve(declaration.type_parameters.size());
+    for (const auto& parameter : declaration.type_parameters) {
+      arguments.push_back(frontend::ParameterTypeName(parameter, parameter.location));
+    }
+    name = frontend::SpecializationName(name, arguments);
+  }
+  const auto found = model_.classes.find(name);
+  return found == model_.classes.end() ? nullptr : &found->second;
+}
+
 Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
   if (frontend::IsStandardTypeNamespace(program_, declaration)) {
     return StandardClassCompletion(declaration);
@@ -288,24 +333,52 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) co
       declaration.constructor->visibility == frontend::Visibility::Private) {
     text += "private ";
   }
+  text += ConstructorParameters(declaration);
+  text += "\n}";
+  return result;
+}
+
+std::string SemanticIndex::ConstructorParameters(const frontend::Class& declaration) const {
+  std::string text;
   text += "constructor(";
+  const auto append = [&](std::string_view name, const std::string& type) {
+    if (text.back() != '(') {
+      text += ", ";
+    }
+    text += name;
+    text += ": ";
+    text += type;
+  };
+  if (const auto* checked = FindClassDescriptor(declaration);
+      checked != nullptr && checked->HasInheritedConstructor()) {
+    const auto& constructor = checked->constructor;
+    for (const auto& parameter : constructor.parameters) {
+      append(parameter.name, DisplayType(parameter.type));
+      if (constructor.optional_parameters.contains(parameter.name)) {
+        text += " = …";
+      }
+    }
+    return text + ");";
+  }
   if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
     for (const auto& parameter : declaration.constructor->parameters) {
-      text += (text.back() == '(' ? "" : ", ") + parameter.name + ": " + TypeText(parameter.type);
+      append(parameter.name, TypeText(parameter.type));
     }
-  } else {
+    return text + ");";
+  }
+  {
     for (const auto& field : declaration.fields) {
       if (!declaration.IsConstructorField(field)) {
         continue;
       }
-      text += (text.back() == '(' ? "" : ", ") + field.name + ": " + TypeText(field.type);
+      append(field.name, TypeText(field.type));
       if (field.initializer) {
         text += " = " + DefaultValue(*field.initializer);
       }
     }
   }
-  text += ");\n}";
-  return result;
+
+  return text + ");";
 }
 
 }  // namespace vela::tooling

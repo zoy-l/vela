@@ -505,19 +505,31 @@ TypeChecker::Type TypeChecker::ResolveClassInstantiation(const TypeName& type_na
 }
 
 void TypeChecker::SetConstructorParameters(const Class& owner, InferenceSignature& source) {
-  if (owner.constructor_kind == ConstructorKind::Explicit) {
-    SetInferenceParameters(owner.constructor->parameters, source);
-  } else {
-    for (const auto& field : owner.fields) {
-      if (owner.IsConstructorField(field)) {
-        source.parameters.push_back(
-            {.type = field.type, .name = field.name, .location = field.location});
-        if (field.initializer) {
-          source.optional_parameters.insert(field.name);
-        }
-      }
-    }
+  if (const auto found = constructor_parameters_.find(&owner);
+      found != constructor_parameters_.end()) {
+    source.parameters = found->second.parameters;
+    source.optional_parameters = found->second.optional_parameters;
+    return;
   }
+  const auto self = ResolveType(SelfApplication(owner.name, owner.type_parameters, owner.location),
+                                VoidTypePolicy::Forbidden);
+  if (!IsValid(self)) {
+    return;
+  }
+  const auto& constructor = classes_.at(self.name).constructor;
+  InferenceSignature parameters;
+  for (const auto& parameter : constructor.parameters) {
+    parameters.parameters.push_back({
+        .type = DescribeType(parameter.type),
+        .name = parameter.name,
+        .location = owner.location,
+        .has_default = parameter.has_default,
+    });
+  }
+  parameters.optional_parameters = constructor.optional_parameters;
+  auto& cached = constructor_parameters_.emplace(&owner, std::move(parameters)).first->second;
+  source.parameters = cached.parameters;
+  source.optional_parameters = cached.optional_parameters;
 }
 
 void TypeChecker::RegisterSpecializations() {

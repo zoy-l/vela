@@ -16,7 +16,9 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-from tools.config import BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform, llvm_tools
+from tools.config import (
+    BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform, llvm_tools, static_library_name,
+)
 
 
 def sdk_specification() -> tuple[str, str, str, str]:
@@ -163,12 +165,16 @@ def link_configuration() -> dict[str, str | list[str]]:
                                 capture_output=True, text=True, encoding="utf-8")
         return shlex.split(result.stdout, posix=True)
 
-    def select(components: tuple[str, ...]) -> tuple[list[str], list[str]]:
-        libraries = [directory / "lib" / name
-                     for name in query("--libnames", *components)]
+    def checked_archives(libraries: list[Path]) -> list[str]:
         for library in libraries:
             if not library.is_file():
                 raise RuntimeError(f"Missing LLVM static library: {library}")
+        return [path.as_posix() for path in libraries]
+
+    def select(components: tuple[str, ...]) -> tuple[list[str], list[str]]:
+        libraries = [directory / "lib" / name
+                     for name in query("--libnames", *components)]
+        checked = checked_archives(libraries)
         system = []
         for argument in query("--system-libs", *components):
             name = PureWindowsPath(argument).name
@@ -186,12 +192,20 @@ def link_configuration() -> dict[str, str | list[str]]:
                 system.append(argument)
             else:
                 raise RuntimeError(f"Unmanaged LLVM system library: {argument}")
-        return [path.as_posix() for path in libraries], system
+        return checked, system
 
     core = ("core", "passes", "nativecodegen")
     libraries, system = select(core)
     jit_libraries, jit_system = select(core + ("orcjit", "orcdebugging", "jitlink",
                                              "orctargetprocess"))
+    # 加载端只提取 ORC 的链接、符号、延迟入口和调试对象；不使用同一归档中的 LLJIT。
+    # llvm-config 的 orcjit 闭包同时包含 IR 编译层，不能把该完整闭包传给 runtime 宿主。
+    loader_libraries, loader_system = select((
+        "jitlink", "orctargetprocess", "orcshared", "executionengine", "core", "transformutils",
+        "bitwriter"))
+    loader_archives = [directory / "lib" / static_library_name(name)
+                       for name in ("LLVMOrcJIT", "LLVMOrcDebugging")]
+    loader_libraries = checked_archives(loader_archives) + loader_libraries
     tooling_libraries, tooling_system = select((
         "bitreader", "bitstreamreader", "option", "plugins", "profiledata", "targetparser",
         "binaryformat", "mc", "mcparser", "object", "windowsdriver", "frontendhlsl",
@@ -201,6 +215,8 @@ def link_configuration() -> dict[str, str | list[str]]:
             "vela_llvm_target": query("--host-target")[0],
             "vela_llvm_libraries": libraries,
             "vela_llvm_jit_libraries": jit_libraries,
+            "vela_llvm_loader_libraries": loader_libraries,
+            "vela_llvm_loader_system_libraries": loader_system,
             "vela_llvm_tooling_libraries": tooling_libraries,
             "vela_llvm_system_libraries": system,
             "vela_llvm_jit_system_libraries": jit_system,

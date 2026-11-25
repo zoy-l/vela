@@ -1,7 +1,7 @@
 # Vela for Visual Studio Code
 
 Adds `.vela` syntax highlighting, comments/brackets, code completion, go to
-definition, type-parameter rename, hover information, diagnostics, document formatting and file execution. Semantic features use the native
+definition, find references, variable and type-parameter rename, hover information, diagnostics, document formatting and file execution. Semantic features use the native
 `vela lsp` server and its production compiler frontend. The extension has no npm dependencies.
 
 Build Vela, then package the extension from the repository root:
@@ -52,6 +52,11 @@ Hover over a name to see its type or function signature and adjacent `///`
 documentation. Imported symbols and unsaved declarations use the same checked
 snapshot as navigation. **Ctrl+K Ctrl+I** also opens the hover from the keyboard.
 
+**Find All References** (**Shift+F12**) finds bound symbol uses throughout the workspace,
+including unopened files and unsaved documents. Method references include calls through the
+same base-class or interface contract. Declarations are included when requested by the editor;
+shadowed variables and unrelated members with the same name remain separate.
+
 Class hover shows constructor parameters and literal defaults. Built-in API documentation is in English and shows
 usage, parameters, return values, units, boundary conditions and examples where useful;
 the same documentation appears in completion details.
@@ -61,10 +66,8 @@ return types, inheritance clauses, generic arguments, and after `is` and `as`.
 The language server distinguishes classes, interfaces, enums, enum members, aliases and type
 parameters, including imported names and constructor calls.
 
-Unused parameters and imports produce editor warnings and fade their source ranges.
-Parameters whose names start with `_` express intentional non-use. Interface and
-external signatures have no implementation to inspect. Type-only references,
-default expressions and closure captures count as uses.
+Unused parameter and import warnings fade their source ranges in the editor and match CLI
+checking. See [unused warning semantics](../../docs/en/source_tooling.md#unused-warnings).
 
 Hover follows TypeScript's display conventions: enum and interface names show their
 declaration headers and documentation; enum members include their owner and value;
@@ -82,7 +85,7 @@ active, install the VSIX in that profile, for example
 
 For another editor, configure `vela lsp` as a stdio LSP server for `.vela` files.
 It supports UTF-8/UTF-16 positions, document open/change/close/save, diagnostics,
-watched-file invalidation, completion, hover, definition lookup, document links and document formatting.
+watched-file invalidation, completion, hover, definition lookup, reference lookup, document links and document formatting.
 
 Run the real VS Code extension-host tests with
 `python -m tools.vl editor test --code PATH_TO_VSCODE_LAUNCHER`.

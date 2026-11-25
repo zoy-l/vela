@@ -1,0 +1,16 @@
+import 'input' as data;
+
+func run(): int {
+  let checksum = 0;
+  for (const value in data.values) {
+    checksum += Math.round(
+      Math.atan2((value % 97 + 1).toDouble(), (value % 128 - 64).toDouble()) * 1000.0,
+    ).toInt();
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

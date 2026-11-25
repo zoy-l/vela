@@ -7,7 +7,7 @@
 
 `string` is immutable, valid UTF-8. Source files, runtime storage, and console
 output use UTF-8. Embedded NUL bytes are allowed and do not terminate a string.
-Length, indexing, slice boundaries, and search results count Unicode scalar
+`length`, indexing, `slice` boundaries, and search results count Unicode scalar
 values (code points), not bytes or grapheme clusters. There is no `char` type.
 
 For `"A中😀e\u0301"`, `length` is 5 and `byteLength` is 11. The final `e` and
@@ -101,6 +101,41 @@ search time for repeated-prefix inputs. Short pattern tables use stack storage;
 patterns longer than 64 bytes allocate a temporary native prefix table and
 report allocation failure explicitly. Prefix/suffix tests compare bytes
 directly; valid UTF-8 guarantees these matches respect code point boundaries.
+
+## UTF-8 byte ranges
+
+These are instance methods of the built-in `string` type. Existing indexing,
+`slice`, and search positions continue to count code points.
+
+```vela
+const value: string = 'A中😀';
+const offset: int? = value.byteOffsetAt(2); // 4
+const part: string = value.sliceBytes(1, 8); // 中😀
+const changed: string = value.replaceBytes(1, 4, '好'); // A好😀
+```
+
+| Method | Result | Contract |
+| --- | --- | --- |
+| `isCodePointBoundary(byteOffset: int)` | `bool` | O(1); accepts 0 and byteLength, returns false for negative, out-of-range, or continuation-byte positions |
+| `sliceBytes(start: int, end: int)` | `string` | Copies the half-open byte range `[start, end)` |
+| `replaceBytes(start: int, end: int, inserted: string)` | `string` | Allocates one result containing the prefix, inserted text, and suffix, without intermediate strings |
+| `byteOffsetAt(codePointIndex: int)` | `int?` | Converts a code-point index to a byte offset; length maps to byteLength, invalid indices return null; allocates no string |
+| `trim()` | `string` | Removes surrounding Unicode White_Space, preserving internal whitespace, NUL, BOM, and zero-width space |
+
+Byte ranges require `0 <= start <= end <= byteLength` and both endpoints at code-point
+boundaries. Violations throw `IndexOutOfBounds`; ranges are never clamped or repaired.
+Empty ranges support empty slices and insertion. Code-point boundaries need not be
+grapheme boundaries. Inputs and results remain valid UTF-8, including embedded NUL.
+`byteOffsetAt` shares the existing position cache: sequential forward or reverse
+queries are amortized O(1); arbitrary jumps remain O(n) in the worst case.
+`trim` uses Unicode White_Space, including U+0085 and excluding U+FEFF and U+200B.
+All-whitespace input produces an empty string; unchanged input may be reused.
+All five methods support named arguments, captured method values, and null-safe calls.
+
+`<vela/strings.h>` exposes `StringIsCodePointBoundary`, `StringSliceBytes`,
+`StringReplaceBytes`, `StringByteOffsetAt`, and `StringTrim` through the same builtins
+and error contracts. HandleScope retains inputs and roots results, including aliased
+inputs during allocation.
 
 ## Compilation, allocation, and GC
 

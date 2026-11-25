@@ -1,11 +1,5 @@
 #include <vela/handles.h>
-#include <optional>
-
-#include <array>
-#include <cassert>
-#include <cstddef>
 #include <expected>
-#include <memory>
 #include <span>
 
 #include "base/execution_status.h"
@@ -15,27 +9,17 @@
 
 namespace vela {
 
-struct HandleScope::Block final {
-  static constexpr std::size_t kCapacity = 32;
-  explicit Block(runtime::Heap& heap, Block* previous) noexcept
-      : roots(heap, values.data(), values.size()), next(previous) {}
-  std::array<runtime::Value, kCapacity> values;
-  runtime::RootRange roots;
-  std::size_t count = 0;
-  Block* next;
-};
+namespace internal {
 
-HandleScope::HandleScope(runtime::Isolate& isolate) noexcept
-    : isolate_(&isolate), inline_roots_(isolate.heap(), inline_values_.data(), 0) {
-  assert(isolate.scheduler().IsOwnerThread());
+runtime::Heap& HandleScopeHeap(runtime::Isolate& isolate) noexcept {
+  return isolate.heap();
 }
 
-HandleScope::~HandleScope() {
-  assert(isolate_->scheduler().IsOwnerThread());
-  if (blocks_ != nullptr) [[unlikely]] {
-    ReleaseBlocks();
-  }
+bool IsHandleScopeOwnerThread(runtime::Isolate& isolate) noexcept {
+  return isolate.scheduler().IsOwnerThread();
 }
+
+}  // namespace internal
 
 std::expected<runtime::Value*, ExecutionStatus> HandleScope::Store(runtime::Value value) noexcept {
   auto& heap = isolate_->heap();
@@ -43,34 +27,6 @@ std::expected<runtime::Value*, ExecutionStatus> HandleScope::Store(runtime::Valu
     heap.WriteRootBarrier(std::span(&value, 1));
   }
   return StoreRooted(value);
-}
-
-void HandleScope::ReleaseBlocks() noexcept {
-  auto& heap = isolate_->heap();
-  auto* block = blocks_;
-  while (block != nullptr) {
-    auto* next = block->next;
-    block->~Block();
-    heap.FreeNative(block);
-    block = next;
-  }
-}
-
-std::expected<runtime::Value*, ExecutionStatus> HandleScope::StoreOverflow(
-    runtime::Value value) noexcept {
-  auto& heap = isolate_->heap();
-  if (blocks_ == nullptr || blocks_->count == Block::kCapacity) {
-    const runtime::RootRange source_root(heap, &value, 1, std::nullopt);
-    auto* memory = heap.AllocateNative(sizeof(Block));
-    if (memory == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    blocks_ = std::construct_at(static_cast<Block*>(memory), heap, blocks_);
-  }
-  auto& slot = blocks_->values[blocks_->count++];
-  slot = value;
-  heap.WriteRootBarrier(std::span(&slot, 1));
-  return &slot;
 }
 
 }  // namespace vela

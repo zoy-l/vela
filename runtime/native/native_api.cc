@@ -112,9 +112,9 @@ Error TakeError(VelaAotStatus status, VelaAotError* error) {
   return owned ? std::move(owned->detail) : Error::FromStatus(static_cast<ExecutionStatus>(status));
 }
 
-VelaAotLocal Borrow(Local<vela::Value> value) noexcept {
+VelaAotLocal Borrow(HandleScope& scope, Local<vela::Value> value) noexcept {
   return {
-      .scope = &vela::internal::HandleAccess::Scope(value),
+      .scope = &scope,
       .slot = &vela::internal::HandleAccess::Slot(value),
   };
 }
@@ -127,7 +127,7 @@ Result<VelaAotValue> Encode(HandleScope& scope, Value value) {
       return std::unexpected(std::move(local.error()));
     }
     result.kind = VELA_AOT_LOCAL;
-    result.local = Borrow(*local);
+    result.local = Borrow(scope, *local);
   } else if (value.IsInteger()) {
     result.kind = VELA_AOT_INTEGER;
     result.payload = std::bit_cast<std::uint64_t>(value.AsInteger());
@@ -257,7 +257,7 @@ extern "C" VelaAotStatus vela_aot_v2_localize(VelaAotScope* scope,
   if (!result) {
     return ToNativeStatus(result.error().status);
   }
-  *local = aot::Borrow(*result);
+  *local = aot::Borrow(*scope, *result);
   return VELA_AOT_RETURNED;
 }
 
@@ -348,7 +348,7 @@ extern "C" VelaAotStatus vela_aot_v2_string_create(VelaAotScope* scope,
   if (!string) {
     return ToNativeStatus(string.error().status);
   }
-  *result = aot::Borrow(string->ToValue());
+  *result = aot::Borrow(*scope, string->ToValue());
   return VELA_AOT_RETURNED;
 }
 
@@ -423,7 +423,7 @@ extern "C" VelaAotStatus vela_aot_v2_error_payload(VelaAotScope* scope,
   if (!local) {
     return ToNativeStatus(local.error().status);
   }
-  *payload = aot::Borrow(*local);
+  *payload = aot::Borrow(*scope, *local);
   return VELA_AOT_RETURNED;
 }
 

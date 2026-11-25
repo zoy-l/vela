@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <ranges>
@@ -532,54 +534,11 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
   return result;
 }
 
-std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration(
-    const std::filesystem::path& working_directory,
-    const std::optional<std::filesystem::path>& explicit_file,
-    ConfigurationRequirement requirement) {
+namespace {
+
+std::expected<ProjectConfiguration, ConfigurationError> ReadConfigurationFile(
+    const std::filesystem::path& file) {
   std::error_code error;
-  const auto working = std::filesystem::absolute(working_directory, error);
-  if (error) {
-    return std::unexpected(
-        ConfigurationError::FileError(working_directory, error.message(), kIoErrorExitCode));
-  }
-  std::filesystem::path file;
-  if (explicit_file) {
-    file = working / *explicit_file;
-  } else {
-    auto directory = working.lexically_normal();
-    while (true) {
-      const auto candidate = directory / Utf8Path(kProjectConfigurationName);
-      const auto status = std::filesystem::status(candidate, error);
-      if (error && error != std::errc::no_such_file_or_directory) {
-        return std::unexpected(
-            ConfigurationError::FileError(candidate, error.message(), kIoErrorExitCode));
-      }
-      if (std::filesystem::exists(status)) {
-        file = candidate;
-        break;
-      }
-      const auto parent = directory.parent_path();
-      if (parent == directory) {
-        if (requirement == ConfigurationRequirement::Optional) {
-          return ProjectConfiguration{
-              .file = {},
-              .root = working,
-              .test = std::nullopt,
-              .diagnostics = {},
-              .imports = {},
-          };
-        }
-        return std::unexpected(ConfigurationError{
-            .file = candidate,
-            .location = {},
-            .field = {},
-            .message = "vela.json was not found",
-            .exit_code = kUsageExitCode,
-        });
-      }
-      directory = parent;
-    }
-  }
   const auto canonical = std::filesystem::canonical(file, error);
   if (error) {
     return std::unexpected(ConfigurationError::FileError(file, error.message(), kIoErrorExitCode));
@@ -593,17 +552,119 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
   return ParseProjectConfiguration(canonical, {static_cast<const char*>(storage), bytes->size()});
 }
 
+using ConfigurationResult = std::expected<ProjectConfiguration, ConfigurationError>;
+using DirectoryConfigurations = absl::flat_hash_map<std::filesystem::path,
+                                                    std::shared_ptr<const ConfigurationResult>,
+                                                    std::hash<std::filesystem::path>>;
+
+std::expected<std::filesystem::path, ConfigurationError> AbsoluteConfigurationPath(
+    const std::filesystem::path& path) {
+  std::error_code error;
+  auto absolute = std::filesystem::absolute(path, error).lexically_normal();
+  if (error) {
+    return std::unexpected(ConfigurationError::FileError(path, error.message(), kIoErrorExitCode));
+  }
+  return absolute;
+}
+
+std::shared_ptr<const ConfigurationResult> DiscoverConfiguration(
+    std::filesystem::path& directory,
+    DirectoryConfigurations* directories,
+    std::vector<std::filesystem::path>& visited) {
+  for (;;) {
+    if (directories != nullptr) {
+      if (const auto cached = directories->find(directory); cached != directories->end()) {
+        return cached->second;
+      }
+      visited.push_back(directory);
+    }
+    const auto candidate = directory / Utf8Path(kProjectConfigurationName);
+    std::error_code error;
+    const auto status = std::filesystem::status(candidate, error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+      return std::make_shared<const ConfigurationResult>(std::unexpected(
+          ConfigurationError::FileError(candidate, error.message(), kIoErrorExitCode)));
+    }
+    if (std::filesystem::exists(status)) {
+      return std::make_shared<const ConfigurationResult>(ReadConfigurationFile(candidate));
+    }
+    const auto parent = directory.parent_path();
+    if (parent == directory) {
+      return std::make_shared<const ConfigurationResult>(ProjectConfiguration{
+          .file = {},
+          .root = {},
+          .test = std::nullopt,
+          .diagnostics = {},
+          .imports = {},
+      });
+    }
+    directory = parent;
+  }
+}
+
+ConfigurationResult FindConfiguration(const std::filesystem::path& working_directory,
+                                      ConfigurationRequirement requirement,
+                                      DirectoryConfigurations* directories = nullptr) {
+  const auto working = AbsoluteConfigurationPath(working_directory);
+  if (!working) {
+    return std::unexpected(working.error());
+  }
+  auto directory = *working;
+  std::vector<std::filesystem::path> visited;
+  const auto discovered = DiscoverConfiguration(directory, directories, visited);
+  if (directories != nullptr) {
+    for (const auto& path : visited) {
+      directories->emplace(path, discovered);
+    }
+  }
+  auto result = *discovered;
+  if (result && result->file.empty()) {
+    if (requirement == ConfigurationRequirement::Required) {
+      return std::unexpected(ConfigurationError{
+          .file = directory / Utf8Path(kProjectConfigurationName),
+          .location = {},
+          .field = {},
+          .message = "vela.json was not found",
+          .exit_code = kUsageExitCode,
+      });
+    }
+    result->root = *working;
+  }
+  return result;
+}
+
+ConfigurationResult SourceConfiguration(const std::filesystem::path& source,
+                                        const std::optional<std::filesystem::path>& explicit_file,
+                                        DirectoryConfigurations* directories = nullptr) {
+  const auto absolute = AbsoluteConfigurationPath(source);
+  if (!absolute) {
+    return std::unexpected(absolute.error());
+  }
+  const auto working = absolute->parent_path();
+  return explicit_file
+             ? ReadConfigurationFile(working / *explicit_file)
+             : FindConfiguration(working, ConfigurationRequirement::Optional, directories);
+}
+
+}  // namespace
+
+std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration(
+    const std::filesystem::path& working_directory,
+    const std::optional<std::filesystem::path>& explicit_file,
+    ConfigurationRequirement requirement) {
+  return explicit_file ? ReadConfigurationFile(working_directory / *explicit_file)
+                       : FindConfiguration(working_directory, requirement);
+}
+
 std::expected<ProjectConfiguration, ConfigurationError> LoadSourceConfiguration(
     const std::filesystem::path& source,
     const std::optional<std::filesystem::path>& explicit_file) {
-  std::error_code error;
-  const auto absolute = std::filesystem::absolute(source, error);
-  if (error) {
-    return std::unexpected(
-        ConfigurationError::FileError(source, error.message(), kIoErrorExitCode));
-  }
-  return LoadProjectConfiguration(absolute.parent_path(), explicit_file,
-                                  ConfigurationRequirement::Optional);
+  return SourceConfiguration(source, explicit_file);
+}
+
+std::expected<ProjectConfiguration, ConfigurationError> SourceConfigurationCache::Load(
+    const std::filesystem::path& source) {
+  return SourceConfiguration(source, std::nullopt, &directories_);
 }
 
 std::expected<ProjectConfiguration, ConfigurationError> ReadSourceConfiguration(

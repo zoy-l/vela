@@ -424,9 +424,10 @@ void IntegerRangeAnalysis::Publish(std::size_t index) {
       const auto& instruction = function.instructions[position];
       const auto opcode = instruction.opcode;
       result.no_overflow[position] = static_cast<std::uint8_t>(HasNoOverflow(instruction, state));
-      if (opcode == Opcode::GetIndex || opcode == Opcode::SetIndex) {
+      if (opcode == Opcode::GetIndex || opcode == Opcode::SetIndex ||
+          opcode == Opcode::CheckRecordIndex) {
         result.indices[position] =
-            state[opcode == Opcode::GetIndex ? instruction.rhs : instruction.lhs];
+            state[opcode != Opcode::SetIndex ? instruction.rhs : instruction.lhs];
       }
       if (opcode == Opcode::SetIndex) {
         result.writes[position] = state[instruction.rhs];

@@ -88,17 +88,12 @@ def package_headers(targets: dict, root: str, package: Path) -> None:
         if path.is_file() and path.suffix in {".h", ".inc"}:
             relative = (Path("include") / path.relative_to(abseil)).as_posix()
             copy_file(path, package, relative, "header", "Abseil", "Apache-2.0")
-    # The development file watcher exposes the efsw declarations on POSIX.
-    if Path("base/directory_watcher.h") in headers:
-        copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", package,
-                  "include/efsw/efsw.hpp", "header", "efsw", "MIT")
 
 
 def package_licenses(package: Path) -> None:
     for name, path in {
         "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
         "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
-        "efsw": ROOT / "third_party/efsw/LICENSE",
         "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
         "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
         "yyjson": ROOT / "third_party/yyjson/LICENSE",

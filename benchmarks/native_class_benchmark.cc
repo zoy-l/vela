@@ -180,7 +180,7 @@ Prepared PrepareReloadable(compiler::jit::Compiler& compiler,
     result.error = frontend::DiagnosticsText(candidate.error().diagnostics);
     return result;
   }
-  auto compiled = compiler.Compile(candidate->snapshot().program, options);
+  auto compiled = compiler.Compile(*candidate->snapshot().program, options);
   if (!compiled) {
     result.error = frontend::DiagnosticsText(compiled.error());
     return result;

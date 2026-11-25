@@ -316,6 +316,12 @@ Program AstCloner::CloneProgram(const Program& source) {
   result.imports = source.imports;
   for (auto& imported : result.imports) {
     imported.location = Relocate(imported.location);
+    imported.diagnostic_location = Relocate(imported.diagnostic_location);
+  }
+  result.unused_imports = source.unused_imports;
+  for (auto& imported : result.unused_imports) {
+    imported.location = Relocate(imported.location);
+    imported.diagnostic_location = Relocate(imported.diagnostic_location);
   }
   result.sources = source.sources;
   result.import_sources = source.import_sources;

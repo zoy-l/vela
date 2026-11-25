@@ -25,8 +25,8 @@ constexpr std::string_view kBreakCommand = ".break";
 
 DevelopmentDebugger::DevelopmentDebugger(compiler::DevelopmentSession& session,
                                          std::ostream& errors,
-                                         std::function<void()> poll)
-    : session_(&session), errors_(&errors), poll_(std::move(poll)) {
+                                         std::function<void()> wait)
+    : session_(&session), errors_(&errors), wait_(std::move(wait)) {
   session_->SetDebugger(this);
 }
 
@@ -185,7 +185,7 @@ void DevelopmentDebugger::AtSafepoint(const runtime::NativeDebugContext& context
   *errors_ << "paused ";
   PrintFrame(0, frame);
   while (!continuing_ && !session_->isolate().native_control().IsStopRequested()) {
-    poll_();
+    wait_();
   }
   paused_ = nullptr;
 }

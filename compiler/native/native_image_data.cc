@@ -391,7 +391,11 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build() {
   std::vector<runtime::NativeArrayDescription> arrays;
   arrays.reserve(layouts.arrays.size());
   for (const auto& array : layouts.arrays) {
-    arrays.push_back({.name = Text(array.name), .element = Describe(array.element)});
+    arrays.push_back({
+        .name = Text(array.name),
+        .element = Describe(array.element),
+        .record_fields = array.record_fields,
+    });
   }
   image.arrays = Copy(arrays);
   std::vector<runtime::NativeCollectionDescription> collections;
@@ -423,10 +427,15 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build() {
   image.source_paths = Texts(program_->source_paths);
   auto& functions = data_->functions_;
   functions.reserve(program_->functions.size());
+  std::vector<std::uint32_t> imports;
   for (const auto& function : program_->functions) {
+    if (!function.native_symbol.empty()) {
+      imports.push_back(static_cast<std::uint32_t>(functions.size()));
+    }
     functions.push_back(Function(function));
   }
   image.functions = {.data = functions.data(), .size = functions.size()};
+  image.imported_functions = Copy(imports);
   std::vector<runtime::NativeMemberDescription> members;
   members.reserve(program_->members.size());
   for (const auto& member : program_->members) {

@@ -27,6 +27,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_inference.h"
+#include "compiler/frontend/typing/unused_parameters.h"
 
 namespace vela::frontend {
 
@@ -262,7 +263,8 @@ class TypeChecker final : private InferenceTypeRelations {
   std::vector<TypeName> ProjectSupertypes(const Projection& projection) override;
   [[nodiscard]] bool IsStaticSubtype(const TypeName& subtype, const TypeName& supertype) override;
   [[nodiscard]] bool CanBindType(const TypeName& destination, const TypeName& source) override;
-  static void SetConstructorParameters(const Class& owner, InferenceSignature& source);
+  void SetConstructorParameters(const Class& owner, InferenceSignature& source);
+  absl::node_hash_map<const Class*, InferenceSignature> constructor_parameters_;
   std::optional<std::vector<TypeName>> InferFunctionValue(const InferenceSignature& source,
                                                           const Expression& callee,
                                                           const Type* expected);
@@ -619,6 +621,8 @@ class TypeChecker final : private InferenceTypeRelations {
   Type CheckAwait(const Expression& expression, const Type* expected);
 
   Diagnostics diagnostics_;
+  ParameterUsage parameter_usage_;
+  void ReportUnused(const Program& program);
   absl::flat_hash_set<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::string>>
       dynamic_diagnostics_;
   absl::flat_hash_map<std::string, Type> types_;

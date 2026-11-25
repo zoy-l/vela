@@ -238,6 +238,7 @@ struct TypeSignature final {
 // layout 由 Isolate 持有，生命周期覆盖所有数组与编译结果。
 struct ArrayLayout final {
   TypeConstraint element{.kind = ValueKind::Integer};
+  std::uint32_t record_fields = 0;
 
   [[nodiscard]] bool HasTaggedElements() const noexcept {
     if (element.kind == ValueKind::Object || element.kind == ValueKind::String) {
@@ -248,8 +249,8 @@ struct ArrayLayout final {
 
   [[nodiscard]] std::size_t element_size() const noexcept;
   [[nodiscard]] bool HasReferences() const noexcept {
-    return element.dynamic || element.kind == ValueKind::Object ||
-           element.kind == ValueKind::String;
+    return record_fields == 0 && (element.dynamic || element.kind == ValueKind::Object ||
+                                  element.kind == ValueKind::String);
   }
   [[nodiscard]] TypeConstraint value_type() const noexcept {
     auto type = element;
@@ -261,7 +262,7 @@ struct ArrayLayout final {
   bool operator==(const ArrayLayout&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const ArrayLayout& layout) {
-    return H::combine(std::move(hash), layout.element);
+    return H::combine(std::move(hash), layout.element, layout.record_fields);
   }
 };
 
@@ -296,6 +297,8 @@ struct HeapObject final {
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
   std::uint8_t size_class = 0;
+  // 零表示没有内联字段；普通实例复用尾部元数据槽，可调用环境保留该槽。
+  std::uint8_t inline_field_offset = 0;
   std::uint32_t allocation_size = 0;
   const ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
@@ -304,8 +307,16 @@ struct HeapObject final {
     std::uint32_t index;
     std::uint32_t offset;
   };
+  // length：String 为 UTF-8 字节数，MutableString 为已用字节数，Array/ValueSlots
+  // 为元素数，ByteArray/ByteData 为可见字节数；native callable 的 Instance 为函数编号。
+  // Collection 的大小存于尾部 CollectionStorage，其他 kind 不使用本槽。
+  std::uint32_t length = 0;
+  // 字符串逻辑长度、内联实例的物理字段数或新构造 Host 的内联载荷字节数。
+  // 外部 unique/shared Host 为零，内联 Host 不再重复核算这段载荷的外部预算。
+  std::uint32_t auxiliary_length = 0;
   // kind 区分互斥的元数据；与 Value 一样以对象表示保存，避免 inactive union 读取。
-  // 字符串仅在此保存整数位置，GC 不将其视为引用。
+  // 字符串仅在此保存整数位置，GC 不将其视为引用。其他 kind 的原生载荷指针
+  // 与类型元数据互斥；普通内联实例不使用两者，将此字节区交给字段存储。
   alignas(const void*) mutable std::array<std::byte, sizeof(const void*)> type_metadata = {};
   void SetTypeMetadata(const void* metadata) noexcept {
     type_metadata = std::bit_cast<decltype(type_metadata)>(metadata);
@@ -319,26 +330,22 @@ struct HeapObject final {
   [[nodiscard]] const TypeSignature* future_signature() const noexcept {
     return static_cast<const TypeSignature*>(std::bit_cast<const void*>(type_metadata));
   }
-  // length：String 为 UTF-8 字节数，MutableString 为已用字节数，Array/ValueSlots
-  // 为元素数，ByteArray/ByteData 为可见字节数；native callable 的 Instance 为函数编号。
-  // Collection 的大小存于尾部 CollectionStorage，其他 kind 不使用本槽。
-  std::uint32_t length = 0;
-  // 字符串逻辑长度、内联实例的物理字段数或新构造 Host 的内联载荷字节数。
-  // 外部 unique/shared Host 为零，内联 Host 不再重复核算这段载荷的外部预算。
-  std::uint32_t auxiliary_length = 0;
   // native_payload：reloadable Instance 持有 InstanceStorage；native callable 借用
   // NativeProgram 对象；Timer、CancellationToken 分别拥有对应句柄；
   // ValueSlots 拥有 Value 数组；NativeProgram 拥有 NativeProgramState。其他 kind 不使用。
   // Future/Completer 的内部句柄位于对象头之后；实例字段块与 callable 环境互斥。
   // Heap 按 kind 追踪引用并销毁其拥有的存储。
-  void* native_payload = nullptr;
+  void SetNativePayload(void* payload) noexcept { SetTypeMetadata(payload); }
+  [[nodiscard]] void* native_payload() const noexcept {
+    return std::bit_cast<void*>(type_metadata);
+  }
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));
 
 // 调用者已验证宿主种类并保根包装；借用期间只需固定位置的一次指针读取。
 [[nodiscard]] inline void* HostObjectPointer(const HeapObject& object) noexcept {
-  return object.native_payload;
+  return object.native_payload();
 }
 
 // 固定布局字段紧接对象头；可重载实例借用独立字段块，地址不得跨安全点保存。

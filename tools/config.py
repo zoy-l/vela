@@ -140,6 +140,8 @@ def gn_value(value: str | bool | list[str]) -> str:
 def compiler_build_identity() -> str:
     """Invalidate compiled caches when compiler, runtime, ABI or pinned tools change."""
     paths = {ROOT / "DEPS", ROOT / "BUILD.gn", ROOT / "tools" / "config.py",
+             ROOT / "tools" / "llvm.py",
+             ROOT / "tools" / "llvm_support_archive.py",
              ROOT / "third_party" / "BUILD.gn"}
     paths.update({ROOT / "third_party/unicode_data/manifest.json", ROOT / "tools/unicode_case.py"})
     paths.update((ROOT / "third_party").glob("*.gni"))
@@ -181,7 +183,6 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
         "target_os": target_os(),
         "vela_archiver": tools["archiver"].as_posix(),
         "vela_build_config": variant,
-        "vela_thin_lto": variant == "release",
         "vela_build_identity": compiler_build_identity(),
         "vela_cc": tools["cc"].as_posix(),
         "vela_cxx": tools["cxx"].as_posix(),

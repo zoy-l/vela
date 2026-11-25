@@ -132,6 +132,104 @@ double HostSquareRoot(double value) noexcept {
   return value + kHostOverrideOffset;
 }
 
+double HostBinaryMath(double left, double right) noexcept {
+  return left + right;
+}
+
+void ExpectSameDouble(double actual, double expected) {
+  if (std::isnan(expected)) {
+    EXPECT_TRUE(std::isnan(actual));
+  } else {
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(actual), std::bit_cast<std::uint64_t>(expected));
+  }
+}
+
+TEST(JitCompilerTest, MathIntrinsicsPreserveSpecialValuesAndFrozenHostOverrides) {
+  constexpr auto kSource = R"(
+export func angle(left: double, right: double): double { return Math.atan2(left, right); }
+export func root(value: double): double { return Math.cbrt(value); }
+export func norm(left: double, right: double): double { return Math.hypot(left, right); }
+export func rem(left: double, right: double): double { return Math.remainder(left, right); }
+export func round(value: double): double { return Math.round(value); }
+)";
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, kSource, tier, test::IRPreservation::Preserve);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto unary = std::to_array({
+        std::pair{"root", static_cast<double (*)(double)>(std::cbrt)},
+        std::pair{"round", static_cast<double (*)(double)>(std::round)},
+    });
+    for (const auto& [name, operation] : unary) {
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      for (const auto value : {
+               -8.0,
+               -0.5,
+               -0.0,
+               0.0,
+               0.5,
+               std::numeric_limits<double>::infinity(),
+               std::numeric_limits<double>::quiet_NaN(),
+           }) {
+        const auto result = entry->Invoke(std::array{runtime::Value::Double(value)});
+        ASSERT_TRUE(result);
+        ExpectSameDouble(result->AsDouble(), operation(value));
+      }
+    }
+    const auto binary = std::to_array({
+        std::pair{"angle", static_cast<double (*)(double, double)>(std::atan2)},
+        std::pair{"norm", static_cast<double (*)(double, double)>(std::hypot)},
+        std::pair{"rem", static_cast<double (*)(double, double)>(std::remainder)},
+    });
+    for (const auto& [name, operation] : binary) {
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      for (const auto left : {
+               -8.0,
+               -0.0,
+               0.0,
+               std::numeric_limits<double>::infinity(),
+               std::numeric_limits<double>::quiet_NaN(),
+           }) {
+        for (const auto right : {-0.0, 0.0, 3.0, std::numeric_limits<double>::infinity()}) {
+          const auto result = entry->Invoke(
+              std::array{runtime::Value::Double(left), runtime::Value::Double(right)});
+          ASSERT_TRUE(result);
+          ExpectSameDouble(result->AsDouble(), operation(left, right));
+        }
+      }
+    }
+    runtime::Isolate overridden;
+    for (const auto* const name : {"Math.cbrt", "Math.round"}) {
+      ASSERT_TRUE(overridden.RegisterNative(runtime::NativeFunction::Bind<HostSquareRoot>(name)));
+    }
+    for (const auto* const name : {"Math.atan2", "Math.hypot", "Math.remainder"}) {
+      ASSERT_TRUE(overridden.RegisterNative(runtime::NativeFunction::Bind<HostBinaryMath>(name)));
+    }
+    static_cast<void>(overridden.FreezeBindings());
+    ASSERT_TRUE(test::PublishImage(overridden, compiled->image));
+    for (const auto& [name, operation] : unary) {
+      const auto entry = overridden.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      const auto result = entry->Invoke(std::array{runtime::Value::Double(2.0)});
+      ASSERT_TRUE(result);
+      EXPECT_EQ(result->AsDouble(), 42.0);
+    }
+    for (const auto& [name, operation] : binary) {
+      const auto entry = overridden.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      const auto result =
+          entry->Invoke(std::array{runtime::Value::Double(2.0), runtime::Value::Double(3.0)});
+      ASSERT_TRUE(result);
+      EXPECT_EQ(result->AsDouble(), 5.0);
+    }
+  }
+}
+
 TEST(JitCompilerTest, StringLengthsUseUnicodeScalarsAndUtf8Bytes) {
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();
@@ -485,7 +583,7 @@ TEST(JitCompilerTest, ReusesUnchangedCodeAcrossNamedCalleeEdits) {
                       "; } export func answer(): int { return step(40); } "
                       "export func independent(): int { return 7; }");
       ASSERT_TRUE(prepared);
-      const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+      const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                  {.tier = tier, .preserve_ir = true}, &reuse);
       ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
       const auto functions = compiled->image->functions.values();
@@ -521,7 +619,7 @@ TEST(JitCompilerTest, ReusePlanningPinsCodeUntilTheCandidateOwnsItsEntries) {
   const auto prepared = test::PrepareText(source, "export func answer(): int { return 42; }");
   ASSERT_TRUE(prepared);
   CodeReuseCache reuse;
-  auto compiled = (*compiler)->Compile(prepared->snapshot().program, {}, &reuse);
+  auto compiled = (*compiler)->Compile(*prepared->snapshot().program, {}, &reuse);
   ASSERT_TRUE(compiled);
   {
     std::vector<FunctionCodeInputs> inputs;
@@ -593,7 +691,7 @@ TEST(JitCompilerTest, LayoutEditsInvalidateTheirUsersWithoutRecompilingIndepende
               condition + " ? 42 : 0; }");
       ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
       const auto compiled =
-          (*compiler)->Compile(prepared->snapshot().program, {.tier = tier}, &reuse);
+          (*compiler)->Compile(*prepared->snapshot().program, {.tier = tier}, &reuse);
       ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
       const auto functions = compiled->image->functions.values();
       const auto unchanged = FindImageFunction(functions, "independent");
@@ -629,7 +727,7 @@ export func read(box: Box?): int { return box == null ? 0 : box.value; }
 export func answer(): int { return read(Box(value: 42)); }
 )");
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+    const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     runtime::Isolate isolate(1);
@@ -1056,7 +1154,7 @@ TEST(JitCompilerTest, GlobalAndStaticSlotsAreSharedByOldAndNewCodeAndPendingCand
                         "export func bump(): int { score += 100; return score; } "
                         "export func readCold(): int { return cold + added; }");
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  const auto compiled = (*compiler)->Compile(next->snapshot().program);
+  const auto compiled = (*compiler)->Compile(*next->snapshot().program);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   auto prepared = dispatch.Prepare(1, compiled->image);
   ASSERT_TRUE(prepared) << prepared.error().message;
@@ -1529,7 +1627,7 @@ TEST(JitCompilerTest, LargeCheckpointFramesKeepScalarValuesAndRootsAcrossHostCol
     for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
       auto compiler = Compiler::Create();
       ASSERT_TRUE(compiler);
-      const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+      const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                  {.optimization = optimization, .tier = tier});
       ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
       runtime::Isolate isolate(1);

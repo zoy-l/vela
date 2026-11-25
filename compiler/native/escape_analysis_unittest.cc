@@ -74,7 +74,7 @@ export func sum(value: int): int {
   const auto compiled = aot::Compile(program.program, {.exports = {"sum"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v10_scalar_to_string"), std::string_view::npos);
-  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v9_scalar_text_length"), std::string_view::npos);
+  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v1_integer_text_length"), std::string_view::npos);
   EXPECT_EQ(compiled->function_metrics.front().shadow_slots, 0U);
 }
 

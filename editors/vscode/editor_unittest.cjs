@@ -177,6 +177,12 @@ async function runEditorTests() {
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "vela-vscode-")));
   const uri = vscode.Uri.file(path.join(directory, "exceptions.vela"));
   const temporaryDocuments = [];
+  const openTemporary = async (uri, text) => {
+    await fs.writeFile(uri.fsPath, text, { encoding: "utf8" });
+    const opened = await vscode.workspace.openTextDocument(uri);
+    temporaryDocuments.push(opened);
+    return opened;
+  };
   try {
     const asyncUri = vscode.Uri.file(path.join(directory, "async-highlighting.vela"));
     const asyncText = "async func main(): Future<int> {\n" +
@@ -195,9 +201,7 @@ async function runEditorTests() {
       "  override read(): int { return 2; }\n" +
       "  override get amount(): int { return this.value + 1; }\n" +
       "  override set amount(value: int): void { this.value = value + 1; }\n}\n";
-    await fs.writeFile(asyncUri.fsPath, asyncText);
-    const asyncDocument = await vscode.workspace.openTextDocument(asyncUri);
-    temporaryDocuments.push(asyncDocument);
+    const asyncDocument = await openTemporary(asyncUri, asyncText);
     const syntaxTokens = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", asyncUri);
     for (const [spelling, scope, count] of [
       ["async", "storage.modifier.vela", 1],
@@ -263,9 +267,7 @@ async function runEditorTests() {
       "}",
       ""
     ].join("\n");
-    await fs.writeFile(typeUri.fsPath, typeText);
-    const typeDocument = await vscode.workspace.openTextDocument(typeUri);
-    temporaryDocuments.push(typeDocument);
+    const typeDocument = await openTemporary(typeUri, typeText);
     await checkTypeHighlighting(typeDocument, typeText);
     console.log("PASS: type annotations, type tests, casts and generic arguments use the editor's type colors");
 
@@ -273,9 +275,7 @@ async function runEditorTests() {
     const enumText = "enum Palette { light, dark }\n" +
       "class Item { light: int = 0; }\n" +
       "func main(): void { const color: Palette = Palette.dark; print(Item().light); }\n";
-    await fs.writeFile(enumUri.fsPath, enumText);
-    const enumDocument = await vscode.workspace.openTextDocument(enumUri);
-    temporaryDocuments.push(enumDocument);
+    const enumDocument = await openTemporary(enumUri, enumText);
     const enumSyntax = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", enumUri);
     const enumMembers = enumSyntax.filter(token =>
       token.t.split(" ").includes("variable.other.enummember.vela"));
@@ -296,9 +296,7 @@ async function runEditorTests() {
       "export func echo(value: int): int { return value; }\n");
     const warningUri = vscode.Uri.file(path.join(directory, "unused-warnings.vela"));
     const warningText = "import 'warning-library' as unused;\nfunc consume(value: int): void {}\n";
-    await fs.writeFile(warningUri.fsPath, warningText);
-    const warningDocument = await vscode.workspace.openTextDocument(warningUri);
-    temporaryDocuments.push(warningDocument);
+    const warningDocument = await openTemporary(warningUri, warningText);
     await readSemanticTokens(warningDocument);
     const warnings = vscode.languages.getDiagnostics(warningUri);
     assert.deepEqual(warnings.map(diagnostic => diagnostic.code), ["unused_import", "unused_parameter"]);
@@ -316,10 +314,20 @@ async function runEditorTests() {
       "using the parameter and import in an unsaved edit must clear the warnings");
     console.log("PASS: unused parameters and imports show warnings and fading, then clear after edits");
 
+    const referenceUri = vscode.Uri.file(path.join(directory, "references.vela"));
+    const referenceText = "export func target(value: int): int { return value; }\n"
+      + "func invoke(): int { return target(1); }\n";
+    const referenceDocument = await openTemporary(referenceUri, referenceText);
+    const referencePosition = referenceDocument.positionAt(referenceText.indexOf("target"));
+    const references = await vscode.commands.executeCommand("vscode.executeReferenceProvider",
+      referenceUri, referencePosition);
+    assert.ok(references.some(reference => reference.uri.toString() === referenceUri.toString()
+      && reference.range.start.line === 1), "Find All References must reach the language server");
+    assert.ok(references.every(reference => referenceDocument.getText(reference.range) === "target"));
+    console.log("PASS: Find All References returns semantic call locations through the real provider");
+
     const runUri = vscode.Uri.file(path.join(directory, "run $shell; 中文.vela"));
-    await fs.writeFile(runUri.fsPath, "func main(): int { return 1; }\n");
-    const runDocument = await vscode.workspace.openTextDocument(runUri);
-    temporaryDocuments.push(runDocument);
+    const runDocument = await openTemporary(runUri, "func main(): int { return 1; }\n");
     await vscode.window.showTextDocument(runDocument);
     const runEdit = new vscode.WorkspaceEdit();
     const runText = "func main(): int { print('Run File works'); return 23; }\n";
@@ -333,26 +341,20 @@ async function runEditorTests() {
     console.log("PASS: Run File saves edits and executes paths containing spaces, Unicode and shell characters");
 
     const invalidUri = vscode.Uri.file(path.join(directory, "run-invalid.vela"));
-    await fs.writeFile(invalidUri.fsPath, "func main(): int { return true; }\n");
-    const invalidDocument = await vscode.workspace.openTextDocument(invalidUri);
-    temporaryDocuments.push(invalidDocument);
+    const invalidDocument = await openTemporary(invalidUri, "func main(): int { return true; }\n");
     await vscode.window.showTextDocument(invalidDocument);
     assert.equal(await runVelaTask(invalidUri.fsPath), 65, "compile errors must reach the task terminal");
     console.log("PASS: Run File preserves compilation failure status");
 
     const waitingUri = vscode.Uri.file(path.join(directory, "run-waiting.vela"));
-    await fs.writeFile(waitingUri.fsPath, "async func main(): Future<void> { await sleep(60000); }\n");
-    const waitingDocument = await vscode.workspace.openTextDocument(waitingUri);
-    temporaryDocuments.push(waitingDocument);
+    const waitingDocument = await openTemporary(waitingUri, "async func main(): Future<void> { await sleep(60000); }\n");
     await vscode.window.showTextDocument(waitingDocument);
     await runVelaTask(waitingUri.fsPath, true);
     console.log("PASS: a running Vela task can be terminated");
 
     const standardUri = vscode.Uri.file(path.join(directory, "standard.vela"));
     const standardText = "func main(): void { const values = [2, 1]; values.sort((a: int, b: int): int => a - b); print(Math.sqrt(9.0)); }";
-    await fs.writeFile(standardUri.fsPath, standardText);
-    const standardDocument = await vscode.workspace.openTextDocument(standardUri);
-    temporaryDocuments.push(standardDocument);
+    const standardDocument = await openTemporary(standardUri, standardText);
     const standardCompletion = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider", standardUri,
       standardDocument.positionAt(standardText.indexOf("Math.sqrt") + "Math.".length));
     assert.ok(standardCompletion.items.some(item => item.label === "sqrt"));
@@ -372,9 +374,7 @@ async function runEditorTests() {
       "type Callback<T> = (T) => string;\n" +
       "func use(value: Readable): int { return value.read(2); }\n" +
       "func main(): void { const convert: Callback<int> = value => value.toString(); print(Brightness.dark); }\n";
-    await fs.writeFile(typeHoverUri.fsPath, typeHoverText);
-    const typeHoverDocument = await vscode.workspace.openTextDocument(typeHoverUri);
-    temporaryDocuments.push(typeHoverDocument);
+    const typeHoverDocument = await openTemporary(typeHoverUri, typeHoverText);
     for (const [marker, expected] of [
       ["Brightness {", "enum Brightness\n```\n\nBrightness levels."],
       ["dark);", "(enum member) Brightness.dark = 1"],
@@ -389,9 +389,7 @@ async function runEditorTests() {
     console.log("PASS: enum, interface, member and generic alias hovers follow TypeScript conventions");
     const mutableStringUri = vscode.Uri.file(path.join(directory, "mutable-string.vela"));
     const mutableStringText = "func main(): void { const text: String = String(); text.append('x'); print(text.toString()); }\n";
-    await fs.writeFile(mutableStringUri.fsPath, mutableStringText);
-    const mutableStringDocument = await vscode.workspace.openTextDocument(mutableStringUri);
-    temporaryDocuments.push(mutableStringDocument);
+    const mutableStringDocument = await openTemporary(mutableStringUri, mutableStringText);
     const mutableStringHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", mutableStringUri,
       mutableStringDocument.positionAt(mutableStringText.indexOf("String()")));
     assert.ok(mutableStringHover[0].contents.some(content => content.value.includes("class String {\n  constructor();\n}")));
@@ -402,9 +400,7 @@ async function runEditorTests() {
     console.log("PASS: String constructor hover and mutable string member completion use the renamed API");
     const argumentUri = vscode.Uri.file(path.join(directory, "arguments.vela"));
     const argumentText = "class Counter { value: int; step: int = 1; }\nfunc main(): void { Counter(); }\n";
-    await fs.writeFile(argumentUri.fsPath, argumentText);
-    const argumentDocument = await vscode.workspace.openTextDocument(argumentUri);
-    temporaryDocuments.push(argumentDocument);
+    const argumentDocument = await openTemporary(argumentUri, argumentText);
     const argumentOffset = argumentText.lastIndexOf("Counter(") + "Counter(".length;
     const classHover = await vscode.commands.executeCommand("vscode.executeHoverProvider",
       argumentUri, argumentDocument.positionAt(argumentOffset - "Counter(".length));
@@ -435,9 +431,7 @@ async function runEditorTests() {
     const importingUri = vscode.Uri.file(path.join(directory, "imports.vela"));
     const importingSource = "import './imported';\nfunc main(): int { return answer(); }\n";
     await fs.writeFile(importedUri.fsPath, "export func answer(): int { return 42; }\n");
-    await fs.writeFile(importingUri.fsPath, importingSource);
-    const importingDocument = await vscode.workspace.openTextDocument(importingUri);
-    temporaryDocuments.push(importingDocument);
+    const importingDocument = await openTemporary(importingUri, importingSource);
     const importPosition = importingDocument.positionAt(importingSource.indexOf("imported") + 4);
     const importLinks = await vscode.commands.executeCommand("vscode.executeLinkProvider", importingUri);
     assert.equal(importLinks.length, 1, "the native document-link provider must expose the import underline");
@@ -458,9 +452,7 @@ async function runEditorTests() {
     console.log("PASS: import path navigation opens the actual module");
     const hoverUri = vscode.Uri.file(path.join(directory, "hover.vela"));
     const hoverText = "/// A documented answer.\nfunc answer(): int { return 42; }\nfunc main(): void { print(answer()); }\n";
-    await fs.writeFile(hoverUri.fsPath, hoverText);
-    const hoverDocument = await vscode.workspace.openTextDocument(hoverUri);
-    temporaryDocuments.push(hoverDocument);
+    const hoverDocument = await openTemporary(hoverUri, hoverText);
     const hoverPosition = hoverDocument.positionAt(hoverText.indexOf("answer());"));
     const originalHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", hoverUri, hoverPosition);
     assert.ok(originalHover[0].contents.some(content => content.value.includes("A documented answer.")));
@@ -472,9 +464,7 @@ async function runEditorTests() {
     assert.ok(updatedHover[0].contents.some(content => content.value.includes("An unsaved answer.")),
       "hover must synchronize unsaved text and invalidate the previous semantic snapshot");
     console.log("PASS: hover renders documentation and updates unsaved text");
-    await fs.writeFile(uri.fsPath, text);
-    const scratch = await vscode.workspace.openTextDocument(uri);
-    temporaryDocuments.push(scratch);
+    const scratch = await openTemporary(uri, text);
     const insertion = scratch.positionAt(text.indexOf("validate(-1)"));
     const edit = new vscode.WorkspaceEdit();
     edit.insert(uri, insertion, "va\n    ");
@@ -551,9 +541,7 @@ async function runEditorTests() {
 
     const quoteUri = vscode.Uri.file(path.join(directory, "quotes.vela"));
     const quoteSource = "func main():void{print();}";
-    await fs.writeFile(quoteUri.fsPath, quoteSource);
-    const quoteDocument = await vscode.workspace.openTextDocument(quoteUri);
-    temporaryDocuments.push(quoteDocument);
+    const quoteDocument = await openTemporary(quoteUri, quoteSource);
     const quoteEditor = await vscode.window.showTextDocument(quoteDocument);
     const quoteCaret = quoteDocument.positionAt(quoteSource.indexOf("print(") + "print(".length);
     quoteEditor.selection = new vscode.Selection(quoteCaret, quoteCaret);

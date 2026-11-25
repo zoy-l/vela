@@ -26,7 +26,7 @@ class DevelopmentDebugger final : public runtime::NativeDebugger {
  public:
   DevelopmentDebugger(compiler::DevelopmentSession& session,
                       std::ostream& errors,
-                      std::function<void()> poll);
+                      std::function<void()> wait);
   ~DevelopmentDebugger() override;
   DevelopmentDebugger(const DevelopmentDebugger&) = delete;
   DevelopmentDebugger& operator=(const DevelopmentDebugger&) = delete;
@@ -56,7 +56,7 @@ class DevelopmentDebugger final : public runtime::NativeDebugger {
 
   compiler::DevelopmentSession* session_;
   std::ostream* errors_;
-  std::function<void()> poll_;
+  std::function<void()> wait_;
   const runtime::NativeDebugContext* paused_ = nullptr;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::uint32_t>> breakpoints_;
   std::optional<Position> step_from_;

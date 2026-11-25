@@ -107,6 +107,18 @@ export class Counter<T> {
   EXPECT_FALSE(result.markdown.contains("reset"));
 }
 
+TEST_F(DocumentationTest, DescribesInheritedSignaturesInsteadOfEmptyConstructors) {
+  const auto result = Generate(R"(
+class Root<T> { value: T; }
+export class Child<U> extends Root<U> {}
+export class Leaf extends Child<int> { private state: int = 0; }
+)");
+  ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
+  EXPECT_TRUE(result.markdown.contains("Constructor signature inherited from `Root<U>`."));
+  EXPECT_TRUE(result.markdown.contains("Constructor signature inherited from `Child<int>`."));
+  EXPECT_FALSE(result.markdown.contains("Leaf();"));
+}
+
 TEST_F(DocumentationTest, RendersNullableArraysGenericsFunctionsInterfacesAndEnums) {
   const auto result = Generate(R"(
 export type Operation = (int, string[]) => Map<string, int?[]>;

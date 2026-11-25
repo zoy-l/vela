@@ -158,10 +158,10 @@ std::string ParametersSource(std::size_t count) {
     if (index != 0) {
       source += ',';
     }
-    source += "p" + std::to_string(index) + ": int";
+    source += "_p" + std::to_string(index) + ": int";
   }
   source +=
-      "): int { return p" + std::to_string(count - 1) + "; }\nfunc main(): int { return pick(";
+      "): int { return _p" + std::to_string(count - 1) + "; }\nfunc main(): int { return pick(";
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
       source += ',';

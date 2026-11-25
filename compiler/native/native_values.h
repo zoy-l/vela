@@ -17,6 +17,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/compile_options.h"
+#include "runtime/native/native_function.h"
 
 namespace llvm {
 class Type;
@@ -64,7 +65,8 @@ std::vector<std::optional<std::uint32_t>> FindStringConstants(
 bool IsScalar(const SourceType& type);
 bool IsReferenceKind(Kind kind);
 bool HasValidity(const SourceType& type);
-bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts);
+runtime::NativeFunction::Intrinsic FindMathIntrinsic(const ir::Function& function,
+                                                     const layout::Program& layouts);
 std::optional<llvm::CmpInst::Predicate> IntegerComparison(Opcode opcode);
 void AssumeNonNull(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind);

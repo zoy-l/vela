@@ -47,7 +47,7 @@ enum class DeclarationKind : std::uint8_t {
   EnumMember,
 };
 
-enum class GlobalFlag : std::uint8_t { Constant = 1, Private = 2 };
+enum class GlobalFlag : std::uint8_t { Constant = 1, Private = 2, ModuleLocal = 4 };
 
 // local 为零表示命名实现；非零表示同一外层版本内的匿名函数。
 struct FunctionIdentity final {

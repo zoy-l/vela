@@ -31,11 +31,13 @@
 #include "compiler/aot/native_reflection_optimizer.h"
 #include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
+#include "compiler/aot/record_array_optimizer.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/library/standard_library.h"
@@ -134,6 +136,11 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
   // 去虚拟化和反射绑定已收窄真实调用边；发布前按最终 IR 重新裁剪，
   // 不让初始 selector 闭包继续保留不再可调用的函数体与原生入口。
   PruneNativeProgram(program, main);
+  if (options.optimization == NativeOptimization::Release &&
+      options.placement == NativeCodePlacement::Linked &&
+      options.escape == native::EscapeOptimization::Enabled) {
+    PackPrivateRecordArrays(program);
+  }
   if (main) {
     if (const auto imports = CheckStandaloneImports(program); !imports) {
       return std::unexpected(imports.error());

@@ -216,9 +216,14 @@ std::optional<ArrayAccess> ClassifyArrayAccess(const ir::Instruction& instructio
   switch (instruction.opcode) {
     case Opcode::Move:
     case Opcode::GetIndex:
+    case Opcode::CheckRecordIndex:
+    case Opcode::GetRecordField:
       return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Both};
     case Opcode::SetIndex:
+    case Opcode::SetRecordField:
       return ArrayAccess{.reg = instruction.dst, .use = ArrayAccessUse::Both};
+    case Opcode::PushRecord:
+      return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Elements};
     case Opcode::BuiltinCall:
       switch (static_cast<Builtin>(instruction.index)) {
         case Builtin::ArrayLength:
@@ -587,10 +592,11 @@ std::vector<std::uint8_t> ProveArrayAccessBounds(
   std::vector<std::uint8_t> in_bounds(function.instructions.size());
   for (std::size_t position = 0; position < function.instructions.size(); ++position) {
     const auto& instruction = function.instructions[position];
-    if (instruction.opcode != Opcode::GetIndex && instruction.opcode != Opcode::SetIndex) {
+    if (instruction.opcode != Opcode::GetIndex && instruction.opcode != Opcode::SetIndex &&
+        instruction.opcode != Opcode::CheckRecordIndex) {
       continue;
     }
-    const auto reg = instruction.opcode == Opcode::GetIndex ? instruction.lhs : instruction.dst;
+    const auto reg = instruction.opcode != Opcode::SetIndex ? instruction.lhs : instruction.dst;
     const auto length = lengths[reg];
     const auto& range = integers.indices[position];
     if (length && !range.isEmptySet() && range.getUnsignedMax().ult(*length)) {

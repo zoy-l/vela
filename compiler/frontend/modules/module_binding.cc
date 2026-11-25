@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -29,10 +30,19 @@ struct Symbol final {
   ExportKind export_kind = ExportKind::Local;
 };
 
+struct NameBinding final {
+  std::string target;
+  std::optional<std::size_t> imported;
+};
+struct ImportBinding final {
+  std::uint32_t dependency;
+  std::size_t imported;
+};
 struct ModuleScope final {
   absl::flat_hash_map<std::string, Symbol> declarations;
-  absl::flat_hash_map<std::string, std::string> names;
-  absl::flat_hash_map<std::string, std::uint32_t> prefixes;
+  absl::flat_hash_map<std::string, NameBinding> names;
+  absl::flat_hash_map<std::string, ImportBinding> prefixes;
+  std::vector<bool> used_imports;
 };
 
 class ModuleBinding final {
@@ -49,7 +59,10 @@ class ModuleBinding final {
   void Declare(const Declaration& declaration, DeclarationKind kind, std::size_t index);
   void CollectDeclarations();
   void BindImports();
-  void AddImport(const Program::Import& imported, std::uint32_t dependency, ModuleScope& scope);
+  void AddImport(const Program::Import& imported,
+                 std::uint32_t dependency,
+                 std::size_t import_index,
+                 ModuleScope& scope);
   void BindProgram(Program& program);
   void BindClass(Class& declaration, const std::string& owner);
   void BindInterface(Interface& declaration, const std::string& owner);
@@ -112,7 +125,7 @@ void ModuleBinding::Declare(const Declaration& declaration,
     Error(declaration.location,
           "duplicate " + std::string(category) + " '" + declaration.name + "'");
   }
-  scope.names.try_emplace(declaration.name, target);
+  scope.names.try_emplace(declaration.name, NameBinding{target, std::nullopt});
   // 类型参数的身份与上界在绑定声明后写入，来源只记录已解析的形式。
   module.program.origins.emplace(target, DeclarationOrigin{
                                              .module_uri = sources_.at(index).path,
@@ -151,11 +164,15 @@ void ModuleBinding::CollectDeclarations() {
 
 void ModuleBinding::AddImport(const Program::Import& imported,
                               std::uint32_t dependency,
+                              std::size_t import_index,
                               ModuleScope& scope) {
   if (!imported.alias.empty()) {
     if (IsBuiltinName(imported.alias) || IsStandardName(imported.alias) ||
         scope.names.contains(imported.alias) ||
-        !scope.prefixes.emplace(imported.alias, dependency).second) {
+        !scope.prefixes
+             .emplace(imported.alias,
+                      ImportBinding{.dependency = dependency, .imported = import_index})
+             .second) {
       Error(imported.location, "duplicate or reserved import prefix '" + imported.alias + "'");
     }
     return;
@@ -164,8 +181,9 @@ void ModuleBinding::AddImport(const Program::Import& imported,
     if (symbol.export_kind != ExportKind::Exported) {
       continue;
     }
-    const auto [found, inserted] = scope.names.try_emplace(name, symbol.target);
-    if (scope.prefixes.contains(name) || (!inserted && found->second != symbol.target)) {
+    const auto [found, inserted] = scope.names.try_emplace(
+        name, NameBinding{.target = symbol.target, .imported = import_index});
+    if (scope.prefixes.contains(name) || (!inserted && found->second.target != symbol.target)) {
       Error(imported.location, "conflicting imported name '" + name + "'; use an import prefix");
     }
   }
@@ -175,8 +193,10 @@ void ModuleBinding::BindImports() {
   for (std::size_t index = 0; index < modules_.size(); ++index) {
     const auto& module = modules_.at(index);
     auto& scope = scopes_.at(index);
+    scope.used_imports.resize(module.program.imports.size());
     for (std::size_t imported = 0; imported < module.program.imports.size(); ++imported) {
-      AddImport(module.program.imports.at(imported), module.dependencies.at(imported), scope);
+      AddImport(module.program.imports.at(imported), module.dependencies.at(imported), imported,
+                scope);
     }
   }
 }
@@ -255,17 +275,22 @@ std::string ModuleBinding::ExportedName(std::uint32_t dependency,
 }
 
 std::string ModuleBinding::Resolve(const std::string& name, SourceLocation location) {
-  const auto& scope = scopes_.at(current_);
+  auto& scope = scopes_.at(current_);
   const auto separator = name.find('.');
   if (separator != std::string::npos) {
     const auto prefix = scope.prefixes.find(std::string_view(name).substr(0, separator));
     if (prefix != scope.prefixes.end()) {
-      return ExportedName(prefix->second, name.substr(separator + 1), location);
+      scope.used_imports[prefix->second.imported] = true;
+      return ExportedName(prefix->second.dependency, name.substr(separator + 1), location);
     }
   }
   const auto found = scope.names.find(name);
   if (found != scope.names.end()) {
-    return found->second;
+    const auto& binding = found->second;
+    if (binding.imported) {
+      scope.used_imports[*binding.imported] = true;
+    }
+    return binding.target;
   }
   if (current_ != 0 && scopes_.front().declarations.contains(name)) {
     // 入口声明保留宿主可见名称；合并 AST 不能令其他模块越过各自的 import 作用域。
@@ -311,10 +336,13 @@ void ModuleBinding::BindExpression(Expression* expression) {
   }
   if (expression->kind == Expression::Kind::Member &&
       expression->object->kind == Expression::Kind::Name && !IsLocal(expression->object->text)) {
-    const auto& prefixes = scopes_.at(current_).prefixes;
+    auto& scope = scopes_.at(current_);
+    const auto& prefixes = scope.prefixes;
     const auto prefix = prefixes.find(expression->object->text);
     if (prefix != prefixes.end()) {
-      expression->text = ExportedName(prefix->second, expression->text, expression->location);
+      scope.used_imports[prefix->second.imported] = true;
+      expression->text =
+          ExportedName(prefix->second.dependency, expression->text, expression->location);
       expression->kind = Expression::Kind::Name;
       expression->object.reset();
     }
@@ -534,6 +562,12 @@ ParseResult ModuleBinding::Run() {
     // 声明与导入表已经建立；函数体中的未知名字不能阻止后续依赖绑定其声明身份。
     if (can_bind) {
       BindProgram(module.program);
+      const auto& used = scopes_[current_].used_imports;
+      for (std::size_t index = 0; index < used.size(); ++index) {
+        if (!used[index]) {
+          combined.unused_imports.push_back(std::move(module.program.imports[index]));
+        }
+      }
     }
     module.program.imports.clear();
     AppendProgram(combined, std::move(module.program));

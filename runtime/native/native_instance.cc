@@ -200,6 +200,7 @@ layout::Program DescribeLayouts(const NativeImage& image) {
                                               return layout::Array{
                                                   .name = Text(source.name),
                                                   .element = DescribeType(source.element),
+                                                  .record_fields = source.record_fields,
                                               };
                                             }),
       .collections = ConvertTable<layout::Collection>(
@@ -437,12 +438,9 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
     std::uninitialized_value_construct_n(data_->imports, functions.size());
   }
   const auto imports = std::span(data_->imports, functions.size());
-  for (std::size_t index = 0; index < functions.size(); ++index) {
+  for (const auto index : data_->image->imported_functions.values()) {
     const auto& function = functions[index];
     const auto symbol = function.native_symbol.text();
-    if (symbol.empty()) {
-      continue;
-    }
     auto binding = data_->isolate->FindNative(symbol);
     if (binding == nullptr) {
       return std::unexpected(NativeInstantiationError{

@@ -97,6 +97,7 @@ struct NativeClassDescription final {
 struct NativeArrayDescription final {
   NativeText name;
   NativeTypeDescription element;
+  std::uint32_t record_fields = 0;
 };
 
 struct NativeCollectionDescription final {
@@ -318,6 +319,8 @@ struct NativeImage final {
   NativeTable<NativeReflectionType> reflection_types;
   NativeTable<NativeReflectionMember> reflection_members;
   NativeTable<NativeAttribute> attributes;
+  // 编译器按函数索引生成绑定计划，实例化不扫描并触及全部函数的冷描述页。
+  NativeTable<std::uint32_t> imported_functions;
 
   [[nodiscard]] bool IsReloadable() const noexcept {
     return native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable);

@@ -141,6 +141,34 @@ func main(): string {
             "|中|a😀😀b");
 }
 
+TEST_F(StringLanguageTest, ScalarTextLengthsMatchMaterializedNumbersAtRepresentationBoundaries) {
+  const auto result = Run(R"(
+func main(): int {
+  const integers = [-9223372036854775808, -1, 0, 1, 9223372036854775807];
+  const decimals = [-0.0, 0.0, -1.25, 1.0e-300, 1.0e300,
+                    Math.pow(10.0, 400.0), Math.remainder(1.0, 0.0)];
+  for (const value in integers) {
+    const text = value.toString();
+    if (text.length != value.toString().length ||
+        text.byteLength != value.toString().byteLength) { return 0; }
+  }
+  for (const value in decimals) {
+    const text = value.toString();
+    if (text.length != value.toString().length ||
+        text.byteLength != value.toString().byteLength) { return 0; }
+  }
+  for (const value in [false, true]) {
+    const text = value.toString();
+    if (text.length != value.toString().length ||
+        text.byteLength != value.toString().byteLength) { return 0; }
+  }
+  return 42;
+}
+)");
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
 TEST_F(StringLanguageTest, FormatsPrimitivesOnlyInStringContexts) {
   EXPECT_EQ(Text(R"(
 func main(): string {
@@ -380,6 +408,48 @@ func main(): string {
   EXPECT_EQ(result.stack_trace.front().line, 4U);
 }
 
+TEST_F(StringLanguageTest, ByteOperationsKeepUnitsNullableOffsetsAndBoundMethods) {
+  constexpr auto kExpected = std::to_array("中😀|A好😀é\0|false|true|4|12|null|中|中😀|2|null");
+  EXPECT_EQ(Text(R"(
+class Counter {
+  calls: int = 0;
+  next(value: int): int { this.calls++; return value; }
+}
+func main(): string {
+  const value = 'A中😀e\u0301\0';
+  const slice: (int, int) => string = value.sliceBytes;
+  const replace: (int, int, string) => string = value.replaceBytes;
+  const boundary: (int) => bool = value.isCodePointBoundary;
+  const offset: (int) => int? = value.byteOffsetAt;
+  const trim: () => string = ' \u3000中\u0085'.trim;
+  const absent: string? = null;
+  const counter = Counter();
+  const noValue = absent?.sliceBytes(counter.next(0), counter.next(1));
+  const named = value.sliceBytes(end: counter.next(8), start: counter.next(1));
+  return '${slice(1, 8)}|${replace(1, 4, "好")}|${boundary(2)}|${boundary(12)}|' +
+      '${offset(2)}|${offset(6)}|${offset(7)}|${trim()}|${named}|${counter.calls}|${noValue}';
+})"),
+            std::string_view(kExpected.data(), kExpected.size() - 1));
+}
+
+TEST_F(StringLanguageTest, ByteOffsetsAcceptEmptyEndsAndRejectExtremePositions) {
+  const auto result = Run(R"(
+func main(): int {
+  const empty = '';
+  const text = '中😀';
+  const maximum = 9223372036854775807;
+  if (!empty.isCodePointBoundary(0) || empty.isCodePointBoundary(1) ||
+      text.isCodePointBoundary(-1) || text.isCodePointBoundary(maximum) ||
+      text.byteOffsetAt(-1) != null || text.byteOffsetAt(maximum) != null ||
+      text.byteOffsetAt(2) != 7 || empty.byteOffsetAt(0) != 0 ||
+      empty.sliceBytes(0, 0) != '' || empty.replaceBytes(0, 0, text) != text ||
+      text.replaceBytes(0, 7, '') != '' || text.sliceBytes(7, 7) != '') { return 0; }
+  return 42;
+})");
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
 class StringBoundsTest : public StringLanguageTest,
                          public testing::WithParamInterface<const char*> {};
 
@@ -396,7 +466,14 @@ INSTANTIATE_TEST_SUITE_P(InvalidRanges,
                                          "\"中\".slice(-1, 0)",
                                          "\"中\".slice(1, 0)",
                                          "\"中\".slice(0, 2)",
-                                         "\"中\".slice(2, 2)"));
+                                         "\"中\".slice(2, 2)",
+                                         "\"中\".sliceBytes(0, 1)",
+                                         "\"中\".sliceBytes(1, 3)",
+                                         "\"中\".sliceBytes(-1, 0)",
+                                         "\"中\".sliceBytes(3, 2)",
+                                         "\"中\".sliceBytes(0, 9223372036854775807)",
+                                         "\"中\".replaceBytes(0, 1, \"x\")",
+                                         "\"中\".replaceBytes(2, 3, \"x\")"));
 
 class StringDiagnosticTest : public testing::TestWithParam<const char*> {};
 
@@ -437,6 +514,11 @@ INSTANTIATE_TEST_SUITE_P(
                     R"(func main(): void { if (1) {} })",
                     R"(func main(): string { return [1, true].join(','); })",
                     R"(func main(): string { return "x".slice(0.0, 1); })",
+                    R"(func main(): string { return "x".sliceBytes(0.0, 1); })",
+                    R"(func main(): string { return "x".replaceBytes(0, 1, 42); })",
+                    R"(func main(): int { return "x".byteOffsetAt(0); })",
+                    R"(func main(): bool { return "x".isCodePointBoundary(false); })",
+                    R"(func main(): string { return "x".trim(1); })",
                     R"(func main(): string { return "x"[false]; })",
                     R"(func main(): void { let text = "x"; text[0] = "y"; })",
                     R"(func main(): void { let text = "x"; text.length = 0; })",

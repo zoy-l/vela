@@ -70,8 +70,10 @@ for execution and validation.
 ### Object fields
 
 Object fields store eight-byte payloads in one contiguous region and `ValueKind` tags in a separate
-region. Inline instances own this storage after their object header. Reloadable instances own an
-`InstanceStorage` block whose initialization states follow the tags. Inline object headers and
+region. Ordinary inline instances begin their fields in the header's otherwise unused metadata
+tail; callable instances preserve that tail for their native environment and place fields after
+the complete header. Reloadable instances own an `InstanceStorage` block whose initialization
+states follow the tags. Inline object headers and
 reloadable field blocks record their physical field counts. Native code addresses payloads
 directly and reads tags when the value representation requires them. Boxed `Value` and `NativeValue`
 records retain their sixteen-byte ABI; array storage follows its element layout.
@@ -84,6 +86,32 @@ next allocation. `ObjectFieldStorage` borrows the owner's storage; callers keep 
 do not retain the view across migration or a safepoint that can publish a migration. Prepared
 migrations register their field blocks as roots until commit or discard. Commit replaces the layout
 and complete field block before releasing the previous storage.
+
+Each Heap owns a segmented local-handle stack with stable slot addresses. Scopes own their segments,
+so storing into an outer scope and releasing scopes out of creation order remain valid. GC scans
+only active segments' published values; new references retain the ordinary root barrier, including
+synchronous tracing during sweep. Empty scopes also prevent stopping. External-root diagnostics
+report one stack resource per Heap, with a stable identity and a reference count equal to the active
+scope count. Overflow pages participate in native-memory accounting and retire when the last scope
+exits. Each scope can share ownership of its first localized immutable host root slot, from a
+Persistent or error payload; further values use the segmented storage. This avoids another value
+copy while retaining the root
+after the source Persistent is reset. Shared slots remain read-only; output destinations use fresh
+mutable slots. `Local` borrows its Isolate directly and expires with its owning scope. Internal
+localization returns an execution status, with public `Error` construction at the API boundary.
+Callable host roots place their bound scalar descriptor in the same allocation; ordinary roots
+retain their existing size. The first localization borrows that descriptor through its shared root
+ownership. Other locals bind from their rooted callable. Descriptors retain addresses of mutable
+captures and observe their current values on every call.
+Scalar callback slow calls borrow the Isolate without retaining the caller's scope address; managed
+results still use the destination scope. The public callable slow entry processes pending control
+requests before executing, including closed AOT callbacks without an internal safepoint.
+
+Pooled object pages reserve an aligned power-of-two address range and commit writable prefixes as
+slots are initialized. Heap statistics count committed bytes separately from the reserved address
+range. Reusing an empty page discards its obsolete free-slot chain and decommits the unused tail;
+live slots never move or lose their backing storage. Page growth reports allocation failure before
+publishing a slot, and incremental collection continues to budget complete page retirement.
 
 ### Instance dispatch
 
@@ -195,7 +223,11 @@ arguments can expose the native view ABI. C++ constructs each opaque view, and g
 it for each value parameter. The compiler never assumes the standard library's member layout.
 Closed synchronous AOT functions whose only successful observable operations are host calls may
 borrow `host_execution` for the whole function. Reentrant executions retain their own contexts,
-restore the outer execution, and preserve the caller's logical frames.
+restore the outer execution, and preserve the caller's logical frames. Repeated direct calls can
+share the linked import frame. With one host call site, linking the frame also publishes the
+caller's position. A requested safepoint exposes the script frame for observation and restores the
+borrowed frame and its caller position on success. Checked calls publish the caller position
+before entering the ordinary import frame.
 
 Native callbacks root explicit arguments throughout conversion and execution. Only implicit
 arguments and omitted argument values need owned temporary storage; that storage and its root
@@ -289,6 +321,19 @@ Specialized bodies remain outside the NativeImage entry table. Trusted host call
 functions retain the generic body and its full type-domain checks. Range proofs preserve access and
 failure order, logical frames, roots and physical stack budgets; they do not enlarge parameter-array
 caches or apply to dynamic JIT code.
+
+Release closed linked AOT may pack an unexposed global object array into contiguous scalar records
+after proving that array and element identities never escape. Each record retains its logical
+uint32 element count; checked indices are saved before field addressing, preserving negative and
+large-index failures. Eligibility requires complete scalar initialization, one insertion per object,
+and field-only element uses within one basic block without an intervening safepoint. Unknown calls,
+structural writes in readers, reflected static fields, shared insertions and observable identities
+prevent packing. Ordinary
+construction, logical frames, stops, arithmetic failures and GC remain in place. Appending reserves
+capacity before copying the complete record and publishing length and mutation together. Image and
+runtime layout descriptions carry the physical field count; record payloads contain no GC references.
+Innermost record loops may partially unroll within the existing instruction budget, retaining each
+check and the bounded-poll observation contract.
 
 Closed-program lowering may replace a pure non-null integer ordering lambda with a native integer
 array sort. The proof interprets only parameter comparisons, conditional selection and integer

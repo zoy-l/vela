@@ -74,7 +74,7 @@ TEST(CompilerTest, NullSafeAccessCoalescesAndSkipsArgumentsAndIndices) {
   constexpr std::string_view source = R"(
 class Item {
   value: int;
-  read(unused: int): int { return this.value; }
+  read(_unused: int): int { return this.value; }
 }
 func fail(): int { return 1 / 0; }
 func main(): int {

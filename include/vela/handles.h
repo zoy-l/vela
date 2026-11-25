@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstddef>
+#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -8,19 +8,22 @@
 #include <type_traits>
 #include <utility>
 
-#include <absl/container/inlined_vector.h>
 #include <vela/error.h>
 #include <vela/types.h>
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
+#include "runtime/heap/local_handle_stack.h"
 #include "runtime/native/host_callback.h"
 #include "runtime/value/value.h"
 
 namespace vela {
 
 namespace internal {
+// 只按 Isolate 地址定位其 Heap；不读取或修改对象状态，避免句柄头反向包含绑定模板。
+[[gnu::const]] runtime::Heap& HandleScopeHeap(runtime::Isolate& isolate) noexcept;
+bool IsHandleScopeOwnerThread(runtime::Isolate& isolate) noexcept;
 struct HandleAccess;
 template <class T>
 struct HostFunctionCall;
@@ -31,8 +34,8 @@ inline constexpr bool kIsScalarCallback =
     std::is_same_v<T, Function<double(double)>> || std::is_same_v<T, Function<bool(bool)>>;
 struct NoScalarCallback {};
 template <class T>
-using HandleCallback =
-    std::conditional_t<kIsScalarCallback<T>, BoundScalarCallback, NoScalarCallback>;
+using LocalCallback =
+    std::conditional_t<kIsScalarCallback<T>, const BoundScalarCallback*, NoScalarCallback>;
 }
 
 template <class T>
@@ -42,8 +45,16 @@ class Persistent;
 
 class HandleScope final {
  public:
-  explicit HandleScope(runtime::Isolate& isolate) noexcept;
-  ~HandleScope();
+  [[clang::always_inline]] explicit HandleScope(runtime::Isolate& isolate) noexcept
+      : isolate_(&isolate), storage_(&internal::HandleScopeHeap(isolate).local_handles()) {
+    assert(internal::IsHandleScopeOwnerThread(isolate));
+    storage_->Enter();
+  }
+  [[clang::always_inline]] ~HandleScope() {
+    assert(internal::IsHandleScopeOwnerThread(*isolate_));
+    retained_.Reset();
+    storage_->Leave(segment_);
+  }
   HandleScope(const HandleScope&) = delete;
   HandleScope& operator=(const HandleScope&) = delete;
   HandleScope(HandleScope&&) = delete;
@@ -56,31 +67,21 @@ class HandleScope final {
   friend class ErrorPayload;
   template <class T>
   friend class Persistent;
-  struct Block;
   [[nodiscard]] std::expected<runtime::Value*, ExecutionStatus> Store(
       runtime::Value value) noexcept;
-  [[nodiscard]] std::expected<runtime::Value*, ExecutionStatus> StoreRooted(
+  [[nodiscard, clang::always_inline]] std::expected<runtime::Value*, ExecutionStatus> StoreRooted(
       runtime::Value value) noexcept {
-    if (inline_values_.size() < kInlineCapacity) {
-      // 内联容量以内保持已经交给 Local 的槽地址稳定。
-      inline_values_.push_back(value);
-      auto& slot = inline_values_.back();
-      inline_roots_.AppendRootedValue(slot);
-      return &slot;
-    }
-    return StoreOverflow(value);
+    return storage_->StoreRooted(segment_, value);
   }
-  void ReleaseBlocks() noexcept;
-  [[nodiscard]] std::expected<runtime::Value*, ExecutionStatus> StoreOverflow(
-      runtime::Value value) noexcept;
   template <class T>
-  [[nodiscard]] Result<Local<T>> Localize(const runtime::HostRoot& root) noexcept;
+  [[nodiscard]] std::expected<Local<T>, ExecutionStatus> Localize(
+      const runtime::HostRoot& root) noexcept;
 
-  static constexpr std::size_t kInlineCapacity = 16;
   runtime::Isolate* isolate_;
-  absl::InlinedVector<runtime::Value, kInlineCapacity> inline_values_;
-  runtime::RootRange inline_roots_;
-  Block* blocks_ = nullptr;
+  runtime::LocalHandleStack* storage_;
+  runtime::LocalHandleStack::Segment* segment_ = nullptr;
+  // 已存在的不可变根可共享所有权；首个本地化值无需再复制成独立 GC 槽。
+  runtime::HostRoot retained_;
 };
 
 template <class T>
@@ -90,7 +91,7 @@ class Local final {
       internal::HostValueType<T>::kManaged &&
           !requires { typename internal::HostValueType<T>::Payload; },
       "Local requires a managed logical type; use scalars directly");
-  [[nodiscard]] runtime::Isolate& isolate() const noexcept { return scope_->isolate(); }
+  [[nodiscard]] runtime::Isolate& isolate() const noexcept { return *isolate_; }
   [[nodiscard]] Result<Persistent<T>> Persist() const noexcept;
   [[nodiscard]] Local<Value> ToValue() const noexcept;
   [[nodiscard]] std::string_view Utf8() const noexcept
@@ -234,13 +235,17 @@ class Local final {
   friend struct internal::HostFunctionCall;
   template <class U>
   friend class Persistent;
-  Local(HandleScope& scope, runtime::Value& value) noexcept : scope_(&scope), value_(&value) {}
-  HandleScope* scope_;
+  Local(runtime::Isolate& isolate,
+        runtime::Value& value,
+        internal::LocalCallback<T> callback = {}) noexcept
+      : isolate_(&isolate), value_(&value), callback_(callback) {}
+  // 槽仍由创建它的作用域覆盖；句柄访问仅借用 Isolate，不反向借用作用域对象。
+  runtime::Isolate* isolate_;
   runtime::Value* value_;
 #ifdef _MSC_VER
-  [[msvc::no_unique_address]] internal::HandleCallback<T> callback_;
+  [[msvc::no_unique_address]] internal::LocalCallback<T> callback_;
 #else
-  [[no_unique_address]] internal::HandleCallback<T> callback_;
+  [[no_unique_address]] internal::LocalCallback<T> callback_;
 #endif
 };
 
@@ -255,27 +260,17 @@ class Persistent final {
   ~Persistent() = default;
   Persistent(const Persistent&) noexcept = default;
   Persistent& operator=(const Persistent&) noexcept = default;
-  Persistent(Persistent&& other) noexcept
-      : root_(std::move(other.root_)), callback_(std::exchange(other.callback_, {})) {}
-  Persistent& operator=(Persistent&& other) noexcept {
-    root_ = std::move(other.root_);
-    callback_ = std::exchange(other.callback_, {});
-    return *this;
-  }
+  Persistent(Persistent&& other) noexcept = default;
+  Persistent& operator=(Persistent&& other) noexcept = default;
   [[nodiscard]] bool IsEmpty() const noexcept { return root_.IsEmpty(); }
-  void Reset() noexcept {
-    callback_ = {};
-    root_.Reset();
-  }
-  [[nodiscard]] Result<Local<T>> ToLocal(HandleScope& scope) const noexcept {
-    auto local = scope.Localize<T>(root_);
-    if constexpr (internal::kIsScalarCallback<T>) {
-      if (local) {
-        // 新槽独立保活映像，可复制入口；源 Persistent 随后可以立即释放。
-        local->callback_ = callback_;
-      }
+  void Reset() noexcept { root_.Reset(); }
+  [[nodiscard, clang::always_inline]] Result<Local<T>> ToLocal(HandleScope& scope) const noexcept {
+    // 作用域独立保活根和回调描述，源 Persistent 随后可以立即释放。
+    const auto localized = scope.Localize<T>(root_);
+    if (!localized) {
+      return std::unexpected(Error::FromStatus(localized.error()));
     }
-    return local;
+    return *localized;
   }
   template <class U = T, class... Args>
     requires(std::is_same_v<U, T> && requires { typename internal::FunctionType<U>::Return; } &&
@@ -285,17 +280,8 @@ class Persistent final {
 
  private:
   friend class Local<T>;
-  explicit Persistent(runtime::HostRoot root) noexcept : root_(std::move(root)) {
-    if constexpr (internal::kIsScalarCallback<T>) {
-      callback_ = internal::BoundScalarCallback::Bind(root_.isolate(), root_.value());
-    }
-  }
+  explicit Persistent(runtime::HostRoot root) noexcept : root_(std::move(root)) {}
   runtime::HostRoot root_;
-#ifdef _MSC_VER
-  [[msvc::no_unique_address]] internal::HandleCallback<T> callback_;
-#else
-  [[no_unique_address]] internal::HandleCallback<T> callback_;
-#endif
 };
 
 template <class T>
@@ -308,22 +294,31 @@ Result<Persistent<T>> Local<T>::Persist() const noexcept {
 }
 
 template <class T>
-Result<Local<T>> HandleScope::Localize(const runtime::HostRoot& root) noexcept {
+[[clang::always_inline]] std::expected<Local<T>, ExecutionStatus> HandleScope::Localize(
+    const runtime::HostRoot& root) noexcept {
   if (root.IsEmpty()) {
-    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidEntry));
+    return std::unexpected(ExecutionStatus::InvalidEntry);
   }
   if (&root.isolate() != isolate_) {
-    return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
+    return std::unexpected(ExecutionStatus::InvalidIsolate);
+  }
+  if (retained_.IsEmpty()) {
+    retained_ = root;
+    if constexpr (internal::kIsScalarCallback<T>) {
+      return Local<T>(*isolate_, retained_.slot(), &retained_.callback());
+    } else {
+      return Local<T>(*isolate_, retained_.slot());
+    }
   }
   const auto stored = StoreRooted(root.value());
   if (!stored) {
-    return std::unexpected(Error::FromStatus(stored.error()));
+    return std::unexpected(stored.error());
   }
-  return Local<T>(*this, **stored);
+  return Local<T>(*isolate_, **stored);
 }
 
 inline Result<Local<Value>> ErrorPayload::ToLocal(HandleScope& scope) const noexcept {
-  return scope.Localize<Value>(root_);
+  return scope.Localize<Value>(root_).transform_error(Error::FromStatus);
 }
 
 }  // namespace vela

@@ -1,0 +1,15 @@
+import 'input' as data;
+
+func run(): int {
+  const text = 'A中😀e\u0301Z\0';
+  let checksum = 0;
+  for (const value in data.values) {
+    checksum += text.isCodePointBoundary(value % (text.byteLength + 2) - 1) ? 1 : 0;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

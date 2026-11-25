@@ -24,6 +24,47 @@ Benchmark. Report modes default to seven repetitions, a 0.2-second minimum
 measurement and random interleaving. `--report=PATH.json` selects their JSON
 destination; the matching Markdown report separates time and memory.
 
+Release C++ targets use the shared `//build/config:vela_defaults` optimization
+settings: `/clang:-O3` with clang-cl on Windows and `-O3` on macOS/Linux. Benchmark
+targets use the same settings as the SDK; they do not override optimization locally.
+
+## Math and UTF-8 byte APIs versus C++
+
+The ordinary `--compare` suite includes `math_atan2`, `math_cbrt`, `math_hypot`,
+`math_remainder`, `string_boundary`, `string_slice_bytes`, `string_replace_bytes`,
+`string_byte_offset`, and `string_trim`, each with 256 and 2,048 operations.
+Their independently compiled C++ kernels live in
+[standard_api_workloads.cc](standard_api_workloads.cc), paired with identical
+Vela inputs in [workloads/](workloads/). To select only these pairs:
+
+```powershell
+python -m tools.vl bench --compare -- --benchmark_filter='^compare/(cpp|jit)/(math_(atan2|cbrt|hypot|remainder)|string_(boundary|slice_bytes|replace_bytes|byte_offset|trim))/'
+```
+
+Input preparation, source compilation, and warm-up are excluded from steady timing.
+Cold execution and compilation have separate existing registrations. Both backends
+check the same complete-iteration checksum. Math uses matching C++ standard functions,
+double conversions and rounded integer checksums; signed and varying operands prevent
+constant folding of the complete workload.
+
+Strings contain ASCII, Chinese, emoji, combining marks, and embedded NUL. The boundary
+case also probes invalid positions. Slices exceed common C++ small-string storage;
+replacement reserves one final result. Both backends perform byte-boundary validation
+and account for output code-point length. Offset conversion retains the same position
+cache and nearest-endpoint strategy. Trim mixes unchanged, padded, and all-whitespace
+inputs under the same Unicode White_Space contract.
+
+C++ results use ordinary `std::string` allocation/destruction; Vela uses its managed
+heap and automatic GC. Those lifecycle differences remain timed and are stated in the
+report's per-workload baseline notes. Heap counters report Vela bytes and allocation
+counts per complete workload, peak live growth, and post-collection retention; they
+are not C++ heap measurements or isolated GC timings. This suite is a
+C++ versus closed-JIT comparison, with no AOT performance claim. Retained measurements
+change only after an actual complete successful run.
+
+The measured nine-API comparison is documented in
+[Math and UTF-8 string API benchmarks](../docs/zh-CN/standard_api_benchmarks.md).
+
 ## Runtime reflection
 
 `python -m tools.vl bench --reflection-compare` measures ordinary access, `dynamic`,

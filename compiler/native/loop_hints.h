@@ -8,6 +8,8 @@ class Loop;
 
 namespace vela::compiler::native {
 
+inline constexpr const char* kNativeRecordFieldMetadata = "vela.record.field";
+
 enum class LoopUnrollHints : std::uint8_t { Retain, Replace };
 
 [[nodiscard]] bool HasLoopUnrollHints(const llvm::Loop& loop);

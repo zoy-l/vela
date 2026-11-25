@@ -170,6 +170,7 @@ class Lowerer final {
     std::uint64_t bit;
   };
   [[nodiscard]] static ConstructorFieldMask ConstructorMask(FieldId field);
+  void LowerBaseConstructor(const frontend::ClassDescriptor& owner);
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
   CallSignature& RegisterFunctionSignature(Function& function,
                                            const frontend::Function& source,

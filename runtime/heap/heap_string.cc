@@ -147,14 +147,32 @@ StringObject* Heap::AllocateStringStorage(StringSize size) noexcept {
   return string;
 }
 
-StringObject* Heap::AllocateString(std::string_view first, std::string_view second) noexcept {
+StringObject* Heap::AllocateString(std::string_view text) noexcept {
+  return AllocateString(text, Utf8Length(text));
+}
+
+StringObject* Heap::AllocateString(std::string_view text, std::size_t code_points) noexcept {
+  auto* string = AllocateStringStorage({.bytes = text.size(), .code_points = code_points});
+  if (string != nullptr) {
+    std::ranges::copy(text, StringStorage(*string, text.size()).begin());
+  }
+  return string;
+}
+
+StringObject* Heap::AllocateString(std::string_view first,
+                                   std::string_view second,
+                                   std::string_view third) noexcept {
   if (first.size() > kMaximumStringLength || second.size() > kMaximumStringLength - first.size()) {
     return nullptr;
   }
-  const auto length = first.size() + second.size();
+  const auto prefix_length = first.size() + second.size();
+  if (third.size() > kMaximumStringLength - prefix_length) {
+    return nullptr;
+  }
+  const auto length = prefix_length + third.size();
   auto* string = AllocateStringStorage({
       .bytes = length,
-      .code_points = Utf8Length(first) + Utf8Length(second),
+      .code_points = Utf8Length(first) + Utf8Length(second) + Utf8Length(third),
   });
   if (string == nullptr) {
     return nullptr;
@@ -162,6 +180,7 @@ StringObject* Heap::AllocateString(std::string_view first, std::string_view seco
   const auto bytes = StringStorage(*string, length);
   std::ranges::copy(first, bytes.begin());
   std::ranges::copy(second, bytes.subspan(first.size()).begin());
+  std::ranges::copy(third, bytes.subspan(prefix_length).begin());
   return string;
 }
 

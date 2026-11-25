@@ -94,7 +94,7 @@ toolchain("clang") {
     }
     if (vela_build_config == "release") {
       # Windows Ninja does not interpret shell operators. Strip only final
-      # executables; archives must retain symbols and bitcode for linking.
+      # executables; archives must retain symbols for linking.
       command = "\"$python\" \"$helper\" link-and-strip --strip-tool \"$vela_strip\" --output {{output}} $command"
     }
     description = "LINK {{output}}"

@@ -33,7 +33,8 @@ def programs() -> list[dict]:
         sources = {
             "main.vela": template.substitute(background=unused, matches=matches),
             "attributes.vela": "export class Button extends Reflect { index: int = 0; label: string = ''; }\n",
-            "targets.vela": "import 'attributes' as tags;\nexport class Actions {\n" + methods + "\n}\n",
+            "targets.vela": ("import 'attributes' as tags;\n" if matches else "")
+                            + "export class Actions {\n" + methods + "\n}\n",
         }
         selected = []
         modes = ("all", "module", "missing") if (background, matches) == (1024, 8) else ("all",)

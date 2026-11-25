@@ -16,7 +16,9 @@
 #include "base/streams.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/project/project_config.h"
 #include "compiler/tooling/semantic/semantic_index.h"
+#include "compiler/tooling/semantic/semantic_references.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling::internal {
@@ -59,6 +61,7 @@ inline constexpr std::string_view kSdkSource = "vela/sdkSource";
 [[nodiscard]] std::optional<std::int64_t> JsonInteger(const yyjson_val* value);
 [[nodiscard]] std::expected<TextPosition, std::string> ReadTextPosition(const yyjson_val* value);
 [[nodiscard]] yyjson_mut_val* JsonPosition(yyjson_mut_doc* document, TextPosition position);
+[[nodiscard]] yyjson_mut_val* JsonLocation(yyjson_mut_doc* document, const Definition& location);
 [[nodiscard]] yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range);
 [[nodiscard]] JsonOutput RpcMessage();
 
@@ -97,9 +100,17 @@ class LanguageServer final {
 
  private:
   enum class State : std::uint8_t { New, Initialized, Shutdown };
-  enum class SymbolQuery : std::uint8_t { Completion, Definition, Hover, PrepareRename, Rename };
+  enum class SymbolQuery : std::uint8_t {
+    Completion,
+    Definition,
+    Hover,
+    PrepareRename,
+    Rename,
+    References,
+  };
   void Dispatch(const yyjson_val* request);
   void Initialize(RpcCall call);
+  [[nodiscard]] std::expected<void, std::string> InitializeWorkspace(const yyjson_val* params);
   void Request(std::string_view method, RpcCall call);
   void Notification(std::string_view method, const yyjson_val* params);
   [[nodiscard]] static JsonOutput Response(const yyjson_val* request_id);
@@ -119,6 +130,8 @@ class LanguageServer final {
       std::optional<std::string_view> text = std::nullopt) const;
   void Format(RpcCall call);
   void Query(RpcCall call, SymbolQuery query);
+  void References(RpcCall call, const SemanticIndex& index, std::size_t offset);
+  [[nodiscard]] std::expected<ReferenceIndex*, std::string> WorkspaceReferences();
   void Rename(RpcCall call, SemanticIndex& index, std::size_t offset);
   [[nodiscard]] std::vector<Completion> CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
@@ -138,6 +151,10 @@ class LanguageServer final {
   absl::flat_hash_map<std::string, ServerDocument> documents_;
   absl::flat_hash_map<std::string, PublishedDiagnostics> published_;
   absl::flat_hash_map<std::string, SemanticIndex> semantic_indices_;
+  std::vector<std::string> workspace_roots_;
+  std::optional<ReferenceIndex> reference_index_;
+  std::optional<std::vector<std::string>> workspace_sources_;
+  compiler::SourceConfigurationCache configurations_;
   struct CompletionIndex final {
     std::string text;
     SemanticIndex index;

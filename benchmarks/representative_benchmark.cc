@@ -14,6 +14,7 @@
 #include "benchmarks/native_standard_workloads.h"
 #include "benchmarks/native_workloads.h"
 #include "benchmarks/source.h"
+#include "benchmarks/standard_api_workloads.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/jit/compiler.h"
@@ -29,10 +30,7 @@ constexpr std::string_view kInputModule = "workloads/input.vela";
 constexpr std::string_view kSetupEntry = "benchmarkSetup";
 constexpr std::string_view kWorkloadEntry = "benchmarkEntry";
 
-struct Problem final {
-  std::int64_t size;
-  std::int64_t expected;
-};
+using Problem = WorkloadProblem;
 
 struct Workload final {
   std::string_view name;
@@ -257,6 +255,7 @@ void Jit(benchmark::State& state, Workload workload, Problem problem) {
   heap.Collect();
   const auto baseline_bytes = heap.allocated_bytes();
   state.counters["baseline_bytes"] = static_cast<double>(baseline_bytes);
+  heap.ResetAllocationStatistics();
   for (auto iteration : state) {
     auto result = runtime::ExecuteNativeFunction(instance, entry);
     benchmark::DoNotOptimize(result);
@@ -265,6 +264,14 @@ void Jit(benchmark::State& state, Workload workload, Problem problem) {
       return;
     }
   }
+  const auto statistics = heap.allocation_statistics();
+  const auto iterations = static_cast<double>(state.iterations());
+  state.counters["allocation_bytes_per_iteration"] =
+      static_cast<double>(statistics.bytes) / iterations;
+  state.counters["allocation_count_per_iteration"] =
+      static_cast<double>(statistics.count) / iterations;
+  state.counters["peak_live_growth_bytes"] =
+      static_cast<double>(statistics.peak_live_bytes - baseline_bytes);
   const auto retained = ReportHeap(state, heap);
   if (retained != baseline_bytes) {
     state.SkipWithError("Execution retained temporary heap values after collection");
@@ -348,6 +355,21 @@ void Cpp(benchmark::State& state, Workload workload, Problem problem) {
 }
 
 int RegisterWorkloads() {
+  for (const auto& workload : kStandardApiWorkloads) {
+    for (const auto problem : workload.problems) {
+      const Workload shared{
+          .name = workload.name,
+          .native = workload.native,
+          .problems = workload.problems,
+      };
+      const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
+      benchmark::RegisterBenchmark("compare/cpp/" + suffix, Cpp, shared, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("compare/jit/" + suffix, Jit, shared, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("compile/representative/" + suffix, Compile, shared, problem)
+          ->UseRealTime();
+      benchmark::RegisterBenchmark("first/jit/" + suffix, FirstJit, shared, problem)->UseRealTime();
+    }
+  }
   for (const auto& workload : kWorkloads) {
     for (const auto problem : workload.problems) {
       const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);

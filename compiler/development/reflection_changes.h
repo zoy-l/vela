@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compiler/development/development_session.h"
+#include "compiler/development/development_changes.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler {

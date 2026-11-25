@@ -55,9 +55,12 @@ class LanguageServerTest(CommandTestCase):
         self.assertEqual(result.returncode, expected_exit, result.stderr.decode("utf-8"))
         return self.decode(result.stdout)
 
-    def session(self, messages: list[dict], encoding: str = "utf-16") -> list[dict]:
+    def session(self, messages: list[dict], encoding: str = "utf-16", *,
+                root_uri: str | None = None) -> list[dict]:
         initialize = request("initialize", {"capabilities": {
             "general": {"positionEncodings": [encoding]}}}, 1)
+        if root_uri is not None:
+            initialize["params"]["rootUri"] = root_uri
         shutdown = request("shutdown", identity=999)
         return self.run_wire(b"".join(frame(item) for item in [
             initialize, request("initialized", {}), *messages, shutdown, request("exit")]))
@@ -109,6 +112,7 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(capabilities["textDocumentSync"]["change"], 2)
                 self.assertTrue(capabilities["documentFormattingProvider"])
                 self.assertTrue(capabilities["definitionProvider"])
+                self.assertTrue(capabilities["referencesProvider"])
                 self.assertTrue(capabilities["hoverProvider"])
                 self.assertEqual(capabilities["renameProvider"], {"prepareProvider": True})
                 self.assertEqual(capabilities['documentLinkProvider'], {'resolveProvider': False})
@@ -119,6 +123,85 @@ class LanguageServerTest(CommandTestCase):
                     'tokenModifiers': ['declaration', 'defaultLibrary']})
                 self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])
+
+    def test_references_find_unopened_importers_and_refresh_after_unsaved_changes(self) -> None:
+        source = "export func answer(): int { return 42; }\n"
+        self.entry.write_text(source, encoding="utf-8", newline="\n")
+        consumer = self.write("consumer.vela",
+                              "import 'main'; func caller(): int { return answer(); }\n")
+        self.write("out/ignored.vela", "not valid Vela")
+        self.write("broken.vela", "import 'missing'; func broken(): void {}")
+        query = self.symbol_query("references", source, source.index("answer"), "first", include_declaration=False)
+        inclusive = self.symbol_query("references", source, source.index("answer"), "inclusive", include_declaration=True)
+        changed = self.symbol_query("references", source, source.index("answer"), "changed", include_declaration=False)
+        messages = self.session([
+            self.open(source), query, inclusive,
+            self.open("func caller(): int { return 0; }", consumer.as_uri()), changed,
+        ], root_uri=self.directory.as_uri())
+        references = self.reply(messages, "first")["result"]
+        self.assertEqual(len(references), 1)
+        self.assertEqual(references[0]["uri"], consumer.as_uri())
+        self.assertEqual(references[0]["range"]["start"]["character"], 43)
+        self.assertEqual(len(self.reply(messages, "inclusive")["result"]), 2)
+        self.assertEqual(self.reply(messages, "changed")["result"], [])
+
+    def test_references_preserve_encoding_shadowing_and_include_declaration(self) -> None:
+        source = ("func main(): int { const label = '中😀'; let value = 1; "
+                  "{ const value = 2; print(value); } value = 3; return value; }")
+        for encoding in ("utf-8", "utf-16"):
+            with self.subTest(encoding=encoding):
+                query = self.symbol_query("references", source, source.index("value"),
+                                          encoding=encoding)
+                query["params"]["context"] = {"includeDeclaration": True}
+                messages = self.session([self.open(source), query], encoding)
+                references = self.reply(messages, "query")["result"]
+                self.assertEqual(len(references), 3)
+                offsets = [source.index("value"), source.index("value = 3"), source.rindex("value")]
+                expected = [len(source[:offset].encode("utf-8")) if encoding == "utf-8"
+                            else len(source[:offset].encode("utf-16-le")) // 2 for offset in offsets]
+                self.assertEqual([item["range"]["start"]["character"] for item in references],
+                                  expected)
+
+    def test_references_reject_invalid_context_and_return_empty_for_literal_text(self) -> None:
+        source = "func main(): string { return 'text'; }"
+        missing = self.symbol_query("references", source, source.index("main"), "missing")
+        literal = self.symbol_query("references", source, source.index("text"), "literal", include_declaration=False)
+        messages = self.session([self.open(source), missing, literal])
+        self.assertEqual(self.reply(messages, "missing")["error"]["code"], -32602)
+        self.assertEqual(self.reply(messages, "literal")["result"], [])
+
+    def test_references_connect_unused_generic_overrides_to_calls_in_unopened_files(self) -> None:
+        base = self.write("base.vela", "export class Widget { read(value: int): int { return value; } }")
+        self.write("caller.vela", "import 'base'; func call(widget: Widget): int { return widget.read(1); }")
+        source = ("import 'base'; export class Child<T> extends Widget { "
+                  "override read(value: int): int { return 0; } }")
+        self.entry.write_text(source, encoding="utf-8", newline="\n")
+        query = self.symbol_query("references", source, source.index("read("), include_declaration=False)
+        messages = self.session([self.open(source), query], root_uri=self.directory.as_uri())
+        references = self.reply(messages, "query")["result"]
+        self.assertEqual(len(references), 1)
+        self.assertTrue(references[0]["uri"].endswith("/caller.vela"))
+        self.assertNotEqual(references[0]["uri"], base.as_uri())
+
+    def test_references_restore_disk_after_overlay_close_and_watched_file_invalidation(self) -> None:
+        source = "export func answer(): int { return 42; }"
+        self.entry.write_text(source, encoding="utf-8", newline="\n")
+        consumer = self.write("consumer.vela", "import 'main'; func caller(): int { return answer(); }")
+        query = self.symbol_query("references", source, source.index("answer"), include_declaration=False)
+        # 同一传输会话中的内存覆盖关闭后恢复磁盘内容，引用缓存也必须失效。
+        messages = self.session([
+            self.open(source),
+            self.open("func caller(): int { return 0; }", consumer.as_uri()),
+            query,
+            request("textDocument/didClose", {"textDocument": {"uri": consumer.as_uri()}}),
+            {**query, "id": "closed"},
+            request("workspace/didChangeWatchedFiles", {"changes": [{"uri": consumer.as_uri(), "type": 2}]}),
+            {**query, "id": "watched"},
+        ], root_uri=self.directory.as_uri())
+        self.assertEqual(self.reply(messages, "query")["result"], [])
+        self.assertEqual(len(self.reply(messages, "closed")["result"]), 1)
+        self.assertEqual(self.reply(messages, "watched")["result"],
+                          self.reply(messages, "closed")["result"])
 
     def test_unused_parameter_warnings_have_precise_ranges_and_clear_after_unsaved_reads(self) -> None:
         source = "const label = '中😀'; func ignore(value: int): void {}"
@@ -520,6 +603,36 @@ func main(): int {
         self.assertIn('union', {item['label'] for item in self.reply(messages, 'set')['result']})
         self.assertIn('(method) int[].sort(compareFn?: (int, int) => int): int[]', self.reply(messages, 'sort')['result']['contents']['value'])
         self.assertIn('(method) Math.sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
+
+    def test_math_and_string_byte_apis_share_completion_and_hover_signatures(self) -> None:
+        source = ("func main(): void { const value = '中'; "
+                  "print(value.isCodePointBoundary(0)); print(value.sliceBytes(0, 3)); "
+                  "print(value.replaceBytes(0, 3, '好')); print(value.byteOffsetAt(1)); "
+                  "print(value.trim()); print(Math.atan2(1.0, 1.0)); print(Math.cbrt(-8.0)); "
+                  "print(Math.hypot(3.0, 4.0)); print(Math.remainder(7.0, 2.0)); }")
+        signatures = {
+            'isCodePointBoundary': '(method) string.isCodePointBoundary(byteOffset: int): bool',
+            'sliceBytes': '(method) string.sliceBytes(start: int, end: int): string',
+            'replaceBytes': '(method) string.replaceBytes(start: int, end: int, inserted: string): string',
+            'byteOffsetAt': '(method) string.byteOffsetAt(codePointIndex: int): int?',
+            'trim': '(method) string.trim(): string',
+            'atan2': '(method) Math.atan2(y: double, x: double): double',
+            'cbrt': '(method) Math.cbrt(value: double): double',
+            'hypot': '(method) Math.hypot(x: double, y: double): double',
+            'remainder': '(method) Math.remainder(value: double, divisor: double): double',
+        }
+        messages = self.session([self.open(source),
+            self.symbol_query('completion', source, source.index('value.trim') + len('value.'), 'string'),
+            self.symbol_query('completion', source, source.index('Math.atan2') + len('Math.'), 'math'),
+            *[self.symbol_query('hover', source, source.index(name + '('), name)
+              for name in signatures]])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        string_methods = {item['label'] for item in self.reply(messages, 'string')['result']}
+        math_methods = {item['label'] for item in self.reply(messages, 'math')['result']}
+        self.assertTrue(set(list(signatures)[:5]) <= string_methods)
+        self.assertTrue(set(list(signatures)[5:]) <= math_methods)
+        for name, signature in signatures.items():
+            self.assertIn(signature, self.reply(messages, name)['result']['contents']['value'])
 
     def test_class_hover_displays_constructor_parameters_defaults_and_documentation(self) -> None:
         source = ("/// A counter.\nclass Counter { value: int; step: int = -1; "
@@ -1314,13 +1427,17 @@ func main(): int {
             self.assertEqual(self.reply(replies, name)['error']['code'], -32602)
 
     def symbol_query(self, method: str, source: str, offset: int,
-                     identity: str = "query", encoding: str = "utf-16") -> dict:
+                     identity: str = "query", encoding: str = "utf-16", *,
+                     include_declaration: bool | None = None) -> dict:
         prefix = source[:offset]
         column = prefix.rsplit("\n", 1)[-1]
         character = (len(column.encode("utf-8")) if encoding == "utf-8"
                      else len(column.encode("utf-16-le")) // 2)
-        return request("textDocument/" + method, {"textDocument": {"uri": self.uri},
-            "position": {"line": prefix.count("\n"), "character": character}}, identity)
+        params = {"textDocument": {"uri": self.uri},
+                  "position": {"line": prefix.count("\n"), "character": character}}
+        if include_declaration is not None:
+            params["context"] = {"includeDeclaration": include_declaration}
+        return request("textDocument/" + method, params, identity)
 
     def test_completes_visible_names_and_replaces_the_whole_identifier(self) -> None:
         source = ("func answer(): int { return 42; }\n"

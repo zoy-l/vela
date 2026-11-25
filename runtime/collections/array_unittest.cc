@@ -10,6 +10,8 @@
 #include "base/execution_status.h"
 #include "runtime/collections/array_operations.h"
 #include "runtime/heap/array_storage.h"
+#include "runtime/heap/element_storage.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
@@ -28,6 +30,56 @@ struct IntegerArrayFixture : public testing::Test {
 using IntegerArrayRangeTest = IntegerArrayFixture<1>;
 using MutableIntegerArrayRangeTest = IntegerArrayFixture<kDefaultGcThreshold>;
 using ArraySortTest = IntegerArrayFixture<1>;
+
+TEST(RecordArrayTest, AppendsWholeRecordsAndPreservesStateWhenGrowthFails) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  constexpr std::uint32_t kFields = 6;
+  const auto* record = isolate.CreateClassLayout(kFields, {});
+  const auto* layout = isolate.CreateArrayLayout({
+      .element = {.kind = ValueKind::Object, .nominal = &record->nominal_type()},
+      .record_fields = kFields,
+  });
+  const Value array_root = Value::Object(heap.AllocateArray(*layout, 0));
+  ASSERT_NE(array_root.AsObject(), nullptr);
+  const RootRange array_roots(heap, &array_root, 1);
+  const Value value_root = Value::Object(heap.AllocateInstance(*record));
+  ASSERT_NE(value_root.AsObject(), nullptr);
+  const RootRange value_roots(heap, &value_root, 1);
+  auto& array = *array_root.AsObject();
+  auto& value = *value_root.AsObject();
+  for (std::uint32_t field = 0; field < kFields; ++field) {
+    ASSERT_TRUE(heap.SetField(value, field, Value::Double(static_cast<double>(field) + 0.5)));
+  }
+  const auto capacity = *Heap::ArrayCapacity(array);
+  for (std::uint32_t index = 0; index < capacity; ++index) {
+    ASSERT_EQ(heap.PushRecordArray(array, value), index + 1);
+  }
+  const auto mutation = Heap::ArrayMutation(array);
+  const auto bytes = heap.allocated_bytes();
+  heap.ResetAllocationStatistics();
+  heap.SetAllocationCountLimit(0);
+  const auto failed = heap.PushRecordArray(array, value);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error(), ArrayAccessError::OutOfMemory);
+  EXPECT_EQ(Heap::ArrayLength(array), capacity);
+  EXPECT_EQ(Heap::ArrayMutation(array), mutation);
+  EXPECT_EQ(heap.allocated_bytes(), bytes);
+  heap.SetAllocationCountLimit(std::numeric_limits<std::uint64_t>::max());
+  ASSERT_EQ(heap.PushRecordArray(array, value), capacity + 1);
+  heap.Collect();
+  const auto storage = internal::ArrayBytes(array, *layout);
+  const auto fields = ElementSlots<double>(storage);
+  for (std::uint32_t index = 0; index <= capacity; ++index) {
+    for (std::uint32_t field = 0; field < kFields; ++field) {
+      EXPECT_EQ(fields[(index * kFields) + field], static_cast<double>(field) + 0.5);
+    }
+  }
+  ASSERT_TRUE(heap.ClearArray(array));
+  EXPECT_EQ(Heap::ArrayLength(array), 0U);
+  EXPECT_FALSE(layout->HasReferences());
+  EXPECT_EQ(layout->element_size(), kFields * FieldStorage::kPayloadBytes);
+}
 
 TEST_F(IntegerArrayRangeTest, MutationsAndFailedWritesOnlyWeakenTheRange) {
   Value value = Value::Object(heap.AllocateArray(*layout, 2));

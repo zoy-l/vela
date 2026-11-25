@@ -17,17 +17,14 @@ absolute paths into GN arguments. The generated toolchain uses the same paths
 for compilation, archiving, linking, and formatting. This keeps Debug and
 Release outputs separate and avoids ambient tool discovery.
 
-`python -m tools.vl build release` enables ThinLTO for C and C++ compilation,
-including the runtime and third-party sources built by GN. Debug builds keep
-native object files. The `vela_thin_lto` GN argument records this compilation
-choice. Both Debug and Release output directories store incremental link
-results in their own `thinlto-cache/`: the prebuilt LLVM SDK can contain
-ThinLTO bitcode independently of the project compilation mode. This also
-caches SDK backend results when linking Debug executables and tests.
+Debug and Release builds compile C and C++ sources, including the runtime and
+third-party dependencies built by GN, into native object files without LTO.
+Embedding SDK link inputs must contain native objects so hosts can use their
+platform linker without matching Vela's LLVM version. Prebuilt dependencies
+need the same verification as the Vela archives before platform release acceptance.
 
-Clang and LLD use the same pinned release to keep ThinLTO bitcode production and
-consumption aligned. Builds and native distribution packages use that release's
-LLVM archiver and LLD linker. macOS uses the Xcode SDK with the pinned `ld64.lld` linker.
+Builds and native AOT distribution packages use the pinned release's LLVM
+archiver and LLD linker. macOS uses the Xcode SDK with the pinned `ld64.lld` linker.
 
 The macOS SDK comes from the system's Xcode or Command Line Tools installation.
 `xcrun` resolves the SDK selected by `SDKROOT`, or `macosx` when it is unset.
@@ -51,7 +48,7 @@ for branch pushes, pull requests, and manual runs. macOS uses the `macos-26` run
 with Xcode 26.6 selected through `DEVELOPER_DIR`; Clang and LLD still come from the
 pinned LLVM package. Each configuration uses a separate
 runner. Release jobs also create a tested SDK archive and SHA-256 checksum as workflow
-artifacts. Build outputs and ThinLTO link caches are removed after successful testing
+artifacts. Build outputs are removed after successful testing
 and artifact upload, before saving the dependency cache, to reclaim runner disk space.
 
 The shared setup action installs sccache 0.16.0 and enables its GitHub Actions cache

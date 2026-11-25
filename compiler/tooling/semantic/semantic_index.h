@@ -22,9 +22,12 @@
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/project/project_config.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
+
+class ReferenceIndex;
 
 // 数值与 LSP CompletionItemKind 对齐，由所有编辑器客户端共享。
 enum class CompletionKind : std::uint8_t {
@@ -54,6 +57,7 @@ struct Completion final {
 struct Definition final {
   std::string path;
   TextRange range;
+  bool operator==(const Definition&) const = default;
 };
 
 struct ImportLink final {
@@ -114,7 +118,8 @@ class SemanticIndex final {
   SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays);
   SemanticIndex(std::string_view path,
                 frontend::ModuleCache& modules,
-                std::span<const frontend::SourceInput> overlays);
+                std::span<const frontend::SourceInput> overlays,
+                compiler::SourceConfigurationCache* configurations = nullptr);
   [[nodiscard]] std::vector<Completion> Complete(std::size_t offset) const;
   [[nodiscard]] std::optional<Definition> FindDefinition(std::size_t offset,
                                                          PositionEncoding encoding) const;
@@ -125,9 +130,10 @@ class SemanticIndex final {
   RenameSymbol(std::size_t offset, std::string_view name, PositionEncoding encoding) const;
   [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<SemanticToken> SemanticTokens(PositionEncoding encoding) const;
-  [[nodiscard]] frontend::Diagnostics UnusedDiagnostics() const;
   [[nodiscard]] std::vector<Completion> CompleteArguments(
       const ArgumentCompletionQuery& query) const;
+
+  void AddReferences(ReferenceIndex& references, PositionEncoding encoding) const;
 
   // 同一加载/检查结果同时提供编辑器事实与诊断，避免诊断入口丢弃模型后再次检查。
   explicit SemanticIndex(frontend::ParseResult loaded, frontend::DiagnosticOptions options = {});
@@ -140,7 +146,20 @@ class SemanticIndex final {
   [[nodiscard]] bool DependsOn(std::string_view path) const;
 
  private:
+  [[nodiscard]] Definition DefinitionFor(std::size_t index, PositionEncoding encoding) const;
+  [[nodiscard]] std::optional<Definition> DefinitionFor(const frontend::MemberReference& member,
+                                                        PositionEncoding encoding) const;
+  struct LoadedProgram final {
+    frontend::ParseResult parsed;
+    frontend::DiagnosticOptions options;
+  };
+  explicit SemanticIndex(LoadedProgram loaded);
+  static LoadedProgram Load(std::string_view path,
+                            frontend::ModuleCache& modules,
+                            std::span<const frontend::SourceInput> overlays,
+                            compiler::SourceConfigurationCache* configurations);
   using Key = std::pair<std::uint32_t, std::size_t>;
+  Definition LocationFor(Key key, std::size_t length, PositionEncoding encoding) const;
   struct Source final {
     std::string path;
     std::string_view text;
@@ -176,7 +195,6 @@ class SemanticIndex final {
   struct Reference final {
     std::size_t symbol = 0;
     const frontend::Expression* expression = nullptr;
-    bool is_read = true;
   };
   struct TypeReference final {
     Key key;
@@ -205,6 +223,8 @@ class SemanticIndex final {
                                            const SymbolRename& request) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
   [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration) const;
+  [[nodiscard]] const frontend::ClassDescriptor* FindClassDescriptor(
+      const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
   void MarkTypeParameters(std::span<const frontend::TypeParameter> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
@@ -234,6 +254,8 @@ class SemanticIndex final {
                     std::string_view name,
                     const frontend::Expression* expression = nullptr);
   void CollectDeclarations();
+  void CollectInheritedParameters();
+  std::string ConstructorParameters(const frontend::Class& declaration) const;
   void CollectClass(const frontend::Class& declaration);
   void CollectInterface(const frontend::Interface& declaration);
   void BindIntrinsicSignature(std::size_t symbol,
@@ -242,8 +264,6 @@ class SemanticIndex final {
   void CollectEnumMembers(const frontend::Enum& declaration);
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();
-  void CollectUnusedParameters(frontend::Diagnostics& diagnostics) const;
-  void CollectUnusedImports(frontend::Diagnostics& diagnostics) const;
   std::optional<TypeReference> VisitType(const frontend::TypeName& type);
   void VisitFunction(const frontend::Function& function,
                      const Scope& scope,
@@ -317,7 +337,6 @@ class SemanticIndex final {
   absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::size_t>> members_;
   absl::flat_hash_map<std::size_t, NamedSymbols> parameters_;
   absl::flat_hash_map<std::uint32_t, std::size_t> bindings_;
-  absl::flat_hash_set<std::size_t> parameter_definitions_;
   absl::flat_hash_map<Key, Receiver> receivers_;
   absl::flat_hash_map<Key, const frontend::Expression*> calls_;
   absl::flat_hash_map<Key, const frontend::Attribute*> attribute_calls_;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 import subprocess
 import unittest
@@ -54,6 +55,23 @@ class CommandTest(CommandTestCase):
             with self.subTest(example=example.relative_to(ROOT).as_posix()):
                 self.command("check", example)
 
+    def test_jit_cache_prepares_imported_code_without_executing_it(self) -> None:
+        library = self.directory / "page.vela"
+        library.write_text("export func page(): int { return 42; }\n",
+                           encoding="utf-8", newline="\n")
+        self.write("import 'page'; func main(): int { print('executed'); return page(); }")
+        cache = self.directory / "code-cache"
+        first = self.command("jit-cache", self.entry, f"--code-cache={cache}")
+        result = json.loads(first.stdout)
+        self.assertIn(library.as_posix(), result["sources"])
+        files = sorted(cache.glob("*.vlobj"))
+        self.assertEqual(len(files), result["functions"])
+        snapshot = lambda: [(path.read_bytes(), path.stat().st_mtime_ns) for path in files]
+        previous = snapshot()
+        repeated = self.command("jit-cache", self.entry, f"--code-cache={cache}")
+        self.assertEqual(json.loads(repeated.stdout), result)
+        self.assertEqual(snapshot(), previous)
+
     def test_native_object_integrity_survives_source_deletion(self) -> None:
         self.write("export func main(): int { return 42; }")
         image = self.directory / "main.o"
@@ -66,6 +84,72 @@ class CommandTest(CommandTestCase):
         image.write_bytes(data)
         self.assertIn("different generation",
                       self.command("build", "--verify-manifest=" + manifest, expected=65).stderr)
+
+    def test_check_reports_unused_parameters_in_imported_overrides_without_failing(self) -> None:
+        library = self.directory / "widgets.vela"
+        library.write_text(
+            "export class Widget {\n"
+            "  buildChildren(element: int, changed: bool): int { return changed ? element : 0; }\n"
+            "}\n"
+            "export class Child extends Widget {\n"
+            "  override buildChildren(element: int, changed: bool): int { return 1; }\n"
+            "}\n", encoding="utf-8", newline="\n")
+        self.write("import 'widgets'; func main(): int { return Child().buildChildren(1, true); }")
+        result = self.command("check", self.entry)
+        self.assertIn("checked ", result.stdout)
+        self.assertEqual(result.stderr.count("warning: [unused_parameter]"), 2)
+        self.assertIn(f"{library.as_posix()}:5:26: warning: [unused_parameter] parameter 'element' is never read",
+                      result.stderr)
+        self.assertIn("parameter 'changed' is never read", result.stderr)
+
+    def test_check_counts_parameter_reads_in_defaults_captures_and_generic_definitions(self) -> None:
+        self.write("interface Reader { read(value: int): int; }\n"
+                   "external func host(value: int): void;\n"
+                   "func captured(value: int): () => int { return () => value; }\n"
+                   "func defaults(first: int, second: int = first): int { return second; }\n"
+                   "func ignored(_value: int): void {}\n"
+                   "func written(value: int): void { value = 1; }\n"
+                   "func shadowed(value: int): void { { const value = 1; print(value); } }\n"
+                   "func generic<T>(value: T): void {}\n"
+                   "func named(value: int): void {}\n"
+                   "func main(): void { named(value: 1); generic(1); generic('text'); }\n")
+        result = self.command("check", self.entry)
+        self.assertEqual(result.stderr.count("warning: [unused_parameter]"), 4)
+        self.assertNotIn("parameter 'first'", result.stderr)
+        self.assertNotIn("parameter '_value'", result.stderr)
+
+    def test_check_and_build_report_bound_unused_imports_without_failing(self) -> None:
+        for name, source in (
+                ("library", "export class Item {}"),
+                ("types", "export class Box<T> { value: T; }"),
+                ("spare", "export func execute(): void {}")):
+            (self.directory / (name + ".vela")).write_text(source, encoding="utf-8", newline="\n")
+        self.write("import 'library' as used;\n"
+                   "import 'library' as unused;\n"
+                   "import 'library';\n"
+                   "import 'types';\n"
+                   "import 'spare';\n"
+                   "class Holder { value: used.Item?; }\n"
+                   "func identity<T>(value: Box<T>): Box<T> { return value; }\n"
+                   "export func main(): void { const unused = 1; print(unused); }\n")
+        image = self.directory / "unused-imports.o"
+        for arguments in (("check", self.entry),
+                          ("build", self.entry, "--emit=obj", "--export=main", "-o", image)):
+            with self.subTest(command=arguments[0]):
+                result = self.command(*arguments)
+                self.assertEqual(result.stderr.count("warning: [unused_import]"), 3)
+                for line in (2, 3, 5):
+                    self.assertIn(f"{self.entry.as_posix()}:{line}:1: warning: [unused_import]",
+                                  result.stderr)
+                self.assertNotIn("unused import 'types'", result.stderr)
+
+    def test_build_rejects_empty_target_support_and_manifest_paths(self) -> None:
+        self.write("export func main(): int { return 42; }")
+        output = self.directory / "app.exe"
+        invalid = self.command("build", self.entry, "--target-support=", "-o", output, expected=64)
+        self.assertIn("invalid build argument", invalid.stderr)
+        self.assertFalse(output.exists())
+        self.command("build", "--verify-manifest=", expected=64)
 
     def test_corrupt_native_cache_is_recompiled_from_checked_source(self) -> None:
         self.write("func main(): int { return 42; }")

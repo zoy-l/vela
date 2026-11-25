@@ -192,7 +192,9 @@ test("diagnostics preserve protocol warning severity, codes, ranges and unnecess
   assert.deepEqual(diagnostic.tags, [mock.DiagnosticTag.Unnecessary]);
 });
 
-test("VS Code symbol providers synchronize text, map protocol results and discard stale replies", async () => {
+test("VS Code symbol providers synchronize text, map protocol results and discard stale replies", async testContext => {
+  const originalDocuments = mock.workspace.textDocuments;
+  testContext.after(() => { mock.workspace.textDocuments = originalDocuments; });
   const providers = {};
   mock.languages = {
     registerDocumentSemanticTokensProvider(selector, provider, legend) {
@@ -223,22 +225,38 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
       providers.definition = provider;
       return { dispose() {} };
     },
+    registerReferenceProvider(selector, provider) {
+      assert.equal(selector.language, "vela");
+      providers.references = provider;
+      return { dispose() {} };
+    },
+    registerDocumentFormattingEditProvider(selector, provider) {
+      providers.formatting = provider;
+      return { dispose() {} };
+    },
     registerHoverProvider(selector, provider) {
       assert.equal(selector.language, "vela");
       providers.hover = provider;
       return { dispose() {} };
     }
   };
-  const document = { uri: { toString: () => "file:///test.vela" }, version: 1, isClosed: false };
+  mock.EndOfLine = { LF: 1, CRLF: 2 };
+  mock.TextEdit = class {
+    constructor(range, newText) { Object.assign(this, { range, newText }); }
+    static setEndOfLine(newEol) { return { newEol }; }
+  };
+  const document = { uri: { toString: () => "file:///test.vela" }, version: 1,
+    isClosed: false, eol: mock.EndOfLine.CRLF };
   const token = { isCancellationRequested: false };
   const position = { line: 2, character: 5 };
   const events = [];
   const range = { start: { line: 2, character: 3 }, end: { line: 2, character: 7 } };
   let stale = false;
+  let staleDocument = document;
   const client = { async request(method, params, cancellation) {
     events.push(method);
     assert.equal(cancellation, token);
-    if (stale) document.version++;
+    if (stale) staleDocument.version++;
     if (method.endsWith("semanticTokens/full")) {
       assert.equal(params.textDocument.uri, "file:///test.vela");
       return { data: [0, 0, 4, 0, 1] };
@@ -248,9 +266,17 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
       assert.equal(params.position, undefined);
       return [{ target: "file:///library.vela", range, tooltip: "Open imported Vela module" }];
     }
+    if (method.endsWith("/formatting")) {
+      assert.equal(params.options.tabSize, 2);
+      return [{ range, newText: "formatted" }];
+    }
     assert.equal(params.position.line, 2);
     assert.equal(params.position.character, 5);
     if (method.endsWith("prepareRename")) return range;
+    if (method.endsWith("references")) {
+      assert.equal(params.context.includeDeclaration, false);
+      return [{ uri: "file:///library.vela", range }];
+    }
     if (method.endsWith("/rename")) {
       assert.equal(params.newName, "Element");
       return { changes: { "file:///test.vela": [{ range, newText: params.newName }] } };
@@ -263,7 +289,7 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   }};
   const context = { subscriptions: [] };
   const refreshLinks = registerSymbolProviders(context, client, async () => { events.push("flush"); });
-  assert.equal(context.subscriptions.length, 8);
+  assert.equal(context.subscriptions.length, 10);
   const completions = await providers.completion.provideCompletionItems(document, position, token);
   assert.equal(completions[0].label, "value:");
   assert.equal(completions[0].kind, 4);
@@ -274,6 +300,9 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   const target = await providers.definition.provideDefinition(document, position, token);
   assert.equal(target.uri.toString(), "file:///library.vela");
   assert.deepEqual(events, ["flush", "textDocument/completion", "flush", "textDocument/definition"]);
+  const references = await providers.references.provideReferences(document, position, { includeDeclaration: false }, token);
+  assert.equal(references[0].uri.toString(), "file:///library.vela");
+  assert.deepEqual(references[0].range.values, [2, 3, 2, 7]);
   const hover = await providers.hover.provideHover(document, position, token);
   assert.equal(hover.contents.value, "```vela\nvalue: int\n```");
   assert.equal(hover.contents.isTrusted, false);
@@ -291,6 +320,11 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   assert.equal(links[0].target.toString(), "file:///library.vela");
   assert.equal(links[0].tooltip, "Open imported Vela module");
   assert.deepEqual(links[0].range.values, [2, 3, 2, 7]);
+  const options = { tabSize: 2 };
+  const formatted = await providers.formatting.provideDocumentFormattingEdits(document, options, token);
+  assert.equal(formatted[0].newText, "formatted");
+  assert.deepEqual(formatted[0].range.values, [2, 3, 2, 7]);
+  assert.equal(formatted[1].newEol, mock.EndOfLine.LF);
   let invalidations = 0;
   providers.links.onDidChangeDocumentLinks(() => invalidations++);
   let semanticInvalidations = 0;
@@ -301,16 +335,27 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   stale = true;
   assert.equal((await providers.completion.provideCompletionItems(document, position, token)).length, 0);
   assert.equal(await providers.definition.provideDefinition(document, position, token), null);
+  assert.equal((await providers.references.provideReferences(document, position, { includeDeclaration: false }, token)).length, 0);
   assert.equal(await providers.hover.provideHover(document, position, token), null);
   assert.equal(await providers.rename.prepareRename(document, position, token), null);
   assert.equal(await providers.rename.provideRenameEdits(document, position, "Element", token), null);
   assert.equal(await providers.semantic.provideDocumentSemanticTokens(document, token), null);
   assert.equal((await providers.links.provideDocumentLinks(document, token)).length, 0);
+  assert.equal((await providers.formatting.provideDocumentFormattingEdits(document, options, token)).length, 0);
+  const otherDocument = { uri: { scheme: "file" }, languageId: "vela", version: 1, isClosed: false };
+  mock.workspace.textDocuments = [otherDocument];
+  staleDocument = otherDocument;
+  const beforeReferences = events.length;
+  assert.equal((await providers.references.provideReferences(document, position,
+    { includeDeclaration: false }, token)).length, 1);
+  assert.deepEqual(events.slice(beforeReferences), ["flush", "flush", "textDocument/references"]);
   token.isCancellationRequested = true;
   const count = events.length;
   assert.equal((await providers.links.provideDocumentLinks(document, token)).length, 0);
   assert.equal((await providers.completion.provideCompletionItems(document, position, token)).length, 0);
   assert.equal(await providers.hover.provideHover(document, position, token), null);
   assert.equal(await providers.semantic.provideDocumentSemanticTokens(document, token), null);
+  assert.equal((await providers.references.provideReferences(document, position,
+    { includeDeclaration: false }, token)).length, 0);
   assert.equal(events.length, count);
 });

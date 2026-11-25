@@ -51,7 +51,7 @@ void StoreHostResult(runtime::Heap& heap, runtime::Value& output, runtime::Value
                                          runtime::Value value,
                                          runtime::TypeConstraint type,
                                          runtime::Value& output);
-[[nodiscard]] Result<void> InvokeHostCallable(HandleScope& scope,
+[[nodiscard]] Result<void> InvokeHostCallable(runtime::Isolate& isolate,
                                               runtime::Value callable,
                                               std::span<const runtime::Value> arguments,
                                               runtime::Value& output);
@@ -188,9 +188,8 @@ Result<HostReceivedValue<T, Operation>> ReceiveHostValue(HandleScope& scope,
 template <class R, class... Args>
 struct HostFunctionCall<Function<R(Args...)>> final {
   template <class... Actual>
-  static Result<HostValue<R>> Call(HandleScope& scope,
-                                   Local<Function<R(Args...)>> callable,
-                                   Actual&&... arguments) {
+  [[clang::always_inline]] static Result<HostValue<R>>
+  Call(HandleScope& scope, const Local<Function<R(Args...)>>& callable, Actual&&... arguments) {
     static_assert(
         std::is_same_v<std::tuple<std::remove_cvref_t<Actual>...>, std::tuple<HostValue<Args>...>>,
         "callback arguments must match the declared Vela types exactly");
@@ -198,15 +197,18 @@ struct HostFunctionCall<Function<R(Args...)>> final {
       return std::unexpected(Error::FromStatus(ExecutionStatus::InvalidIsolate));
     }
     if constexpr (kIsScalarCallback<Function<R(Args...)>>) {
-      auto target = callable.callback_;
-      if (target.control == nullptr) {
-        target = BoundScalarCallback::Bind(scope.isolate(), HandleAccess::Read(callable));
-      }
-      if (const auto result = target.Try(arguments...)) {
+      const auto& cached = callable.callback_;
+      const auto result = cached != nullptr ? cached->Try(arguments...)
+                                            : BoundScalarCallback::Bind(
+                                                  scope.isolate(), HandleAccess::Read(callable))
+                                                  .Try(arguments...);
+      if (result) {
         return *result;
       }
+      return InvokeScalar(scope.isolate(), HandleAccess::Read(callable), arguments...);
+    } else {
+      return Invoke(scope, HandleAccess::Read(callable), std::forward<Actual>(arguments)...);
     }
-    return Invoke(scope, HandleAccess::Read(callable), std::forward<Actual>(arguments)...);
   }
 
   template <class... Actual>
@@ -218,7 +220,26 @@ struct HostFunctionCall<Function<R(Args...)>> final {
     // 重入宿主期间原 Persistent 可以被重置；持有同一根直至完整调用返回。
     const auto retained = runtime::HostRoot(root);
     HandleScope scope(retained.isolate());
-    return Invoke(scope, retained.value(), std::move(arguments)...);
+    if constexpr (kIsScalarCallback<Function<R(Args...)>>) {
+      return InvokeScalar(scope.isolate(), retained.value(), std::move(arguments)...);
+    } else {
+      return Invoke(scope, retained.value(), std::move(arguments)...);
+    }
+  }
+
+  // 该签名的实参和结果均为标量；慢调用也不借用调用方的作用域对象。
+  template <class... Actual>
+    requires kIsScalarCallback<Function<R(Args...)>>
+  [[clang::noinline]] static Result<HostValue<R>> InvokeScalar(runtime::Isolate& isolate,
+                                                               runtime::Value callable,
+                                                               Actual... arguments) {
+    const std::array values{EncodeHostScalar<Args>(arguments)...};
+    runtime::Value output;
+    auto invoked = InvokeHostCallable(isolate, callable, values, output);
+    if (!invoked) {
+      return std::unexpected(std::move(invoked.error()));
+    }
+    return DecodeHostScalar<R>(output);
   }
 
   template <class... Actual>
@@ -233,7 +254,7 @@ struct HostFunctionCall<Function<R(Args...)>> final {
       return std::unexpected(std::move(values.error()));
     }
     return ReceiveHostValue<R>(scope, [&](runtime::Value& output) {
-      return InvokeHostCallable(scope, callable, *values, output);
+      return InvokeHostCallable(scope.isolate(), callable, *values, output);
     });
   }
 };

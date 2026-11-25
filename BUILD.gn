@@ -14,6 +14,7 @@ group("embedding") {
   deps = [
     "//compiler:vela",
     "//compiler:vela_development",
+    "//compiler:vela_development_client",
     "//compiler/bindgen:vela_bindgen",
     "//runtime:vela_runtime",
   ]

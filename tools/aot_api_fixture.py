@@ -168,6 +168,25 @@ TEST(NativeHostTest, GeneratedCppExportsKeepCompleteTypesAndUseTheCallersScope) 
   const auto wrong = NULLABLE_NAMESPACE::Call_calculate(scope, wrong_image->get(), std::optional<std::int64_t>(42));
   ASSERT_FALSE(wrong);
   EXPECT_EQ(wrong.error().status, ExecutionStatus::InvalidEntry);
+  auto strings = TEXT_NAMESPACE::Instantiate(&isolate);
+  ASSERT_TRUE(strings);
+  const auto source = vela::CreateString(scope, "outer");
+  ASSERT_TRUE(source);
+  vela::Persistent<vela::String> retained;
+  {
+    vela::HandleScope inner(isolate);
+    const auto appended = TEXT_NAMESPACE::Call_calculate(inner, strings->get(), *source);
+    ASSERT_TRUE(appended);
+    EXPECT_EQ(appended->Utf8(), "outer!");
+    auto saved = appended->Persist();
+    ASSERT_TRUE(saved);
+    retained = std::move(*saved);
+  }
+  isolate.heap().Collect();
+  EXPECT_EQ(source->Utf8(), "outer");
+  const auto localized = retained.ToLocal(scope);
+  ASSERT_TRUE(localized);
+  EXPECT_EQ(localized->Utf8(), "outer!");
   auto floats = FLOAT_NAMESPACE::Instantiate(&isolate);
   ASSERT_TRUE(floats);
   const auto divided = FLOAT_NAMESPACE::Call_calculate(scope, floats->get(), 84.0, 2.0);

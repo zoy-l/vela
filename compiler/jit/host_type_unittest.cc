@@ -301,6 +301,20 @@ export func callbacks(): ((int) => int)[] {
   EXPECT_EQ(writer.Call(std::int64_t{7}), 7);
   owner.heap().Collect();
   EXPECT_EQ(reader.Call(std::int64_t{35}), 42);
+  HandleScope event(owner);
+  const auto localized_read = reader.ToLocal(event);
+  const auto localized_write = writer.ToLocal(event);
+  ASSERT_TRUE(localized_read);
+  ASSERT_TRUE(localized_write);
+  reader.Reset();
+  writer.Reset();
+  owner.heap().Collect();
+  EXPECT_EQ(localized_write->Call(event, std::int64_t{13}), 13);
+  EXPECT_EQ(localized_read->Call(event, std::int64_t{29}), 42);
+  owner.native_control().RequestStop();
+  const auto stopped = localized_read->Call(event, std::int64_t{29});
+  ASSERT_FALSE(stopped);
+  EXPECT_EQ(stopped.error().status, ExecutionStatus::ExecutionStopped);
 }
 
 TEST_P(HostTypeReloadTest, TypedEntryChecksChangedSignaturesAndRejectsPrivateLookup) {

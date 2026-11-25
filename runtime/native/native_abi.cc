@@ -11,11 +11,9 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
-#include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_deoptimization.h"
-#include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_materialization.h"
 #include "runtime/value/value.h"
@@ -50,40 +48,6 @@ NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept {
 NativeFrame::~NativeFrame() {
   root_range_.Detach();
   ::operator delete(allocation_, std::align_val_t{kNativeFrameAlignment});
-}
-
-[[clang::always_inline]] NativeExecution::NativeExecution(NativeInstance& instance) noexcept
-    : NativeExecution(instance, nullptr) {}
-
-[[clang::always_inline]] NativeExecution::NativeExecution(NativeInstance& instance,
-                                                          const NativeExecution* parent) noexcept
-    : instance_(&instance),
-      context_(instance.isolate(), *this),
-      control_state_(&isolate().native_control().state()),
-      barrier_state_(&isolate().heap().barrier_state()),
-      stack_roots_(isolate().heap().native_stack_roots_head()),
-      execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
-  const auto limit = CurrentNativeStackLimit(*control_state_);
-  if (parent != nullptr) {
-    current_frame_ = parent->current_frame_;
-    frame_count_ = parent->frame_count_;
-    base_frame_count_ = frame_count_;
-  }
-  if (!limit) {
-    stack_status_ = limit.error();
-  } else {
-    stack_limit_ = *limit;
-    stack_status_ = ExecutionStatus::Returned;
-  }
-  if (instance.image().IsReloadable()) {
-    isolate().native_dispatch().RegisterExecution(*this);
-  }
-}
-
-NativeExecution::~NativeExecution() {
-  if (version_previous_link_ != nullptr) {
-    NativeDispatch::UnregisterExecution(*this);
-  }
 }
 
 bool CanReenterNativeProgram(const NativeExecution* parent, const CodeIdentity& identity) noexcept {

@@ -57,7 +57,7 @@ class JitCodeCacheTest : public vela::test::DirectoryTest {
     }
     auto cached = options;
     cached.code_cache = directory();
-    return compiler.Compile(prepared->snapshot().program, cached);
+    return compiler.Compile(*prepared->snapshot().program, cached);
   }
   void SetDependency(std::string source) { dependency_ = std::move(source); }
   static void ExpectImageInteger(std::shared_ptr<const runtime::NativeImage> image,

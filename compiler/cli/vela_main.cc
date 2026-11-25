@@ -13,6 +13,7 @@
 
 #include <llvm/Support/InitLLVM.h>
 
+#include "base/command_line.h"
 #include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/native_program_mode.h"
@@ -23,6 +24,7 @@
 #include "compiler/build_info.h"
 #include "compiler/cli/debug_console.h"
 #include "compiler/cli/development_console.h"
+#include "compiler/cli/jit_cache_command.h"
 #include "compiler/cli/repl_console.h"
 #include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
@@ -30,6 +32,7 @@
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/jit/compiler_protocol.h"
 #include "compiler/jit/source_compiler.h"
 #include "compiler/native/host_header.h"
 #include "compiler/native/native_roots.h"
@@ -65,6 +68,7 @@ void PrintUsage(std::ostream& output) {
          << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
          << "  mock API_FILE --interface NAME -o OUTPUT [--check]   Generate interface mocks\n"
          << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
+         << "  jit-cache FILE [--config=FILE] --code-cache=DIR   Prepare reloadable code caches\n"
          << "  build FILE [--config=FILE] [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   "
             "Build native code\n"
          << "  build --verify-manifest=FILE   Verify a native library and its header\n"
@@ -223,11 +227,11 @@ int ReplCommand(std::span<char*> arguments) {
 }
 
 int CheckCommand(std::span<char*> arguments) {
-  if (arguments.size() == 2 && std::string_view(arguments[1]).starts_with("--config=")) {
-    return CheckFile(
-        arguments.front(),
-        vela::Utf8Path(
-            std::string_view(arguments[1]).substr(std::string_view("--config=").size())));
+  if (arguments.size() == 2) {
+    if (const auto path =
+            vela::ReadPathOption(arguments[1], vela::compiler::kConfigurationOption)) {
+      return CheckFile(arguments.front(), *path);
+    }
   }
   if (arguments.size() != 1) {
     std::cerr << "vela: check requires exactly one source file\n";
@@ -243,12 +247,11 @@ int DevelopmentCommand(std::span<char*> arguments) {
     return kUsageExitCode;
   }
   vela::compiler::jit::CompileOptions options;
-  constexpr std::string_view kCodeCache = "--code-cache=";
   for (const std::string_view argument : arguments.subspan(1)) {
     if (argument == "--optimized") {
       options.tier = vela::NativeCodeTier::Optimized;
-    } else if (argument.starts_with(kCodeCache) && argument.size() > kCodeCache.size()) {
-      options.code_cache = vela::Utf8Path(argument.substr(kCodeCache.size()));
+    } else if (auto cache = vela::ReadPathOption(argument, vela::compiler::jit::kCodeCacheOption)) {
+      options.code_cache = std::move(cache);
     } else {
       std::cerr << "vela: unknown development option: " << argument << '\n';
       return kUsageExitCode;
@@ -308,6 +311,14 @@ int main(int argc, char** argv) {
     return kUsageExitCode;
   }
   const std::string_view command = arguments[1];
+  if (command == "compile-server") {
+    const auto configured = vela::tooling::SetBinaryStandardStreams();
+    if (!configured) {
+      std::cerr << "vela: " << configured.error() << '\n';
+      return kIoErrorExitCode;
+    }
+    return vela::compiler::jit::RunCompilerService();
+  }
   if (command == "--help" || command == "-h") {
     PrintUsage(std::cout);
     return 0;
@@ -343,6 +354,10 @@ int main(int argc, char** argv) {
   }
   if (command == "dev") {
     return DevelopmentCommand(arguments.subspan(2));
+  }
+  if (command == "jit-cache") {
+    return vela::tooling::JitCacheCommand(
+        arguments.subspan(2), {.input = std::cin, .output = std::cout, .errors = std::cerr});
   }
   if (command == "doc") {
     return DocumentCommand(arguments.subspan(2));

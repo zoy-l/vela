@@ -107,6 +107,38 @@ class RuntimeReflectionTest : public ::testing::TestWithParam<NativeCodeTier> {
   std::unique_ptr<runtime::NativeInstance> instance_storage_;
 };
 
+TEST_P(RuntimeReflectionTest, InheritedConstructorsExposeAndBindTheBaseSignature) {
+  Load(R"(
+class Root<T> { value: T; bonus: int = 2; }
+[Reflect]
+class Generated extends Root<int> {}
+class Base {
+  value: int;
+  constructor(initial: int = 20) { this.value = initial; }
+}
+[Reflect]
+class Explicit extends Base {}
+export func answer(): int {
+  const generated = Reflect.typeInfo<Generated>().getConstructor();
+  const explicit = Reflect.typeInfo<Explicit>().getConstructor();
+  if (generated == null || explicit == null) { return 0; }
+  if (generated.parameters.length != 2 || generated.parameters[0].name != 'value' ||
+      generated.parameters[0].hasDefault || !generated.parameters[1].hasDefault ||
+      explicit.parameters[0].name != 'initial' || !explicit.parameters[0].hasDefault) {
+    return 0;
+  }
+  const first = generated.invoke(CallArguments(items: [CallArgument(value: 20, name: 'value')]));
+  const second = explicit.invoke(CallArguments());
+  if (first is Generated && second is Explicit) {
+    return first.value + first.bonus + second.value;
+  }
+  return 0;
+}
+)");
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
 TEST_P(RuntimeReflectionTest, ConstructsAndUsesFieldsPropertiesMethodsAndStatics) {
   Load(R"(
 class Counter {

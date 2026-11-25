@@ -41,9 +41,8 @@ Local<Value> Local<T>::ToValue() const noexcept {
 template <class T>
 template <class U, class... Args>
   requires std::is_same_v<U, T>
-Result<HostValue<typename internal::FunctionType<U>::Return>> Local<T>::Call(
-    HandleScope& scope,
-    Args&&... arguments) const {
+[[clang::always_inline]] Result<HostValue<typename internal::FunctionType<U>::Return>>
+Local<T>::Call(HandleScope& scope, Args&&... arguments) const {
   return internal::HostFunctionCall<U>::Call(scope, *this, std::forward<Args>(arguments)...);
 }
 
@@ -54,8 +53,10 @@ template <class U, class... Args>
 Result<HostValue<typename internal::FunctionType<U>::Return>> Persistent<T>::Call(
     Args&&... arguments) const {
   if constexpr (internal::kIsScalarCallback<T>) {
-    if (const auto result = callback_.Try(arguments...)) [[likely]] {
-      return *result;
+    if (!root_.IsEmpty()) {
+      if (const auto result = root_.callback().Try(arguments...)) [[likely]] {
+        return *result;
+      }
     }
   }
   return internal::HostFunctionCall<T>::InvokePersistent(root_, std::forward<Args>(arguments)...);

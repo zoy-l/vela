@@ -630,6 +630,21 @@ class BenchmarkReportTest(unittest.TestCase):
                                      [entry["name"] for entry in ordinary_entries], 1)
         self.assertNotIn("Native baseline contracts", ordinary)
 
+    def test_reports_api_allocation_pressure_without_treating_it_as_cpp_memory(self) -> None:
+        rows = [sample("cpp", 1000), sample("jit", 5000)]
+        for entry in rows:
+            entry["name"] = entry["name"].replace("sieve", "string_replace_bytes")
+        rows[1].update(allocation_bytes_per_iteration=4096,
+                       allocation_count_per_iteration=256, peak_live_growth_bytes=8192)
+        names = [entry["name"] for entry in rows]
+        report = comparison_report({"benchmarks": rows}, names, 1)
+        self.assertIn("| string_replace_bytes | 10000 | 4096.00 | 256.00 | 8192.00 |", report)
+        self.assertIn("not C++ allocator measurements", report)
+        self.assertIn("reserves one result", report)
+        rows[1].pop("allocation_count_per_iteration")
+        with self.assertRaises(ValueError):
+            comparison_report({"benchmarks": rows}, names, 1)
+
     def test_comparison_options_preserve_google_benchmark_arguments(self) -> None:
         parsed = parse_arguments(["--compare", "--report", "out/test.json", "--",
                                   "--benchmark_repetitions=3"])

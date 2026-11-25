@@ -69,6 +69,10 @@ class LinkConfigurationTest(unittest.TestCase):
             library = directory / "lib/LLVMSupport.lib"
             library.parent.mkdir()
             library.touch()
+            loader_libraries = [library.parent / config.static_library_name(component)
+                                for component in ("LLVMOrcJIT", "LLVMOrcDebugging")]
+            for loader in loader_libraries:
+                loader.touch()
             system = ("psapi.lib shell32.lib ole32.lib uuid.lib advapi32.lib ws2_32.lib "
                       "ntdll.lib zs.lib S:/llvm/zstdbuild/install/lib/zstd_static.lib xml2s.lib")
 
@@ -86,6 +90,9 @@ class LinkConfigurationTest(unittest.TestCase):
                     self.assertEqual(configuration[prefix + "_system_libraries"],
                                      ["psapi.lib", "shell32.lib", "ole32.lib", "uuid.lib",
                                       "advapi32.lib", "ws2_32.lib", "ntdll.lib"])
+                self.assertEqual(configuration["vela_llvm_loader_libraries"], [
+                    loader.as_posix() for loader in loader_libraries
+                ] + [library.as_posix()])
                 for unmanaged in ("S:/unmanaged/dependency.lib", r"S:\unmanaged\dependency.lib",
                                   "unmanaged/dependency.lib", r"unmanaged\dependency.lib"):
                     system = shlex.quote(unmanaged)

@@ -114,9 +114,21 @@ std::shared_ptr<const NativeFunction> FindStandardNative(std::string_view name) 
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::sin)>>("Math.sin"));
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cos)>>("Math.cos"));
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::tan)>>("Math.tan"));
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::atan2)>>(
+            "Math.atan2"),
+        NativeFunction::Intrinsic::Atan2);
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cbrt)>>("Math.cbrt"),
+        NativeFunction::Intrinsic::CubeRoot);
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::hypot)>>(
+            "Math.hypot"),
+        NativeFunction::Intrinsic::Hypotenuse);
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::remainder)>>(
+            "Math.remainder"),
+        NativeFunction::Intrinsic::Remainder);
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::floor)>>("Math.floor"));
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::ceil)>>("Math.ceil"));
-    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("Math.round"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("Math.round"),
+        NativeFunction::Intrinsic::Round);
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::trunc)>>("Math.trunc"));
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::fabs)>>("Math.abs"));
     add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::exp)>>("Math.exp"));

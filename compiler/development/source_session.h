@@ -14,6 +14,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "base/declaration.h"
+#include "compiler/development/development_changes.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -61,10 +62,15 @@ struct CompiledSourceSnapshot final {
   std::vector<std::string> standard_names;
   frontend::DeclarationIds identities;
   frontend::ModuleCache modules;
-  ir::Program program;
+  // 本地后端拥有 Typed IR；外部后端只返回声明身份、变更和源码元数据。
+  std::shared_ptr<const ir::Program> program;
+  DevelopmentChanges changes;
   SourceTimings timings;
   frontend::Diagnostics diagnostics;
   std::vector<frontend::ReflectionSelection> reflection;
+  // 外部编译会话的候选租约；运行时元数据不借用编译进程的地址。
+  std::uint64_t compiler_token = 0;
+  std::shared_ptr<void> compiler_lease;
 };
 
 enum class SourceCandidateStatus : std::uint8_t {
@@ -84,9 +90,13 @@ struct SourceCandidateError final {
 class SourceCandidate final {
  public:
   [[nodiscard]] const CompiledSourceSnapshot& snapshot() const noexcept { return *prepared_; }
+  [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot_owner() const noexcept {
+    return prepared_;
+  }
 
  private:
   friend class SourceSession;
+  friend class ExternalSourceSession;
   SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> base,
                   std::shared_ptr<const CompiledSourceSnapshot> prepared);
   std::shared_ptr<const CompiledSourceSnapshot> base_;
@@ -95,18 +105,35 @@ class SourceCandidate final {
 
 // 编译层只拥有不可变源码和声明身份，不访问 Isolate。代码生成或运行时验证成功后，
 // 开发会话才提交候选；失败候选和并行编译不会改变已提交基线。
-class SourceSession final {
+struct SourceSessionConfiguration final {
+  std::string entry;
+  frontend::DiagnosticOptions diagnostics;
+  std::vector<frontend::ReflectionSelection> reflection;
+  frontend::ModulePaths imports;
+};
+
+class SourceSession {
  public:
   explicit SourceSession(const std::string& entry,
                          frontend::DiagnosticOptions options = {},
                          std::vector<frontend::ReflectionSelection> reflection = {},
                          frontend::ModulePaths imports = {});
+  explicit SourceSession(const SourceSessionConfiguration& configuration);
+  SourceSession(const SourceSession&) = delete;
+  SourceSession& operator=(const SourceSession&) = delete;
+  SourceSession(SourceSession&&) = delete;
+  SourceSession& operator=(SourceSession&&) = delete;
+  virtual ~SourceSession() = default;
   [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
   // retained 必须来自本会话的已提交声明身份；候选继承同一单调增长的身份表。
-  [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
+  [[nodiscard]] virtual std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
       std::span<const DeclarationId> retained = {}) const;
   [[nodiscard]] std::expected<void, SourceCommitStatus> Commit(const SourceCandidate& candidate);
+
+ protected:
+  struct External final {};
+  SourceSession(const std::string& entry, External /*unused*/);
 
  private:
   const std::shared_ptr<const SourceSessionIdentity> identity_;

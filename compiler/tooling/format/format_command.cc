@@ -2,14 +2,11 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <expected>
 #include <filesystem>
 #include <ostream>
 #include <span>
-#include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 
 #include "base/diagnostic.h"
 #include "base/file.h"
@@ -18,44 +15,12 @@
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/tooling/format/formatter.h"
+#include "compiler/tooling/source_files.h"
 
 namespace vela::tooling {
 namespace {
 
 enum class FormatMode : std::uint8_t { Output, Write, Check };
-
-bool IsExcludedDirectory(const std::filesystem::path& path) {
-  const auto name = path.filename();
-  return name == ".git" || name == ".cache" || name == ".cipd" || name == "out" ||
-         name == "third_party" || name == "node_modules";
-}
-
-std::expected<std::vector<std::filesystem::path>, std::string> DirectorySources(
-    const std::filesystem::path& directory) {
-  std::vector<std::filesystem::path> sources;
-  std::error_code error;
-  auto iterator = std::filesystem::recursive_directory_iterator(directory, error);
-  const auto end = std::filesystem::recursive_directory_iterator();
-  while (!error && iterator != end) {
-    const auto& entry = *iterator;
-    const auto& path = entry.path();
-    const auto status = entry.symlink_status(error);
-    if (error) {
-      break;
-    }
-    if (std::filesystem::is_directory(status) && IsExcludedDirectory(path)) {
-      iterator.disable_recursion_pending();
-    } else if (std::filesystem::is_regular_file(status) && path.extension() == ".vela") {
-      sources.push_back(path);
-    }
-    iterator.increment(error);
-  }
-  if (error) {
-    return std::unexpected(error.message());
-  }
-  std::ranges::sort(sources);
-  return sources;
-}
 
 int FormatFile(const std::filesystem::path& file, FormatMode mode, FormatStreams streams) {
   std::ostream& output = streams.output.get();

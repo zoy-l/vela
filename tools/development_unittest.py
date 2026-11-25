@@ -101,6 +101,15 @@ class DevelopmentCommandTest(CommandTestCase):
         self.send(".quit")
         self.assertEqual(self.process.wait(timeout=5), 0)
 
+    def test_async_entry_timer_completes_while_waiting_for_commands(self) -> None:
+        self.write("async func main(): Future<void> { "
+                   "await sleep(30); print('timer completed'); } "
+                   "export func read(): int { return 42; }")
+        self.start()
+        self.wait("out", "^timer completed$")
+        self.send(".call read")
+        self.wait("out", "^42$")
+
     def test_relative_entry_observes_saves_in_the_process_working_directory(self) -> None:
         self.write("func main(): void {} export func read(): int { return 42; }")
         self.start(entry="main.vela")

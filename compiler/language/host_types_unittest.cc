@@ -251,7 +251,7 @@ class Failure { value: int; }
 func main(): int {
   const failure = Failure(value: 42);
   const values = [1];
-  try { apply(values, (value: int): int => { throw failure; }); }
+  try { apply(values, (_value: int): int => { throw failure; }); }
   catch (error: Failure) { return error == failure && values[0] == 1 ? error.value : -1; }
   return -2;
 }

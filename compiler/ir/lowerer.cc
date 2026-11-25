@@ -202,6 +202,12 @@ LoweringResult Lowerer::Lower() && {
       frontend::Function constructor;
       constructor.name = frontend::kConstructorName;
       constructor.location = owner.location;
+      if (descriptor.constructor_kind == frontend::ConstructorKind::Explicit) {
+        for (const auto& parameter : descriptor.constructor.parameters) {
+          constructor.parameters.push_back(
+              {.type = {}, .name = parameter.name, .location = owner.location, .initializer = {}});
+        }
+      }
       LowerFunction(constructor, descriptor.constructor, &owner);
     }
   }
@@ -360,7 +366,7 @@ void Lowerer::BuildFunctionTable() {
       static_cast<void>(AddFunctionId(name));
     }
     const auto name = MethodKey(owner.name, DeclarationKind::Method, frontend::kConstructorName);
-    if (owner.constructor_kind != frontend::ConstructorKind::Unavailable &&
+    if (model_.classes.at(owner.name).constructor_kind != frontend::ConstructorKind::Unavailable &&
         native_mode_ == NativeProgramMode::Reloadable) {
       static_cast<void>(AddFunctionId(name));
       pending_constructors_.push_back(&owner);
@@ -582,7 +588,7 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
   Function function;
   function.is_generated_constructor =
       owner != nullptr && source.name == frontend::kConstructorName &&
-      owner->constructor_kind == frontend::ConstructorKind::Generated;
+      model_.classes.at(owner->name).constructor_kind == frontend::ConstructorKind::Generated;
   function.location = source.location;
   const auto identity = declarations_->functions.find(&source);
   if (identity != declarations_->functions.end()) {

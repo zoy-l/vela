@@ -58,7 +58,7 @@ TEST_P(JitCodeFanoutTest, EditsReplaceOneTypedSlotAndPreserveEveryCaller) {
     const auto prepared = test::PrepareText(source, text);
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
     const auto compiled =
-        (*compiler)->Compile(prepared->snapshot().program,
+        (*compiler)->Compile(*prepared->snapshot().program,
                              {.tier = NativeCodeTier::Optimized, .preserve_ir = true}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
@@ -106,7 +106,7 @@ TEST_F(JitCodeReuseTest, RecursiveComponentEditsDoNotInvalidateItsOutsideCaller)
                     "func odd(n: int): int { if (n == 0) { return 0; } return even(n - 1); }\n"
                     "export func answer(): int { return even(2); }");
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+    const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
@@ -146,7 +146,7 @@ TEST_P(CapturedJitCallerTest, KeepsItsBodyAndResolvesEditedAndDeletedTargets) {
   for (std::size_t index = 0; index < sources.size(); ++index) {
     const auto prepared = test::PrepareText(source, sources.at(index));
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+    const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image, source.snapshot()->revision));
@@ -181,7 +181,7 @@ TEST_F(JitCodeReuseTest, ConstructorBodySpecializationInvalidatesItsCallerAcross
       "class Point { x: int; } "
       "export func answer(): int { const point = Point(x: 42); return point.x; }");
   ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-  auto program = prepared->snapshot().program;
+  auto program = *prepared->snapshot().program;
   const auto first = (*compiler)->Compile(program, {.tier = NativeCodeTier::Optimized}, &reuse);
   ASSERT_TRUE(first) << DiagnosticsText(first.error());
   const auto constructor = std::ranges::find_if(
@@ -223,7 +223,7 @@ TEST_F(JitCodeReuseTest, RepeatedPureCallsInvalidateTheirCallerAndTrackSlotTrans
   for (std::size_t version = 0; version < bodies.size(); ++version) {
     const auto prepared = test::PrepareText(source, bodies[version] + kRepeatedCaller);
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+    const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     const auto functions = compiled->image->functions.values();
@@ -252,7 +252,7 @@ TEST_F(JitCodeReuseTest, ReusedCodeReadsEachInstancesOwnConstantPoolAfterPublica
     const auto prepared = test::PrepareText(
         source, "export func text(): string { return '" + std::string(text) + "'; }");
     ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
-    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+    const auto compiled = (*compiler)->Compile(*prepared->snapshot().program,
                                                {.tier = NativeCodeTier::Optimized}, &reuse);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     if (captured.has_value()) {

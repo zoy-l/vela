@@ -2,13 +2,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include "compiler/jit/code_inputs.h"
+#include "runtime/native/native_image.h"
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/Function.h>
@@ -96,29 +99,52 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
   return plan;
 }
 
+void PlanFunctionBindings(std::span<const std::string> symbols,
+                          std::size_t index,
+                          std::string_view suffix,
+                          CodeReusePlan& plan) {
+  if (plan.reused[index] != 0) {
+    auto& entries = plan.retained[index];
+    plan.functions.insert(plan.functions.end(), std::make_move_iterator(entries.begin()),
+                          std::make_move_iterator(entries.end()));
+    entries.clear();
+  } else {
+    ++plan.compiled_functions;
+    for (const auto& name : symbols) {
+      plan.functions.push_back(
+          {.name = name, .symbol = std::string(name).append(suffix), .resource = {}});
+    }
+  }
+}
+
+void UpdateSourceCache(CodeReuseCache& reuse,
+                       const CodeReusePlan& plan,
+                       const runtime::NativeImage& image,
+                       const std::function<CodeReuseCache::Source(std::size_t)>& describe) {
+  reuse.sources.clear();
+  reuse.sources.reserve(plan.inputs.size());
+  const auto functions = image.functions.values();
+  for (std::size_t index = 0; index < plan.inputs.size(); ++index) {
+    auto source = describe(index);
+    const auto& function = functions[index];
+    source.fingerprint = plan.inputs[index].fingerprint;
+    source.entry = function.entry;
+    source.reflection_entry = function.reflection_entry;
+    source.typed_entry = function.typed_entry;
+    source.integer_callback = function.integer_callback;
+    reuse.sources.push_back(std::move(source));
+  }
+}
+
 void BindReusableCode(llvm::Module& module,
                       const std::vector<std::vector<std::string>>& symbols,
                       std::uint64_t batch,
                       CodeReusePlan& plan) {
-  auto retained = std::move(plan.retained);
   const auto suffix = "_batch_" + std::to_string(batch);
   for (std::size_t index = 0; index < symbols.size(); ++index) {
     const auto reused = plan.reused[index] != 0;
     const auto first = plan.functions.size();
-    if (reused) {
-      auto& entries = retained[index];
-      plan.functions.insert(plan.functions.end(), std::make_move_iterator(entries.begin()),
-                            std::make_move_iterator(entries.end()));
-    } else {
-      ++plan.compiled_functions;
-      for (const auto& name : symbols[index]) {
-        plan.functions.push_back({
-            .name = name,
-            .symbol = name + suffix,
-            .resource = {},
-        });
-      }
-    }
+    PlanFunctionBindings(symbols[index], index, suffix, plan);
     for (auto& entry : std::span(plan.functions).subspan(first)) {
       if (auto* function = module.getFunction(entry.name)) {
         if (reused) {

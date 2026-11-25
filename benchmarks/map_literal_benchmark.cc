@@ -188,7 +188,7 @@ std::expected<std::size_t, std::string> CompileMap(const MapLiteralCase& problem
   }
   const auto tier =
       backend == MapBackend::Baseline ? NativeCodeTier::Baseline : NativeCodeTier::Optimized;
-  const auto compiled = compiler.Compile(prepared->snapshot().program, {.tier = tier});
+  const auto compiled = compiler.Compile(*prepared->snapshot().program, {.tier = tier});
   if (!compiled) {
     return std::unexpected(frontend::DiagnosticsText(compiled.error()));
   }

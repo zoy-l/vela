@@ -29,7 +29,8 @@ using Instance = std::unique_ptr<VelaAotInstance, InstanceRelease>;
 [[nodiscard]] Error TakeError(VelaAotStatus status, VelaAotError* error);
 // C 入口已确认 scope 的所属线程；Local 仍须验证同一 Isolate 和有效槽位。
 [[nodiscard]] Result<runtime::Value> Decode(HandleScope& scope, const VelaAotValue& input);
-[[nodiscard]] VelaAotLocal Borrow(Local<vela::Value> value) noexcept;
+// 参数借用只覆盖本次 C 调用；结果槽由显式传入的目标作用域拥有。
+[[nodiscard]] VelaAotLocal Borrow(HandleScope& scope, Local<vela::Value> value) noexcept;
 [[nodiscard]] Result<VelaAotValue> Encode(HandleScope& scope, runtime::Value value);
 [[nodiscard]] Result<Local<vela::Value>> ReceiveLocal(HandleScope& scope,
                                                       const VelaAotValue& value);
@@ -60,7 +61,7 @@ template <class T>
     }
     VelaAotValue result{};
     result.kind = VELA_AOT_LOCAL;
-    result.local = Borrow(vela::internal::HandleAccess::Rebind<vela::Value>(value));
+    result.local = Borrow(scope, vela::internal::HandleAccess::Rebind<vela::Value>(value));
     return result;
   }
 }

@@ -29,6 +29,24 @@ std::string_view Local<T>::Utf8() const noexcept
                                                     HostValue<String> text,
                                                     HostValue<std::int64_t> start,
                                                     HostValue<std::int64_t> end);
+[[nodiscard]] Result<HostValue<bool>> StringIsCodePointBoundary(
+    HandleScope& scope,
+    HostValue<String> text,
+    HostValue<std::int64_t> byte_offset);
+[[nodiscard]] Result<HostValue<String>> StringSliceBytes(HandleScope& scope,
+                                                         HostValue<String> text,
+                                                         HostValue<std::int64_t> start,
+                                                         HostValue<std::int64_t> end);
+[[nodiscard]] Result<HostValue<String>> StringReplaceBytes(HandleScope& scope,
+                                                           HostValue<String> text,
+                                                           HostValue<std::int64_t> start,
+                                                           HostValue<std::int64_t> end,
+                                                           HostValue<String> inserted);
+[[nodiscard]] Result<HostValue<Nullable<std::int64_t>>> StringByteOffsetAt(
+    HandleScope& scope,
+    HostValue<String> text,
+    HostValue<std::int64_t> code_point_index);
+[[nodiscard]] Result<HostValue<String>> StringTrim(HandleScope& scope, HostValue<String> text);
 [[nodiscard]] Result<HostValue<String>> StringAt(HandleScope& scope,
                                                  HostValue<String> text,
                                                  HostValue<std::int64_t> index);

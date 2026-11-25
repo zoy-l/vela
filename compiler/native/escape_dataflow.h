@@ -32,7 +32,6 @@ std::optional<std::size_t> VirtualReceiver(const EscapePlan& plan,
 bool MatchesType(const ir::Program& program,
                  const AllocationSite& allocation,
                  std::uint32_t type_index);
-bool IsTrivialConstructor(const ir::Function& function);
 bool NeedsHeap(const EscapePlan& plan,
                const ir::Program& program,
                const ir::Instruction& instruction,

@@ -1,5 +1,26 @@
 import("abseil_sources.gni")
 
+if (target_os == "win") {
+  # 官方预编译包的 rpmalloc 对象会全局覆写
+  # malloc/free，不能改变嵌入宿主的分配器。 从锁定归档生成
+  # CRT 链接变体；原始第三方输入保持不变。
+  llvm_support_archive = "$vela_llvm_root/lib/LLVMSupport.lib"
+  llvm_crt_support = "$root_gen_dir/third_party/vela_llvm_support.lib"
+  action("llvm_crt_support") {
+    script = "//tools/llvm_support_archive.py"
+    inputs = [ llvm_support_archive ]
+    outputs = [ llvm_crt_support ]
+    args = [
+      "--archiver",
+      "$vela_llvm_root/bin/llvm-ar.exe",
+      "--source",
+      rebase_path(inputs[0], root_build_dir),
+      "--output",
+      rebase_path(outputs[0], root_build_dir),
+    ]
+  }
+}
+
 config("llvm_headers") {
   llvm_include = "$vela_llvm_root/include"
 
@@ -22,36 +43,6 @@ config("llvm_headers") {
   }
 }
 
-config("llvm_libraries") {
-  libs = vela_llvm_libraries + vela_llvm_system_libraries
-}
-
-source_set("llvm") {
-  public_configs = [
-    ":llvm_headers",
-    ":llvm_libraries",
-  ]
-  public_deps = [
-    ":zlib",
-    ":zstd",
-  ]
-}
-
-config("llvm_jit_libraries") {
-  libs = vela_llvm_jit_libraries + vela_llvm_jit_system_libraries
-}
-
-source_set("llvm_jit") {
-  public_configs = [
-    ":llvm_headers",
-    ":llvm_jit_libraries",
-  ]
-  public_deps = [
-    ":zlib",
-    ":zstd",
-  ]
-}
-
 config("clang_tooling_headers") {
   defines = [ "CLANG_BUILD_STATIC" ]
   clang_include = "$vela_clang_root/include"
@@ -65,94 +56,55 @@ config("clang_tooling_headers") {
   }
 }
 
-config("clang_tooling_libraries") {
-  libs = vela_clang_libraries + vela_llvm_tooling_libraries +
-         vela_llvm_tooling_system_libraries
-  if (target_os == "win") {
-    libs += [ "version.lib" ]
-  }
-}
-
-source_set("clang_tooling") {
-  public_configs = [
-    ":llvm_headers",
-    ":clang_tooling_headers",
-    ":clang_tooling_libraries",
-  ]
-  public_deps = [
-    ":zlib",
-    ":zstd",
-  ]
-}
-
-config("efsw_headers") {
-  efsw_include = rebase_path("efsw/include", root_build_dir)
-  if (target_os == "win") {
-    cflags = [ "/external:I$efsw_include" ]
-  } else {
-    cflags = [
-      "-isystem",
-      efsw_include,
-    ]
-  }
-}
-
-static_library("efsw") {
-  configs -= [ "//build/config:vela_warnings" ]
-  public_configs = [ ":efsw_headers" ]
-  include_dirs = [
-    "efsw/include",
-    "efsw/src",
-  ]
-  sources = [
-    "efsw/src/efsw/Debug.cpp",
-    "efsw/src/efsw/DirWatcherGeneric.cpp",
-    "efsw/src/efsw/DirectorySnapshot.cpp",
-    "efsw/src/efsw/DirectorySnapshotDiff.cpp",
-    "efsw/src/efsw/FileActionBatch.cpp",
-    "efsw/src/efsw/FileInfo.cpp",
-    "efsw/src/efsw/FileSystem.cpp",
-    "efsw/src/efsw/FileWatcher.cpp",
-    "efsw/src/efsw/FileWatcherGeneric.cpp",
-    "efsw/src/efsw/FileWatcherImpl.cpp",
-    "efsw/src/efsw/Log.cpp",
-    "efsw/src/efsw/String.cpp",
-    "efsw/src/efsw/System.cpp",
-    "efsw/src/efsw/Watcher.cpp",
-    "efsw/src/efsw/WatcherGeneric.cpp",
-  ]
-  if (target_os == "win") {
-    defines = [ "_SCL_SECURE_NO_WARNINGS" ]
-    sources += [
-      "efsw/src/efsw/FileWatcherWin32.cpp",
-      "efsw/src/efsw/WatcherWin32.cpp",
-      "efsw/src/efsw/platform/win/FileSystemImpl.cpp",
-      "efsw/src/efsw/platform/win/SystemImpl.cpp",
-    ]
-  } else {
-    sources += [
-      "efsw/src/efsw/platform/posix/FileSystemImpl.cpp",
-      "efsw/src/efsw/platform/posix/SystemImpl.cpp",
-    ]
-    if (target_os == "mac") {
-      sources += [
-        "efsw/src/efsw/FileWatcherFSEvents.cpp",
-        "efsw/src/efsw/FileWatcherKqueue.cpp",
-        "efsw/src/efsw/WatcherFSEvents.cpp",
-        "efsw/src/efsw/WatcherKqueue.cpp",
-      ]
-      frameworks = [
-        "CoreFoundation.framework",
-        "CoreServices.framework",
-      ]
-    } else {
-      sources += [
-        "efsw/src/efsw/FileWatcherInotify.cpp",
-        "efsw/src/efsw/WatcherInotify.cpp",
-      ]
-      libs = [ "pthread" ]
+template("llvm_component") {
+  tooling = defined(invoker.tooling) && invoker.tooling
+  config("${target_name}_libraries") {
+    libs = invoker.libraries + invoker.system_libraries
+    if (target_os == "win") {
+      libs -= [ llvm_support_archive ]
+      libs += [ llvm_crt_support ]
+      if (tooling) {
+        libs += [ "version.lib" ]
+      }
     }
   }
+  source_set(target_name) {
+    public_configs = [
+      ":llvm_headers",
+      ":${target_name}_libraries",
+    ]
+    if (tooling) {
+      public_configs += [ ":clang_tooling_headers" ]
+    }
+    public_deps = [
+      ":zlib",
+      ":zstd",
+    ]
+    if (target_os == "win") {
+      public_deps += [ ":llvm_crt_support" ]
+    }
+  }
+}
+
+llvm_component("llvm") {
+  libraries = vela_llvm_libraries
+  system_libraries = vela_llvm_system_libraries
+}
+
+llvm_component("llvm_jit") {
+  libraries = vela_llvm_jit_libraries
+  system_libraries = vela_llvm_jit_system_libraries
+}
+
+llvm_component("llvm_loader") {
+  libraries = vela_llvm_loader_libraries
+  system_libraries = vela_llvm_loader_system_libraries
+}
+
+llvm_component("clang_tooling") {
+  libraries = vela_clang_libraries + vela_llvm_tooling_libraries
+  system_libraries = vela_llvm_tooling_system_libraries
+  tooling = true
 }
 
 static_library("zlib") {

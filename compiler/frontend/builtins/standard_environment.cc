@@ -70,6 +70,15 @@ class Math {
   static external func cos(value: double): double = 'Math.cos';
   /// Returns the tangent of value, measured in radians, as double.
   static external func tan(value: double): double = 'Math.tan';
+  /// Returns the angle in radians for (x, y), preserving quadrants and signed zero.
+  static external func atan2(y: double, x: double): double = 'Math.atan2';
+  /// Returns the real cube root, including negative values and signed zero.
+  static external func cbrt(value: double): double = 'Math.cbrt';
+  /// Returns sqrt(x*x + y*y) without unnecessary intermediate overflow or underflow.
+  static external func hypot(x: double, y: double): double = 'Math.hypot';
+  /// Returns value - divisor*n, with n rounded to the nearest integer, ties to even.
+  /// Zero divisor or infinite value produces NaN. This is not the % operation.
+  static external func remainder(value: double, divisor: double): double = 'Math.remainder';
   /// Rounds towards negative infinity and returns double. Example: Math.floor(-1.2) is -2.0.
   static external func floor(value: double): double = 'Math.floor';
   /// Rounds towards positive infinity and returns double. Example: Math.ceil(-1.2) is -1.0.
@@ -348,7 +357,7 @@ std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declara
           {{kDateTypeName, "toISOString"}, Builtin::DateToISOString},
           {{kDateTypeName, "fromUTC"}, Builtin::DateFromUTC},
           {{kDateTypeName, "toUTC"}, Builtin::DateToUTC},
-      };
+  };
   const auto found = kIntrinsics.find({owner, declaration.name});
   return found == kIntrinsics.end() ? std::nullopt : std::optional(found->second);
 }

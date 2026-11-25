@@ -28,7 +28,11 @@ void TypeChecker::DeclareFunctionParameters(const Function& function,
         AddDiagnostic(initializer.location, "parameter default does not match its declared type");
       }
     }
-    DeclareLocal(parameter.name, type, parameter.location, kind, &parameter);
+    if (DeclareLocal(parameter.name, type, parameter.location, kind, &parameter) ==
+            CheckStatus::Succeeded &&
+        function.body) {
+      parameter_usage_.Declare(parameter, LookupLocal(parameter.name)->id);
+    }
   }
 }
 
@@ -183,6 +187,7 @@ TypeChecker::Type TypeChecker::FunctionValueType(const FunctionInfo& signature,
 
 void TypeChecker::CaptureLocal(const Expression& expression, const LocalBinding& binding) {
   facts_.bindings.insert_or_assign(&expression, binding.id);
+  parameter_usage_.Read(expression, binding.id);
   for (auto& context : lambda_scopes_) {
     if (binding.scope >= context.scope) {
       continue;

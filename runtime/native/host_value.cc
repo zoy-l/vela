@@ -115,11 +115,10 @@ BoundScalarCallback BoundScalarCallback::Bind(runtime::Isolate& isolate,
   return result;
 }
 
-Result<void> InvokeHostCallable(HandleScope& scope,
+Result<void> InvokeHostCallable(runtime::Isolate& isolate,
                                 runtime::Value callable,
                                 std::span<const runtime::Value> arguments,
                                 runtime::Value& output) {
-  auto& isolate = scope.isolate();
   const auto* parent = isolate.native_control().state().host_execution;
   auto* environment = runtime::Heap::NativeEnvironment(*callable.AsObject());
   auto instance = runtime::NativeInstance::Borrow(*environment);
@@ -129,6 +128,11 @@ Result<void> InvokeHostCallable(HandleScope& scope,
     return std::unexpected(Error::FromStatus(resolved.error()));
   }
   runtime::NativeExecution execution(instance, parent);
+  // 纯 AOT 回调可能没有内部安全点；宿主入口仍必须先处理已排队的请求。
+  const auto ready = isolate.native_control().ProcessSafepoint(&execution);
+  if (ready != ExecutionStatus::Returned) {
+    return std::unexpected(Error::FromStatus(ready));
+  }
   const auto result = runtime::InvokeResolvedNativeCallable(execution, *resolved, arguments);
   if (!result) {
     return std::unexpected(CaptureHostError(execution, result.error()));

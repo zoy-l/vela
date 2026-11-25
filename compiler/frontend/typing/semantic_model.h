@@ -150,11 +150,17 @@ struct ClassDescriptor final {
   absl::flat_hash_map<std::string, MethodTemplate> method_templates;
   std::optional<std::string> base_class;
   FunctionDescriptor constructor;
+  // 有效签名的绑定方式；继承构造仍保留原始声明的字段或显式参数契约。
+  ConstructorKind constructor_kind = ConstructorKind::Generated;
   const Class* declaration = nullptr;
   absl::flat_hash_map<std::string, Field> static_fields;
   absl::flat_hash_set<std::string> interfaces;
   absl::flat_hash_map<std::tuple<std::string, std::string, DeclarationKind>, MemberReference>
       virtual_targets;
+
+  [[nodiscard]] bool HasInheritedConstructor() const {
+    return base_class.has_value() && constructor.member_owner != type.name;
+  }
 };
 
 struct InterfaceDescriptor final {

@@ -15,23 +15,95 @@ python -m tools.vl embed debug /path/to/debug-sdk
 python -m tools.vl embed release /path/to/release-sdk
 ```
 
-Each command exports static archives, headers, the compiler, the linker, bindgen and licenses to a
-new directory. All artifact paths in `embedding.json` version 4 are relative to that directory.
+Each command exports static archives, headers, the compiler, bindgen and licenses to a
+new directory. All artifact paths in `embedding.json` version 5 are relative to that directory.
 Move the entire SDK directory and point the host build to its manifest. Use `<vela/runtime.h>` for
 `Isolate` and `NativeInstance` and `<vela/development.h>` for `DevelopmentSession`.
 
 Match the host OS, CPU, C++ ABI, dependency versions and Debug/Release variant. Link AOT hosts
 with `runtime_libraries`, `runtime_system_libraries` and `runtime_frameworks`. Add the corresponding
 `development_*` inputs for JIT and source reload. Development archives include LLVM as link
-inputs. On macOS and Linux use the packaged linker to consume any LLVM ThinLTO in the archives.
+inputs. See the [native-object link contract](toolchain.md) for archive requirements.
 Use `bin/vela build --emit=obj` for embeddable AOT objects and
 `python bin/vela-bindgen.py --config FILE` to generate both C++ and Vela binding files.
 The macOS deployment target is defined by `tools.config.MACOS_DEPLOYMENT_TARGET` and is shared
 by library compilation and package probes. AOT library manifests expose `sources` so build
 systems can track the complete imported source graph with depfiles.
 
+For UI hosts, select `Materialization::Eager`, `NativeCodeTier::Baseline`, and
+`NativeOptimization::Baseline` in `DevelopmentOptions::compilation`. Every entry is linked before
+the candidate returns, so input and drawing do not trigger compilation. Prepare hot-reload candidates
+on a background thread and publish them on the Isolate thread when ready. `Materialization::OnDemand`
+instead defers compilation until each function's first call and can block that caller. Both modes
+emit separate function objects and retire temporary LLVM contexts and modules after emission.
+The baseline policy performs local SSA simplification and
+light machine-code optimization to bound stack spills. `NativeOptimization::None` controls both
+IR and machine-code optimization; `NativeOptimization::Release` retains the O3 pipeline.
+These choices are independent of the host's Debug/Release build.
+
+`Compiler::CreateExternal({executable, cache})` starts the SDK's `vela compile-server` process.
+Use the compiler's public `CreateFiles` API and pass the compiler to the four-argument
+`DevelopmentSession::Create` overload. File watching, immutable text capture, parsing, typing,
+incremental source state, Typed IR, and code generation stay in the child process.
+The host receives immutable native image
+descriptions, declaration identities, and relocatable objects, and owns execution, linking, GC,
+publication, and state preservation. Compiler and host must use the same SDK build, target, and
+runtime ABI. The final live source or code owner closes the pipes and waits for the child to exit.
+`DevelopmentFiles::StartWatching(changed)` can notify the host when OS file events arrive. The
+callback only signals work; capture and preparation requests run on the host's compilation thread.
+The compiler channel carries both ordered request responses and file-change notifications.
+Unregistering a file session waits for its current notification callback to finish. Source responses
+transmit changed texts and removals; the host shares unchanged immutable text with the previous snapshot.
+The file watcher lives in Vela's `base` module and uses Windows IOCP, Linux inotify,
+or macOS FSEvents, selected by GN. Native events distinguish content changes from path
+identity changes; rename endpoints are reported as changed paths. Idle readers block on
+native events, and shutdown explicitly wakes or drains outstanding callbacks. Registration
+failures are returned to the caller. Lost events and queue overflow request a complete
+capture and subscription rebuild; Linux recursive directory topology changes use the same
+rebuild contract. There is no directory-scanning fallback or third-party watcher dependency.
+Source snapshots and delayed compilation share immutable Typed IR without retaining obsolete
+frontend snapshots solely for code generation.
+
+Link the manifest's `development_client_libraries`, `development_client_system_libraries`, and
+`development_client_frameworks` for this mode. They include the object loader but exclude LLVM
+machine-code backends and optimization passes. The original `development_*` inputs retain local
+compilation. Closed AOT still needs only `runtime_*` inputs.
+
+External compilation supports eager and on-demand loading with baseline runtime contracts, including
+O3 object generation. Eager loading releases its remote code-generation plan once every entry is ready.
+The function object cache is checked before LLVM lowering. Its identity
+includes the compiler build, LLVM, runtime ABI, target CPU/features, compilation modes, function
+contents, dependent call contents, and the program's code-generation environment. Cache hits still
+relocate into the current process; caches never store Isolate addresses or live application state.
+An external source snapshot exposes metadata and declaration identities; `snapshot.program` is
+absent because the Typed IR belongs to the compiler process. Local snapshots retain their IR.
+
+Build systems can run `vela jit-cache FILE --config=FILE --code-cache=DIR` to prepare all baseline
+development objects before launching the host. The command returns JSON with `sources` and `functions`
+for dependency tracking. It does not link or execute the program and does not produce a closed AOT
+image. Use the same SDK, source configuration, cache directory, and baseline compilation policy in
+the host. Clearing the cache or changing the compiler requires preparing it again; cache preparation
+still pays the code-generation cost.
+
+On Windows, SDK builds derive `vela_llvm_support.lib` from the pinned LLVM Support archive,
+excluding its `rpmalloc` object that globally overrides CRT allocation. All other archive members
+remain unchanged, and the original toolchain archive is preserved. The compiler, object loader,
+runtime, and embedding host use the same CRT allocation contract; this avoids retaining compiler
+allocation caches in the host or replacing the host's allocator as a side effect of linking LLVM.
+
 Rebuild the libraries, host bindings and AOT objects together when changing Vela versions.
 Windows hosts must match the SDK's CRT and STL ABI, including static or dynamic CRT linkage.
+
+Closed linked images share boxed argument conversion by native signature; typed calls between
+script functions retain their direct ABI. Checked C++ host bindings also share decoding and result
+validation by signature, while keeping each binding's target and scope requirements. On Windows,
+boundary entry code is grouped separately from typed bodies so unused wrappers need not share
+resident pages with active code. Native images carry a sparse import index used during binding.
+
+Windows managed block pages use 4 KiB for small size classes and 8 KiB for the largest 4 KiB slots;
+POSIX block pages retain a 16 KiB minimum. Objects remain non-moving, and only completely empty
+pages can be released. Heap committed capacity includes live slots, page slack and reusable pages;
+it is distinct from logical allocation pressure and process working set.
 
 ## Compile and execute
 
@@ -158,9 +230,18 @@ with its owning scope. Creation, reads and calls receive the destination scope;
 managed results are rooted before return. Host imports access their call scope
 through `context.handles()`. `local.Persist()` returns
 `Result<Persistent<T>>` for storage across calls. Copies share a root, released
-by its final owner. `persistent.ToLocal(scope)` creates an independent local
-root, allowing the persistent handle to be reset. The Isolate must outlive its
+by its final owner. `persistent.ToLocal(scope)` gives the local its own rooted lifetime,
+allowing the persistent handle to be reset. The Isolate must outlive its
 scopes, persistent handles, error payloads, instances and executions.
+
+New local values use stable slots in the Isolate's segmented handle storage. Scopes support
+transferring a local to an outer scope and independent scope destruction. `ReloadBlockers()` reports
+their shared `RootRange` resource once, with `references` equal to the number of active scopes, including empty
+scopes. Growing the storage respects the heap budget and can return `OutOfMemory`.
+The first localization of a Persistent or error payload shares its immutable root slot without
+allocating another slot. A localized scalar callback also borrows the root's bound descriptor;
+mutable captures keep their current values. Later values use the segmented storage. Resetting the
+source Persistent does not invalidate either kind of local; both expire with their destination scope.
 
 Bind public script entries with `Entry<Signature>::Bind(instance, name)` and call
 them with `entry.Call(scope, args...)`. Development-session entries select the

@@ -111,6 +111,8 @@ TEST(NativeImageLifetimeTest, FailedInstantiationReleasesUnpublishedCodeOwner) {
   auto resource = std::make_shared<AsyncImage>();
   const std::weak_ptr<AsyncImage> lifetime = resource;
   resource->functions.front().native_symbol = Text("host.missing");
+  const std::array<std::uint32_t, 1> imports{0};
+  resource->image.imported_functions = Table(imports);
   {
     const std::shared_ptr<const NativeImage> image(resource, &resource->image);
     const auto created = NativeInstance::Instantiate(isolate, image);

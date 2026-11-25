@@ -39,15 +39,12 @@ std::optional<std::size_t> SemanticIndex::RenameTarget(std::size_t offset) const
 
 std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
                                                        PositionEncoding encoding) const {
-  if (!RenameTarget(offset)) {
+  const auto symbol = RenameTarget(offset);
+  if (!symbol) {
     return std::nullopt;
   }
   const auto& token = *QueryToken(offset);
-  const auto& source = sources_.front();
-  return Definition{
-      .path = source.path,
-      .range = source.lines.RangeAt(source.text, token.offset, token.length, encoding),
-  };
+  return LocationFor({0, token.offset}, token.length, encoding);
 }
 
 SemanticIndex::Key SemanticIndex::RenamedKey(Key key,
@@ -133,11 +130,7 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
   std::vector<Definition> edits;
   edits.reserve(request.offsets.size());
   for (const auto& [source_id, position] : request.offsets) {
-    const auto& source = sources_[source_id];
-    edits.push_back({
-        .path = source.path,
-        .range = source.lines.RangeAt(source.text, position, symbol.length, encoding),
-    });
+    edits.push_back(LocationFor({source_id, position}, symbol.length, encoding));
   }
   return edits;
 }

@@ -1,6 +1,8 @@
 #include "compiler/jit/runtime_symbols.h"
 #include "runtime/native/native_symbols.h"
 
+#include <cmath>
+#include <cstring>
 #include <utility>
 
 #include <llvm/ADT/StringRef.h>
@@ -8,9 +10,9 @@
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/Support/Error.h>
+#include "compiler/jit/engine.h"
 
 #include "compiler/native/development_builtin.h"
 #include "compiler/testing/runtime_support.h"
@@ -22,14 +24,31 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_operations.h"
 
+#ifdef _WIN32
+// CRT 固定使用 __chkstk；C++ 声明别名保留该链接身份。
+extern "C" void VelaStackProbe() asm("__chkstk");
+#endif
+
 namespace vela::compiler::jit {
 
-llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
+llvm::Error DefineRuntimeSymbols(CodeLinker& jit) {
   llvm::orc::SymbolMap symbols;
   const auto bind = [&](llvm::StringRef name, auto* entry) {
     symbols.try_emplace(jit.mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(entry),
                         llvm::JITSymbolFlags::Exported);
   };
+  // LLVM 可以把内存 intrinsic 降为 CRT 调用；目标文件加载器必须显式提供这些宿主入口。
+  bind("memset", &std::memset);
+  bind("memcpy", &std::memcpy);
+  bind("memmove", &std::memmove);
+  bind("atan2", static_cast<double (*)(double, double)>(&std::atan2));
+  bind("cbrt", static_cast<double (*)(double)>(&std::cbrt));
+  bind("hypot", static_cast<double (*)(double, double)>(&std::hypot));
+  bind("remainder", static_cast<double (*)(double, double)>(&std::remainder));
+  bind("round", static_cast<double (*)(double)>(&std::round));
+#ifdef _WIN32
+  bind("__chkstk", &VelaStackProbe);
+#endif
   bind(runtime::kNativeSafepointSymbol, &runtime::vela_native_v3_safepoint);
   bind(runtime::kNativeCanOptimizeSymbol, &runtime::vela_native_v4_can_optimize);
   bind(runtime::kNativeRecoverSymbol, &runtime::vela_native_v4_recover);
@@ -62,7 +81,8 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeStoreGlobalSymbol, &runtime::vela_native_v10_store_global);
   bind(runtime::kNativeLoadFieldSymbol, &runtime::vela_native_v3_load_field);
   bind(runtime::kNativeFieldCachesSymbol, &runtime::vela_native_v10_field_caches);
-  bind(runtime::kNativeScalarTextLengthSymbol, &runtime::vela_native_v9_scalar_text_length);
+  bind(runtime::kNativeIntegerTextLengthSymbol, &runtime::vela_native_v1_integer_text_length);
+  bind(runtime::kNativeDoubleTextLengthSymbol, &runtime::vela_native_v1_double_text_length);
   bind(runtime::kNativeScalarToStringSymbol, &runtime::vela_native_v10_scalar_to_string);
   bind(runtime::kNativeMapGetSymbol, &runtime::vela_native_v11_map_get);
   bind(runtime::kNativeMapSetSymbol, &runtime::vela_native_v11_map_set);
@@ -74,11 +94,16 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind(runtime::kNativeNewObjectSymbol, &runtime::vela_native_v10_new_object);
   bind(runtime::kNativeNewCallableSymbol, &runtime::vela_native_v10_new_callable);
   bind(runtime::kNativeNewArraySymbol, &runtime::vela_native_v10_new_array);
+  bind(runtime::kNativePushRecordSymbol, &runtime::vela_native_v1_push_record);
   bind(runtime::kNativeNewCollectionSymbol, &runtime::vela_native_v1_new_collection);
   bind(runtime::kNativeWriteBarrierSymbol, &runtime::vela_native_v1_write_barrier);
   bind(runtime::kNativeBuiltinSymbol, &runtime::vela_native_v1_builtin);
   bind(native::kDevelopmentBuiltinSymbol, &testing::vela_development_v1_builtin);
   bind(runtime::kNativeNumericParseSymbol, &runtime::vela_native_v1_numeric_parse);
+  bind(runtime::kNativeStringByteOffsetSymbol, &runtime::vela_native_v1_string_byte_offset);
+  bind(runtime::kNativeStringSliceBytesSymbol, &runtime::vela_native_v1_string_slice_bytes);
+  bind(runtime::kNativeStringTrimSymbol, &runtime::vela_native_v1_string_trim);
+  bind(runtime::kNativeStringAffixSymbol, &runtime::vela_native_v1_string_affix);
   bind(runtime::kNativeReflectionInvokeSymbol, &runtime::vela_native_v12_reflection_invoke);
   bind(runtime::kNativeConcatSymbol, &runtime::vela_native_v1_concat);
   bind(runtime::kNativeInterpolateSymbol, &runtime::vela_native_v1_interpolate);

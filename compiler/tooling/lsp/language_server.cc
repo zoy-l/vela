@@ -14,6 +14,7 @@
 #include "base/json.h"
 #include "base/streams.h"
 #include "compiler/build_info.h"
+#include "compiler/tooling/lsp/file_uri.h"
 #include "compiler/tooling/lsp/json_rpc.h"
 #include "compiler/tooling/lsp/language_server_internal.h"
 #include "compiler/tooling/semantic/semantic_index.h"
@@ -71,6 +72,15 @@ JsonOutput RpcMessage() {
   auto* root = message.root();
   AddJsonField(document, root, protocol::kJsonRpc, yyjson_mut_str(document, "2.0"));
   return message;
+}
+
+yyjson_mut_val* JsonLocation(yyjson_mut_doc* document, const Definition& location) {
+  auto* item = yyjson_mut_obj(document);
+  const auto uri = SourceUri(location.path);
+  AddJsonField(document, item, protocol::kUri,
+               yyjson_mut_strncpy(document, uri.data(), uri.size()));
+  AddJsonField(document, item, protocol::kRange, JsonRange(document, location.range));
+  return item;
 }
 
 yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
@@ -139,6 +149,11 @@ void LanguageServer::Initialize(RpcCall call) {
     Error(request_id, kInvalidParams, "initialize requires an object");
     return;
   }
+  const auto workspace = InitializeWorkspace(params);
+  if (!workspace) {
+    Error(request_id, kInvalidParams, workspace.error());
+    return;
+  }
   encoding_ = IsUtf8Supported(params) ? PositionEncoding::Utf8 : PositionEncoding::Utf16;
   auto response = Response(request_id);
   auto* document = response.document();
@@ -156,6 +171,7 @@ void LanguageServer::Initialize(RpcCall call) {
   AddJsonField(document, capabilities, "documentFormattingProvider",
                yyjson_mut_bool(document, true));
   AddJsonField(document, capabilities, "definitionProvider", yyjson_mut_bool(document, true));
+  AddJsonField(document, capabilities, "referencesProvider", yyjson_mut_bool(document, true));
   AddJsonField(document, capabilities, "hoverProvider", yyjson_mut_bool(document, true));
   auto* rename = yyjson_mut_obj(document);
   AddJsonField(document, rename, "prepareProvider", yyjson_mut_bool(document, true));
@@ -223,6 +239,8 @@ void LanguageServer::Request(std::string_view method, RpcCall call) {
     Query(call, SymbolQuery::Completion);
   } else if (method == "textDocument/definition") {
     Query(call, SymbolQuery::Definition);
+  } else if (method == "textDocument/references") {
+    Query(call, SymbolQuery::References);
   } else if (method == "textDocument/hover") {
     Query(call, SymbolQuery::Hover);
   } else if (method == "textDocument/prepareRename") {
@@ -257,6 +275,7 @@ void LanguageServer::Notification(std::string_view method, const yyjson_val* par
     changed = Close(params);
   } else if (method == "textDocument/didSave" || method == "workspace/didChangeWatchedFiles") {
     modules_ = {};
+    workspace_sources_.reset();
     PublishDiagnostics();
   }
   // initialized、$/cancelRequest 与未知通知无需响应；本阶段请求按接收顺序同步完成。

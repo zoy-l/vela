@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +22,7 @@
 #include "runtime/heap/host_index.h"
 #include "runtime/heap/host_memory.h"
 #include "runtime/heap/intrusive_link_internal.h"
+#include "runtime/heap/local_handle_stack.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/value/host_object.h"
 #include "runtime/value/object.h"
@@ -77,8 +77,6 @@ class RootRange final {
   RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
-  // 加入连续存储中刚构造的下一个槽；已发布的槽必须保持地址稳定。
-  void AppendRootedValue([[maybe_unused]] const Value& value) noexcept;
   // 借用准备中的字段块；必须先 Detach 再释放或替换该块。
   void Attach(Heap& heap, const InstanceStorage& fields) noexcept;
   void Detach() noexcept;
@@ -215,9 +213,7 @@ class Heap final {
                             std::uint32_t function) noexcept;
   [[nodiscard]] static HeapObject* NativeEnvironment(const HeapObject& callable) noexcept;
   [[nodiscard]] static const NativeFunctionDescription* CallableFunction(
-      const HeapObject& callable) noexcept {
-    return std::bit_cast<const NativeFunctionDescription*>(callable.type_metadata);
-  }
+      const HeapObject& callable) noexcept;
   [[nodiscard]] static std::uint32_t NativeFunctionIndex(const HeapObject& callable) noexcept;
   [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
   [[nodiscard]] static Future* GetFuture(HeapObject& object) noexcept;
@@ -233,6 +229,7 @@ class Heap final {
     return &native_stack_roots_;
   }
   [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
+  [[nodiscard]] LocalHandleStack& local_handles() noexcept { return local_handles_; }
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   // 非空引用数组的初始空槽只供构建使用；交给脚本或宿主前必须完成所有元素初始化。
   [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
@@ -305,8 +302,13 @@ class Heap final {
       HeapObject& array,
       CollectionProjection projection) noexcept;
   // 输入必须是合法 UTF-8；堆字符串须由调用者保根，分配可触发 GC。
+  [[nodiscard]] StringObject* AllocateString(std::string_view text) noexcept;
+  // 内部操作已计算合法 UTF-8 的码点数；复用该事实，避免对同一结果重复扫描。
+  [[nodiscard]] StringObject* AllocateString(std::string_view text,
+                                             std::size_t code_points) noexcept;
   [[nodiscard]] StringObject* AllocateString(std::string_view first,
-                                             std::string_view second = {}) noexcept;
+                                             std::string_view second,
+                                             std::string_view third = {}) noexcept;
   // 输入为 int/double/bool；格式化器产生 ASCII，直接使用其字节数作为字符数。
   [[nodiscard]] StringObject* AllocateScalarString(Value value) noexcept;
   [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
@@ -338,6 +340,10 @@ class Heap final {
                                                                    std::size_t capacity) noexcept;
   [[nodiscard]] std::expected<std::uint32_t, ArrayAccessError> PushArray(HeapObject& array,
                                                                          Value value) noexcept;
+  // 仅供封闭 AOT 的独占标量记录数组；对象完整构造后一次性复制并发布逻辑长度。
+  [[nodiscard]] std::expected<std::uint32_t, ArrayAccessError> PushRecordArray(
+      HeapObject& array,
+      HeapObject& value) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> PopArray(HeapObject& array) noexcept;
   // items 是独立的同类型数组；先完成全部分配，再一次性移动后缀并发布新长度。
   [[nodiscard]] std::expected<void, ArrayAccessError> ReplaceArrayRange(HeapObject& array,
@@ -452,6 +458,7 @@ class Heap final {
   void MarkRegExp(HeapObject& object) noexcept;
   static void ReleaseRegExp(HeapObject& object) noexcept;
   friend class RootRange;
+  friend class LocalHandleStack;
   friend class NativeMaterialization;
   friend class Future;
   friend class InstanceMigration;
@@ -504,10 +511,15 @@ class Heap final {
   [[nodiscard]] HeapObject* AllocateFutureObject(ObjectKind kind, Future future) noexcept;
   template <ObjectKind kind, class T>
   [[nodiscard]] static T* NativeOf(const HeapObject& object) noexcept {
-    return object.kind == kind ? static_cast<T*>(object.native_payload) : nullptr;
+    return object.kind == kind ? static_cast<T*>(object.native_payload()) : nullptr;
   }
 
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
+  struct BlockPageLayout final {
+    std::size_t bytes;
+    std::size_t capacity;
+  };
+  [[nodiscard]] static const BlockPageLayout& BlockLayout(std::size_t class_index) noexcept;
   [[nodiscard]] void* AllocatePooledBlock(std::size_t class_index) noexcept;
   void ReleasePooledBlock(void* memory, std::size_t class_index) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
@@ -572,14 +584,16 @@ class Heap final {
   struct FreeBlock final {
     FreeBlock* next;
   };
-  struct alignas(std::max_align_t) BlockPage final {
+  static constexpr std::size_t kBlockPageAlignment = 64;
+  struct alignas(kBlockPageAlignment) BlockPage final {
     FreeBlock* free_blocks = nullptr;
     BlockPage* next = nullptr;
     BlockPage** previous_link = nullptr;
     std::size_t used = 0;
     std::size_t initialized = 0;
+    std::size_t committed = 0;
   };
-  void ReleasePage(BlockPage& page) noexcept;
+  void ReleasePage(BlockPage& page, std::size_t class_index) noexcept;
   // 满页不在分配链中；最后一个对象归还后从可用链移至空页链，增量释放无需扫描活页。
   std::array<BlockPage*, kSizeClasses.size()> available_pages_{};
   std::array<BlockPage*, kSizeClasses.size()> empty_pages_{};
@@ -598,6 +612,7 @@ class Heap final {
   GcBarrierState barrier_state_;
   // Heap 析构体先释放所有包装，弱索引随后释放其自身预算。
   HostIndex host_index_;
+  LocalHandleStack local_handles_;
 };
 
 // 准备中的块和被迁移对象分别保根；销毁候选只释放新块，Commit 不分配也不执行用户代码。
@@ -645,7 +660,7 @@ HeapObject* Heap::AllocateNativeObject(ObjectKind kind, T payload) noexcept {
     return nullptr;
   }
   return AllocateObject(kind, sizeof(HeapObject),
-                        [&owned](HeapObject& object) { object.native_payload = owned.release(); });
+                        [&owned](HeapObject& object) { object.SetNativePayload(owned.release()); });
 }
 
 inline RootRange::RootRange(Heap& heap,
@@ -681,12 +696,6 @@ inline void Heap::RegisterRoot(RootRange& root) noexcept {
 
 inline void Heap::UnregisterRoot(RootRange& root) noexcept {
   internal::UnlinkIntrusive(root, &RootRange::next_, &RootRange::previous_link_);
-}
-
-inline void RootRange::AppendRootedValue([[maybe_unused]] const Value& value) noexcept {
-  assert(heap_ != nullptr && kind_ == Kind::Values);
-  assert(&value == &std::span(static_cast<const Value*>(data_), count_ + 1).back());
-  ++count_;
 }
 
 }  // namespace vela::runtime

@@ -59,6 +59,7 @@ struct DeclarationRecord final {
 // 每次编译操作工作副本。删除只退休身份，后续同名声明重新分配；失败时直接丢弃副本。
 class DeclarationIds final {
  public:
+  [[nodiscard]] static DeclarationIds FromRecords(std::vector<DeclarationRecord> records);
   void BeginUpdate() noexcept;
   [[nodiscard]] DeclarationId Get(DeclarationKey key, DeclarationId definition = {});
   [[nodiscard]] std::optional<DeclarationId> Find(const DeclarationKey& key) const;

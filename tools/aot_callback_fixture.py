@@ -138,6 +138,59 @@ TEST_F(NativeCallbackTest, NullPresenceReassignmentAndMutableCapturesUseTheirCur
   ExpectIntegerOperations(CALLBACK_ENTRY, execution, {5, 6, 7, 8, 11});
 }
 
+TEST_F(NativeCallbackTest, LocalizedCallbacksSurviveIndependentPersistentRelease) {
+  using Callback = vela::Function<std::int64_t(std::int64_t)>;
+  const auto factory = vela::Entry<vela::Array<Callback>()>::Bind(*instance, "savedCallbacks");
+  ASSERT_TRUE(factory);
+  vela::Persistent<Callback> reader;
+  vela::Persistent<Callback> writer;
+  {
+    vela::HandleScope registration(isolate);
+    const auto pair = factory->Call(registration);
+    ASSERT_TRUE(pair);
+    const auto read = pair->Get(registration, 0);
+    const auto write = pair->Get(registration, 1);
+    ASSERT_TRUE(read);
+    ASSERT_TRUE(write);
+    auto saved_read = read->Persist();
+    auto saved_write = write->Persist();
+    ASSERT_TRUE(saved_read);
+    ASSERT_TRUE(saved_write);
+    reader = std::move(*saved_read);
+    writer = std::move(*saved_write);
+  }
+  vela::HandleScope event(isolate);
+  const auto local_read = reader.ToLocal(event);
+  const auto local_write = writer.ToLocal(event);
+  ASSERT_TRUE(local_read);
+  ASSERT_TRUE(local_write);
+  reader.Reset();
+  writer.Reset();
+  isolate.heap().Collect();
+  EXPECT_EQ(local_write->Call(event, std::int64_t{7}), 7);
+  EXPECT_EQ(local_read->Call(event, std::int64_t{35}), 42);
+  const auto failure = local_read->Call(event, std::numeric_limits<std::int64_t>::max());
+  ASSERT_FALSE(failure);
+  EXPECT_EQ(failure.error().status, ExecutionStatus::IntegerOverflow);
+  EXPECT_FALSE(failure.error().stack_trace.empty());
+  std::int64_t observations = 0;
+  ASSERT_TRUE(isolate.native_control().endpoint().Post([&] {
+    ++observations;
+    isolate.heap().Collect();
+  }));
+  EXPECT_EQ(local_read->Call(event, std::int64_t{35}), 42);
+  EXPECT_EQ(observations, 1);
+  const auto saved = local_read->Persist();
+  ASSERT_TRUE(saved);
+  isolate.native_control().RequestStop();
+  const auto stopped = local_read->Call(event, std::int64_t{35});
+  ASSERT_FALSE(stopped);
+  EXPECT_EQ(stopped.error().status, ExecutionStatus::ExecutionStopped);
+  const auto saved_stopped = saved->Call(std::int64_t{35});
+  ASSERT_FALSE(saved_stopped);
+  EXPECT_EQ(saved_stopped.error().status, ExecutionStatus::ExecutionStopped);
+}
+
 TEST_F(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCallerTrace) {
   NativeExecution execution(*instance);
   const std::array arguments{Integer(4)};

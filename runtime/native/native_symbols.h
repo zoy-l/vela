@@ -8,6 +8,7 @@ namespace vela::runtime {
 inline constexpr std::string_view kNativeFieldCachesSymbol = "vela_native_v10_field_caches";
 inline constexpr std::string_view kNativeLoadGlobalSymbol = "vela_native_v10_load_global";
 inline constexpr std::string_view kNativeNewArraySymbol = "vela_native_v10_new_array";
+inline constexpr std::string_view kNativePushRecordSymbol = "vela_native_v1_push_record";
 inline constexpr std::string_view kNativeNewCallableSymbol = "vela_native_v10_new_callable";
 inline constexpr std::string_view kNativeNewObjectSymbol = "vela_native_v10_new_object";
 inline constexpr std::string_view kNativeScalarToStringSymbol = "vela_native_v10_scalar_to_string";
@@ -23,6 +24,12 @@ inline constexpr std::string_view kNativeAsyncErrorSymbol = "vela_native_v1_asyn
 inline constexpr std::string_view kNativeAsyncReturnSymbol = "vela_native_v1_async_return";
 inline constexpr std::string_view kNativeBuiltinSymbol = "vela_native_v1_builtin";
 inline constexpr std::string_view kNativeNumericParseSymbol = "vela_native_v1_numeric_parse";
+inline constexpr std::string_view kNativeStringByteOffsetSymbol =
+    "vela_native_v1_string_byte_offset";
+inline constexpr std::string_view kNativeStringSliceBytesSymbol =
+    "vela_native_v1_string_slice_bytes";
+inline constexpr std::string_view kNativeStringTrimSymbol = "vela_native_v1_string_trim";
+inline constexpr std::string_view kNativeStringAffixSymbol = "vela_native_v1_string_affix";
 inline constexpr std::string_view kNativeReflectionInvokeSymbol =
     "vela_native_v12_reflection_invoke";
 inline constexpr std::string_view kNativeCallIndirectSymbol = "vela_native_v1_call_indirect";
@@ -71,7 +78,9 @@ inline constexpr std::string_view kNativeCanOptimizeSymbol = "vela_native_v4_can
 inline constexpr std::string_view kNativeRecoverSymbol = "vela_native_v4_recover";
 inline constexpr std::string_view kNativeStoreMaterializedFieldSymbol =
     "vela_native_v7_store_materialized_field";
-inline constexpr std::string_view kNativeScalarTextLengthSymbol =
-    "vela_native_v9_scalar_text_length";
+inline constexpr std::string_view kNativeIntegerTextLengthSymbol =
+    "vela_native_v1_integer_text_length";
+inline constexpr std::string_view kNativeDoubleTextLengthSymbol =
+    "vela_native_v1_double_text_length";
 
 }  // namespace vela::runtime

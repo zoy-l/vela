@@ -45,6 +45,8 @@ struct Type final {
 struct Array final {
   std::string name;
   Type element;
+  // 封闭 AOT 独占的记录数组；每个逻辑元素保存这些八字节标量字段，不保存对象身份。
+  std::uint32_t record_fields = 0;
 };
 
 struct Collection final {

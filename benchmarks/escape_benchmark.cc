@@ -18,11 +18,9 @@
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/MemoryBuffer.h>
-#include <llvm/TargetParser/Triple.h>
 
 #include "compiler/aot/native_compiler.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -119,7 +117,7 @@ std::int64_t Expected(const Problem& problem) {
 }
 
 struct Compiled final {
-  std::unique_ptr<llvm::orc::LLJIT> engine;
+  std::unique_ptr<compiler::jit::CodeLinker> engine;
   compiler::aot::NativeArtifact artifact;
   const runtime::NativeImage* image = nullptr;
   std::shared_ptr<compiler::jit::CodeResourceCounters> resources;
@@ -142,37 +140,39 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
   if (!artifact) {
     return std::unexpected(artifact.error().front().message);
   }
-  auto engine = compiler::jit::CreateEngine(llvm::Triple(artifact->target));
+  auto engine = compiler::jit::CreateEngine();
   if (!engine) {
     return std::unexpected(llvm::toString(engine.takeError()));
   }
+  auto& linker = **engine;
+  auto& library = linker.getMainJITDylib();
   llvm::orc::SymbolMap api;
   const auto bind = [&](const char* name, auto* function) {
-    api.try_emplace((*engine)->mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(function),
+    api.try_emplace(linker.mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(function),
                     llvm::JITSymbolFlags::Exported);
   };
   bind("vela_aot_v2_instantiate", &vela_aot_v2_instantiate);
   bind("vela_aot_v2_invoke", &vela_aot_v2_invoke);
-  if (auto error =
-          (*engine)->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(api)))) {
+  if (auto error = library.define(llvm::orc::absoluteSymbols(std::move(api)))) {
     return std::unexpected(llvm::toString(std::move(error)));
   }
   auto resources = std::make_shared<compiler::jit::CodeResourceCounters>();
-  compiler::jit::InstallResourceAccounting(**engine, resources);
+  compiler::jit::InstallResourceAccounting(linker, resources);
   const auto linking = Clock::now();
   const auto bytes = std::as_bytes(std::span(artifact->object));
   const void* data = bytes.data();
   auto buffer =
       llvm::MemoryBuffer::getMemBufferCopy({static_cast<const char*>(data), bytes.size()});
-  if (auto error = (*engine)->addObjectFile(std::move(buffer))) {
+  if (auto error = linker.addObjectFile(library.getDefaultResourceTracker(), std::move(buffer))) {
     return std::unexpected(llvm::toString(std::move(error)));
   }
-  auto entry = (*engine)->lookup(artifact->image_symbol);
+  auto entry = linker.getExecutionSession().lookup({&library},
+                                                   linker.mangleAndIntern(artifact->image_symbol));
   if (!entry) {
     return std::unexpected(llvm::toString(entry.takeError()));
   }
   using ImageEntry = const runtime::NativeImage* (*)();
-  const auto* image = entry->toPtr<ImageEntry>()();
+  const auto* image = entry->getAddress().toPtr<ImageEntry>()();
   return Compiled{
       .engine = std::move(*engine),
       .artifact = std::move(*artifact),

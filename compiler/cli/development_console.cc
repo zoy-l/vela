@@ -54,7 +54,6 @@ using compiler::DevelopmentSession;
 using compiler::DevelopmentStatus;
 using compiler::SourceUpdate;
 using Clock = std::chrono::steady_clock;
-constexpr auto kPollInterval = std::chrono::milliseconds(25);
 constexpr auto kSaveQuietPeriod = std::chrono::milliseconds(100);
 constexpr std::string_view kLoadCommand = ".load ";
 constexpr std::string_view kCallCommand = ".call ";
@@ -121,6 +120,7 @@ class DevelopmentConsole final {
 
  private:
   void Print(const DevelopmentResult& result);
+  void OnProgress(const DevelopmentResult& result);
   void Diagnostics(const frontend::Diagnostics& diagnostics) const;
   void ReadCommands();
   void CompileRequests();
@@ -137,8 +137,12 @@ class DevelopmentConsole final {
   void PostDiagnostics(frontend::Diagnostics diagnostics);
   void Post(const std::function<void()>& action);
   void PrintChanged();
-  void PollPaused();
+  void WaitPaused();
 
+  // 文件监视器回调只访问这些同步状态；files_ 先析构并结束回调借用。
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  bool files_changed_ = false;
   compiler::DevelopmentFiles files_;
   Streams streams_;
   compiler::jit::CompileOptions compilation_;
@@ -147,14 +151,12 @@ class DevelopmentConsole final {
   std::unique_ptr<DevelopmentDebugger> debugger_;
   std::unique_ptr<compiler::DevelopmentRepl> repl_;
   std::string input_;
-  std::mutex mutex_;
-  std::condition_variable changed_;
   std::deque<std::string> commands_;
   std::deque<std::string> calls_;
   std::deque<compiler::DevelopmentCandidate> candidates_;
   bool candidate_scheduled_ = false;
   std::atomic_bool quit_{false};
-  std::atomic_bool owner_done_{false};
+  std::uint64_t publication_event_ = 0;
   bool watching_ = true;
   std::optional<SourceUpdate> observed_;
   std::shared_ptr<const compiler::SourceSessionIdentity> observed_session_;
@@ -237,12 +239,8 @@ void DevelopmentConsole::ReadCommands() {
     changed_.notify_all();
   }
   quit_.store(true, std::memory_order_release);
+  session_->safepoint_endpoint().RequestStop();
   changed_.notify_all();
-  // Reload 可能刚切换运行代次；直到所属线程退出，持续对当前端点请求停止。
-  while (!owner_done_.load(std::memory_order_acquire)) {
-    session_->safepoint_endpoint().RequestStop();
-    std::this_thread::sleep_for(kPollInterval);
-  }
 }
 
 void DevelopmentConsole::PostDiagnostics(frontend::Diagnostics diagnostics) {
@@ -250,11 +248,16 @@ void DevelopmentConsole::PostDiagnostics(frontend::Diagnostics diagnostics) {
 }
 
 void DevelopmentConsole::Post(const std::function<void()>& action) {
+  std::unique_lock lock(mutex_);
   while (!quit_.load(std::memory_order_acquire)) {
+    const auto observed = publication_event_;
     if (session_->safepoint_endpoint().Post(action)) {
       return;
     }
-    std::this_thread::sleep_for(kPollInterval);
+    // Reload 已关闭旧端点；等待发布事件交接新端点，保留尚未投递的动作。
+    changed_.wait(lock, [this, observed] {
+      return quit_.load(std::memory_order_acquire) || publication_event_ != observed;
+    });
   }
 }
 
@@ -478,10 +481,24 @@ void DevelopmentConsole::CompileRequests() {
     std::optional<std::string> command;
     {
       std::unique_lock lock(mutex_);
-      changed_.wait_for(lock, kPollInterval, [this] { return !commands_.empty() || quit_.load(); });
+      const auto ready = [this] {
+        return quit_.load(std::memory_order_acquire) || !commands_.empty() ||
+               (watching_ && files_changed_);
+      };
+      if (watching_ && waiting_) {
+        changed_.wait_until(lock, saved_ + kSaveQuietPeriod, ready);
+      } else {
+        changed_.wait(lock, ready);
+      }
+      if (quit_.load(std::memory_order_acquire)) {
+        return;
+      }
       if (!commands_.empty()) {
         command = std::move(commands_.front());
         commands_.pop_front();
+      }
+      if (!command && watching_) {
+        files_changed_ = false;
       }
     }
     if (command) {
@@ -492,9 +509,40 @@ void DevelopmentConsole::CompileRequests() {
   }
 }
 
+void DevelopmentConsole::OnProgress(const DevelopmentResult& result) {
+  // 退出与 Reload 交错时，新运行在进入入口前也消费同一个退出意图。
+  if (quit_.load(std::memory_order_acquire)) {
+    session_->safepoint_endpoint().RequestStop();
+  }
+  {
+    const std::scoped_lock lock(mutex_);
+    ++publication_event_;
+  }
+  changed_.notify_all();
+  if (result.status == DevelopmentStatus::Accepted ||
+      result.status == DevelopmentStatus::RefreshFailed ||
+      result.status == DevelopmentStatus::EntryFailed) {
+    const auto accepted = files_.Accept(session_->snapshot());
+    if (!accepted) {
+      Diagnostics(accepted.error());
+    }
+  }
+  Print(result);
+  const auto& current = session_->result();
+  printed_request_ = current.request;
+  printed_status_ = current.status;
+  ScheduleCandidate();
+}
+
 int DevelopmentConsole::Run() {
   const compiler::CompiledSourceSnapshot empty;
-  const auto watched = files_.StartWatching();
+  const auto watched = files_.StartWatching([this] {
+    {
+      const std::scoped_lock lock(mutex_);
+      files_changed_ = true;
+    }
+    changed_.notify_all();
+  });
   if (!watched) {
     Diagnostics(watched.error());
     return kSourceErrorExitCode;
@@ -509,21 +557,7 @@ int DevelopmentConsole::Run() {
   options.imports = configuration_.imports;
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
-  options.progress = [this](const DevelopmentResult& result) {
-    if (result.status == DevelopmentStatus::Accepted ||
-        result.status == DevelopmentStatus::RefreshFailed ||
-        result.status == DevelopmentStatus::EntryFailed) {
-      const auto accepted = files_.Accept(session_->snapshot());
-      if (!accepted) {
-        Diagnostics(accepted.error());
-      }
-    }
-    Print(result);
-    const auto& current = session_->result();
-    printed_request_ = current.request;
-    printed_status_ = current.status;
-    ScheduleCandidate();
-  };
+  options.progress = [this](const DevelopmentResult& result) { OnProgress(result); };
   auto created = DevelopmentSession::Create(files_.entry(), {}, std::move(options));
   if (!created) {
     Diagnostics(created.error());
@@ -531,7 +565,7 @@ int DevelopmentConsole::Run() {
   }
   session_ = std::move(*created);
   debugger_ = std::make_unique<DevelopmentDebugger>(*session_, streams_.errors.get(),
-                                                    [this] { PollPaused(); });
+                                                    [this] { WaitPaused(); });
   repl_ = std::make_unique<compiler::DevelopmentRepl>(
       *session_, PathText(Utf8Path(files_.entry()).parent_path() / "__vela_dev_repl__.vela"));
   session_->isolate().SetOutput(streams_.output.get());
@@ -557,10 +591,13 @@ int DevelopmentConsole::Run() {
   if (!entry && entry.error() != ExecutionStatus::ExecutionStopped) {
     streams_.errors.get() << "entry failed: " << ExecutionStatusName(entry.error()) << '\n';
   }
+  const auto can_call = [this] {
+    return !calls_.empty() && candidates_.empty() && !candidate_scheduled_ &&
+           !IsWaiting(session_->result().status);
+  };
   while (!quit_.load(std::memory_order_acquire)) {
     (void)session_->Pump();
-    if (!calls_.empty() && candidates_.empty() && !candidate_scheduled_ &&
-        !IsWaiting(session_->result().status)) {
+    if (can_call()) {
       auto command = std::move(calls_.front());
       calls_.pop_front();
       if (command.starts_with(kCallCommand)) {
@@ -569,12 +606,17 @@ int DevelopmentConsole::Run() {
         Submit(command);
       }
     }
-    (void)session_->isolate().scheduler().PumpOne();
     PrintChanged();
-    std::unique_lock lock(mutex_);
-    changed_.wait_for(lock, kPollInterval);
+    if (can_call()) {
+      continue;
+    }
+    // 运行时消息、计时器与安全点请求共用调度器的唤醒；真实计时器使用自己的期限。
+    (void)session_->isolate().scheduler().PumpOne(
+        runtime::FuturePumpMode::WaitForCompletion, [this] {
+          return !quit_.load(std::memory_order_acquire) &&
+                 !session_->isolate().native_control().HasReadySafepoint();
+        });
   }
-  owner_done_.store(true, std::memory_order_release);
   changed_.notify_all();
   input.join();
   compiler.join();
@@ -582,11 +624,16 @@ int DevelopmentConsole::Run() {
   return streams_.input.get().bad() ? kIoErrorExitCode : 0;
 }
 
-void DevelopmentConsole::PollPaused() {
+void DevelopmentConsole::WaitPaused() {
+  const auto& control = session_->isolate().native_control();
+  if (!quit_.load(std::memory_order_acquire) && !control.IsStopRequested() &&
+      !control.HasReadySafepoint()) {
+    if (const auto wakeup = session_->isolate().scheduler().wakeup().lock()) {
+      wakeup->acquire();
+    }
+  }
   (void)session_->Pump();
   PrintChanged();
-  std::unique_lock lock(mutex_);
-  changed_.wait_for(lock, kPollInterval);
 }
 
 }  // namespace

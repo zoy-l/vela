@@ -31,7 +31,7 @@ func main(): void { named(value: 1); }
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   const SemanticIndex index(input.path, std::span(&input, 1));
   EXPECT_FALSE(frontend::HasErrors(index.diagnostics()));
-  const auto diagnostics = index.UnusedDiagnostics();
+  const auto diagnostics = index.diagnostics();
   ASSERT_EQ(diagnostics.size(), 4U);
   const std::vector<std::uint32_t> expected_lines{7, 8, 9, 10};
   for (std::size_t position = 0; position < diagnostics.size(); ++position) {
@@ -61,7 +61,7 @@ func main(): void { const unused = 1; print(unused); }
   });
   const SemanticIndex index(frontend::LoadSources(inputs, "main.vela"));
   EXPECT_FALSE(frontend::HasErrors(index.diagnostics()));
-  const auto diagnostics = index.UnusedDiagnostics();
+  const auto diagnostics = index.diagnostics();
   ASSERT_EQ(diagnostics.size(), 3U);
   const std::vector<std::uint32_t> expected_lines{2, 3, 5};
   for (std::size_t position = 0; position < diagnostics.size(); ++position) {
@@ -80,7 +80,10 @@ TEST(SemanticUnusedTest, SuppressesUnusedReportsUntilInvalidReferencesCanBeResol
   };
   const SemanticIndex index(input.path, std::span(&input, 1));
   EXPECT_TRUE(frontend::HasErrors(index.diagnostics()));
-  EXPECT_TRUE(index.UnusedDiagnostics().empty());
+  for (const auto& diagnostic : index.diagnostics()) {
+    EXPECT_NE(diagnostic.code, frontend::DiagnosticCode::UnusedImport);
+    EXPECT_NE(diagnostic.code, frontend::DiagnosticCode::UnusedParameter);
+  }
 }
 
 }  // namespace

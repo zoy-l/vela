@@ -3,10 +3,14 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <iosfwd>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+
+#include <absl/container/flat_hash_map.h>
 
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
@@ -14,6 +18,8 @@
 #include "compiler/testing/settings.h"
 
 namespace vela::compiler {
+
+inline constexpr std::string_view kConfigurationOption = "--config=";
 
 struct ConfigurationError final {
   std::filesystem::path file;
@@ -37,6 +43,19 @@ struct ProjectConfiguration final {
 };
 
 enum class ConfigurationRequirement : std::uint8_t { Required, Optional };
+
+// 一次工作区检查内共享目录解析结果；新检查创建新缓存，磁盘配置不会被永久固定。
+class SourceConfigurationCache final {
+ public:
+  std::expected<ProjectConfiguration, ConfigurationError> Load(const std::filesystem::path& source);
+
+ private:
+  absl::flat_hash_map<
+      std::filesystem::path,
+      std::shared_ptr<const std::expected<ProjectConfiguration, ConfigurationError>>,
+      std::hash<std::filesystem::path>>
+      directories_;
+};
 
 [[nodiscard]] std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguration(
     const std::filesystem::path& file,

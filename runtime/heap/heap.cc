@@ -37,9 +37,10 @@ struct alignas(std::max_align_t) NativeHeader final {
   std::size_t size;
 };
 
-// 同类对象集中在独立页，回收时整页归还，避免系统小对象分配器保留历史碎片。
-// 页对齐使对象可以在不扩充其头部的情况下定位所属页；大对象仍独立分配。
-constexpr auto kBlockPageBytes = internal::kHeapBlockPageBytes;
+constexpr std::size_t CommittedHeapPageBytes(std::size_t bytes) noexcept {
+  constexpr auto kUnit = internal::kHeapBlockCommitGranularity;
+  return ((bytes + kUnit - 1U) / kUnit) * kUnit;
+}
 
 }  // namespace
 
@@ -87,7 +88,8 @@ Heap::Heap(std::size_t gc_threshold, GcScheduling scheduling) noexcept
     : gc_threshold_(std::max<std::size_t>(gc_threshold, 1)),
       minimum_gc_threshold_(gc_threshold_),
       gc_scheduling_(scheduling),
-      host_index_(*this) {}
+      host_index_(*this),
+      local_handles_(*this, next_root_identity_++) {}
 
 Heap::~Heap() {
   DestroyAll();
@@ -241,7 +243,7 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     }
     auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
     object->layout = &layout;
-    object->native_payload = storage;
+    object->SetNativePayload(storage);
     const auto fields = storage->fields();
     for (std::uint32_t index = 0; index < initial_fields.size(); ++index) {
       FieldStorage::Store(fields, storage->count, index, initial_fields.subspan(index).front());
@@ -252,13 +254,17 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     Publish(*object, allocation);
     return object;
   }
-  const std::size_t requested_size = sizeof(HeapObject) + FieldStorage::Size(layout.field_count());
+  const auto field_offset =
+      layout.callable() != nullptr ? sizeof(HeapObject) : offsetof(HeapObject, type_metadata);
+  const auto requested_size =
+      std::max(sizeof(HeapObject), field_offset + FieldStorage::Size(layout.field_count()));
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
   }
   return AllocateObject(ObjectKind::Instance, requested_size,
-                        [&layout, initial_fields](HeapObject& object) {
+                        [&layout, initial_fields, field_offset](HeapObject& object) {
                           object.layout = &layout;
+                          object.inline_field_offset = static_cast<std::uint8_t>(field_offset);
                           object.auxiliary_length = layout.field_count();
                           const auto fields = ObjectFieldStorage(object);
                           static_assert(static_cast<std::uint8_t>(ValueKind::Null) == 0);
@@ -354,6 +360,7 @@ void Heap::Collect() noexcept {
 }
 
 void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
+  local_handles_.AppendExternalRoots(result);
   for (auto* root = roots_; root != nullptr; root = root->next_) {
     const auto kind = root->resource_kind_;
     if (!kind) {
@@ -364,6 +371,7 @@ void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const 
 }
 
 void Heap::MarkRoots() noexcept {
+  local_handles_.Trace();
   for (auto* frame = native_stack_roots_; frame != nullptr; frame = frame->previous) {
     for (const Value value : std::span(frame->values, frame->count)) {
       MarkValue(value);
@@ -546,20 +554,59 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   };
 }
 
+const Heap::BlockPageLayout& Heap::BlockLayout(std::size_t class_index) noexcept {
+  // 每个保留区至少容纳一个槽及页头；按实际用量提交，保留区大小仍为二次幂，
+  // 释放时可以直接由块地址定位页头。
+  static constexpr auto kPageBytes = [] {
+    std::array<BlockPageLayout, kSizeClasses.size()> sizes{};
+    for (std::size_t index = 0; index < sizes.size(); ++index) {
+      const auto block_size = kSizeClasses[index];
+      const auto bytes = std::max(internal::kMinimumHeapBlockPageBytes,
+                                  std::bit_ceil(sizeof(BlockPage) + block_size));
+      sizes[index] = {.bytes = bytes, .capacity = (bytes - sizeof(BlockPage)) / block_size};
+    }
+    return sizes;
+  }();
+  return kPageBytes[class_index];
+}
+
 void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
+  const auto& layout = BlockLayout(class_index);
+  const auto page_bytes = layout.bytes;
   auto& available = available_pages_[class_index];
   auto* page = available;
   if (page == nullptr) {
     page = empty_pages_[class_index];
     if (page != nullptr) {
       internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
+      // 空页已经没有任何存活槽。丢弃旧空闲链并退还尾部提交，新的小工作集从页首开始。
+      page->free_blocks = nullptr;
+      page->initialized = 0;
+      const auto initial_bytes =
+          CommittedHeapPageBytes(sizeof(BlockPage) + kSizeClasses[class_index]);
+      if (page->committed > initial_bytes) {
+        const auto unused = page->committed - initial_bytes;
+        const auto tail = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes)
+                              .subspan(initial_bytes);
+        internal::DecommitHeapBlockPage(tail.data(), unused);
+        page->committed = initial_bytes;
+        committed_bytes_ -= unused;
+      }
     } else {
-      auto* memory = internal::AllocateHeapBlockPage();
+      auto* memory = internal::ReserveHeapBlockPage(page_bytes);
       if (memory == nullptr) {
         return nullptr;
       }
+      const auto initial_bytes =
+          CommittedHeapPageBytes(sizeof(BlockPage) + kSizeClasses[class_index]);
+      if (internal::CommitHeapBlockPage(memory, initial_bytes) !=
+          internal::HeapPageCommit::Committed) {
+        internal::ReleaseHeapBlockPage(memory, page_bytes);
+        return nullptr;
+      }
       page = std::construct_at(static_cast<BlockPage*>(memory));
-      committed_bytes_ += kBlockPageBytes;
+      page->committed = initial_bytes;
+      committed_bytes_ += initial_bytes;
     }
     internal::PrependIntrusive(*page, available, &BlockPage::next, &BlockPage::previous_link);
   }
@@ -570,23 +617,38 @@ void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
     memory = block;
     std::destroy_at(block);
   } else {
-    auto storage = std::span(std::as_writable_bytes(std::span(page, 1)).data(), kBlockPageBytes);
+    const auto required_bytes = sizeof(BlockPage) + ((page->initialized + 1U) * block_size);
+    if (required_bytes > page->committed) [[unlikely]] {
+      const auto committed = CommittedHeapPageBytes(required_bytes);
+      const auto extra_bytes = committed - page->committed;
+      const auto tail = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes)
+                            .subspan(page->committed);
+      if (internal::CommitHeapBlockPage(tail.data(), extra_bytes) !=
+          internal::HeapPageCommit::Committed) {
+        return nullptr;
+      }
+      page->committed = committed;
+      committed_bytes_ += extra_bytes;
+    }
+    auto storage = std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes);
     memory = storage.subspan(sizeof(BlockPage) + (page->initialized * block_size)).data();
     ++page->initialized;
   }
   ++page->used;
   pooled_live_bytes_ += block_size;
-  if (page->used == (kBlockPageBytes - sizeof(BlockPage)) / block_size) {
+  if (page->used == layout.capacity) {
     internal::UnlinkIntrusive(*page, &BlockPage::next, &BlockPage::previous_link);
   }
   return memory;
 }
 
 void Heap::ReleasePooledBlock(void* memory, std::size_t class_index) noexcept {
+  const auto& layout = BlockLayout(class_index);
+  const auto page_bytes = layout.bytes;
   pooled_live_bytes_ -= kSizeClasses[class_index];
-  const auto address = std::bit_cast<std::uintptr_t>(memory) & ~(kBlockPageBytes - 1U);
+  const auto address = std::bit_cast<std::uintptr_t>(memory) & ~(page_bytes - 1U);
   auto* page = std::bit_cast<BlockPage*>(address);
-  const auto capacity = (kBlockPageBytes - sizeof(BlockPage)) / kSizeClasses[class_index];
+  const auto capacity = layout.capacity;
   if (page->used == capacity) {
     internal::PrependIntrusive(*page, available_pages_[class_index], &BlockPage::next,
                                &BlockPage::previous_link);
@@ -637,16 +699,16 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
       break;
     }
     case ObjectKind::Timer: {
-      const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload));
+      const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload()));
       break;
     }
     case ObjectKind::CancellationToken: {
       const std::unique_ptr<CancellationToken> owned(
-          static_cast<CancellationToken*>(object.native_payload));
+          static_cast<CancellationToken*>(object.native_payload()));
       break;
     }
     case ObjectKind::ValueSlots:
-      ReleaseExternalStorage(object.native_payload, object.length * sizeof(Value));
+      ReleaseExternalStorage(object.native_payload(), object.length * sizeof(Value));
       break;
     default:
       break;
@@ -699,11 +761,14 @@ void Heap::MaybeCollect(std::size_t next_size) noexcept {
   }
 }
 
-void Heap::ReleasePage(BlockPage& page) noexcept {
+void Heap::ReleasePage(BlockPage& page, std::size_t class_index) noexcept {
+  const auto& layout = BlockLayout(class_index);
+  const auto page_bytes = layout.bytes;
+  const auto committed = page.committed;
   internal::UnlinkIntrusive(page, &BlockPage::next, &BlockPage::previous_link);
   std::destroy_at(&page);
-  internal::ReleaseHeapBlockPage(&page);
-  committed_bytes_ -= kBlockPageBytes;
+  internal::ReleaseHeapBlockPage(&page, page_bytes);
+  committed_bytes_ -= committed;
 }
 
 std::size_t Heap::ReleaseExcessCachedPages(std::size_t work_budget) noexcept {
@@ -711,10 +776,11 @@ std::size_t Heap::ReleaseExcessCachedPages(std::size_t work_budget) noexcept {
   // 释放也消耗增量工作预算，页面卸载不会把历史高峰变成一次同步清理停顿。
   const auto cache_budget = std::max(minimum_gc_threshold_, pooled_live_bytes_);
   for (std::size_t index = empty_pages_.size(); index != 0 && work_budget != 0; --index) {
-    auto& head = empty_pages_[index - 1U];
+    const auto class_index = index - 1U;
+    auto& head = empty_pages_[class_index];
     while (head != nullptr && committed_bytes_ - allocated_bytes_ > cache_budget &&
            work_budget != 0) {
-      ReleasePage(*head);
+      ReleasePage(*head, class_index);
       --work_budget;
     }
   }
@@ -749,9 +815,10 @@ void Heap::DestroyAll() noexcept {
   object_count_ = 0;
   ReleaseRetiredNativePrograms();
 
-  for (auto& page : empty_pages_) {
+  for (std::size_t index = 0; index < empty_pages_.size(); ++index) {
+    auto& page = empty_pages_[index];
     while (page != nullptr) {
-      ReleasePage(*page);
+      ReleasePage(*page, index);
     }
   }
   assert(allocated_bytes_ == 0);

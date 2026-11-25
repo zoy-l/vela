@@ -7,11 +7,49 @@
 #include <utility>
 
 #include "base/execution_status.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_dispatch.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+[[clang::always_inline]] NativeExecution::NativeExecution(NativeInstance& instance) noexcept
+    : NativeExecution(instance, nullptr) {}
+
+[[clang::always_inline]] NativeExecution::NativeExecution(NativeInstance& instance,
+                                                          const NativeExecution* parent) noexcept
+    : instance_(&instance),
+      context_(instance.isolate(), *this),
+      control_state_(&isolate().native_control().state()),
+      barrier_state_(&isolate().heap().barrier_state()),
+      stack_roots_(isolate().heap().native_stack_roots_head()),
+      execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
+  const auto limit = CurrentNativeStackLimit(*control_state_);
+  if (parent != nullptr) {
+    current_frame_ = parent->current_frame_;
+    frame_count_ = parent->frame_count_;
+    base_frame_count_ = frame_count_;
+  }
+  if (!limit) {
+    stack_status_ = limit.error();
+  } else {
+    stack_limit_ = *limit;
+    stack_status_ = ExecutionStatus::Returned;
+  }
+  if (instance.image().IsReloadable()) {
+    isolate().native_dispatch().RegisterExecution(*this);
+  }
+}
+
+NativeExecution::~NativeExecution() {
+  if (version_previous_link_ != nullptr) {
+    NativeDispatch::UnregisterExecution(*this);
+  }
+}
+
 namespace {
 
 ExecutionResult Failure(Value value, ExecutionStatus status, FutureDiagnostic diagnostic) {
@@ -25,7 +63,7 @@ ExecutionResult Failure(Value value, ExecutionStatus status, FutureDiagnostic di
 }
 
 [[clang::noinline]] ExecutionResult CompleteFailure(NativeExecution& execution,
-                                                     ExecutionStatus status) {
+                                                    ExecutionStatus status) {
   if (!execution.HasException()) {
     return {
         .status = status,

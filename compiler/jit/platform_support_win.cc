@@ -2,6 +2,8 @@
 
 #include <windows.h>  // IWYU pragma: keep
 
+#include <llvm/ExecutionEngine/Orc/CoreContainers.h>
+
 #include <minwindef.h>
 #include <winnt.h>
 
@@ -19,12 +21,11 @@
 
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/LinkGraphLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
-#include <llvm/Support/Casting.h>
 #include <llvm/Support/Error.h>
+#include "compiler/jit/engine.h"
 
 namespace vela::compiler::jit {
 namespace {
@@ -192,9 +193,9 @@ class CoffRegistrationPlugin final : public llvm::orc::LinkGraphLinkingLayer::Pl
 
 }  // namespace
 
-llvm::Error InstallPlatformSupport(llvm::orc::LLJIT& jit) {
+llvm::Error InstallPlatformSupport(CodeLinker& jit) {
   auto plugin = std::make_shared<CoffRegistrationPlugin>();
-  llvm::cast<llvm::orc::ObjectLinkingLayer>(jit.getObjLinkingLayer()).addPlugin(std::move(plugin));
+  jit.getObjLinkingLayer().addPlugin(std::move(plugin));
   return llvm::Error::success();
 }
 

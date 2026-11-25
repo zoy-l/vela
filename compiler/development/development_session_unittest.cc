@@ -9,6 +9,7 @@
 #include <optional>
 #include <semaphore>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -102,6 +103,34 @@ TEST(DevelopmentSessionTest, LoadDoesNotRunEntryAndHotReloadPreservesInitialized
   EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 43);
   EXPECT_EQ(session.snapshot()->revision, 2U);
   EXPECT_EQ(session.isolate().native_dispatch().revision(), 2U);
+}
+
+TEST(DevelopmentSessionTest, InheritedConstructorsFollowReloadedDefaultsAndPreserveInstances) {
+  const auto source = [](std::string_view initial) {
+    return "class Root<T> { value: T; bonus: int = " + std::string(initial) +
+           "; } class Middle<U> extends Root<U> {} class Leaf extends Middle<int> {} "
+           "class Base { value: int; constructor(initial: int = " +
+           std::string(initial) +
+           ") { this.value = initial; } } class Child extends Base {} "
+           "const retained = Leaf(value: 40); "
+           "export func existing(): int { return retained.value + retained.bonus; } "
+           "export func create(): int { return Leaf(value: 40).value + Child().value; }";
+  };
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    DevelopmentOptions options;
+    options.compilation.tier = tier;
+    auto created = DevelopmentSession::Create("main.vela", {}, options);
+    ASSERT_TRUE(created);
+    auto& session = **created;
+    auto result = Apply(session, source("0"), DevelopmentOperation::Load);
+    ASSERT_EQ(result.status, DevelopmentStatus::Accepted) << result.message;
+    ExpectInteger(session.Invoke("main.vela", "existing"), kOldAnswer);
+    ExpectInteger(session.Invoke("main.vela", "create"), kOldAnswer);
+    result = Apply(session, source("2"));
+    ASSERT_EQ(result.status, DevelopmentStatus::Accepted) << result.message;
+    ExpectInteger(session.Invoke("main.vela", "existing"), kOldAnswer);
+    ExpectInteger(session.Invoke("main.vela", "create"), kAnswer);
+  }
 }
 
 TEST(DevelopmentSessionTest, EntryLookupPreservesModuleScopeArityAndCurrentRevision) {

@@ -207,6 +207,14 @@ TEST(StandardLibraryTest, MapAllocatesOnlyOneResultArray) {
 }
 
 TEST(StandardLibraryTest, RejectsImplicitConversionsAndRemovedModuleScheme) {
+  for (const auto* const source : {
+           "func main(): double { return Math.atan2(1, 1.0); }",
+           "func main(): double { return Math.cbrt(8); }",
+           "func main(): double { return Math.hypot(3.0); }",
+           "func main(): double { return Math.remainder(7.0, false); }",
+       }) {
+    EXPECT_FALSE(frontend::CheckTestSource(source).Succeeded()) << source;
+  }
   EXPECT_FALSE(
       frontend::CheckTestSource("func main(): double { return Math.sqrt(4); }").Succeeded());
   EXPECT_FALSE(
@@ -218,6 +226,30 @@ TEST(StandardLibraryTest, RejectsImplicitConversionsAndRemovedModuleScheme) {
       {.path = "std:math", .text = "export func sqrt(value: double): double { return 0.0; }"},
   });
   EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
+}
+
+TEST(StandardLibraryTest, ExtendedMathPreservesQuadrantsRangesAndIeeeRemainder) {
+  test::ExpectRunAnswer(R"(
+func main(): int {
+  const angle: (double, double) => double = Math.atan2;
+  const root: (double) => double = Math.cbrt;
+  const length: (double, double) => double = Math.hypot;
+  const remainder: (double, double) => double = Math.remainder;
+  const nan = Math.pow(-1.0, 0.5);
+  const infinity = Math.exp(1000.0);
+  if (Math.abs(Math.atan2(y: 1.0, x: -1.0) - Math.PI * 0.75) > 0.000000000001 ||
+      angle(-0.0, 1.0).toString() != '-0' || angle(-0.0, -1.0) != -Math.PI ||
+      Math.abs(root(-8.0) + 2.0) > 0.000000000001 || root(-0.0).toString() != '-0' ||
+      length(3.0, 4.0) != 5.0 || !Math.isFinite(length(1e308, 1e308)) ||
+      length(1e-300, 1e-300) == 0.0 || Math.isFinite(length(infinity, nan)) ||
+      Math.isNaN(length(infinity, nan)) || remainder(7.0, 2.0) != -1.0 ||
+      remainder(5.0, 2.0) != 1.0 || remainder(-4.0, 2.0).toString() != '-0' ||
+      remainder(3.0, infinity) != 3.0 || !Math.isNaN(remainder(1.0, 0.0)) ||
+      !Math.isNaN(remainder(infinity, 2.0)) || !Math.isNaN(angle(nan, 1.0))) {
+    return 0;
+  }
+  return 42;
+})");
 }
 
 INSTANTIATE_TEST_SUITE_P(TraversalSortAndReduction,
@@ -254,15 +286,15 @@ INSTANTIATE_TEST_SUITE_P(TraversalSortAndReduction,
 })",
                              R"(func main(): int {
   let caught = 0;
-  try { [1, 2].map((value): int => { throw Error(message: 'stop'); }); }
+  try { [1, 2].map((_value): int => { throw Error(message: 'stop'); }); }
   catch (error: Error) { caught = 42; }
   return caught;
 })",
                              R"(func main(): int {
   const empty: int[] = []; let calls = 0;
-  const predicate = (value: int): bool => { calls = calls + 1; return true; };
+  const predicate = (_value: int): bool => { calls = calls + 1; return true; };
   if (empty.some(predicate) || !empty.every(predicate) || empty.findIndex(predicate) != -1) { return 0; }
-  empty.forEach((value: int): void => { calls = calls + 1; });
+  empty.forEach((_value: int): void => { calls = calls + 1; });
   const mapped = empty.map(value => { calls = calls + 1; return value; });
   if (mapped.length != 0) { return 0; }
   if (calls == 0) { return empty.reduce((a: int, b: int): int => a + b, 42); }
@@ -314,9 +346,9 @@ func main(): int {
 })",
                              R"(func main(): int {
   const values = [2, 1]; let caught = 0;
-  try { values.sort((a: int, b: int): int => { throw Error(message: 'sort'); }); } catch (error: Error) { caught = caught + 1; }
-  try { values.forEach((value: int): void => { throw Error(message: 'each'); }); } catch (error: Error) { caught = caught + 1; }
-  try { values.reduce((a: int, b: int): int => { throw Error(message: 'reduce'); }, 0); } catch (error: Error) { caught = caught + 1; }
+  try { values.sort((_a: int, _b: int): int => { throw Error(message: 'sort'); }); } catch (error: Error) { caught = caught + 1; }
+  try { values.forEach((_value: int): void => { throw Error(message: 'each'); }); } catch (error: Error) { caught = caught + 1; }
+  try { values.reduce((_a: int, _b: int): int => { throw Error(message: 'reduce'); }, 0); } catch (error: Error) { caught = caught + 1; }
   if (caught == 3) { return 42; } return 0;
 })",
                              R"(func main(): int {

@@ -27,8 +27,8 @@ generated applications do not link Clang. The parser version is recorded in gene
 
 `gclient sync --no-history` obtains source dependencies and host tools from the
 immutable revisions in the root `DEPS`. Vela's GN integration lives in
-`third_party/BUILD.gn`; upstream sources are not modified. All required sources
-and host tools are obtained through this dependency configuration.
+`third_party/BUILD.gn`; source dependencies and host tools are obtained through
+the dependency configuration.
 
 GN, Ninja, and Clang are installed under `third_party/build_tools`. Build scripts
 resolve their repository-relative paths, use no system copies, and do not modify
@@ -41,7 +41,6 @@ and standard library with the project `ld64.lld`. See the root README for platfo
 | Dependency | Revision | License |
 | --- | --- | --- |
 | [Abseil](https://github.com/abseil/abseil-cpp) | `76bb24329e8bf5f39704eb10d21b9a80befa7c81` | Apache-2.0; [upstream license](https://github.com/abseil/abseil-cpp/blob/76bb24329e8bf5f39704eb10d21b9a80befa7c81/LICENSE) |
-| [efsw 1.7.3 (Vela fork)](https://github.com/zoy-l/efsw) | `d3b9595a4043d371923511098d32372d28adbaed` | MIT; [upstream license](https://github.com/zoy-l/efsw/blob/d3b9595a4043d371923511098d32372d28adbaed/LICENSE) |
 | [GoogleTest](https://github.com/google/googletest) | `52eb8108c5bdec04579160ae17225d66034bd723` | BSD-3-Clause; [upstream license](https://github.com/google/googletest/blob/52eb8108c5bdec04579160ae17225d66034bd723/LICENSE) |
 | [Google Benchmark 1.9.5](https://github.com/google/benchmark) | `192ef10025eb2c4cdd392bc502f0c852196baa48` | Apache-2.0; [upstream license](https://github.com/google/benchmark/blob/192ef10025eb2c4cdd392bc502f0c852196baa48/LICENSE) |
 | [utf8proc 2.12.0](https://github.com/JuliaStrings/utf8proc) | `79cdd5ab40c79afa559f689ffc13b76812dee1ac` | MIT and Unicode-3.0; [upstream licenses](https://github.com/JuliaStrings/utf8proc/blob/79cdd5ab40c79afa559f689ffc13b76812dee1ac/LICENSE.md) |
@@ -52,12 +51,6 @@ and standard library with the project `ld64.lld`. See the root README for platfo
 
 GoogleTest and Google Benchmark are `testonly` GN dependencies. Abseil is a
 production dependency of the compiler and runtime, and Vela builds its own pinned copy.
-
-efsw supplies development-session file notifications through its native Windows, Linux and macOS
-backends, retaining upstream's automatic polling fallback. GN builds the C++ watcher and generic
-backend directly from the pinned sources, without its C wrapper, agent or test applications.
-It is linked into the compiler, excluded from the generated application's runtime closure, and its
-MIT license is included in distribution packages.
 
 PCRE2 builds only its 8-bit Unicode compiler/interpreter closure, listed in
 `BUILD.gn`. It excludes DFA, conversion, substitution, serialization, command-line

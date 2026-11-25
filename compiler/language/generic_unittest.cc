@@ -119,10 +119,10 @@ func main(): int {
 TEST(GenericTest, NestedOutputVariablesWaitForOuterArgumentEvidence) {
   runtime::Isolate isolate;
   test::ExpectRunAnswer(R"(
-func create<T, U>(value: T): U[] { return []; }
-func maybe<T, U>(value: T): U[]? { return null; }
+func create<T, U>(_value: T): U[] { return []; }
+func maybe<T, U>(_value: T): U[]? { return null; }
 func identity<T>(value: T): T { return value; }
-func choose<T>(items: T[], value: T): T { return value; }
+func choose<T>(_items: T[], value: T): T { return value; }
 class Box<T> { value: T; }
 func main(): int {
   const first = choose(create(1), 20);
@@ -286,7 +286,7 @@ TEST(GenericTest, DeferredInferenceKeepsEarlierArgumentsBeforeLaterMutation) {
   test::ExpectRunAnswer(R"(
 let mutate: () => void = (): void => {};
 func create<T>(): T[] { mutate(); return []; }
-func choose<T>(first: T, second: T[]): T { return first; }
+func choose<T>(first: T, _second: T[]): T { return first; }
 func main(): int {
   let value: int? = 42;
   mutate = () => { value = null; };

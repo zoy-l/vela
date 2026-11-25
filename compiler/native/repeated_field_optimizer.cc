@@ -46,7 +46,6 @@
 #include "compiler/native/memory_regions.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
-#include "runtime/value/object.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -84,7 +83,7 @@ std::optional<FieldUpdate> MatchUpdate(llvm::StoreInst& store, const llvm::Loop&
       !object->getType()->isPointerTy() ||
       object->getMetadata(llvm::LLVMContext::MD_nonnull) == nullptr ||
       !HasStorageTag(*object, MemoryRegion::Elements) ||
-      std::cmp_less(offset, sizeof(runtime::HeapObject))) {
+      std::cmp_less(offset, runtime::NativeMemoryLayout::kInlineObjectFields)) {
     return std::nullopt;
   }
   auto* current = llvm::dyn_cast<llvm::LoadInst>(add->getOperand(0));
@@ -99,7 +98,7 @@ std::optional<FieldUpdate> MatchUpdate(llvm::StoreInst& store, const llvm::Loop&
   std::int64_t delta_offset = 0;
   if (llvm::GetPointerBaseWithConstantOffset(delta->getPointerOperand(), delta_offset, layout) !=
           object ||
-      std::cmp_less(delta_offset, sizeof(runtime::HeapObject))) {
+      std::cmp_less(delta_offset, runtime::NativeMemoryLayout::kInlineObjectFields)) {
     return std::nullopt;
   }
   return FieldUpdate{

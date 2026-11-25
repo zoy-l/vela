@@ -28,23 +28,31 @@ namespace vela::compiler {
 // Capture 固定本次全部模块文本；Poll 只捕获 OS 事件指向的文件及新依赖。
 // 后续编译不得再次读取磁盘；未接纳的编辑保持 dirty，直到提交或被后续编辑替换。
 // 显式 reset 的捕获与编译线程的轮询共享同一事务锁。
-class DevelopmentFiles final {
+// 公共 API：嵌入宿主通过文件会话捕获源码、接收变更通知并接纳已发布快照。
+class DevelopmentFiles {
  public:
   explicit DevelopmentFiles(std::string entry, frontend::ModulePaths imports = {});
-  [[nodiscard]] std::expected<SourceUpdate, frontend::Diagnostics> Capture(
+  DevelopmentFiles(const DevelopmentFiles&) = delete;
+  DevelopmentFiles& operator=(const DevelopmentFiles&) = delete;
+  DevelopmentFiles(DevelopmentFiles&&) = delete;
+  DevelopmentFiles& operator=(DevelopmentFiles&&) = delete;
+  virtual ~DevelopmentFiles() = default;
+  [[nodiscard]] virtual std::expected<SourceUpdate, frontend::Diagnostics> Capture(
       const CompiledSourceSnapshot& previous);
-  [[nodiscard]] std::expected<void, frontend::Diagnostics> StartWatching();
+  // 公共 API：通知只唤醒消费者；没有文件变化时不定时轮询。
+  [[nodiscard]] virtual std::expected<void, frontend::Diagnostics> StartWatching(
+      std::function<void()> changed = {});
   // 显式加载其他入口时登记其文件；后续事件不需要遍历整个已提交源码表。
-  [[nodiscard]] std::expected<void, frontend::Diagnostics> WatchSources(
+  [[nodiscard]] virtual std::expected<void, frontend::Diagnostics> WatchSources(
       std::span<const SourceChange> changes);
   // 所有者在每次源码提交后传入该快照；普通提交只消费 changed_sources，Reload 重建订阅。
   // 接纳较早候选不会覆盖其后已捕获的未提交文本。
-  [[nodiscard]] std::expected<void, frontend::Diagnostics> Accept(
+  [[nodiscard]] virtual std::expected<void, frontend::Diagnostics> Accept(
       std::shared_ptr<const CompiledSourceSnapshot> snapshot);
-  [[nodiscard]] std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> Poll(
+  [[nodiscard]] virtual std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> Poll(
       std::chrono::milliseconds timeout = {});
   // 首次成功 Capture 后是规范化的模块 URI，创建源码会话时使用同一身份。
-  [[nodiscard]] std::string entry() const;
+  [[nodiscard]] virtual std::string entry() const;
 
  private:
   enum class GraphTracking : std::uint8_t { Existing, Expanded };

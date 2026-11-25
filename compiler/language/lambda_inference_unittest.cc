@@ -90,7 +90,7 @@ INSTANTIATE_TEST_SUITE_P(
            })",
         R"(func main(): int {
              const values = [1, 2];
-             const f = values.reduce((operation, value) => operation, () => 42);
+             const f = values.reduce((operation, _value) => operation, () => 42);
              return f();
            })",
         R"(func main(): int {

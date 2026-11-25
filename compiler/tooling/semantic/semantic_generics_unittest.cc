@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/tooling/semantic/semantic_index.h"
@@ -30,6 +31,33 @@ TEST(SemanticCompletionTest, DefaultsResolveEarlierParametersAndConstructorValue
   EXPECT_NE(std::ranges::find(completions, "first", &Completion::label), completions.end());
   const auto reference = source.find("= Counter") + 2;
   EXPECT_TRUE(index.FindDefinition(reference, PositionEncoding::Utf8));
+}
+
+TEST(SemanticCompletionTest, InheritedConstructorSignaturesAndNamedDefinitionsUseTheBase) {
+  const std::string source = R"(
+class Root<T> { value: T; bonus: int = 2; }
+class Child<U> extends Root<U> {}
+class Leaf extends Child<int> {}
+func main(): int { return Leaf(value: 40).value; }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto completions = index.Complete(source.find("Leaf(value") + 4);
+  const auto leaf = std::ranges::find(completions, "Leaf", &Completion::label);
+  ASSERT_NE(leaf, completions.end());
+  EXPECT_TRUE(leaf->detail.contains("constructor(value: int, bonus: int = …)")) << leaf->detail;
+  const auto child_completions = index.Complete(source.find("Child<int>") + 5);
+  const auto child = std::ranges::find(child_completions, "Child", &Completion::label);
+  ASSERT_NE(child, child_completions.end());
+  EXPECT_TRUE(child->detail.contains("constructor(value: U, bonus: int = …)")) << child->detail;
+  const auto definition = index.FindDefinition(source.find("value: 40"), PositionEncoding::Utf8);
+  ASSERT_TRUE(definition);
+  const auto text = SourceText::Create(source);
+  ASSERT_TRUE(text);
+  EXPECT_EQ(definition->range.start,
+            text->PositionAt(source.find("value: T"), PositionEncoding::Utf8));
 }
 
 TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutAnImport) {

@@ -35,7 +35,7 @@ class HostConstruction final {
   HeapObject* object_;
 };
 
-// 位于宿主包装头之后；普通借用只读 HeapObject::native_payload，不复制这里的所有权。
+// 位于宿主包装头之后；普通借用只读 HeapObject::native_payload()，不复制这里的所有权。
 class HostObjectStorage final {
  public:
   using Destructor = void (*)(void*) noexcept;

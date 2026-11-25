@@ -87,7 +87,7 @@ export func answer(): int { return 42; }
       .added_roots = {},
   });
   ASSERT_TRUE(candidate);
-  const auto code = (*compiler)->Compile(candidate->snapshot().program, {.tier = GetParam()});
+  const auto code = (*compiler)->Compile(*candidate->snapshot().program, {.tier = GetParam()});
   ASSERT_TRUE(code) << code.error().front().message;
   SmallStackRun run{.image = code->image};
   constexpr std::size_t kStackBytes = std::size_t{128} * 1024;
@@ -126,7 +126,7 @@ TEST(JitPlatformTest, CoffUnwindTablesAreRegisteredBeforePublicationAndRetiredWi
       .added_roots = {},
   });
   ASSERT_TRUE(candidate);
-  auto code = (*compiler)->Compile(candidate->snapshot().program);
+  auto code = (*compiler)->Compile(*candidate->snapshot().program);
   ASSERT_TRUE(code) << code.error().front().message;
   const auto entry = code->image->functions.values().front().entry;
   const auto address = std::bit_cast<std::uintptr_t>(entry);

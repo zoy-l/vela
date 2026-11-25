@@ -334,7 +334,7 @@ class ScalarRewriter final {
       return;
     }
     if (instruction.opcode == Opcode::Call && left &&
-        IsTrivialConstructor(program_->functions.at(instruction.index))) {
+        ir::IsTrivialConstructor(program_->functions.at(instruction.index))) {
       plan_->body_dependencies.push_back(instruction.index);
       // 空生成构造不读取 receiver。保留实际调用的逻辑帧、栈检查和失败边，
       // 仅为未使用的私有参数提供 null；虚拟身份不会进入对象 ABI。

@@ -4,6 +4,13 @@ SOURCE = r'''
 external func freeze(): void = 'append.freeze';
 export func calculate(operation: int): int {
   const builder = String();
+  if (operation >= 3) {
+    if (operation == 8) { builder.append(''[operation - 8]); }
+    builder.append('A\u0000Z'[operation - 4]);
+    const result = builder.toString();
+    const expected = operation == 4 ? 'A' : (operation == 5 ? '\u0000' : 'Z');
+    return result == expected ? 1 : 0;
+  }
   if (operation == 1) {
     for (let index = 0; index < 64; index++) { builder.append('a'[0]); }
     freeze();
@@ -43,5 +50,24 @@ TEST_F(NativeStringAppendTest, IndexedUnicodeCrossesGrowthBoundariesUnderGc) {
 TEST_F(NativeStringAppendTest, FailedAsciiGrowthReleasesRootsAndAllowsTheNextInvocation) {
   NativeExecution execution(*instance);
   ExpectOutOfMemoryAndRetry(STRING_APPEND_ENTRY, execution, 1, 1);
+}
+
+TEST_F(NativeStringAppendTest, LiteralAsciiPreservesNullBytesAndDynamicIndexFailures) {
+  for (const auto operation : {4, 5, 6}) {
+    NativeExecution execution(*instance);
+    const std::array input{Integer(operation)};
+    NativeValue output;
+    ASSERT_EQ(Execute(STRING_APPEND_ENTRY, execution, input, output), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 1);
+  }
+  for (const auto operation : {3, 7, 8}) {
+    NativeExecution execution(*instance);
+    const std::array input{Integer(operation)};
+    NativeValue output;
+    EXPECT_EQ(Execute(STRING_APPEND_ENTRY, execution, input, output),
+              ExecutionStatus::IndexOutOfBounds);
+    EXPECT_EQ(execution.current_frame(), nullptr);
+    EXPECT_EQ(*isolate.heap().native_stack_roots_head(), nullptr);
+  }
 }
 '''

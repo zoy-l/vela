@@ -31,14 +31,14 @@ HeapObject* Heap::AllocateValueSlots(std::size_t count) noexcept {
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
   object->kind = ObjectKind::ValueSlots;
   object->length = static_cast<std::uint32_t>(count);
-  object->native_payload = slots;
+  object->SetNativePayload(slots);
   Publish(*object, allocation);
   return object;
 }
 
 std::span<Value> Heap::ValueSlots(HeapObject& object) noexcept {
   assert(object.kind == ObjectKind::ValueSlots);
-  return {static_cast<Value*>(object.native_payload), object.length};
+  return {static_cast<Value*>(object.native_payload()), object.length};
 }
 
 void Heap::SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept {

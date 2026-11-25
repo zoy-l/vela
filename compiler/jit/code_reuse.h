@@ -2,9 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -61,6 +64,14 @@ struct CodeReusePlan final {
 };
 
 CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeReuseCache& cache);
+void PlanFunctionBindings(std::span<const std::string> symbols,
+                          std::size_t index,
+                          std::string_view suffix,
+                          CodeReusePlan& plan);
+void UpdateSourceCache(CodeReuseCache& reuse,
+                       const CodeReusePlan& plan,
+                       const runtime::NativeImage& image,
+                       const std::function<CodeReuseCache::Source(std::size_t)>& describe);
 void BindReusableCode(llvm::Module& module,
                       const std::vector<std::vector<std::string>>& symbols,
                       std::uint64_t batch,

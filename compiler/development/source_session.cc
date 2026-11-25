@@ -1,4 +1,5 @@
 #include "compiler/development/source_session.h"
+#include "compiler/development/reflection_changes.h"
 
 #include <chrono>
 #include <cstddef>
@@ -66,7 +67,7 @@ std::expected<void, SourceCandidateError> CheckMemberContracts(
     const CompiledSourceSnapshot& previous,
     const MemberContracts& contracts) {
   const auto records = previous.identities.records();
-  for (const auto& declaration : previous.program.declarations) {
+  for (const auto& declaration : previous.program->declarations) {
     const auto& key = records[static_cast<std::size_t>(declaration.identity.value)].key;
     const auto found = contracts.find({key.owner, key.kind, key.name});
     if (!key.arguments.empty() || found == contracts.end()) {
@@ -101,7 +102,7 @@ std::expected<void, SourceCandidateError> CheckDeclarationContracts(
   }
   MemberContracts members;
   const auto records = previous.identities.records();
-  for (const auto& declaration : previous.program.declarations) {
+  for (const auto& declaration : previous.program->declarations) {
     const auto& key = records[static_cast<std::size_t>(declaration.identity.value)].key;
     if (key.owner == DeclarationId{} || !key.arguments.empty()) {
       continue;
@@ -223,16 +224,32 @@ SourceCandidate::SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> b
                                  std::shared_ptr<const CompiledSourceSnapshot> prepared)
     : base_(std::move(base)), prepared_(std::move(prepared)) {}
 
+SourceSession::SourceSession(const SourceSessionConfiguration& configuration)
+    : SourceSession(configuration.entry,
+                    configuration.diagnostics,
+                    configuration.reflection,
+                    configuration.imports) {}
+
 SourceSession::SourceSession(const std::string& entry,
                              frontend::DiagnosticOptions options,
                              std::vector<frontend::ReflectionSelection> reflection,
                              frontend::ModulePaths imports)
     : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
+  initial->program = std::make_shared<const ir::Program>();
   initial->session = identity_;
   initial->roots.push_back(NormalizePath(entry));
   initial->reflection = std::move(reflection);
   initial->modules.imports = std::move(imports);
+  current_ = std::move(initial);
+}
+
+SourceSession::SourceSession(const std::string& entry, External /*unused*/)
+    : identity_(std::make_shared<const SourceSessionIdentity>()) {
+  auto initial = std::make_shared<CompiledSourceSnapshot>();
+  initial->session = identity_;
+  initial->roots.push_back(NormalizePath(entry));
+  initial->program.reset();
   current_ = std::move(initial);
 }
 
@@ -325,7 +342,8 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   if (!prepared.Succeeded()) {
     return std::unexpected(SourceError(std::move(prepared.diagnostics)));
   }
-  candidate->program = std::move(prepared.program);
+  candidate->program = std::make_shared<const ir::Program>(std::move(prepared.program));
+  DescribeReflectionChanges(*base->program, *candidate->program, candidate->changes);
   candidate->diagnostics = std::move(checked.diagnostics);
   candidate->timings.ir = Clock::now() - lowering;
   return SourceCandidate(std::move(base), std::move(candidate));

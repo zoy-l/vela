@@ -400,7 +400,7 @@ TEST_P(JitDebuggerTest, ArrayGrowthReloadsStorageAndResumesAfterTheCompletedAppe
     ASSERT_TRUE(session_->isolate().heap().PushArray(*array.value().AsObject(),
                                                      runtime::Value::Integer(0)));
   }
-  const auto& functions = session_->snapshot()->program.functions;
+  const auto& functions = session_->snapshot()->program->functions;
   const auto function = std::ranges::find(functions, "run", &ir::Function::name);
   ASSERT_NE(function, functions.end());
   const auto& code = function->instructions;

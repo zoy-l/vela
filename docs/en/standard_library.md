@@ -110,10 +110,20 @@ Tests verify independent reference vectors, reseeding and extreme bounds.
 
 All math inputs and numeric results are `double`; use explicit `toDouble()` or
 `toInt()` where needed. Static members of `Math` are `PI`, `E`, `random`, `sqrt`, `log`, `exp`, `sin`, `cos`,
-`tan`, `floor`, `ceil`, `round`, `trunc`, `abs`, `pow`, `min`, `max`, `clamp`,
+`tan`, `atan2`, `cbrt`, `hypot`, `remainder`, `floor`, `ceil`, `round`, `trunc`, `abs`, `pow`, `min`, `max`, `clamp`,
 `isFinite` and `isNaN`. Binary functions take two arguments; clamp takes
 `(value, lower, upper)`. `round` rounds halfway cases away from zero. Basic
 transcendentals use the platform C++ math library and may vary in their last bits.
+
+`atan2(y, x)` returns a quadrant-aware angle in radians and preserves signed zero.
+`cbrt(value)` computes a real cube root, including negative values.
+`hypot(x, y)` avoids unnecessary intermediate overflow and underflow; infinity
+takes precedence over NaN. `remainder(value, divisor)` returns `value - divisor*n`,
+where n is the nearest integer to the exact quotient, with ties to even. It differs
+from `%`/fmod: `remainder(7.0, 2.0)` is -1.0. A zero divisor or infinite value gives
+NaN; a finite value with infinite divisor is unchanged. These functions use IEEE
+NaN/infinity results without raising domain exceptions and share ordinary typed,
+named, captured-function, JIT, and AOT call contracts.
 
 Negative sqrt, nonpositive log, and unordered/NaN clamp bounds raise catchable
 errors. Other domain/overflow results retain IEEE NaN/infinity, allowing explicit

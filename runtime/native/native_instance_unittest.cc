@@ -94,6 +94,8 @@ TEST(NativeInstanceTest, BindsImportsBeforePublishingAnyLayoutsOrConstants) {
   image.types = Table(types);
   image.classes = Table(classes);
   image.functions = Table(functions);
+  const std::array<std::uint32_t, 1> imports{0};
+  image.imported_functions = Table(imports);
   const auto initial_heap_bytes = isolate.heap().allocated_bytes();
   const auto missing = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(missing.has_value());
@@ -138,6 +140,8 @@ TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedSt
   auto image = Image();
   image.types = Table(types);
   image.functions = Table(functions);
+  const std::array<std::uint32_t, 2> imported_functions{1, 3};
+  image.imported_functions = Table(imported_functions);
   auto& heap = isolate.heap();
   const auto initial_bytes = heap.allocated_bytes();
   auto created = NativeInstance::Instantiate(isolate, image);

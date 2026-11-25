@@ -8,8 +8,11 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
+#include <vector>
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
@@ -28,36 +31,77 @@ constexpr auto kIntegerMinimumBits =
 
 }  // namespace
 
-bool IsSquareRootImport(const ir::Function& function, const layout::Program& layouts) {
+runtime::NativeFunction::Intrinsic FindMathIntrinsic(const ir::Function& function,
+                                                     const layout::Program& layouts) {
   using Intrinsic = runtime::NativeFunction::Intrinsic;
   const auto standard = runtime::FindStandardNative(function.native_symbol);
   const auto& signature = function.signature;
-  return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
-         signature && standard->IsSignatureCompatible(*signature, layouts);
+  return standard != nullptr && signature && standard->IsSignatureCompatible(*signature, layouts)
+             ? standard->aot_entry().intrinsic
+             : Intrinsic::None;
 }
 
-llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {
+llvm::Value* FunctionEmitter::IntrinsicCondition(llvm::Value& entries,
+                                                 llvm::Value* operand,
+                                                 runtime::NativeFunction::Intrinsic expected) {
   using Intrinsic = runtime::NativeFunction::Intrinsic;
   auto* intrinsic = builder_.CreateExtractValue(&entries, 2);
-  auto* recognized = builder_.CreateICmpEQ(
-      intrinsic, builder_.getInt8(static_cast<std::uint8_t>(Intrinsic::SquareRoot)));
+  auto* recognized =
+      builder_.CreateICmpEQ(intrinsic, builder_.getInt8(static_cast<std::uint8_t>(expected)));
   // 身份来自已冻结的真实绑定，宿主覆盖同名函数仍调用其入口。负参数沿用标准绑定的
   // vela::Error 消息和逻辑栈；NaN 与 -0 按 sqrt 的浮点契约直接计算。
-  auto* valid = builder_.CreateFCmpUGE(operand, llvm::ConstantFP::get(operand->getType(), 0));
-  return builder_.CreateAnd(recognized, valid);
+  if (expected == Intrinsic::SquareRoot) {
+    auto* valid = builder_.CreateFCmpUGE(operand, llvm::ConstantFP::get(operand->getType(), 0));
+    return builder_.CreateAnd(recognized, valid);
+  }
+  return recognized;
+}
+
+llvm::Value* FunctionEmitter::EmitMathIntrinsic(runtime::NativeFunction::Intrinsic intrinsic,
+                                                std::span<llvm::Value* const> operands) {
+  using Intrinsic = runtime::NativeFunction::Intrinsic;
+  const char* symbol = nullptr;
+  switch (intrinsic) {
+    case Intrinsic::SquareRoot:
+      return builder_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, operands[0]);
+    case Intrinsic::Atan2:
+      return builder_.CreateBinaryIntrinsic(llvm::Intrinsic::atan2, operands[0], operands[1]);
+    case Intrinsic::Round:
+      return builder_.CreateUnaryIntrinsic(llvm::Intrinsic::round, operands[0]);
+    case Intrinsic::CubeRoot:
+      symbol = "cbrt";
+      break;
+    case Intrinsic::Hypotenuse:
+      symbol = "hypot";
+      break;
+    case Intrinsic::Remainder:
+      symbol = "remainder";
+      break;
+    case Intrinsic::None:
+      llvm_unreachable("math lowering requires a recognized intrinsic");
+  }
+  std::vector<llvm::Type*> types(operands.size(), builder_.getDoubleTy());
+  auto* signature = llvm::FunctionType::get(builder_.getDoubleTy(), types, false);
+  return builder_.CreateCall(module_.getOrInsertFunction(symbol, signature),
+                             llvm::ArrayRef(operands.data(), operands.size()));
 }
 
 void FunctionEmitter::EmitIntrinsicImport() {
-  if (!generated_[function_index_].square_root) {
+  const auto intrinsic = generated_[function_index_].math_intrinsic;
+  if (intrinsic == runtime::NativeFunction::Intrinsic::None) {
     return;
   }
   auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
-  auto* operand = body_->getArg(1);
-  auto* calculate = llvm::BasicBlock::Create(module_.getContext(), "intrinsic.sqrt", body_);
+  std::vector<llvm::Value*> operands;
+  operands.reserve(source_.parameter_count);
+  for (std::size_t index = 0; index < source_.parameter_count; ++index) {
+    operands.push_back(body_->getArg(static_cast<unsigned>(index + 1)));
+  }
+  auto* calculate = llvm::BasicBlock::Create(module_.getContext(), "intrinsic.math", body_);
   auto* host = llvm::BasicBlock::Create(module_.getContext(), "intrinsic.host", body_);
-  builder_.CreateCondBr(SquareRootCondition(*entries, operand), calculate, host);
+  builder_.CreateCondBr(IntrinsicCondition(*entries, operands.front(), intrinsic), calculate, host);
   builder_.SetInsertPoint(calculate);
-  builder_.CreateStore(builder_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, operand), Output());
+  builder_.CreateStore(EmitMathIntrinsic(intrinsic, operands), Output());
   Finish(Status(builder_, ExecutionStatus::Returned));
   builder_.SetInsertPoint(host);
 }

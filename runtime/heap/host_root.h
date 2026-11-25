@@ -1,9 +1,22 @@
 #pragma once
 
+#include <cassert>
+#include <cstddef>
 #include <expected>
+#include <utility>
+
+#include "runtime/heap/heap.h"
 
 #include "base/execution_status.h"
+#include "runtime/native/host_callback.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
+
+namespace vela {
+class HandleScope;
+template <class T>
+class Persistent;
+}
 
 namespace vela::runtime {
 
@@ -13,23 +26,71 @@ class Isolate;
 class HostRoot final {
  public:
   HostRoot() noexcept = default;
-  ~HostRoot();
-  HostRoot(const HostRoot& other) noexcept;
-  HostRoot& operator=(const HostRoot& other) noexcept;
-  HostRoot(HostRoot&& other) noexcept;
-  HostRoot& operator=(HostRoot&& other) noexcept;
+  ~HostRoot() { Reset(); }
+  HostRoot(const HostRoot& other) noexcept : storage_(other.storage_) { Retain(); }
+  HostRoot& operator=(const HostRoot& other) noexcept {
+    if (this != &other) {
+      Reset();
+      storage_ = other.storage_;
+      Retain();
+    }
+    return *this;
+  }
+  HostRoot(HostRoot&& other) noexcept : storage_(std::exchange(other.storage_, nullptr)) {}
+  HostRoot& operator=(HostRoot&& other) noexcept {
+    if (this != &other) {
+      Reset();
+      storage_ = std::exchange(other.storage_, nullptr);
+    }
+    return *this;
+  }
 
   [[nodiscard]] static std::expected<HostRoot, ExecutionStatus> Create(Isolate& isolate,
                                                                        Value value) noexcept;
   [[nodiscard]] bool IsEmpty() const noexcept { return storage_ == nullptr; }
-  [[nodiscard]] Isolate& isolate() const noexcept;
-  [[nodiscard]] Value value() const noexcept;
-  void Reset() noexcept;
+  [[nodiscard]] Isolate& isolate() const noexcept {
+    assert(storage_ != nullptr);
+    return *storage_->isolate;
+  }
+  [[nodiscard]] Value value() const noexcept {
+    assert(storage_ != nullptr);
+    assert(IsOwnerThread());
+    return storage_->value;
+  }
+  void Reset() noexcept {
+    assert(storage_ == nullptr || IsOwnerThread());
+    auto* storage = std::exchange(storage_, nullptr);
+    if (storage != nullptr && --storage->references == 0) {
+      Destroy(*storage);
+    }
+  }
 
  private:
-  struct Storage;
+  friend class ::vela::HandleScope;
+  template <class T>
+  friend class ::vela::Persistent;
+  struct Storage final {
+    Storage(Isolate& owner, Value source) noexcept;
+    Isolate* isolate;
+    Value value;
+    RootRange root;
+    std::size_t references = 1;
+  };
+  static void Destroy(Storage& storage) noexcept;
+  // 作用域共享根的所有权并借用稳定槽；只用于构造读句柄，不作为输出目标。
+  [[nodiscard]] Value& slot() const noexcept { return storage_->value; }
+  // 仅可调用根附带描述；函数类型的 Persistent 已在创建边界确立这一契约。
+  [[nodiscard]] const ::vela::internal::BoundScalarCallback& callback() const noexcept {
+    return *StorageAfter<const ::vela::internal::BoundScalarCallback>(*storage_);
+  }
+  [[nodiscard]] bool IsOwnerThread() const noexcept;
   explicit HostRoot(Storage& storage) noexcept : storage_(&storage) {}
-  void Retain() noexcept;
+  void Retain() noexcept {
+    if (storage_ != nullptr) {
+      assert(IsOwnerThread());
+      ++storage_->references;
+    }
+  }
   Storage* storage_ = nullptr;
 };
 

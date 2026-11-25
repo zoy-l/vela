@@ -24,6 +24,7 @@ English and Simplified Chinese editions are listed side by side below. Implement
 | **Typed Arrays** / 强类型动态数组 | [arrays.md](en/arrays.md) | [arrays.md](zh-CN/arrays.md) |
 | **Exceptions & Errors** / 异常与错误处理 | [exceptions.md](en/exceptions.md) | [exceptions.md](zh-CN/exceptions.md) |
 | **Standard Library** / 标准库 | [standard_library.md](en/standard_library.md) | [standard_library.md](zh-CN/standard_library.md) |
+| **Math & String API Benchmarks** / 数学与字符串 API 基准 | — | [standard_api_benchmarks.md](zh-CN/standard_api_benchmarks.md) |
 | **UTC Date & Time** / UTC 日期与时间 | [time.md](en/time.md) | [time.md](zh-CN/time.md) |
 | **JSON & Dynamic Values** / JSON 与动态值 | [json.md](en/json.md) | [json.md](zh-CN/json.md) |
 | **Typed JSON Decoding** / JSON 强类型解码（验收中 / acceptance in progress） | [typed_json.md](en/typed_json.md) | [typed_json.md](zh-CN/typed_json.md) |

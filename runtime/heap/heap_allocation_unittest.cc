@@ -19,26 +19,102 @@ namespace vela::runtime {
 namespace {
 
 TEST(HeapAllocationTest, BlockPagesHaveIndependentAlignedWritableStorage) {
-  auto* first = internal::AllocateHeapBlockPage();
-  auto* second = internal::AllocateHeapBlockPage();
+  constexpr auto kFirstPageBytes = internal::kMinimumHeapBlockPageBytes;
+  constexpr auto kSecondPageBytes = kFirstPageBytes * 2U;
+  auto* first = internal::ReserveHeapBlockPage(kFirstPageBytes);
+  auto* second = internal::ReserveHeapBlockPage(kSecondPageBytes);
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
+  ASSERT_EQ(internal::CommitHeapBlockPage(first, kFirstPageBytes),
+            internal::HeapPageCommit::Committed);
+  ASSERT_EQ(internal::CommitHeapBlockPage(second, kSecondPageBytes),
+            internal::HeapPageCommit::Committed);
   EXPECT_NE(first, second);
-  constexpr auto kPageBytes = internal::kHeapBlockPageBytes;
-  EXPECT_EQ(std::bit_cast<std::uintptr_t>(first) % kPageBytes, 0U);
-  EXPECT_EQ(std::bit_cast<std::uintptr_t>(second) % kPageBytes, 0U);
-  const std::span first_bytes(static_cast<std::byte*>(first), kPageBytes);
-  const std::span second_bytes(static_cast<std::byte*>(second), kPageBytes);
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(first) % kFirstPageBytes, 0U);
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(second) % kSecondPageBytes, 0U);
+  const std::span first_bytes(static_cast<std::byte*>(first), kFirstPageBytes);
+  const std::span second_bytes(static_cast<std::byte*>(second), kSecondPageBytes);
   constexpr auto kFirstValue = std::byte{0x42};
   constexpr auto kSecondValue = std::byte{0x17};
   first_bytes.front() = kFirstValue;
   first_bytes.back() = kFirstValue;
   second_bytes.front() = kSecondValue;
   second_bytes.back() = kSecondValue;
-  internal::ReleaseHeapBlockPage(first);
+  internal::ReleaseHeapBlockPage(first, kFirstPageBytes);
   EXPECT_EQ(second_bytes.front(), kSecondValue);
   EXPECT_EQ(second_bytes.back(), kSecondValue);
-  internal::ReleaseHeapBlockPage(second);
+  internal::ReleaseHeapBlockPage(second, kSecondPageBytes);
+}
+
+TEST(HeapAllocationTest, ReservationCommitsNewPrefixesWithoutChangingPreviousStorage) {
+  constexpr auto kReservation = internal::kMinimumHeapBlockPageBytes * 2U;
+  constexpr auto kInitial = internal::kHeapBlockCommitGranularity;
+  auto* memory = internal::ReserveHeapBlockPage(kReservation);
+  ASSERT_NE(memory, nullptr);
+  ASSERT_EQ(internal::CommitHeapBlockPage(memory, kInitial), internal::HeapPageCommit::Committed);
+  const std::span bytes(static_cast<std::byte*>(memory), kReservation);
+  constexpr auto kFirst = std::byte{0x42};
+  constexpr auto kLast = std::byte{0x17};
+  bytes.front() = kFirst;
+  bytes[kInitial - 1U] = kFirst;
+  ASSERT_EQ(internal::CommitHeapBlockPage(bytes.subspan(kInitial).data(), kReservation - kInitial),
+            internal::HeapPageCommit::Committed);
+  bytes.back() = kLast;
+  EXPECT_EQ(bytes.front(), kFirst);
+  EXPECT_EQ(bytes[kInitial - 1U], kFirst);
+  EXPECT_EQ(bytes.back(), kLast);
+  internal::DecommitHeapBlockPage(bytes.subspan(kInitial).data(), kReservation - kInitial);
+  EXPECT_EQ(bytes.front(), kFirst);
+  EXPECT_EQ(bytes[kInitial - 1U], kFirst);
+  ASSERT_EQ(internal::CommitHeapBlockPage(bytes.subspan(kInitial).data(), kReservation - kInitial),
+            internal::HeapPageCommit::Committed);
+  bytes.back() = kLast;
+  EXPECT_EQ(bytes.back(), kLast);
+  internal::ReleaseHeapBlockPage(memory, kReservation);
+}
+
+TEST(HeapAllocationTest, SparseInstancesCommitOnlyTheStorageNeededByTheirFirstSlots) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateClassLayout(1U, {});
+  auto* object = heap.AllocateInstance(*layout);
+  ASSERT_NE(object, nullptr);
+  EXPECT_EQ(heap.committed_bytes(), internal::kHeapBlockCommitGranularity);
+  ASSERT_TRUE(heap.SetField(*object, 0, Value::Integer(42)));
+  EXPECT_EQ(Heap::LoadField(*object, 0).AsInteger(), 42);
+}
+
+TEST(HeapAllocationTest, LargeInstancesKeepTheirFieldsAfterNeighborPagesRetire) {
+  Isolate isolate(1U, GcScheduling::kHostDriven);
+  auto& heap = isolate.heap();
+  constexpr std::uint32_t kFieldCount = 400;
+  const auto* layout = isolate.CreateClassLayout(kFieldCount, {});
+  constexpr std::size_t kNeighborInstances = 8;
+  std::array<Value, kNeighborInstances> values;
+  const RootRange roots(heap, values.data(), values.size());
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    auto* object = heap.AllocateInstance(*layout);
+    ASSERT_NE(object, nullptr);
+    values[index] = Value::Object(object);
+    const auto payload = Value::Integer(static_cast<std::int64_t>(index));
+    ASSERT_TRUE(heap.SetField(*object, 0U, payload));
+    ASSERT_TRUE(heap.SetField(*object, kFieldCount - 1U, payload));
+  }
+  // 相邻的大实例覆盖不同块页；退休其中一半不能破坏保留实例的页头或尾部字段。
+  for (std::size_t index = 0; index < values.size(); index += 2U) {
+    values[index] = Value::Null();
+  }
+  heap.Collect();
+  for (std::size_t index = 1; index < values.size(); index += 2U) {
+    const auto& object = *values[index].AsObject();
+    const auto expected = static_cast<std::int64_t>(index);
+    EXPECT_EQ(Heap::LoadField(object, 0U).AsInteger(), expected);
+    EXPECT_EQ(Heap::LoadField(object, kFieldCount - 1U).AsInteger(), expected);
+  }
+  values.fill(Value::Null());
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 0U);
+  EXPECT_EQ(heap.committed_bytes(), 0U);
 }
 
 TEST(HeapAllocationTest, HostDrivenCollectionDoesNotAdvanceDuringAllocation) {

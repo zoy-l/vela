@@ -7,11 +7,20 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
-#include <efsw/efsw.hpp>
+
+#ifdef _WIN32
+#include "base/directory_watcher_win.h"
+#elifdef __APPLE__
+#include "base/directory_watcher_mac.h"
+#else
+#include "base/directory_watcher_linux.h"
+#endif
 
 namespace vela {
 
@@ -24,7 +33,7 @@ struct FileChange final {
 
 struct FileChanges final {
   std::vector<FileChange> paths;
-  // efsw 报告事件丢失或消费队列溢出时，调用者重新订阅并捕获完整输入快照。
+  // 原生事件丢失、递归目录身份变化或队列溢出后，调用者重新订阅并捕获完整输入快照。
   bool invalidated = false;
 };
 
@@ -35,12 +44,12 @@ struct DirectoryWatchError final {
   std::string message;
 };
 
-// 只适配 efsw 的订阅和回调；平台后端、读取线程和轮询回退均由 efsw 负责。
-// 回调只入队，调用者串行执行 Watch、Unwatch 与 Drain。
-class DirectoryWatcher final : private efsw::FileWatchListener {
+// 原生事件只入队，调用者串行执行订阅和消费。无订阅时不启动读取线程；没有扫描回退。
+class DirectoryWatcher final {
  public:
-  DirectoryWatcher();
-  ~DirectoryWatcher() override = default;
+  // changed 只通知消费者，不得重入 watcher；调用方可在回调中唤醒自己的执行域。
+  explicit DirectoryWatcher(std::function<void()> changed = {});
+  ~DirectoryWatcher();
   DirectoryWatcher(const DirectoryWatcher&) = delete;
   DirectoryWatcher& operator=(const DirectoryWatcher&) = delete;
   DirectoryWatcher(DirectoryWatcher&&) = delete;
@@ -55,24 +64,41 @@ class DirectoryWatcher final : private efsw::FileWatchListener {
   [[nodiscard]] FileChanges Drain(std::chrono::milliseconds timeout = {});
 
  private:
+#ifdef __APPLE__
+  friend struct internal::MacDirectoryWatch;
+#endif
   struct Subscription final {
-    efsw::WatchID id;
+    std::uint64_t subscription_id;
     DirectoryWatchScope scope;
+    [[nodiscard]] bool Covers(DirectoryWatchScope requested) const {
+      return requested == DirectoryWatchScope::Direct || scope == requested;
+    }
   };
-  void handleFileAction(efsw::WatchID watch_id,
-                        const std::string& directory,
-                        const std::string& filename,
-                        efsw::Action action,
-                        const std::string& old_filename) override;
-  void handleMissedFileActions(efsw::WatchID watch_id, const std::string& directory) override;
+  [[nodiscard]] std::expected<void, std::string> AddNative(const std::filesystem::path& directory,
+                                                           DirectoryWatchScope scope,
+                                                           std::uint64_t subscription_id);
+  void RemoveNative(std::uint64_t subscription_id);
+  void CloseNative();
+#ifndef __APPLE__
+  void ReadEvents();
+#endif
+  void Record(std::vector<FileChange>& changes);
   void Invalidate();
+  void NotifyChanged();
   std::mutex mutex_;
   std::condition_variable available_;
   FileChanges changes_;
+  const std::function<void()> changed_;
+  mutable std::mutex native_mutex_;
   absl::flat_hash_map<std::filesystem::path, Subscription, std::hash<std::filesystem::path>>
       subscriptions_;
-  // 最先析构 efsw 并等待回调结束，再释放 listener 使用的队列和同步对象。
-  efsw::FileWatcher watcher_;
+  std::uint64_t next_subscription_ = 1;
+#ifndef __APPLE__
+  std::optional<std::string> failure_;
+  bool stopping_ = false;
+  std::thread reader_;
+#endif
+  internal::DirectoryWatchState native_;
 };
 
 }  // namespace vela

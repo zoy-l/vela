@@ -112,17 +112,6 @@ bool MatchesType(const ir::Program& program,
          std::ranges::find(interfaces, type.index) != interfaces.end();
 }
 
-bool IsTrivialConstructor(const ir::Function& function) {
-  if (!function.is_generated_constructor || function.parameter_count != 1 || function.is_async ||
-      !function.native_symbol.empty() || !function.handlers.empty()) {
-    return false;
-  }
-  return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
-    return instruction.opcode == Opcode::Return ||
-           (instruction.opcode == Opcode::LoadNull && instruction.dst >= function.parameter_count);
-  });
-}
-
 std::optional<std::size_t> BorrowedReceiver(const EscapePlan& plan,
                                             const ir::Instruction& instruction,
                                             const State& values) {
@@ -161,7 +150,7 @@ bool NeedsHeap(const EscapePlan& plan,
       return !object || !MatchesType(program, plan.allocations.at(*object), instruction.index);
     }
     case Opcode::Call:
-      return !IsTrivialConstructor(program.functions.at(instruction.index)) &&
+      return !ir::IsTrivialConstructor(program.functions.at(instruction.index)) &&
              !BorrowedReceiver(plan, instruction, values);
     case Opcode::GetField:
     case Opcode::SetField:
@@ -406,7 +395,7 @@ void InspectBoundary(EscapePlan& plan,
   }
   if (instruction.opcode == Opcode::Call) {
     const auto& callee = program.functions.at(instruction.index);
-    if (callee.name.ends_with(".$constructor") && !IsTrivialConstructor(callee)) {
+    if (callee.name.ends_with(".$constructor") && !ir::IsTrivialConstructor(callee)) {
       ir::ForEachUse(instruction, access,
                      [&](ir::RegisterId reg) { Exclude(plan, values.at(reg).objects); });
     }

@@ -27,10 +27,12 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/opcode.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/field_access.h"
+#include "compiler/native/loop_hints.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/array_storage.h"
@@ -329,8 +331,23 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
       builder_.CreateMul(builder_.CreateZExt(count, builder_.getInt64Ty()),
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
       builder_.getInt64(runtime::FieldStorage::KindOffset(0, instruction.index)));
-  const auto address = FieldAddress(ByteAddress(object, sizeof(runtime::HeapObject)),
-                                    *builder_.getInt32(instruction.index), kind_offset);
+  const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
+  const auto type = std::ranges::find(program_.classes, frontend::NonNullableTypeName(receiver),
+                                      &ir::Class::name);
+  llvm::Value* fields = nullptr;
+  if (receiver.kind == Kind::Function || type != program_.classes.end()) {
+    const auto callable = receiver.kind == Kind::Function || type->callable.has_value();
+    fields = ByteAddress(
+        object, callable ? sizeof(runtime::HeapObject) : NativeMemoryLayout::kInlineObjectFields);
+  } else {
+    auto* field_offset = LoadMemory(
+        builder_.getInt8Ty(), ByteAddress(object, NativeMemoryLayout::kObjectInlineFieldOffset),
+        MemoryRegion::HeapHeader);
+    MarkInvariant(*field_offset);
+    fields = builder_.CreateInBoundsGEP(builder_.getInt8Ty(), object,
+                                        builder_.CreateZExt(field_offset, builder_.getInt64Ty()));
+  }
+  const auto address = FieldAddress(fields, *builder_.getInt32(instruction.index), kind_offset);
   EmitFieldAccess(instruction, object, address);
   if (!reading && instruction.index == 0 &&
       source_.value_types.at(instruction.dst).kind == Kind::Function) {
@@ -637,8 +654,7 @@ llvm::Value* FunctionEmitter::LoadArrayStorageField(llvm::Value* array, ArraySto
 }
 
 void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
-  using runtime::NativeMemoryLayout;
-  const auto reading = instruction.opcode == Opcode::GetIndex;
+  const auto reading = instruction.opcode != Opcode::SetIndex;
   const auto array_reg = reading ? instruction.lhs : instruction.dst;
   auto* array = Reference(array_reg);
   auto* index = Payload(reading ? instruction.rhs : instruction.lhs);
@@ -649,45 +665,83 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
     Check(builder_.CreateICmpULT(index, builder_.CreateZExt(length, builder_.getInt64Ty())),
           ExecutionStatus::IndexOutOfBounds);
   }
+  if (instruction.opcode == Opcode::CheckRecordIndex) {
+    Store(instruction.dst, index, {.kind = Kind::Int, .name = frontend::kIntTypeName});
+    return;
+  }
   auto* data = ReadArrayStorage(array, array_reg, ArrayStorageField::Data);
   const auto& element = ArrayElement(instruction);
   auto* storage = ElementStorage(element);
-  auto* address = builder_.CreateGEP(storage, data, index);
-  const auto tagged = storage == NativeRecordType(module_.getContext());
+  // 越界检查或上游范围证明已保证访问在实际分配内，地址运算不会回绕。
+  auto* address = builder_.CreateInBoundsGEP(storage, data, index);
   if (reading) {
-    const auto& type = source_.value_types.at(instruction.dst);
-    llvm::Value* value = nullptr;
-    if (tagged) {
-      value = ReadHeapValue(address, type);
-    } else {
-      auto* loaded = LoadMemory(storage, address, MemoryRegion::Elements);
-      if (storage->isPointerTy() && !element.nullable) {
-        // 构建中的引用槽只供初始化和 GC 使用；已交给脚本的数组满足元素的非空契约。
-        // 使用实际元素布局，不能根据可能已擦除为 dynamic 的目标寄存器猜测空值形状。
-        loaded->setMetadata(llvm::LLVMContext::MD_nonnull,
-                            llvm::MDNode::get(module_.getContext(), {}));
-      }
-      if (storage == builder_.getInt64Ty() && array_reg < array_access_.element_bits.size()) {
-        const auto bits = array_access_.element_bits[array_reg];
-        if (bits != kUnknownArrayElementBits) {
-          loaded->setMetadata(
-              llvm::LLVMContext::MD_range,
-              llvm::MDBuilder(module_.getContext())
-                  .createRange(llvm::APInt(std::numeric_limits<std::uint64_t>::digits, 0),
-                               llvm::APInt(std::numeric_limits<std::uint64_t>::digits, bits + 1)));
-        }
-      }
-      value = loaded;
-      if (storage == builder_.getInt8Ty()) {
-        value = builder_.CreateICmpNE(value, builder_.getInt8(0));
-      }
-    }
-    Store(instruction.dst, value, tagged ? type : ElementValueType(element));
+    EmitIndexRead(instruction, address, element);
   } else {
     auto value = LoadStoredValue(instruction.rhs);
     WriteElement(address, element, value);
     InvalidateArrayIntegerRange(array, array_reg, element);
     EmitWriteBarrier(array, value);
+  }
+}
+
+void FunctionEmitter::EmitIndexRead(const ir::Instruction& instruction,
+                                    llvm::Value* address,
+                                    const layout::Type& element) {
+  const auto array_reg = instruction.lhs;
+  auto* storage = ElementStorage(element);
+  const auto tagged = storage == NativeRecordType(module_.getContext());
+  const auto& type = source_.value_types.at(instruction.dst);
+  llvm::Value* value = nullptr;
+  if (tagged) {
+    value = ReadHeapValue(address, type);
+  } else {
+    auto* loaded = LoadMemory(storage, address, MemoryRegion::Elements);
+    if (storage->isPointerTy() && !element.nullable) {
+      // 构建中的引用槽只供初始化和 GC 使用；已交给脚本的数组满足元素的非空契约。
+      // 使用实际元素布局，不能根据可能已擦除为 dynamic 的目标寄存器猜测空值形状。
+      loaded->setMetadata(llvm::LLVMContext::MD_nonnull,
+                          llvm::MDNode::get(module_.getContext(), {}));
+    }
+    if (storage == builder_.getInt64Ty() && array_reg < array_access_.element_bits.size()) {
+      const auto bits = array_access_.element_bits[array_reg];
+      if (bits != kUnknownArrayElementBits) {
+        loaded->setMetadata(
+            llvm::LLVMContext::MD_range,
+            llvm::MDBuilder(module_.getContext())
+                .createRange(llvm::APInt(std::numeric_limits<std::uint64_t>::digits, 0),
+                             llvm::APInt(std::numeric_limits<std::uint64_t>::digits, bits + 1)));
+      }
+    }
+    value = loaded;
+    if (storage == builder_.getInt8Ty()) {
+      value = builder_.CreateICmpNE(value, builder_.getInt8(0));
+    }
+  }
+  Store(instruction.dst, value, tagged ? type : ElementValueType(element));
+}
+
+void FunctionEmitter::EmitRecordField(const ir::Instruction& instruction) {
+  const auto reading = instruction.opcode == Opcode::GetRecordField;
+  const auto array_reg = reading ? instruction.lhs : instruction.dst;
+  auto* array = Reference(array_reg);
+  const auto record_reg = reading ? instruction.rhs : instruction.lhs;
+  auto* record = Payload(record_reg);
+  const auto& layout =
+      program_.layouts.arrays.at(program_.layouts.array_types.at(instruction.array_type));
+  auto* data = ReadArrayStorage(array, array_reg, ArrayStorageField::Data);
+  // CheckRecordIndex 保存求值时的逻辑索引。资格证明保证借用期间没有结构修改或重入。
+  auto* slot =
+      builder_.CreateAdd(builder_.CreateMul(record, builder_.getInt64(layout.record_fields)),
+                         builder_.getInt64(instruction.index));
+  auto* address = builder_.CreateInBoundsGEP(builder_.getInt64Ty(), data, slot);
+  const auto reg = reading ? instruction.dst : instruction.rhs;
+  const auto& type = source_.value_types.at(reg);
+  if (reading) {
+    auto* storage = type.kind == Kind::Double ? builder_.getDoubleTy() : builder_.getInt64Ty();
+    Store(reg, LoadMemory(storage, address, MemoryRegion::Elements), type);
+  } else {
+    auto* store = StoreMemory(Payload(reg), address, MemoryRegion::Elements);
+    store->setMetadata(kNativeRecordFieldMetadata, llvm::MDNode::get(module_.getContext(), {}));
   }
 }
 

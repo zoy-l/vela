@@ -111,6 +111,44 @@ TEST(HostBuiltinTest, StringOperationsUseCodePointRangesAndUnicodeCase) {
   EXPECT_EQ(lower->Utf8(), "straße 🌍");
 }
 
+TEST(HostBuiltinTest, StringByteOperationsShareScriptContractsAndRootResults) {
+  runtime::Isolate isolate(1);
+  HandleScope scope(isolate);
+  std::optional<Local<String>> replaced;
+  {
+    HandleScope child(isolate);
+    const auto text = CreateString(child, "A中😀");
+    const auto inserted = CreateString(child, "好");
+    ASSERT_TRUE(text);
+    ASSERT_TRUE(inserted);
+    const auto boundary = StringIsCodePointBoundary(child, *text, 2);
+    ASSERT_TRUE(boundary);
+    EXPECT_FALSE(*boundary);
+    const auto offset = StringByteOffsetAt(child, *text, 2);
+    ASSERT_TRUE(offset);
+    EXPECT_EQ(*offset, std::optional<std::int64_t>(4));
+    const auto missing = StringByteOffsetAt(child, *text, -1);
+    ASSERT_TRUE(missing);
+    EXPECT_EQ(*missing, std::nullopt);
+    const auto slice = StringSliceBytes(child, *text, 1, 8);
+    ASSERT_TRUE(slice);
+    EXPECT_EQ(slice->Utf8(), "中😀");
+    const auto invalid = StringSliceBytes(child, *text, 2, 8);
+    ASSERT_FALSE(invalid);
+    EXPECT_EQ(invalid.error().status, ExecutionStatus::IndexOutOfBounds);
+    const auto output = StringReplaceBytes(scope, *text, 1, 4, *inserted);
+    ASSERT_TRUE(output);
+    replaced = *output;
+    const auto padded = CreateString(child, "　A中😀\t");
+    ASSERT_TRUE(padded);
+    const auto trimmed = StringTrim(child, *padded);
+    ASSERT_TRUE(trimmed);
+    EXPECT_EQ(trimmed->Utf8(), text->Utf8());
+  }
+  isolate.heap().Collect();
+  EXPECT_EQ(replaced->Utf8(), "A好😀");
+}
+
 TEST(HostBuiltinTest, ByteArrayCopiesValidateValuesAndSlicesHaveIndependentStorage) {
   runtime::Isolate isolate(1);
   HandleScope scope(isolate);

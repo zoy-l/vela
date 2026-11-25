@@ -1,5 +1,4 @@
 #include "compiler/development/development_session.h"
-#include "compiler/development/reflection_changes.h"
 
 #include <cassert>
 #include <chrono>
@@ -137,7 +136,7 @@ DevelopmentCandidate::DevelopmentCandidate(
     SourceUpdate update,
     SourceCandidate source,
     jit::CompiledImage code,
-    std::unique_ptr<SourceSession> replacement,
+    std::shared_ptr<SourceSession> replacement,
     DevelopmentResult result)
     : session_(std::move(session)),
       update_(std::move(update)),
@@ -152,18 +151,17 @@ DevelopmentSession::Pending::Pending(DevelopmentCandidate source)
 DevelopmentSession::DevelopmentSession(std::string entry,
                                        runtime::NativeBindings bindings,
                                        DevelopmentOptions options,
-                                       std::unique_ptr<jit::Compiler> compiler)
+                                       std::unique_ptr<jit::Compiler> compiler,
+                                       std::shared_ptr<SourceSession> sources)
     : identity_(std::make_shared<const DevelopmentSessionIdentity>()),
       entry_(std::move(entry)),
       bindings_(std::move(bindings)),
       options_(std::move(options)),
       compiler_(std::move(compiler)),
-      sources_(std::make_shared<SourceSession>(entry_,
-                                               options_.diagnostics,
-                                               options_.reflection,
-                                               options_.imports)),
-      isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold,
-                                               options_.gc_scheduling)),
+      sources_(std::move(sources)),
+      isolate_(std::make_unique<runtime::Isolate>(bindings_,
+                                                  options_.gc_threshold,
+                                                  options_.gc_scheduling)),
       endpoint_(isolate_->native_control().endpoint()) {
   isolate_->native_control().SetDebugger(options_.debugger);
 }
@@ -175,13 +173,20 @@ DevelopmentSession::~DevelopmentSession() {
 std::expected<std::unique_ptr<DevelopmentSession>, frontend::Diagnostics>
 DevelopmentSession::Create(std::string entry,
                            runtime::NativeBindings bindings,
-                           DevelopmentOptions options) {
-  auto compiler = jit::Compiler::Create();
-  if (!compiler) {
-    return std::unexpected(std::move(compiler.error()));
+                           DevelopmentOptions options,
+                           std::unique_ptr<jit::Compiler> compiler) {
+  auto sources = compiler->CreateSources({
+      .entry = entry,
+      .diagnostics = options.diagnostics,
+      .reflection = options.reflection,
+      .imports = options.imports,
+  });
+  if (!sources) {
+    return std::unexpected(std::move(sources.error()));
   }
-  return std::unique_ptr<DevelopmentSession>(new DevelopmentSession(
-      std::move(entry), std::move(bindings), std::move(options), std::move(*compiler)));
+  return std::unique_ptr<DevelopmentSession>(
+      new DevelopmentSession(std::move(entry), std::move(bindings), std::move(options),
+                             std::move(compiler), std::move(*sources)));
 }
 
 std::shared_ptr<const CompiledSourceSnapshot> DevelopmentSession::snapshot() const noexcept {
@@ -240,10 +245,20 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     }
   }
   const auto started = Clock::now();
-  std::unique_ptr<SourceSession> replacement;
+  std::shared_ptr<SourceSession> replacement;
   if (operation == DevelopmentOperation::Reload) {
-    replacement = std::make_unique<SourceSession>(entry_, options_.diagnostics, options_.reflection,
-                                                  options_.imports);
+    auto created = compiler_->CreateSources({
+        .entry = entry_,
+        .diagnostics = options_.diagnostics,
+        .reflection = options_.reflection,
+        .imports = options_.imports,
+    });
+    if (!created) {
+      result.status = DevelopmentStatus::CodeError;
+      result.diagnostics = std::move(created.error());
+      return std::unexpected(std::move(result));
+    }
+    replacement = std::move(*created);
   }
   auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update))
                             : base.sources->Prepare(update, retained);
@@ -265,7 +280,8 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     return std::unexpected(std::move(result));
   }
   const auto code_started = Clock::now();
-  auto code = compiler_->Compile(source->snapshot().program, options_.compilation, &code_reuse_);
+  const auto source_snapshot = source->snapshot_owner();
+  auto code = compiler_->CompileSource(source_snapshot, options_.compilation, &code_reuse_);
   result.timings.code = Clock::now() - code_started;
   if (!code) {
     result.status = DevelopmentStatus::CodeError;
@@ -273,10 +289,10 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     return std::unexpected(std::move(result));
   }
   result.timings.native = code->timings;
-  result.diagnostics = source->snapshot().diagnostics;
-  result.timings.frontend = source->snapshot().timings;
+  result.diagnostics = source_snapshot->diagnostics;
+  result.timings.frontend = source_snapshot->timings;
+  result.changes = source_snapshot->changes;
   result.changes.compiled_functions = code->compiled_functions;
-  DescribeReflectionChanges(previous->program, source->snapshot().program, result.changes);
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),
                               std::move(replacement), std::move(result));
 }
@@ -318,7 +334,7 @@ DevelopmentResult DevelopmentSession::Submit(DevelopmentCandidate candidate) {
     const auto started = Clock::now();
     auto& replacement = pending_->replacement;
     replacement = std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold,
-                                                   options_.gc_scheduling);
+                                                     options_.gc_scheduling);
     replacement->SetOutput(isolate_->output());
     auto& dispatch = replacement->native_dispatch();
     const auto published = PublishCode(dispatch, 0, pending_->candidate.code_.image);

@@ -3,25 +3,30 @@
 #include "compiler/native/integer_loop_optimizer.h"
 #include "runtime/native/native_symbols.h"
 
+#include <llvm/ADT/APInt.h>
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/ModRef.h>
 #include <bit>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "base/utf8.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -31,6 +36,7 @@
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_memory_layout.h"
+#include "runtime/native/native_operations.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
@@ -210,11 +216,70 @@ void FunctionEmitter::ClearRoot(std::size_t slot) {
   clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
 }
 
+void FunctionEmitter::EmitStringBoundary(const ir::Instruction& instruction) {
+  auto* string = Reference(instruction.lhs);
+  CheckReference(string);
+  auto* index = Payload(instruction.lhs + 1);
+  llvm::Value* wide_length = nullptr;
+  llvm::Value* data = nullptr;
+  if (const auto constant = string_constant_registers_[instruction.lhs]) {
+    const auto& text = program_.strings.at(*constant);
+    wide_length = builder_.getInt64(text.size());
+    data = builder_.CreateGlobalString(text);
+  } else {
+    auto* length = LoadMemory(builder_.getInt32Ty(),
+                              ByteAddress(string, runtime::NativeMemoryLayout::kObjectLength),
+                              MemoryRegion::HeapHeader);
+    MarkInvariant(*length);
+    wide_length = builder_.CreateZExt(length, builder_.getInt64Ty());
+    data = ByteAddress(string, sizeof(runtime::StringObject));
+  }
+  auto& context = module_.getContext();
+  auto* inside = llvm::BasicBlock::Create(context, "string.boundary.inside", body_);
+  auto* outside = llvm::BasicBlock::Create(context, "string.boundary.outside", body_);
+  auto* done = llvm::BasicBlock::Create(context, "string.boundary.done", body_);
+  // 无符号比较同时排除负索引；末尾是合法边界，但不能解引用末尾字节。
+  builder_.CreateCondBr(builder_.CreateICmpULT(index, wide_length), inside, outside);
+  builder_.SetInsertPoint(inside);
+  auto* byte = builder_.CreateLoad(builder_.getInt8Ty(),
+                                   builder_.CreateInBoundsGEP(builder_.getInt8Ty(), data, index));
+  auto* boundary =
+      builder_.CreateICmpNE(builder_.CreateAnd(byte, builder_.getInt8(kContinuationMask)),
+                            builder_.getInt8(kContinuationTag));
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(outside);
+  auto* end = builder_.CreateICmpEQ(index, wide_length);
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(done);
+  auto* result = builder_.CreatePHI(builder_.getInt1Ty(), 2);
+  result->addIncoming(boundary, inside);
+  result->addIncoming(end, outside);
+  Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
+}
+
 void FunctionEmitter::EmitStringCodePointAt(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* string = Reference(instruction.lhs);
   CheckReference(string);
   auto* index = Payload(instruction.lhs + 1);
+  if (const auto constant = string_constant_registers_[instruction.lhs]) {
+    const auto& text = program_.strings.at(*constant);
+    if (Utf8Length(text) == text.size()) {
+      // 字面量的 ASCII 布局和长度在编译时已知，仍在原指令位置检查索引。
+      Check(builder_.CreateICmpULT(index, builder_.getInt64(text.size())),
+            ExecutionStatus::IndexOutOfBounds);
+      auto* data = builder_.CreateGlobalString(text);
+      auto* point = builder_.CreateLoad(
+          builder_.getInt8Ty(), builder_.CreateInBoundsGEP(builder_.getInt8Ty(), data, index));
+      point->setMetadata(
+          llvm::LLVMContext::MD_range,
+          llvm::MDBuilder(module_.getContext())
+              .createRange(llvm::APInt(CHAR_BIT, 0), llvm::APInt(CHAR_BIT, kContinuationTag)));
+      Store(instruction.dst, builder_.CreateZExt(point, builder_.getInt64Ty()),
+            {.kind = Kind::Int, .name = frontend::kIntTypeName});
+      return;
+    }
+  }
   auto* length =
       LoadMemory(builder_.getInt32Ty(), ByteAddress(string, NativeMemoryLayout::kStringLength),
                  MemoryRegion::HeapHeader);
@@ -368,6 +433,38 @@ void FunctionEmitter::EmitAppendCodePoint(const ir::Instruction& instruction) {
         {.kind = Kind::Null, .name = frontend::kNullTypeName});
 }
 
+std::expected<void, std::string> FunctionEmitter::EmitScalarToString(
+    const ir::Instruction& instruction) {
+  const auto& type = source_.value_types.at(instruction.lhs);
+  if (type.nullable ||
+      (type.kind != Kind::Int && type.kind != Kind::Double && type.kind != Kind::Bool)) {
+    return std::unexpected("native scalar formatting requires a non-null scalar operand");
+  }
+  auto format =
+      module_.getOrInsertFunction(runtime::kNativeScalarToStringSymbol, builder_.getPtrTy(),
+                                  builder_.getPtrTy(), builder_.getPtrTy());
+  auto* string = builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
+  Check(builder_.CreateIsNotNull(string), ExecutionStatus::OutOfMemory);
+  Store(instruction.dst, string, {.kind = Kind::String, .name = frontend::kStringTypeName});
+  return {};
+}
+
+void FunctionEmitter::EmitScalarTextLength(const ir::Instruction& instruction) {
+  const auto& type = source_.value_types.at(instruction.lhs);
+  auto* value = Payload(instruction.lhs);
+  llvm::Value* result = nullptr;
+  if (type.kind == Kind::Bool) {
+    result = builder_.CreateSelect(value, builder_.getInt64(std::string_view("true").size()),
+                                   builder_.getInt64(std::string_view("false").size()));
+  } else {
+    const auto symbol = type.kind == Kind::Int ? runtime::kNativeIntegerTextLengthSymbol
+                                               : runtime::kNativeDoubleTextLengthSymbol;
+    auto length = module_.getOrInsertFunction(symbol, builder_.getInt64Ty(), value->getType());
+    result = builder_.CreateCall(length, {value});
+  }
+  Store(instruction.dst, result, {.kind = Kind::Int, .name = frontend::kIntTypeName});
+}
+
 std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
   const auto builtin = static_cast<Builtin>(instruction.index);
   switch (builtin) {
@@ -387,28 +484,89 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
         return {};
       }
       break;
-    case Builtin::ScalarToString: {
-      const auto& type = source_.value_types.at(instruction.lhs);
-      if (type.nullable ||
-          (type.kind != Kind::Int && type.kind != Kind::Double && type.kind != Kind::Bool)) {
-        return std::unexpected("native scalar formatting requires a non-null scalar operand");
-      }
-      auto format =
-          module_.getOrInsertFunction(runtime::kNativeScalarToStringSymbol, builder_.getPtrTy(),
-                                      builder_.getPtrTy(), builder_.getPtrTy());
-      auto* string =
-          builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
-      Check(builder_.CreateIsNotNull(string), ExecutionStatus::OutOfMemory);
-      Store(instruction.dst, string, {.kind = Kind::String, .name = frontend::kStringTypeName});
+    case Builtin::StringIsCodePointBoundary:
+      EmitStringBoundary(instruction);
+      return {};
+    case Builtin::StringByteOffsetAt: {
+      auto* string = Reference(instruction.lhs);
+      CheckReference(string);
+      auto* index = Payload(instruction.lhs + 1);
+      auto* length = LoadMemory(builder_.getInt32Ty(),
+                                ByteAddress(string, runtime::NativeMemoryLayout::kStringLength),
+                                MemoryRegion::HeapHeader);
+      MarkInvariant(*length);
+      auto& context = module_.getContext();
+      auto* present = llvm::BasicBlock::Create(context, "string.offset.present", body_);
+      auto* absent = llvm::BasicBlock::Create(context, "string.offset.absent", body_);
+      auto* done = llvm::BasicBlock::Create(context, "string.offset.done", body_);
+      builder_.CreateCondBr(
+          builder_.CreateICmpULE(index, builder_.CreateZExt(length, builder_.getInt64Ty())),
+          present, absent);
+      const auto& type = source_.value_types.at(instruction.dst);
+      builder_.SetInsertPoint(present);
+      auto offset =
+          module_.getOrInsertFunction(runtime::kNativeStringByteOffsetSymbol, builder_.getInt64Ty(),
+                                      builder_.getPtrTy(), builder_.getInt32Ty());
+      auto* result =
+          builder_.CreateCall(offset, {string, builder_.CreateTrunc(index, builder_.getInt32Ty())});
+      Store(instruction.dst, MakeOptional(builder_, builder_.getTrue(), result, type), type);
+      builder_.CreateBr(done);
+      builder_.SetInsertPoint(absent);
+      Store(instruction.dst,
+            MakeOptional(builder_, builder_.getFalse(), builder_.getInt64(0), type), type);
+      builder_.CreateBr(done);
+      builder_.SetInsertPoint(done);
       return {};
     }
-    case Builtin::ScalarTextLength: {
-      auto length = module_.getOrInsertFunction(runtime::kNativeScalarTextLengthSymbol,
-                                                builder_.getInt64Ty(), builder_.getPtrTy());
-      Store(instruction.dst, builder_.CreateCall(length, {Pack(Encode(instruction.lhs), 0)}),
-            {.kind = Kind::Int, .name = frontend::kIntTypeName});
+    case Builtin::StringSliceBytes: {
+      auto* string = Reference(instruction.lhs);
+      CheckReference(string);
+      auto slice = module_.getOrInsertFunction(
+          runtime::kNativeStringSliceBytesSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+          builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
+      CheckStatus(builder_.CreateCall(slice, {
+                                                 body_->getArg(0),
+                                                 string,
+                                                 Payload(instruction.lhs + 1),
+                                                 Payload(instruction.lhs + 2),
+                                                 result_,
+                                             }));
+      Store(instruction.dst, builder_.CreateLoad(builder_.getPtrTy(), result_),
+            {.kind = Kind::String, .name = frontend::kStringTypeName});
       return {};
     }
+    case Builtin::StringTrim: {
+      auto* string = Reference(instruction.lhs);
+      CheckReference(string);
+      auto trim = module_.getOrInsertFunction(runtime::kNativeStringTrimSymbol, builder_.getPtrTy(),
+                                              builder_.getPtrTy(), builder_.getPtrTy());
+      auto* result = builder_.CreateCall(trim, {body_->getArg(0), string});
+      Check(builder_.CreateIsNotNull(result), ExecutionStatus::OutOfMemory);
+      Store(instruction.dst, result, {.kind = Kind::String, .name = frontend::kStringTypeName});
+      return {};
+    }
+    case Builtin::StringStartsWith:
+    case Builtin::StringEndsWith: {
+      auto* string = Reference(instruction.lhs);
+      auto* affix = Reference(instruction.lhs + 1);
+      CheckReference(string);
+      CheckReference(affix);
+      auto compare = module_.getOrInsertFunction(runtime::kNativeStringAffixSymbol,
+                                                 builder_.getInt8Ty(), builder_.getPtrTy(),
+                                                 builder_.getPtrTy(), builder_.getInt8Ty());
+      const auto kind = builtin == Builtin::StringStartsWith ? runtime::NativeStringAffix::Prefix
+                                                             : runtime::NativeStringAffix::Suffix;
+      auto* result = builder_.CreateCall(
+          compare, {string, affix, builder_.getInt8(static_cast<std::uint8_t>(kind))});
+      Store(instruction.dst, builder_.CreateICmpNE(result, builder_.getInt8(0)),
+            {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
+      return {};
+    }
+    case Builtin::ScalarToString:
+      return EmitScalarToString(instruction);
+    case Builtin::ScalarTextLength:
+      EmitScalarTextLength(instruction);
+      return {};
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble: {
       const auto& type = source_.value_types.at(instruction.lhs);
@@ -444,6 +602,13 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
       return {};
     case Builtin::StringLength:
     case Builtin::StringByteLength: {
+      if (const auto constant = string_constant_registers_[instruction.lhs]) {
+        const auto& text = program_.strings.at(*constant);
+        const auto length = builtin == Builtin::StringLength ? Utf8Length(text) : text.size();
+        Store(instruction.dst, builder_.getInt64(length),
+              {.kind = Kind::Int, .name = frontend::kIntTypeName});
+        return {};
+      }
       auto* string = Reference(instruction.lhs);
       CheckReference(string);
       const auto offset = builtin == Builtin::StringLength
@@ -707,8 +872,20 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     case Opcode::GetIndex:
     case Opcode::SetIndex:
+    case Opcode::CheckRecordIndex:
       EmitIndex(instruction);
       return {};
+    case Opcode::GetRecordField:
+    case Opcode::SetRecordField:
+      EmitRecordField(instruction);
+      return {};
+    case Opcode::PushRecord: {
+      auto helper = module_.getOrInsertFunction(runtime::kNativePushRecordSymbol, status_type,
+                                                pointer, pointer, pointer, pointer);
+      status = builder_.CreateCall(
+          helper, {context, Reference(instruction.lhs), Reference(instruction.rhs), result_});
+      break;
+    }
     case Opcode::BuiltinCall:
       return EmitBuiltin(instruction);
     case Opcode::StringConcat: {

@@ -68,7 +68,7 @@ void SessionSubmission(benchmark::State& state) {
       session.isolate().heap().Collect();
       const auto& heap = session.isolate().heap();
       state.counters["functions"] =
-          static_cast<double>(session.snapshot()->program.functions.size());
+          static_cast<double>(session.snapshot()->program->functions.size());
       state.counters["source_bytes"] = static_cast<double>(repl.source().size());
       state.counters["heap_live_bytes"] = static_cast<double>(heap.allocated_bytes());
       state.counters["heap_committed_bytes"] = static_cast<double>(heap.committed_bytes());

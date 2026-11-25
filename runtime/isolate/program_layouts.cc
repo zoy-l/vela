@@ -144,7 +144,9 @@ const ArrayLayout* LayoutInstantiation::Array(std::uint32_t index) {
   if (const auto found = cache_->arrays.find(description.name); found != cache_->arrays.end()) {
     stored = found->second;
   } else {
-    stored = isolate_->CreateArrayLayout(Element(description.element));
+    auto layout = Element(description.element);
+    layout.record_fields = description.record_fields;
+    stored = isolate_->CreateArrayLayout(layout);
     cache_->arrays.emplace(description.name, stored);
   }
   return stored;

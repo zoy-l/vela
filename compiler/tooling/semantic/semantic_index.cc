@@ -154,37 +154,45 @@ std::string CompletionSource(const frontend::SourceSnapshot& snapshot, std::size
   return text;
 }
 
-namespace {
-
-frontend::ParseResult LoadSemanticProgram(std::string_view path,
-                                          frontend::ModuleCache& modules,
-                                          std::span<const frontend::SourceInput> overlays) {
-  const auto configuration = compiler::LoadSourceConfiguration(Utf8Path(path));
+SemanticIndex::LoadedProgram SemanticIndex::Load(
+    std::string_view path,
+    frontend::ModuleCache& modules,
+    std::span<const frontend::SourceInput> overlays,
+    compiler::SourceConfigurationCache* configurations) {
+  const auto configuration = (configurations != nullptr)
+                                 ? configurations->Load(Utf8Path(path))
+                                 : compiler::LoadSourceConfiguration(Utf8Path(path));
   if (!configuration) {
     return {
-        .program = {},
-        .diagnostics = {compiler::ConfigurationDiagnostic(configuration.error())},
+        .parsed =
+            {
+                .program = {},
+                .diagnostics = {compiler::ConfigurationDiagnostic(configuration.error())},
+            },
+        .options = {},
     };
   }
   modules.imports = configuration->imports;
-  return frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor);
+  return {
+      .parsed = frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor),
+      .options = configuration->diagnostics,
+  };
 }
-
-frontend::ParseResult LoadSemanticProgram(std::string_view path,
-                                          std::span<const frontend::SourceInput> overlays) {
-  frontend::ModuleCache modules;
-  return LoadSemanticProgram(path, modules, overlays);
-}
-
-}  // namespace
 
 SemanticIndex::SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays)
-    : SemanticIndex(LoadSemanticProgram(path, overlays)) {}
+    : SemanticIndex([&] {
+        frontend::ModuleCache modules;
+        return Load(path, modules, overlays, nullptr);
+      }()) {}
 
 SemanticIndex::SemanticIndex(std::string_view path,
                              frontend::ModuleCache& modules,
-                             std::span<const frontend::SourceInput> overlays)
-    : SemanticIndex(LoadSemanticProgram(path, modules, overlays)) {}
+                             std::span<const frontend::SourceInput> overlays,
+                             compiler::SourceConfigurationCache* configurations)
+    : SemanticIndex(Load(path, modules, overlays, configurations)) {}
+
+SemanticIndex::SemanticIndex(LoadedProgram loaded)
+    : SemanticIndex(std::move(loaded.parsed), loaded.options) {}
 
 SemanticIndex::SemanticIndex(frontend::ParseResult loaded, frontend::DiagnosticOptions options)
     : program_(std::move(loaded.program)),
@@ -480,9 +488,6 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
             DeclareLocal(&parameter, parameter.location, std::move(detail), body,
                          sources_[body.source].tokens[TokenAt(parameter.location)].offset)) {
       symbols_[*symbol].role = Symbol::Role::Parameter;
-      if (function.body && parameter.location.source_id == 0) {
-        parameter_definitions_.insert(*symbol);
-      }
     }
   }
   VisitStatement(function.body.get(), body);
@@ -690,13 +695,6 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   }
   for (const auto* child : ExpressionOperands(*expression)) {
     VisitExpression(child, scope);
-  }
-  if (expression->kind == Expression::Kind::Binary && expression->operation == TokenKind::Equal &&
-      expression->left && expression->left->kind == Expression::Kind::Name) {
-    const auto reference = references_.find(KeyAt(expression->left->location));
-    if (reference != references_.end()) {
-      reference->second.is_read = false;
-    }
   }
   for (const auto& element : expression->elements) {
     VisitExpression(element.get(), scope);
@@ -925,15 +923,39 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
   if (found == references_.end()) {
     return std::nullopt;
   }
-  const auto& symbol = symbols_[found->second.symbol];
-  const auto& source = sources_[symbol.key.first];
-  if (source.path.starts_with(frontend::kStandardSourcePrefix)) {
+  auto definition = DefinitionFor(found->second.symbol, encoding);
+  if (definition.path.starts_with(frontend::kStandardSourcePrefix)) {
     return std::nullopt;
   }
-  return Definition{
+  return definition;
+}
+
+Definition SemanticIndex::DefinitionFor(std::size_t index, PositionEncoding encoding) const {
+  const auto& symbol = symbols_[index];
+  return LocationFor(symbol.key, symbol.length, encoding);
+}
+
+Definition SemanticIndex::LocationFor(Key key,
+                                      std::size_t length,
+                                      PositionEncoding encoding) const {
+  const auto& source = sources_[key.first];
+  return {
       .path = source.path,
-      .range = source.lines.RangeAt(source.text, symbol.key.second, symbol.length, encoding),
+      .range = source.lines.RangeAt(source.text, key.second, length, encoding),
   };
+}
+
+std::optional<Definition> SemanticIndex::DefinitionFor(const frontend::MemberReference& member,
+                                                       PositionEncoding encoding) const {
+  const auto members = members_.find(member.owner);
+  if (members == members_.end()) {
+    return std::nullopt;
+  }
+  const auto symbol = members->second.find(member.member);
+  if (symbol == members->second.end()) {
+    return std::nullopt;
+  }
+  return DefinitionFor(symbol->second, encoding);
 }
 
 std::string SemanticIndex::DocumentationAt(SourceLocation location) const {

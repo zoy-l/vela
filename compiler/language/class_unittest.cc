@@ -58,7 +58,7 @@ func main(): int {
 let calls = 0;
 func argument(): int { calls++; return 21; }
 interface Reader { read(value: int): int; }
-class Base implements Reader { read(value: int): int { return 0; } }
+class Base implements Reader { read(_value: int): int { return 0; } }
 class Child extends Base { override read(value: int): int { return value; } }
 func use(value: Base?, reader: Reader?): int {
   const first = value?.read(argument()) ?? 0;
@@ -120,8 +120,8 @@ func use(value: Base): int {
 func main(): int { return use(Child()); }
 )",
                              R"(
-class Base { read<T>(value: T): int { return 1; } }
-class Child extends Base { override read<U>(value: U): int { return 21; } }
+class Base { read<T>(_value: T): int { return 1; } }
+class Child extends Base { override read<U>(_value: U): int { return 21; } }
 func use(value: Base): int {
   const bound: (int) => int = value.read;
   return value.read<int>(0) + bound(1);
@@ -129,9 +129,9 @@ func use(value: Base): int {
 func main(): int { return use(Child()); }
 )",
                              R"(
-class Base<T> { read<U>(value: U): int { return 1; } }
+class Base<T> { read<U>(_value: U): int { return 1; } }
 class Child<T> extends Base<T> {
-  override read<V>(value: V): int { return 21; }
+  override read<V>(_value: V): int { return 21; }
 }
 func use<T extends Base<int>>(value: T): int {
   const bound: (string) => int = value.read;
@@ -197,7 +197,7 @@ func main(): int { const value = Child(42); return observed; }
 )",
                              R"(
 enum Choice { first, second }
-class Base { read(value: Choice): Choice { return Choice.first; } }
+class Base { read(_value: Choice): Choice { return Choice.first; } }
 class Child extends Base { override read(value: Choice): Choice { return value; } }
 func use(value: Base): int {
   const bound: (Choice) => Choice = value.read;
@@ -487,6 +487,87 @@ func main(): int {
 }
 )"));
 
+INSTANTIATE_TEST_SUITE_P(InheritedSignatures,
+                         ClassConstructionTest,
+                         testing::Values(
+                             R"(
+class Base<P> {
+  props: P;
+  constructor { if (this.ready() != 2) throw Error(message: 'uninitialized child'); }
+  ready(): int { return 0; }
+}
+class Child extends Base<int> {
+  private adjustment: int = 2;
+  override ready(): int { return this.adjustment; }
+}
+func main(): int { return Child(props: 40).props + 2; }
+)",
+                             R"(
+class Root<T> { value: T; }
+class Middle<U> extends Root<U[]> {}
+class Leaf<V> extends Middle<V> {}
+type Numbers<T> = Leaf<T>;
+func main(): int { return Numbers(value: [42]).value[0]; }
+)",
+                             R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Root {
+  value: int;
+  constructor(value: int = initial(), answer: int = value + 2) { this.value = answer; }
+}
+class Middle extends Root {}
+class Leaf extends Middle {}
+func main(): int {
+  const first = Leaf();
+  const second = Leaf(answer: 42, value: 1);
+  const third = Leaf(40);
+  return calls == 1 && first.value == 42 && second.value == 42 ? third.value : 0;
+}
+)",
+                             R"(
+let order = '';
+func mark(label: string): int { order += label; return 42; }
+class Root {
+  value: int = mark('base');
+  constructor(value: int = mark('default')) { this.value = value; order += 'body'; }
+}
+class Leaf extends Root { private state: int = mark('child'); }
+func main(): int {
+  const value = Leaf();
+  return order == 'childbasedefaultbody' ? value.value : 0;
+}
+)",
+                             R"(
+// 生成字段构造的默认值与显式参数默认值走不同路径，二者分别验证单次求值。
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Root { value: int = initial(); bonus: int = 2; }
+class Middle extends Root {}
+class Leaf extends Middle {}
+func main(): int {
+  const supplied = Leaf(value: 41, bonus: 1);
+  const omitted = Leaf();
+  return calls == 1 && supplied.value + supplied.bonus == 42 ? omitted.value + omitted.bonus : 0;
+}
+)",
+                             R"(
+class Base<T> {
+  value: T;
+  constructor(initial: T) { this.value = initial; }
+}
+class Child<U> extends Base<U> {}
+func main(): int { return Child(initial: 42).value; }
+)",
+                             R"(
+class Root {
+  value: string?;
+  constructor(value: string? = 'default') { this.value = value; }
+}
+class Leaf extends Root {}
+func main(): int { return Leaf().value == 'default' && Leaf(null).value == null ? 42 : 0; }
+)"));
+
 struct ClassError final {
   std::string_view source;
   std::string_view message;
@@ -528,6 +609,14 @@ INSTANTIATE_TEST_SUITE_P(
         ClassError{"class A { value: int; } class B extends A { bonus: int; }", "must call super"},
         ClassError{"class A { value: int; } class B extends A { constructor {} }",
                    "must call super"},
+        ClassError{"class A { private constructor() {} } class B extends A {}",
+                   "cannot inherit a private constructor"},
+        ClassError{"class A { value: int; } class B extends A {} "
+                   "func main(): B { return B(42); }",
+                   "must be named"},
+        ClassError{"class A { value: int; } class B extends A {} "
+                   "func main(): B { return B(); }",
+                   "missing argument 'value'"},
         ClassError{"class A {} class B extends A { constructor { super(); super(); } }",
                    "exactly once"},
         ClassError{"class A { value: int; } "

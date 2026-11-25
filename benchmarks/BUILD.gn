@@ -167,6 +167,15 @@ action("reflection_native_inputs") {
   deps = [ "//compiler:vela" ]
 }
 
+source_set("standard_api_workloads") {
+  testonly = true
+  sources = [
+    "standard_api_workloads.cc",
+    "standard_api_workloads.h",
+  ]
+  deps = [ "//base" ]
+}
+
 executable("vela_benchmarks") {
   testonly = true
   sources = [
@@ -210,6 +219,7 @@ executable("vela_benchmarks") {
   deps = [
     ":jit_benchmark_support",
     ":reflection_native_inputs",
+    ":standard_api_workloads",
     "//base:json",
     "//base:temporary_directory",
     "//compiler:development",
@@ -396,6 +406,50 @@ action("host_interop_inputs") {
   deps = [ "//compiler:vela" ]
 }
 
+standard_api_directory = "$target_gen_dir/standard_api_native"
+standard_api_object = "$standard_api_directory/workload.o"
+if (target_os == "win") {
+  standard_api_object = "$standard_api_directory/workload.obj"
+}
+standard_api_names = [
+  "input",
+  "math_atan2",
+  "math_cbrt",
+  "math_hypot",
+  "math_remainder",
+  "string_boundary",
+  "string_slice_bytes",
+  "string_replace_bytes",
+  "string_byte_offset",
+  "string_trim",
+]
+action("standard_api_native_inputs") {
+  testonly = true
+  script = "//tools/standard_api_benchmarks.py"
+  inputs = [ "//tools/aot_benchmarks.py" ]
+  outputs = [
+    standard_api_object,
+    "$standard_api_object.h",
+    "$standard_api_object.aot.json",
+    "$standard_api_directory/main.vela",
+    "$standard_api_directory/entries.h",
+    "$standard_api_directory/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--output",
+    rebase_path(standard_api_directory, root_build_dir),
+  ]
+  foreach(name, standard_api_names) {
+    source = "workloads/$name.vela"
+    inputs += [ source ]
+    outputs += [ "$standard_api_directory/$name.vela" ]
+    args += [ rebase_path(source, root_build_dir) ]
+  }
+  deps = [ "//compiler:vela" ]
+}
+
 executable("vela_aot_benchmarks") {
   testonly = true
   sources = [
@@ -417,12 +471,14 @@ executable("vela_aot_benchmarks") {
     "reload_benchmark.cc",
     "reload_scaling_benchmark.cc",
     "repeated_field_benchmark.cc",
+    "standard_api_aot_benchmark.cc",
     algorithms_object,
     aot_object,
     host_interop_object,
     map_literal_object,
     native_call_object,
     native_class_object,
+    standard_api_object,
   ]
   include_dirs = [ root_gen_dir ]
   benchmark_source = rebase_path("aot_workloads.vela", "")
@@ -442,6 +498,8 @@ executable("vela_aot_benchmarks") {
     ":native_class_host",
     ":native_class_inputs",
     ":native_class_paths",
+    ":standard_api_native_inputs",
+    ":standard_api_workloads",
     "//compiler:aot",
     "//compiler:checkpoint_publication",
     "//compiler:development",

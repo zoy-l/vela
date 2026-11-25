@@ -1,0 +1,70 @@
+# Vela
+
+> Vela is a statically typed scripting language for native C++ applications.
+> This index helps AI assistants write Vela programs, tests, and mocks.
+
+Vela is in active development. Use its own language and SDK contracts rather than
+assuming TypeScript, JavaScript, or Dart compatibility. Examples use `.vela` files.
+Paths below are relative to the repository root.
+
+## Start here
+
+- [Vela language, testing, and mocking reference](llms-full.txt): Self-contained
+  practical guide with executable examples, common mistakes, and validation commands.
+- [Documentation index](docs/README.md): English and Simplified Chinese topic references.
+- [Runnable examples](examples/README.md): Existing programs and their expected results.
+- [Language roadmap](docs/en/roadmap.md): Implemented features and remaining acceptance work.
+
+## Language syntax and types
+
+- [Basic contracts](docs/en/language_basics.md): Scope, nullability, switch, and diagnostics.
+- [Core language](docs/en/core_language.md): Functions, classes, interfaces, enums,
+  match, construction, and collections.
+- [Type inference](docs/en/type_inference.md): Contextual lambdas and generic inference.
+- [Generics](docs/en/generics.md): Type parameters, bounds, specialization, and invariance.
+- [Modules](docs/en/modules.md): Exports, relative imports, aliases, and SDK imports.
+- [Exceptions](docs/en/exceptions.md): Typed catch, throwable objects, and finally.
+- [Async and Future](docs/en/async_tasks.md): Async functions, composition, and scheduling.
+- [Program lifecycle](docs/zh-CN/program_lifecycle.md): Main, root Futures, and task shutdown.
+
+## Standard APIs
+
+- [Standard library](docs/en/standard_library.md): Default globals, Math, time, random,
+  collections, and output.
+- [Arrays](docs/en/arrays.md): Growable `T[]`, mutation, callbacks, and bounds.
+- [Strings](docs/en/strings.md): UTF-8, interpolation, code points, and mutable builders.
+- [Numeric parsing](docs/en/numeric_parse.md): Explicit string-to-number conversions.
+- [String case](docs/en/string_case.md): Unicode upper/lower case conversion.
+- [Regular expressions](docs/en/regexp.md): RegExp construction, matching, and captures.
+- [Date and time](docs/en/time.md): Unix milliseconds, strict ISO input, and UTC conversion.
+- [JSON and dynamic](docs/en/json.md): Checked dynamic operations and JSON value shapes.
+- [Typed JSON](docs/en/typed_json.md): Explicit target types and constructor-based decoding.
+- [Byte storage](docs/en/byte_data.md): ByteArray, ByteData views, and endianness.
+- [Reflection](docs/zh-CN/reflection.md): Registration, descriptors, and checked invocation.
+
+## Tests and mocks
+
+- [Testing framework](docs/zh-CN/testing.md): `sdk:test`, `vela.json`, discovery,
+  lifecycle hooks, matchers, async expectations, timeouts, and reporters.
+- [Mock framework](docs/zh-CN/testing.md#12-mock-扩展): `sdk:mock`, interface generation,
+  stubbing, argument matching, capture, verification, and async call observation.
+- [Test SDK declarations](compiler/sdk/test.vela): Exact exported test and matcher APIs.
+- [Mock SDK declarations](compiler/sdk/mock.vela): Exact exported mocking APIs.
+
+Use `test()` for synchronous and asynchronous tests. Generate interface mocks with
+`vela mock`; configure and verify `.calls`, pass `.object` to application code,
+and manage history through `.control`. Every real mock call needs a stub, including
+void methods. Create a new `MockSession` inside each test or its `setUp`.
+
+## Tools and host integration
+
+- [Source tools](docs/en/source_tooling.md): `vela check`, formatter, documentation, and LSP.
+- [Project and test commands](docs/zh-CN/testing.md): Test configuration and CLI options.
+- [Native embedding](docs/en/native_embedding.md): C++ application integration and handles.
+- [C++ class bindings](docs/zh-CN/native_class_bindings.md): Typed host classes and generation.
+- [Native AOT](docs/en/aot.md): Executable, object, and static-library output contracts.
+
+## Optional
+
+- [Repository contributor rules](AGENTS.md): Read when modifying Vela itself.
+- [Development workflow](.agents/development_workflow.md): Compiler build and validation commands.

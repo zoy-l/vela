@@ -177,7 +177,9 @@ func main(): int {
           .text = R"(
 import 'sdk:test';
 class Custom implements Matcher {
-  match(actual: dynamic): MatchResult { return MatchResult(success: true, description: 'custom'); }
+  match(actual: dynamic): MatchResult {
+    return MatchResult(success: actual == 42, description: 'custom');
+  }
 }
 export func valid(): bool {
   const matcher: Matcher = Custom();

@@ -44,6 +44,7 @@ struct InstructionEffects final {
 
 // 普通控制流分析不跨宿主实现、异步挂起或异常处理边。
 [[nodiscard]] bool CanAnalyzeSynchronousFunction(const Function& function);
+[[nodiscard]] bool IsTrivialConstructor(const Function& function);
 
 [[nodiscard]] inline bool IsBackJump(const Instruction& instruction, std::size_t index) {
   return IsJumpOpcode(instruction.opcode) && instruction.index <= index;

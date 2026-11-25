@@ -1,7 +1,6 @@
 #include "compiler/native/root_store_optimizer.h"
 
 #include <algorithm>
-#include <cstddef>
 
 #include <gtest/gtest.h>
 #include <llvm/IR/Function.h>

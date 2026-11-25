@@ -4,76 +4,102 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <functional>
+#include <iterator>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
-
-#include <efsw/efsw.hpp>
-
-#include "base/path.h"
+#include <vector>
 
 namespace vela {
 
-DirectoryWatcher::DirectoryWatcher() {
-  watcher_.watch();
+DirectoryWatcher::DirectoryWatcher(std::function<void()> changed) : changed_(std::move(changed)) {}
+
+DirectoryWatcher::~DirectoryWatcher() {
+  CloseNative();
 }
 
 bool DirectoryWatcher::IsWatching(const std::filesystem::path& directory,
                                   DirectoryWatchScope scope) const {
+  const std::scoped_lock lock(native_mutex_);
   const auto found = subscriptions_.find(directory);
-  return found != subscriptions_.end() &&
-         (scope == DirectoryWatchScope::Direct || found->second.scope == scope);
+  return found != subscriptions_.end() && found->second.Covers(scope);
 }
 
 std::expected<void, std::string> DirectoryWatcher::Watch(const std::filesystem::path& directory,
                                                          DirectoryWatchScope scope) {
-  if (IsWatching(directory, scope)) {
-    return {};
-  }
+  const std::scoped_lock lock(native_mutex_);
   const auto found = subscriptions_.find(directory);
   if (found != subscriptions_.end()) {
-    // efsw 不接受同路径的重复注册；升级期间的事件由下一次完整捕获补齐。
-    Unwatch(directory);
+    if (found->second.Covers(scope)) {
+      return {};
+    }
+    RemoveNative(found->second.subscription_id);
+    subscriptions_.erase(found);
+    // 订阅范围变化期间，完整捕获补齐旧订阅无法观察到的后代变化。
     Invalidate();
   }
-  const auto watch_id =
-      watcher_.addWatch(PathText(directory), this, scope == DirectoryWatchScope::Descendants);
-  if (watch_id < 0) {
-    return std::unexpected(efsw::Errors::Log::getLastErrorLog());
+#ifndef __APPLE__
+  if (failure_) {
+    return std::unexpected(*failure_);
   }
-  subscriptions_.emplace(directory, Subscription{.id = watch_id, .scope = scope});
+#endif
+  const auto subscription_id = next_subscription_++;
+  const auto added = AddNative(directory, scope, subscription_id);
+  if (!added) {
+    RemoveNative(subscription_id);
+    return added;
+  }
+#ifndef __APPLE__
+  if (!reader_.joinable()) {
+    reader_ = std::thread([this] { ReadEvents(); });
+  }
+#endif
+  subscriptions_.emplace(directory,
+                         Subscription{.subscription_id = subscription_id, .scope = scope});
   return {};
 }
 
 void DirectoryWatcher::Unwatch(const std::filesystem::path& directory) {
+  const std::scoped_lock lock(native_mutex_);
   const auto found = subscriptions_.find(directory);
   if (found != subscriptions_.end()) {
-    watcher_.removeWatch(found->second.id);
+    RemoveNative(found->second.subscription_id);
     subscriptions_.erase(found);
   }
 }
 
 std::expected<void, DirectoryWatchError> DirectoryWatcher::Rebind() {
-  const auto subscriptions = std::exchange(subscriptions_, {});
-  for (const auto& [directory, subscription] : subscriptions) {
-    static_cast<void>(directory);
-    watcher_.removeWatch(subscription.id);
+  decltype(subscriptions_) subscriptions;
+  {
+    const std::scoped_lock lock(native_mutex_);
+    subscriptions = std::exchange(subscriptions_, {});
+    for (const auto& [directory, subscription] : subscriptions) {
+      static_cast<void>(directory);
+      RemoveNative(subscription.subscription_id);
+    }
   }
+  std::optional<DirectoryWatchError> failure;
   for (const auto& [directory, subscription] : subscriptions) {
     std::error_code error;
     const auto exists = std::filesystem::exists(directory, error);
     if (error) {
-      return std::unexpected(
-          DirectoryWatchError{.directory = directory, .message = error.message()});
+      if (!failure) {
+        failure = DirectoryWatchError{.directory = directory, .message = error.message()};
+      }
+      continue;
     }
     if (exists) {
       const auto watched = Watch(directory, subscription.scope);
-      if (!watched) {
-        return std::unexpected(
-            DirectoryWatchError{.directory = directory, .message = watched.error()});
+      if (!watched && !failure) {
+        failure = DirectoryWatchError{.directory = directory, .message = watched.error()};
       }
     }
+  }
+  if (failure) {
+    return std::unexpected(std::move(*failure));
   }
   return {};
 }
@@ -87,47 +113,40 @@ FileChanges DirectoryWatcher::Drain(std::chrono::milliseconds timeout) {
   return std::exchange(changes_, {});
 }
 
-void DirectoryWatcher::handleFileAction(efsw::WatchID /*watch_id*/,
-                                        const std::string& directory,
-                                        const std::string& filename,
-                                        efsw::Action action,
-                                        const std::string& old_filename) {
-  const auto parent = Utf8Path(directory);
-  const auto path = (parent / Utf8Path(filename)).lexically_normal();
-  const auto kind =
-      action == efsw::Actions::Modified ? FileChangeKind::Content : FileChangeKind::Identity;
+void DirectoryWatcher::Record(std::vector<FileChange>& changes) {
   const std::scoped_lock lock(mutex_);
-  constexpr std::size_t kMaximumPendingEvents = 4096;
-  if (changes_.invalidated) {
+  if (changes_.invalidated || changes.empty()) {
     return;
   }
-  const auto moved = action == efsw::Actions::Moved;
-  const std::size_t event_count = moved ? 2 : 1;
-  if (changes_.paths.size() + event_count > kMaximumPendingEvents) {
+  constexpr std::size_t kMaximumPendingEvents = 4096;
+  const auto notify = changes_.paths.empty();
+  if (changes.size() > kMaximumPendingEvents - changes_.paths.size()) {
     changes_.paths.clear();
     changes_.invalidated = true;
   } else {
-    if (moved) {
-      changes_.paths.push_back({
-          .path = (parent / Utf8Path(old_filename)).lexically_normal(),
-          .kind = FileChangeKind::Identity,
-      });
-    }
-    changes_.paths.push_back({.path = path, .kind = kind});
+    changes_.paths.insert(changes_.paths.end(), std::make_move_iterator(changes.begin()),
+                          std::make_move_iterator(changes.end()));
   }
-  available_.notify_one();
-}
-
-void DirectoryWatcher::handleMissedFileActions(efsw::WatchID /*watch_id*/,
-                                               const std::string& /*directory*/) {
-  Invalidate();
+  if (notify) {
+    NotifyChanged();
+  }
 }
 
 void DirectoryWatcher::Invalidate() {
   const std::scoped_lock lock(mutex_);
+  const auto notify = !changes_.invalidated && changes_.paths.empty();
   changes_.paths.clear();
   changes_.invalidated = true;
+  if (notify) {
+    NotifyChanged();
+  }
+}
+
+void DirectoryWatcher::NotifyChanged() {
   available_.notify_one();
+  if (changed_) {
+    changed_();
+  }
 }
 
 }  // namespace vela

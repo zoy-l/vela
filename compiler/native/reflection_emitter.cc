@@ -75,7 +75,8 @@ void FunctionEmitter::CacheReflectionMembers() {
 llvm::Value* FunctionEmitter::ReflectionCacheAddress(std::size_t offset) {
   const auto& instruction = source_.instructions[instruction_index_];
   auto* handle = LoadMemory(
-      builder_.getPtrTy(), ByteAddress(Reference(instruction.lhs + 1), sizeof(runtime::HeapObject)),
+      builder_.getPtrTy(),
+      ByteAddress(Reference(instruction.lhs + 1), runtime::NativeMemoryLayout::kInlineObjectFields),
       MemoryRegion::FieldPayloads);
   handle->setMetadata(
       llvm::LLVMContext::MD_tbaa,
@@ -258,7 +259,12 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
   auto* indirect = load(builder_.getInt8Ty(), offsetof(ReflectedFieldCache, reloadable));
   builder_.CreateCondBr(builder_.CreateICmpNE(indirect, builder_.getInt8(0)), reloadable, fixed);
   builder_.SetInsertPoint(fixed);
-  auto* inline_storage = ByteAddress(receiver, sizeof(runtime::HeapObject));
+  auto* field_offset =
+      LoadMemory(builder_.getInt8Ty(),
+                 ByteAddress(receiver, runtime::NativeMemoryLayout::kObjectInlineFieldOffset),
+                 MemoryRegion::HeapHeader);
+  auto* inline_storage = builder_.CreateInBoundsGEP(
+      builder_.getInt8Ty(), receiver, builder_.CreateZExt(field_offset, builder_.getInt64Ty()));
   builder_.CreateBr(access);
   builder_.SetInsertPoint(reloadable);
   auto* storage = LoadInstanceStorage(builder_, receiver);

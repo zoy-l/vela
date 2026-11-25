@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -403,8 +404,12 @@ struct Program final {
     std::string path;
     SourceLocation location;
     std::string alias;
+    SourceLocation diagnostic_location;
+    std::size_t diagnostic_length = 0;
   };
   std::vector<Import> imports;
+  // 模块绑定按实际解析结果标记未使用的导入；checker 成功后统一发布诊断。
+  std::vector<Import> unused_imports;
   std::vector<SourceFile> sources;
   // 加载器解析后的导入目标，按 source_id 和原始 import 顺序索引；不完整图可缺少目标。
   std::vector<std::vector<std::uint32_t>> import_sources;

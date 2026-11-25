@@ -34,16 +34,20 @@ std::optional<std::uint32_t> ClassLayout::FieldIndex(DeclarationId field) const 
 
 std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept {
   if (object.layout->storage() == ClassStorage::Reloadable) {
-    return static_cast<InstanceStorage*>(object.native_payload)->fields();
+    return static_cast<InstanceStorage*>(object.native_payload())->fields();
   }
-  return {StorageAfter<std::byte>(object), FieldStorage::Size(object.auxiliary_length)};
+  const auto header = std::as_writable_bytes(std::span(&object, 1));
+  return {header.subspan(object.inline_field_offset).data(),
+          FieldStorage::Size(object.auxiliary_length)};
 }
 
 std::span<const std::byte> ObjectFieldStorage(const HeapObject& object) noexcept {
   if (object.layout->storage() == ClassStorage::Reloadable) {
-    return static_cast<const InstanceStorage*>(object.native_payload)->fields();
+    return static_cast<const InstanceStorage*>(object.native_payload())->fields();
   }
-  return {StorageAfter<std::byte>(object), FieldStorage::Size(object.auxiliary_length)};
+  const auto header = std::as_bytes(std::span(&object, 1));
+  return {header.subspan(object.inline_field_offset).data(),
+          FieldStorage::Size(object.auxiliary_length)};
 }
 
 InstanceStorage* Heap::AllocateInstanceStorage(std::uint32_t count) noexcept {
@@ -94,7 +98,7 @@ void Heap::ReleaseInstance(HeapObject& object) noexcept {
   if (object.layout->storage() == ClassStorage::Inline) {
     return;
   }
-  auto& storage = *static_cast<InstanceStorage*>(object.native_payload);
+  auto& storage = *static_cast<InstanceStorage*>(object.native_payload());
   UnregisterInstance(object, storage);
   ReleaseInstanceStorage(storage);
 }
@@ -106,7 +110,7 @@ void Heap::AppendInstances(const NominalType& type, std::vector<Value>& instance
 }
 
 InstanceStorage& Heap::InstanceFields(HeapObject& object) noexcept {
-  return *static_cast<InstanceStorage*>(object.native_payload);
+  return *static_cast<InstanceStorage*>(object.native_payload());
 }
 
 std::optional<Value> Heap::GetField(const HeapObject& object, std::uint32_t index) noexcept {
@@ -191,7 +195,7 @@ void InstanceMigration::Commit() noexcept {
   auto& previous = Heap::InstanceFields(object);
   auto& storage = *storage_;
   heap_->UnregisterInstance(object, previous);
-  object.native_payload = &storage;
+  object.SetNativePayload(&storage);
   object.layout = layout_;
   heap_->RegisterInstance(object, storage);
   const auto fields = storage.fields();

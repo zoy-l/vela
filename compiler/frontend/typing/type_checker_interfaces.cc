@@ -163,12 +163,14 @@ void TypeChecker::CheckInterfaceImplementation(ClassInfo& owner, const std::stri
 }
 
 void TypeChecker::RegisterClassDispatch(ClassInfo& owner) {
-  if (owner.type.is_abstract || !owner.declaration->native_key.empty()) {
+  if (!owner.declaration->native_key.empty()) {
     return;
   }
   const auto* ancestor = &owner;
   while (ancestor != nullptr) {
-    RegisterDispatchImplementer(owner, std::string(ancestor->type.name));
+    if (!owner.type.is_abstract) {
+      RegisterDispatchImplementer(owner, std::string(ancestor->type.name));
+    }
     for (const auto& method : ancestor->declaration->methods) {
       if (!method.IsVirtualMethod() || method.application) {
         continue;
@@ -201,7 +203,7 @@ void TypeChecker::MergeBaseClass(std::string_view name) {
     }
     return;
   }
-  auto found = classes_.find(name);
+  const auto found = classes_.find(name);
   if (found == classes_.end()) {
     visiting_classes_.erase(name);
     return;
@@ -222,6 +224,14 @@ void TypeChecker::MergeBaseClass(std::string_view name) {
 }
 
 void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) {
+  if (!info.declaration->constructor && info.constructor.parameters.empty()) {
+    if (base.constructor.visibility == Visibility::Private) {
+      AddDiagnostic(info.declaration->location, "cannot inherit a private constructor");
+    }
+    info.constructor = base.constructor;
+    info.constructor.return_type = info.type;
+    info.constructor_kind = base.constructor_kind;
+  }
   const auto own_fields = info.field_order;
   for (const auto& field_name : own_fields) {
     info.fields.at(field_name).index += static_cast<std::uint32_t>(base.field_order.size());

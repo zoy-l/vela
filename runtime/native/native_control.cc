@@ -54,9 +54,11 @@ std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
 }
 
 NativeControl::NativeControl(std::weak_ptr<std::counting_semaphore<>> wakeup)
-    : queue_(std::make_shared<NativeSafepointQueue>()), state_{.requests = &queue_->requests} {
+    : queue_(std::make_shared<NativeSafepointQueue>()) {
+  auto& control = queue_->control;
+  control.requests = &queue_->requests;
   if (const auto limit = CurrentNativeStackLimit()) {
-    state_.callback_stack_limit = *limit;
+    control.callback_stack_limit = *limit;
   }
   queue_->wakeup = std::move(wakeup);
 }
@@ -92,15 +94,15 @@ void NativeControl::RequestStop() const noexcept {
 }
 
 bool NativeControl::HasHostBorrow() const noexcept {
-  return state_.host_borrows != 0;
+  return queue_->control.host_borrows != 0;
 }
 
 void NativeControl::EnterInitialization() noexcept {
-  ++state_.initializations;
+  ++queue_->control.initializations;
 }
 
 void NativeControl::ExitInitialization() noexcept {
-  --state_.initializations;
+  --queue_->control.initializations;
 }
 
 bool NativeControl::CanPublish() const noexcept {
@@ -108,7 +110,7 @@ bool NativeControl::CanPublish() const noexcept {
 }
 
 bool NativeControl::IsInitializing() const noexcept {
-  return state_.initializations != 0;
+  return queue_->control.initializations != 0;
 }
 
 std::expected<void, NativeSafepointError> NativeControl::ScheduleSafepoint(
@@ -131,7 +133,7 @@ void NativeControl::CancelSafepoint() noexcept {
 }
 
 ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
-  if (IsStopRequested() || HasHostBorrow() || processing_) {
+  if (!CanProcessSafepoint()) {
     return Poll();
   }
   processing_ = true;
@@ -181,6 +183,16 @@ NativeInitializationScope::~NativeInitializationScope() {
 ExecutionStatus NativeControl::Poll() const noexcept {
   return IsStopRequested() && !HasHostBorrow() ? ExecutionStatus::ExecutionStopped
                                                : ExecutionStatus::Returned;
+}
+
+bool NativeControl::CanProcessSafepoint() const noexcept {
+  return !IsStopRequested() && !HasHostBorrow() && !processing_;
+}
+
+bool NativeControl::HasReadySafepoint() const noexcept {
+  const auto requests = queue_->requests.load(std::memory_order_acquire);
+  return CanProcessSafepoint() && ((requests & kQueuedAction) != 0 ||
+                                   ((requests & kPendingPublication) != 0 && CanPublish()));
 }
 
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept {

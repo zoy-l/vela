@@ -125,7 +125,7 @@ func main(): int {
 class DomainFailure {}
 class Throwing implements Matcher {
   original: DomainFailure;
-  match(actual: dynamic): MatchResult { throw this.original; }
+  match(_actual: dynamic): MatchResult { throw this.original; }
 }
 func main(): int {
   const original = DomainFailure();

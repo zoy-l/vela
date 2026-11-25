@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -40,6 +41,82 @@ TEST(StringGcTest, StoresEmptyAndEmbeddedNullBytes) {
   EXPECT_EQ(heap.object_count(), 2U);
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), 0U);
+}
+
+TEST(StringGcTest, ByteReplacementAllocatesOnlyOneResultWithAliasedRootedInputs) {
+  Heap heap(1);
+  std::array roots{Value::String(heap.AllocateString("中😀")), Value::Null()};
+  RootRange root(heap, roots.data(), roots.size());
+  ASSERT_NE(roots.front().AsString(), nullptr);
+  const std::array arguments{roots.front(), Value::Integer(0), Value::Integer(3), roots.front()};
+  heap.ResetAllocationStatistics();
+  const auto result = ExecuteBuiltin(Builtin::StringReplaceBytes, arguments, heap);
+  ASSERT_TRUE(result);
+  EXPECT_EQ(heap.allocation_statistics().count, 1U);
+  roots.back() = *result;
+  heap.Collect();
+  EXPECT_EQ(roots.back().AsString()->value(), "中😀😀");
+  EXPECT_EQ(roots.back().AsString()->length(), 3U);
+}
+
+TEST(StringGcTest, TrimUsesUnicodeWhiteSpaceAndPreservesNulBomAndZeroWidthSpace) {
+  Heap heap(1);
+  Value value = Value::Null();
+  RootRange root(heap, &value, 1);
+  for (const auto* const whitespace : {
+           "\t\n\v\f\r ",
+           "\u0085\u00a0\u1680",
+           "\u2000\u2001\u2002\u2003\u2004\u2005",
+           "\u2006\u2007\u2008\u2009\u200a",
+           "\u2028\u2029\u202f\u205f\u3000",
+       }) {
+    const std::string padding(whitespace);
+    auto text = padding;
+    text.append("中 😀");
+    text.append(padding);
+    value = Value::String(heap.AllocateString(text));
+    ASSERT_NE(value.AsString(), nullptr);
+    const auto result = ExecuteBuiltin(Builtin::StringTrim, std::span(&value, 1), heap);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsString()->value(), "中 😀");
+  }
+  for (const auto text : {
+           std::string_view(""),
+           std::string_view("\0　\0", sizeof("\0　\0") - 1),
+           std::string_view("\ufeff中\u200b"),
+       }) {
+    value = Value::String(heap.AllocateString(text));
+    ASSERT_NE(value.AsString(), nullptr);
+    const auto result = ExecuteBuiltin(Builtin::StringTrim, std::span(&value, 1), heap);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsString(), value.AsString());
+  }
+  value = Value::String(heap.AllocateString("　 \t"));
+  const auto empty = ExecuteBuiltin(Builtin::StringTrim, std::span(&value, 1), heap);
+  ASSERT_TRUE(empty);
+  EXPECT_TRUE(empty->AsString()->value().empty());
+  EXPECT_EQ(empty->AsString()->length(), 0U);
+}
+
+TEST(StringGcTest, ByteOperationsRejectWrongRuntimeKindsBeforeReadingTheirPayloads) {
+  Heap heap;
+  const auto text = Value::String(heap.AllocateString("中"));
+  for (const auto builtin : {
+           Builtin::StringIsCodePointBoundary,
+           Builtin::StringSliceBytes,
+           Builtin::StringReplaceBytes,
+           Builtin::StringByteOffsetAt,
+           Builtin::StringTrim,
+       }) {
+    std::array arguments{Value::Integer(1), Value::Integer(0), Value::Integer(3), text};
+    EXPECT_EQ(ExecuteBuiltin(builtin, arguments, heap).error(), ExecutionStatus::TypeError);
+    if (builtin == Builtin::StringTrim) {
+      continue;
+    }
+    arguments[0] = text;
+    arguments[1] = Value::Boolean(false);
+    EXPECT_EQ(ExecuteBuiltin(builtin, arguments, heap).error(), ExecutionStatus::TypeError);
+  }
 }
 
 TEST(StringGcTest, IndexedCodePointsAppendWithoutManagedCharacterAllocations) {

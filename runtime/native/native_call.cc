@@ -663,26 +663,6 @@ std::expected<Value, ExecutionStatus> CompleteInvocation(
                            nullptr);
 }
 
-[[clang::always_inline]] std::expected<Value, ExecutionStatus> InvokeNativeFunction(
-    NativeExecution& execution,
-    std::uint32_t function,
-    std::span<const Value> arguments) {
-  const auto functions = execution.instance().image().functions.values();
-  if (function >= functions.size()) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
-  }
-  const auto& description = functions.subspan(function).front();
-  if (description.hidden_parameters != 0) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
-  }
-  if (description.parameter_count == 0 && arguments.empty()) {
-    // 无参数的命名入口已验证目标，无需构造闭包调用描述。
-    return InvokeNativeTarget(execution, description, {});
-  }
-  return InvokeResolvedNativeCallable(
-      execution, {.target = {.function = function}, .function = &description}, arguments);
-}
-
 std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& execution,
                                                            Value callable,
                                                            std::span<const Value> arguments) {

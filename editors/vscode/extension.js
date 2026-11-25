@@ -54,7 +54,11 @@ class Connection {
     this.child.stdin.on("error", error => this.fail(error));
     this.child.on("error", error => this.fail(error));
     this.child.on("close", code => this.fail(new Error(`Vela language server exited (${code}).`)));
-    this.ready = this.request("initialize", { processId: process.pid, capabilities: {
+    this.ready = this.request("initialize", { processId: process.pid,
+      workspaceFolders: vscode.workspace.workspaceFolders?.map(folder => ({
+        uri: folder.uri.toString(), name: folder.name
+      })) || null,
+      capabilities: {
       general: { positionEncodings: ["utf-16"] }, textDocument: {
         publishDiagnostics: { versionSupport: true }, synchronization: { didSave: true }
       }
@@ -153,7 +157,21 @@ function editorRange(range) {
   return new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
 }
 
+const isVela = document => document.languageId === "vela" && document.uri.scheme === "file";
+
 function registerSymbolProviders(context, client, flush) {
+  async function query(documents, method, params, token) {
+    if (token.isCancellationRequested) return;
+    const document = documents[0];
+    const version = document.version;
+    for (const document of documents) await flush(document);
+    if (token.isCancellationRequested || document.isClosed) return;
+    const result = await client.request(method, {
+      textDocument: { uri: documents[0].uri.toString() }, ...params
+    }, token);
+    if (token.isCancellationRequested || document.isClosed || document.version !== version) return;
+    return result;
+  }
   const selector = { language: "vela", scheme: "file" };
   const linksChanged = new vscode.EventEmitter();
   const tokensChanged = new vscode.EventEmitter();
@@ -165,28 +183,16 @@ function registerSymbolProviders(context, client, flush) {
     vscode.languages.registerDocumentSemanticTokensProvider(selector, {
       onDidChangeSemanticTokens: tokensChanged.event,
       async provideDocumentSemanticTokens(document, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return null;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return null;
-        const result = await client.request("textDocument/semanticTokens/full", {
-          textDocument: { uri: document.uri.toString() }
-        }, token);
-        if (token.isCancellationRequested || document.version !== version) return null;
+        const result = await query([document], "textDocument/semanticTokens/full", {}, token);
+        if (!result) return null;
         return new vscode.SemanticTokens(Uint32Array.from(result.data));
       }
     }, tokenLegend),
     vscode.languages.registerDocumentLinkProvider(selector, {
       onDidChangeDocumentLinks: linksChanged.event,
       async provideDocumentLinks(document, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return [];
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return [];
-        const links = await client.request("textDocument/documentLink", {
-          textDocument: { uri: document.uri.toString() }
-        }, token);
-        if (token.isCancellationRequested || document.version !== version) return [];
+        const links = await query([document], "textDocument/documentLink", {}, token);
+        if (!links) return [];
         return links.map(item => {
           const link = new vscode.DocumentLink(editorRange(item.range), vscode.Uri.parse(item.target));
           link.tooltip = item.tooltip;
@@ -196,15 +202,10 @@ function registerSymbolProviders(context, client, flush) {
     }),
     vscode.languages.registerCompletionItemProvider(selector, {
       async provideCompletionItems(document, position, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return [];
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return [];
-        const items = await client.request("textDocument/completion", {
-          textDocument: { uri: document.uri.toString() },
+        const items = await query([document], "textDocument/completion", {
           position: { line: position.line, character: position.character }
         }, token);
-        if (token.isCancellationRequested || document.version !== version) return [];
+        if (!items) return [];
         return items.map(item => {
           // LSP 的 kind 从 1 起，VS Code 的对应枚举从 0 起。
           const completion = new vscode.CompletionItem(item.label, item.kind - 1);
@@ -219,42 +220,27 @@ function registerSymbolProviders(context, client, flush) {
     }, ".", "(", ","),
     vscode.languages.registerHoverProvider(selector, {
       async provideHover(document, position, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return null;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return null;
-        const result = await client.request("textDocument/hover", {
-          textDocument: { uri: document.uri.toString() },
+        const result = await query([document], "textDocument/hover", {
           position: { line: position.line, character: position.character }
         }, token);
-        if (token.isCancellationRequested || document.version !== version || !result) return null;
+        if (!result) return null;
         const contents = new vscode.MarkdownString(result.contents.value);
         return new vscode.Hover(contents, editorRange(result.range));
       }
     }),
     vscode.languages.registerRenameProvider(selector, {
       async prepareRename(document, position, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return null;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return null;
-        const range = await client.request("textDocument/prepareRename", {
-          textDocument: { uri: document.uri.toString() },
+        const range = await query([document], "textDocument/prepareRename", {
           position: { line: position.line, character: position.character }
         }, token);
-        if (token.isCancellationRequested || document.version !== version || !range) return null;
+        if (!range) return null;
         return editorRange(range);
       },
       async provideRenameEdits(document, position, newName, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return null;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return null;
-        const result = await client.request("textDocument/rename", {
-          textDocument: { uri: document.uri.toString() },
+        const result = await query([document], "textDocument/rename", {
           position: { line: position.line, character: position.character }, newName
         }, token);
-        if (token.isCancellationRequested || document.version !== version || !result) return null;
+        if (!result) return null;
         const edits = new vscode.WorkspaceEdit();
         for (const [uri, replacements] of Object.entries(result.changes)) {
           for (const replacement of replacements) {
@@ -264,17 +250,35 @@ function registerSymbolProviders(context, client, flush) {
         return edits;
       }
     }),
+    vscode.languages.registerReferenceProvider(selector, {
+      async provideReferences(document, position, context, token) {
+        const documents = [document, ...vscode.workspace.textDocuments.filter(other =>
+          other !== document && isVela(other))];
+        const references = await query(documents, "textDocument/references", {
+          position: { line: position.line, character: position.character },
+          context: { includeDeclaration: context.includeDeclaration }
+        }, token);
+        if (!references) return [];
+        return references.map(reference =>
+          new vscode.Location(vscode.Uri.parse(reference.uri), editorRange(reference.range)));
+      }
+    }),
+    vscode.languages.registerDocumentFormattingEditProvider(selector, {
+      async provideDocumentFormattingEdits(document, options, token) {
+        const edits = await query([document], "textDocument/formatting", { options }, token);
+        if (!edits) return [];
+        const result = edits.map(edit => new vscode.TextEdit(new vscode.Range(edit.range.start.line,
+          edit.range.start.character, edit.range.end.line, edit.range.end.character), edit.newText));
+        if (document.eol !== vscode.EndOfLine.LF) result.push(vscode.TextEdit.setEndOfLine(vscode.EndOfLine.LF));
+        return result;
+      }
+    }),
     vscode.languages.registerDefinitionProvider(selector, {
       async provideDefinition(document, position, token) {
-        const version = document.version;
-        if (token.isCancellationRequested) return null;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return null;
-        const target = await client.request("textDocument/definition", {
-          textDocument: { uri: document.uri.toString() },
+        const target = await query([document], "textDocument/definition", {
           position: { line: position.line, character: position.character }
         }, token);
-        if (token.isCancellationRequested || document.version !== version || !target) return null;
+        if (!target) return null;
         return new vscode.Location(vscode.Uri.parse(target.uri), editorRange(target.range));
       }
     })
@@ -293,7 +297,7 @@ function resolveRuntime() {
 
 async function runFile() {
   const document = vscode.window.activeTextEditor?.document;
-  if (!document || document.languageId !== "vela" || document.uri.scheme !== "file") {
+  if (!document || !isVela(document)) {
     await vscode.window.showErrorMessage("Open a saved Vela file before running it.");
     return;
   }
@@ -337,7 +341,6 @@ function activate(context) {
   }));
   const opened = new Map();
   const timers = new Map();
-  const isVela = document => document.languageId === "vela" && document.uri.scheme === "file";
   const report = error => output.appendLine(error.message);
   const open = async document => {
     if (!isVela(document)) return;
@@ -387,21 +390,6 @@ function activate(context) {
       if (opened.delete(uri) && !connection.closed) connection.notify("textDocument/didClose", { textDocument: { uri } });
       diagnostics.delete(document.uri);
       if (isVela(document)) refreshLinks();
-    }),
-    vscode.languages.registerDocumentFormattingEditProvider({ language: "vela", scheme: "file" }, {
-      async provideDocumentFormattingEdits(document, options, token) {
-        const version = document.version;
-        await flush(document);
-        if (document.isClosed || token.isCancellationRequested) return [];
-        const edits = await connection.request("textDocument/formatting", {
-          textDocument: { uri: document.uri.toString() }, options
-        }, token);
-        if (token.isCancellationRequested || document.version !== version) return [];
-        const result = edits.map(edit => new vscode.TextEdit(new vscode.Range(edit.range.start.line,
-          edit.range.start.character, edit.range.end.line, edit.range.end.character), edit.newText));
-        if (document.eol !== vscode.EndOfLine.LF) result.push(vscode.TextEdit.setEndOfLine(vscode.EndOfLine.LF));
-        return result;
-      }
     }),
     { dispose() { for (const timer of timers.values()) clearTimeout(timer); } }
   );

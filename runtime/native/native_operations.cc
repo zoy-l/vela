@@ -12,6 +12,7 @@
 #include "base/byte_access.h"
 #include "base/execution_status.h"
 #include "base/regexp.h"
+#include "runtime/collections/array_operations.h"
 #include "runtime/collections/byte_operations.h"
 #include "runtime/dynamic/dynamic_value.h"
 #include "runtime/heap/heap.h"
@@ -27,6 +28,8 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_json.h"
 #include "runtime/regexp/regexp.h"
+#include "runtime/strings/string.h"
+#include "runtime/strings/string_byte_operations.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_buffer.h"
@@ -147,6 +150,18 @@ extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution
   return StoreObject(result, execution->isolate().heap().AllocateCollection(*type));
 }
 
+extern "C" std::uint8_t vela_native_v1_push_record(NativeExecution* execution,
+                                                   HeapObject* array,
+                                                   HeapObject* value,
+                                                   NativeValue* result) noexcept {
+  return StoreNativeResult(
+      result, execution->isolate()
+                  .heap()
+                  .PushRecordArray(*array, *value)
+                  .transform([](std::uint32_t length) { return Value::Integer(length); })
+                  .transform_error(ArrayExecutionStatus));
+}
+
 extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
                                              HeapObject* object,
                                              const NativeValue* value) noexcept {
@@ -156,8 +171,12 @@ extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
   }
 }
 
-extern "C" std::uint64_t vela_native_v9_scalar_text_length(const NativeValue* value) {
-  return ScalarTextLength(DecodeNativeValue(*value));
+extern "C" std::uint64_t vela_native_v1_integer_text_length(std::int64_t value) {
+  return ScalarTextLength(value);
+}
+
+extern "C" std::uint64_t vela_native_v1_double_text_length(double value) {
+  return ScalarTextLength(value);
 }
 
 extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execution,
@@ -205,6 +224,37 @@ extern "C" std::uint8_t vela_native_v12_reflection_invoke(NativeExecution* execu
                                                           NativeValue* result) {
   return StoreNativeResult(result,
                            ExecuteReflectedInvocation(*execution, std::span(arguments, count)));
+}
+
+extern "C" std::int64_t vela_native_v1_string_byte_offset(StringObject* string,
+                                                          std::uint32_t index) noexcept {
+  return static_cast<std::int64_t>(string->ByteOffset(index));
+}
+
+extern "C" std::uint8_t vela_native_v1_string_slice_bytes(NativeExecution* execution,
+                                                          StringObject* string,
+                                                          std::int64_t start,
+                                                          std::int64_t end,
+                                                          StringObject** result) {
+  const auto sliced = SliceStringBytes(execution->isolate().heap(), *string, start, end);
+  if (!sliced) {
+    return ToNativeStatus(sliced.error());
+  }
+  *result = *sliced;
+  return ToNativeStatus(ExecutionStatus::Returned);
+}
+
+extern "C" StringObject* vela_native_v1_string_trim(NativeExecution* execution,
+                                                    StringObject* string) {
+  return TrimString(execution->isolate().heap(), *string);
+}
+
+extern "C" std::uint8_t vela_native_v1_string_affix(StringObject* string,
+                                                    StringObject* affix,
+                                                    NativeStringAffix kind) noexcept {
+  return static_cast<std::uint8_t>(kind == NativeStringAffix::Prefix
+                                       ? string->value().starts_with(affix->value())
+                                       : string->value().ends_with(affix->value()));
 }
 
 extern "C" std::uint8_t vela_native_v1_numeric_parse(std::uint32_t operation,

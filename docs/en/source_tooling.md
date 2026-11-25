@@ -78,6 +78,15 @@ does not resolve its imports. The file entry point performs full checking before
 generation. Both render source-level declarations rather than internal specialized
 or module-prefixed symbol names.
 
+## Unused warnings
+
+Unused parameter and import warnings come from the shared frontend and are reported by
+`vela check`, compilation and the language server, including imported modules and generic definitions.
+Import usage follows resolved type and value bindings, including aliases and local shadowing.
+Import warning ranges come from the parser and survive REPL source composition. Writes alone do not
+count as parameter reads; default expressions and closure captures do. Parameter names starting with
+`_` and signatures without bodies do not warn. Warnings alone do not fail `check`.
+
 ## Editor protocol reference
 
 `vela lsp` runs the language server over binary stdio. The implementation follows
@@ -87,7 +96,7 @@ negotiated text positions. Editor functionality shares the production checker
 and formatter; it does not define an alternate language grammar.
 
 The server supports initialize/shutdown/exit, open/change/close/save,
-watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, variable and type-parameter rename, document links
+watched-file invalidation, versioned diagnostics, completion, hover, definition and reference lookup, variable and type-parameter rename, document links
 and document formatting. Full semantic tokens classify user types and built-in types,
 including constructors, annotations, import references and generic parameters.
 UTF-16 is the default protocol encoding; clients advertising UTF-8 can use
@@ -102,6 +111,15 @@ String keys remain data and do not participate in variable renames. Invalid iden
 duplicate parameters, and changes that capture or shadow another reference are
 rejected. The server returns edits without writing files. VS Code applies them
 through **Rename Symbol** (F2) and discards replies after document changes.
+
+`textDocument/references` finds bound symbol occurrences in all workspace `.vela` files,
+including unopened importers and open document overlays. `context.includeDeclaration` controls
+whether declarations appear. Virtual method queries include their base-class and interface
+contracts, including overrides; unrelated members and shadowed bindings remain separate. Workspace folders come from
+initialization. Queries reuse the workspace reference index until a document or watched file changes.
+Each file contributes bindings from its editor snapshot; an unresolved import in another file does
+not discard already resolved references. VS Code invokes this through **Find All References**
+(**Shift+F12**).
 
 All open document overlays participate in each module check. Imported-file
 diagnostics use the exact loaded source snapshots, including syntax errors.

@@ -43,6 +43,42 @@ Result<HostValue<String>> StringSlice(HandleScope& scope,
       scope, Builtin::StringSlice, text, start, end);
 }
 
+Result<HostValue<bool>> StringIsCodePointBoundary(HandleScope& scope,
+                                                  HostValue<String> text,
+                                                  HostValue<std::int64_t> byte_offset) {
+  return internal::CallHostBuiltin<bool, String, std::int64_t>(
+      scope, Builtin::StringIsCodePointBoundary, text, byte_offset);
+}
+
+Result<HostValue<String>> StringSliceBytes(HandleScope& scope,
+                                           HostValue<String> text,
+                                           HostValue<std::int64_t> start,
+                                           HostValue<std::int64_t> end) {
+  return internal::CallHostBuiltin<String, String, std::int64_t, std::int64_t>(
+      scope, Builtin::StringSliceBytes, text, start, end);
+}
+
+Result<HostValue<String>> StringReplaceBytes(HandleScope& scope,
+                                             HostValue<String> text,
+                                             HostValue<std::int64_t> start,
+                                             HostValue<std::int64_t> end,
+                                             HostValue<String> inserted) {
+  return internal::CallHostBuiltin<String, String, std::int64_t, std::int64_t, String>(
+      scope, Builtin::StringReplaceBytes, text, start, end, inserted);
+}
+
+Result<HostValue<Nullable<std::int64_t>>> StringByteOffsetAt(
+    HandleScope& scope,
+    HostValue<String> text,
+    HostValue<std::int64_t> code_point_index) {
+  return internal::CallHostBuiltin<Nullable<std::int64_t>, String, std::int64_t>(
+      scope, Builtin::StringByteOffsetAt, text, code_point_index);
+}
+
+Result<HostValue<String>> StringTrim(HandleScope& scope, HostValue<String> text) {
+  return internal::CallHostBuiltin<String, String>(scope, Builtin::StringTrim, text);
+}
+
 Result<HostValue<String>> StringAt(HandleScope& scope,
                                    HostValue<String> text,
                                    HostValue<std::int64_t> index) {

@@ -198,9 +198,10 @@ TEST_F(NativeIntegerLoopTest, DynamicBoundsAndWideIntermediatesKeepExactResults)
       {1, 0, 10, 7, 0, 7}, {1, 0, -4, 0, 0, -6},
       {1, 0, -4294967297LL, maximum, 0, -2147483649LL},
       {2, -5, 5, 1, -2, -19}, {2, 9, 5, 42, maximum, 42},
-      {2, minimum, maximum, 42, 0, 42},
-      {2, minimum, maximum, minimum, 1, maximum},
-      {2, minimum, maximum, maximum, -1, minimum},
+      // 极值附近跨越多个轮询片段；正常完成不依赖全跨度循环被闭式折叠。
+      {2, minimum, minimum + 2049, 42, 0, 42},
+      {2, minimum, minimum + 2049, minimum, 1, minimum + 2049},
+      {2, maximum - 2049, maximum, maximum, -1, maximum - 2049},
       {2, 0, 1, maximum, minimum, -1},
       {3, 0, 4, 0, 0, -6}, {4, 0, 1, minimum, minimum, 0},
       {5, -4, 5, 17, 0, 17}, {9, 0, 4, maximum - 2, 0, 49},
@@ -215,7 +216,7 @@ TEST_F(NativeIntegerLoopGcTest, OverflowKeepsItsStatusAndOriginalSourcePosition)
   const std::array<std::array<std::int64_t, 5>, 8> cases{{
       {0, 0, 4294967297LL, 0, 0}, {0, 0, maximum, 0, 0},
       {1, 0, -4294967297LL, 0, 0}, {1, 0, minimum, 0, 0},
-      {2, minimum, maximum, 0, 1}, {3, 0, 3, minimum, 0},
+      {2, minimum, maximum, 0, maximum}, {3, 0, 3, minimum, 0},
       {4, 0, 1, 0, minimum}, {4, 0, 2, minimum, maximum},
   }};
   const std::array names{"ascending", "descending", "constant", "subtract", "subtractConstant"};

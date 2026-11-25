@@ -14,21 +14,79 @@ python -m tools.vl embed debug /path/to/debug-sdk
 python -m tools.vl embed release /path/to/release-sdk
 ```
 
-每条命令将静态归档、头文件、编译器、链接器、bindgen 与许可证导出到新目录。
-`embedding.json` v4 的产物路径均相对于该目录。搬迁时移动整个 SDK 目录，然后将宿主构建指向新的
+每条命令将静态归档、头文件、编译器、bindgen 与许可证导出到新目录。
+`embedding.json` v5 的产物路径均相对于该目录。搬迁时移动整个 SDK 目录，然后将宿主构建指向新的
 manifest 位置。`<vela/runtime.h>` 提供 `Isolate` 和 `NativeInstance`，
 `<vela/development.h>` 提供 `DevelopmentSession`。
 
 宿主要求匹配 OS、CPU、C++ ABI、依赖版本与 Debug/Release 变体。AOT 宿主链接
 `runtime_libraries`、`runtime_system_libraries` 与 `runtime_frameworks`。
-JIT 和源码热重载增加对应的 `development_*` 链接输入，其中包含 LLVM 库。macOS 和 Linux
-使用包内链接器处理归档中的 LLVM ThinLTO。使用 `bin/vela build --emit=obj` 构建嵌入式 AOT 对象，
+JIT 和源码热重载增加对应的 `development_*` 链接输入，其中包含 LLVM 库。
+归档要求见[原生目标文件链接契约](toolchain.md)。
+使用 `bin/vela build --emit=obj` 构建嵌入式 AOT 对象，
 使用 `python bin/vela-bindgen.py --config FILE` 同时生成 C++ 与 Vela 绑定代码。
 macOS 的最低部署版本由 `tools.config.MACOS_DEPLOYMENT_TARGET` 统一提供给库构建与发行探针。
 AOT 清单的 `sources` 字段提供完整导入图，供宿主构建系统生成 depfile。
 
 更换 Vela 版本时一起重建库、宿主绑定与 AOT 对象。Windows 需要对齐 SDK 的 CRT 和 STL ABI，
 包括 CRT 的静态或动态链接方式。
+
+封闭链接映像按原生签名共享装箱实参转换，脚本函数之间的 typed 调用保持直接 ABI。
+受检查的 C++ 宿主绑定也按签名共享解码与结果校验，同时保留各绑定的目标和作用域要求。
+Windows 将边界入口与 typed 主体集中分段，避免未调用的包装与活跃代码共享驻留页。
+映像通过编译器生成的稀疏导入索引完成绑定，不遍历全部函数描述。
+
+Windows 的托管块页对小 size class 使用 4 KiB，对最大的 4 KiB 槽使用 8 KiB；
+POSIX 保留 16 KiB 最小块页。对象不移动，只有整页无活对象时才能释放。
+Heap 提交容量包括活槽、页内空隙与可复用页，区别于逻辑分配压力和进程工作集。
+
+UI 宿主在 `DevelopmentOptions::compilation` 中选择 `Materialization::Eager`、
+`NativeCodeTier::Baseline` 与 `NativeOptimization::Baseline`。
+候选返回前全部入口已链接，输入与绘制不会触发编译。热更新在后台线程准备候选，
+就绪后由 Isolate 线程发布。`Materialization::OnDemand` 则在函数首次调用时编译，可能阻塞调用方。
+两种模式均逐函数发射目标文件，临时 LLVM context 和 module 随发射释放。
+Baseline 使用局部 SSA 和轻量机器码整理来限制物理栈溢出槽；
+`NativeOptimization::None` 同时控制 IR 和机器码优化，`NativeOptimization::Release` 保留 O3 流水线。
+这些策略与宿主的 Debug/Release 构建独立。
+
+`Compiler::CreateExternal({executable, cache})` 启动 SDK 的 `vela compile-server` 子进程。
+通过编译器的公共 `CreateFiles` API 创建文件会话，再把编译器传给四参数的 `DevelopmentSession::Create`。
+文件监视、不可变文本捕获、解析、类型检查、增量源码会话、Typed IR 和代码生成由子进程拥有；
+宿主只接收不可变运行描述表、声明身份和可重定位目标文件，拥有执行、加载、GC、发布与状态保留。
+编译进程必须与宿主使用同一 SDK 构建、目标和 runtime ABI。
+最后一个源码或代码 owner 释放后关闭管道并等待子进程退出。
+`DevelopmentFiles::StartWatching(changed)` 可在系统文件事件到达时通知宿主。
+回调只唤醒执行域，文件捕获与候选准备由宿主的编译线程完成。
+编译通道同时传递顺序请求响应和文件变更通知；注销文件会话会等待当前通知回调结束。
+源码响应只传递变更文本与删除项，宿主与前一快照共享未变的不可变文本。
+文件监视由 Vela 自有 `base` 模块负责，GN 按平台选择 Windows IOCP、Linux inotify 或 macOS FSEvents。
+原生事件区分内容变化和路径身份变化，改名的两个端点作为变化路径交付。
+空闲读取阻塞等待原生事件，退出显式唤醒或排空在途回调；注册失败返回调用方。
+事件丢失或队列溢出要求重新订阅并完整捕获输入，Linux 递归目录拓扑变化沿用同一重建契约。
+不提供目录扫描回退，不依赖第三方文件监视库。
+源码快照与延迟编译共享不可变 Typed IR，不为代码生成单独保留旧前端快照。
+
+此模式链接 manifest 的 `development_client_libraries`、
+`development_client_system_libraries` 和 `development_client_frameworks`，
+包含对象加载器，排除 LLVM 机器码后端与优化 pass。原 `development_*` 输入保留进程内编译，
+封闭 AOT 仍只链接 `runtime_*`。
+
+外部模式支持立即加载与按需物化的 Baseline 运行契约，并支持 O3 机器码生成。
+立即加载在全部入口就绪后释放服务端的代码生成计划。
+按函数目标文件缓存查询发生在 LLVM lowering 之前，身份覆盖编译器构建、LLVM、runtime ABI、
+CPU 特性、编译策略、函数内容、直接依赖内容及程序的代码生成环境。
+命中后仍需在当前进程重定位，不保存 Isolate 地址或应用运行状态。
+外部源码快照只暴露元数据和声明身份，`snapshot.program` 为空；本地快照继续拥有 Typed IR。
+
+构建系统可运行 `vela jit-cache FILE --config=FILE --code-cache=DIR`，在宿主启动前准备全部
+Baseline 开发代码。命令返回带有 `sources` 和 `functions` 的 JSON，供构建图跟踪依赖。
+它不链接或执行脚本，也不生成封闭 AOT image。宿主需使用相同的 SDK、源码配置、缓存目录与
+Baseline 编译策略。清空缓存或更换编译器后需要重新准备，首次代码生成成本仍然存在。
+
+Windows SDK 从锁定的 LLVM Support 归档生成 `vela_llvm_support.lib`，
+排除会全局覆写 CRT 分配函数的 `rpmalloc` 对象；其余成员和原始工具链归档保持不变。
+编译器、对象加载器、runtime 与宿主共用同一 CRT 分配契约，
+链接 LLVM 不会替换宿主分配器，也不把编译器的分配缓存留在宿主中。
 
 ## 编译与执行
 
@@ -141,8 +199,15 @@ Future 返回值在尚未完成时也持续保留声明的载荷检查。
 创建、读取和调用显式接收目标作用域，托管返回值在返回前已经保根。宿主导入内通过
 `context.handles()` 取得本次调用的作用域。`local.Persist()` 返回
 `Result<Persistent<T>>`，用于跨调用保存；副本共享一个根，最后一个所有者释放它。
-`persistent.ToLocal(scope)` 在目标作用域建立独立局部根，随后可以重置 Persistent。
+作用域首次本地化 Persistent 或错误载荷时共享其不可变根槽的所有权，无需再分配值槽；
+标量回调同时借用根持有的调用描述，可变捕获仍读取调用时的当前值。后续值使用分段句柄存储。
+两种局部句柄都能在源 Persistent 重置后继续使用，并在目标作用域退出时失效。
+`persistent.ToLocal(scope)` 在目标作用域建立独立的保活寿命，随后可以重置 Persistent。
 Isolate 必须晚于所属作用域、持久句柄、错误载荷、实例和执行资源销毁。
+
+新局部值使用 Isolate 分段句柄存储中的稳定槽位；作用域支持向外层转存 Local 和独立销毁。
+`ReloadBlockers()` 将这些作用域报告为一个共享的 `RootRange` 资源，`references` 等于活动
+作用域数，包含空作用域。存储扩容遵循堆预算，失败时返回 `OutOfMemory`。
 
 宿主调用公开脚本入口使用 `Entry<Signature>::Bind(instance, name)`，随后
 `entry.Call(scope, args...)` 返回 `Result`。开发会话中的命名入口每次调用当前版本；

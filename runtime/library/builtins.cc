@@ -18,6 +18,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
+#include "runtime/strings/string_byte_operations.h"
 #include "runtime/strings/unicode_operations.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
@@ -117,7 +118,8 @@ Result Slice(Builtin builtin,
   }
   const auto end_offset = indexed ? offset + DecodeUtf8Prefix(text.substr(offset)).width
                                   : string.ByteOffset(static_cast<std::uint32_t>(end));
-  return AllocatedValue(heap.AllocateString(text.substr(offset, end_offset - offset)));
+  return AllocatedValue(heap.AllocateString(text.substr(offset, end_offset - offset),
+                                            static_cast<std::size_t>(end - start)));
 }
 
 std::expected<std::int64_t, ExecutionStatus> Find(std::string_view text_view,
@@ -199,6 +201,12 @@ Result ConvertNumber(Builtin builtin, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
+    case Builtin::StringIsCodePointBoundary:
+    case Builtin::StringSliceBytes:
+    case Builtin::StringReplaceBytes:
+    case Builtin::StringByteOffsetAt:
+    case Builtin::StringTrim:
+      return ExecuteStringByteBuiltin(builtin, arguments, heap);
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble:
       return ConvertNumber(builtin, arguments.front());

@@ -11,11 +11,19 @@ external func noop(): void = 'binding.noop';
 external func scoped(): int = 'binding.scoped';
 external func mixed(left: string, value: int, enabled: bool, scale: double, right: string): int = 'binding.mixed';
 external func requestStop(): void = 'binding.stop';
+external func observeStep(index: int): int = 'binding.observe_step';
 let late = initializeLate();
 func initializeLate(): int { noop(); return 42; }
 func borrowedFailure(value: int): int { noop(); return value + 1; }
 func borrowedLazy(): int { noop(); return late; }
 func borrowedStop(): int { requestStop(); return 42; }
+func borrowedPoll(): int {
+  let sum = 0;
+  for (let index = 0; index < 3; index++) {
+    sum += observeStep(index);
+  }
+  return sum;
+}
 
 interface HostOperation { apply<T extends int>(value: T): int; }
 class StepOperation implements HostOperation {
@@ -57,6 +65,7 @@ export func calculate(operation: int): int {
   if (operation == 9) { return borrowedFailure(41); }
   if (operation == 10) { return borrowedStop(); }
   if (operation == 11) { return borrowedLazy(); }
+  if (operation == 12) { return borrowedPoll(); }
   try { return step(-1); }
   catch (error: Error) {
     if (error.code == 'NativeFailure' && error.message == 'negative input') { return 42; }
@@ -81,6 +90,40 @@ bool Invert(bool value) noexcept { return !value; }
 double Scale(double value) noexcept { return value * 2.0; }
 void Noop() noexcept {}
 void RequestStop(NativeContext& context) noexcept { context.isolate().native_control().RequestStop(); }
+std::int64_t ObserveStep(NativeContext& context, std::int64_t index) noexcept {
+  auto& isolate = context.isolate();
+  auto& control = isolate.native_control();
+  auto* execution = control.state().host_execution;
+  if (execution == nullptr) { return -1; }
+  const auto trace = execution->CaptureTrace();
+  EXPECT_EQ(trace.size(), 3U);
+  if (trace.size() == 3) {
+    EXPECT_EQ(trace.front().function, "observeStep");
+    EXPECT_EQ(trace.at(1).function, "borrowedPoll");
+    EXPECT_EQ(trace.at(1).line, BORROWED_POLL_CALL_LINE);
+  }
+  auto* instruction = execution->current_instruction();
+  EXPECT_EQ(*instruction, 0U);
+  constexpr std::uint32_t kHostModifiedInstruction = 1;
+  *instruction = kHostModifiedInstruction;
+  EXPECT_FALSE(control.HasReadySafepoint());
+  if (index == 0) {
+    EXPECT_TRUE(control.endpoint().Post([execution, &isolate] {
+      const auto observed = execution->CaptureTrace();
+      ASSERT_EQ(observed.size(), 2U);
+      EXPECT_EQ(observed.front().function, "borrowedPoll");
+      EXPECT_EQ(observed.back().function, "calculate");
+      isolate.heap().Collect();
+    }));
+  }
+  return 14;
+}
+
+std::expected<std::int64_t, vela::Error> CheckedObserveStep(NativeContext& context,
+                                                           std::int64_t index) noexcept {
+  return ObserveStep(context, index);
+}
+
 double Combine(NativeContext&, std::int64_t value, double scale, bool enabled) noexcept {
   return enabled ? static_cast<double>(value) * scale : 0.0;
 }
@@ -117,7 +160,7 @@ std::int64_t Mixed(NativeContext& context, std::string_view left, std::int64_t v
   return valid ? 42 : -5;
 }
 
-template <auto StepFunction>
+template <auto StepFunction, auto ObserveFunction>
 void CheckBindings(std::int64_t failure_result) {
   Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<StepFunction>("binding.step")));
@@ -130,6 +173,7 @@ void CheckBindings(std::int64_t failure_result) {
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Scoped>("binding.scoped")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Mixed>("binding.mixed")));
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<RequestStop>("binding.stop")));
+  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<ObserveFunction>("binding.observe_step")));
   const auto instance = NativeInstance::Instantiate(isolate, *BINDING_IMAGE());
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   NativeExecution execution(**instance);
@@ -155,7 +199,7 @@ void CheckBindings(std::int64_t failure_result) {
   EXPECT_EQ(trace.back().function, "calculate");
   EXPECT_EQ(execution.current_frame(), nullptr);
   EXPECT_EQ(isolate.native_control().state().host_execution, nullptr);
-  ExpectIntegerOperations(BINDING_ENTRY, execution, {9, 11, 11});
+  ExpectIntegerOperations(BINDING_ENTRY, execution, {9, 11, 11, 12});
   const std::array stop{Integer(10)};
   ASSERT_EQ(Execute(BINDING_ENTRY, execution, stop, output), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 42);
@@ -167,12 +211,18 @@ void CheckBindings(std::int64_t failure_result) {
 }
 
 TEST(NativeBindingAbiTest, DirectScalarCallsPreserveBooleanCodecsAndBorrowedRoots) {
-  CheckBindings<Step>(0);
+  CheckBindings<Step, ObserveStep>(0);
 }
 
 TEST(NativeBindingAbiTest, SameImageAcceptsCheckedBindingsAndPropagatesTheirErrors) {
-  CheckBindings<CheckedStep>(42);
+  CheckBindings<CheckedStep, CheckedObserveStep>(42);
 }
 
 }  // namespace binding_test
 '''
+
+HOST_TESTS = HOST_TESTS.replace(
+    "BORROWED_POLL_CALL_LINE",
+    str(next(number for number, line in enumerate(SOURCE.splitlines(), 1)
+             if "sum += observeStep(index)" in line)),
+)

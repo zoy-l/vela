@@ -47,12 +47,12 @@ NativeGlobalCache& NativeProgramState::global_cache(std::size_t index) const noe
 
 HeapObject* Heap::AllocateNativeProgram(std::unique_ptr<NativeProgramState> state) noexcept {
   return AllocateObject(ObjectKind::NativeProgram, sizeof(HeapObject),
-                        [&state](HeapObject& object) { object.native_payload = state.release(); });
+                        [&state](HeapObject& object) { object.SetNativePayload(state.release()); });
 }
 
 NativeProgramState& Heap::NativeProgram(HeapObject& object) noexcept {
   assert(object.kind == ObjectKind::NativeProgram);
-  return *static_cast<NativeProgramState*>(object.native_payload);
+  return *static_cast<NativeProgramState*>(object.native_payload());
 }
 
 void Heap::SetNativeProgramSlot(HeapObject& object, std::size_t index, Value value) noexcept {
@@ -64,13 +64,21 @@ void Heap::SetNativeEnvironment(HeapObject& callable,
                                 HeapObject& state,
                                 std::uint32_t function) noexcept {
   assert(callable.kind == ObjectKind::Instance && callable.layout->callable());
-  callable.native_payload = &state;
+  callable.SetNativePayload(&state);
   // Instance 不使用容器长度；原生函数值以此保存创建时选定版本内的函数编号。
   callable.length = function;
-  const auto targets = NativeProgram(state).image->functions.values();
-  // 虚方法在捕获接收者前暂存选择器；完成捕获时写入所选版本。
-  callable.SetTypeMetadata(function < targets.size() ? &targets[function] : nullptr);
   WriteBarrier(callable, Value::Object(&state));
+}
+
+const NativeFunctionDescription* Heap::CallableFunction(const HeapObject& callable) noexcept {
+  auto* environment = NativeEnvironment(callable);
+  if (environment == nullptr) {
+    return nullptr;
+  }
+  const auto functions = NativeProgram(*environment).image->functions.values();
+  const auto index = NativeFunctionIndex(callable);
+  // 虚方法捕获前保存 selector；完成捕获后才有该生产版本的函数编号。
+  return index < functions.size() ? &functions[index] : nullptr;
 }
 
 std::uint32_t Heap::NativeFunctionIndex(const HeapObject& callable) noexcept {
@@ -81,7 +89,7 @@ HeapObject* Heap::NativeEnvironment(const HeapObject& callable) noexcept {
   if (callable.kind != ObjectKind::Instance || (callable.layout->callable() == nullptr)) {
     return nullptr;
   }
-  return static_cast<HeapObject*>(callable.native_payload);
+  return static_cast<HeapObject*>(callable.native_payload());
 }
 
 void Heap::MarkNativeProgram(HeapObject& object) noexcept {
@@ -93,7 +101,7 @@ void Heap::MarkNativeProgram(HeapObject& object) noexcept {
 }
 
 void Heap::ReleaseNativeProgram(HeapObject& object) noexcept {
-  auto* state = static_cast<NativeProgramState*>(object.native_payload);
+  auto* state = static_cast<NativeProgramState*>(object.native_payload());
   state->retired_next = retired_programs_;
   retired_programs_ = state;
 }

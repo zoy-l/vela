@@ -26,6 +26,15 @@ NATIVE_CASE = re.compile(
 TEMPORARY_OBJECT_CASE = re.compile(
     r"^(?:aot/(native)|hot/steady/(baseline|optimized))/temporaryObjects/(\d+)/real_time$")
 NATIVE_BASELINES = {
+    "math_atan2": "Same varying integer inputs, double conversions, std::atan2 semantics, scaled rounding and checksum. Compilation/input setup excluded; Vela includes ordinary native binding calls.",
+    "math_cbrt": "Same positive/negative inputs, std::cbrt semantics, scaled rounding and checksum. The C++ kernel is independently compiled without fast-math.",
+    "math_hypot": "Same nonconstant pairs, std::hypot semantics, scaled rounding and checksum. C++ does not replace hypot with an overflow-prone sqrt(x*x+y*y).",
+    "math_remainder": "Both use IEEE remainder with nearest-even quotient; varying inputs and scaled integer checksum. This is not a comparison against fmod or the % operator.",
+    "string_boundary": "Same valid UTF-8 containing multibyte characters and NUL; same byte-offset domain including out-of-range and continuation bytes; constant-time boundary check.",
+    "string_slice_bytes": "Same validated byte boundaries and copied output larger than common C++ SSO capacity. Both account for output code-point length; C++ std::string releases each result, Vela includes automatic GC.",
+    "string_replace_bytes": "Same checked byte ranges and alternating replacement lengths. C++ reserves one result and appends prefix/replacement/suffix; both compute output code-point length. Allocator/GC lifetime differences remain included.",
+    "string_byte_offset": "Same mixed UTF-8 input and queries including invalid/end positions. Both retain a position cache and select the nearest endpoint; C++ does not rescan from the start for each query.",
+    "string_trim": "Same Unicode White_Space contract and unchanged/padded/all-whitespace inputs. Unchanged content is borrowed, changed content is copied and its code-point length is computed; GC is included only on the Vela side.",
     "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
     "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
     "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only generated-code execution.",
@@ -234,6 +243,15 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
         for entry in entries:
             validate_counters(name, entry, fields)
         values = {field: [entry[field] for entry in entries] for field in fields}
+        allocation_fields = ("allocation_bytes_per_iteration", "allocation_count_per_iteration",
+                             "peak_live_growth_bytes")
+        if any(field in entry for entry in entries for field in allocation_fields):
+            for entry in entries:
+                if not all(field in entry for field in allocation_fields):
+                    raise ValueError(f"{name}: incomplete allocation counters")
+                validate_counters(name, entry, allocation_fields)
+            values.update({field: [entry[field] for entry in entries]
+                           for field in allocation_fields})
         counters[backend, workload, size] = values
 
     lines = ["Median wall time per complete workload (microseconds).",
@@ -282,6 +300,18 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
                                                                                      item[0][0])):
         numbers = [f"{median(values[field]):.0f}" if field in values else "-" for field in fields]
         lines.append("| " + " | ".join([workload, str(size), LABELS[backend], *numbers]) + " |")
+    allocations = [(key, values) for key, values in counters.items()
+                   if "allocation_bytes_per_iteration" in values]
+    if allocations:
+        lines.extend(["", "Vela allocation pressure per complete workload (normal GC remains timed).",
+                      "These are managed heap counters, not C++ allocator measurements or isolated GC timings.", "",
+                      "| Workload | Size | Allocated bytes/iteration | Allocations/iteration | Peak live growth bytes |",
+                      "| --- | ---: | ---: | ---: | ---: |"])
+        for (_, workload, size), values in sorted(allocations):
+            fields = ("allocation_bytes_per_iteration", "allocation_count_per_iteration",
+                      "peak_live_growth_bytes")
+            numbers = [f"{median(values[field]):.2f}" for field in fields]
+            lines.append("| " + " | ".join([workload, str(size), *numbers]) + " |")
     notes = [(name, note) for name, note in NATIVE_BASELINES.items()
              if any(workload == name for _, _, workload, _ in samples)]
     if notes:

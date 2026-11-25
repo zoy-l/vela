@@ -272,6 +272,14 @@ void Documentation::Constructor(const frontend::Class& declaration) {
       declaration.constructor->visibility == frontend::Visibility::Private) {
     return;
   }
+  if (declaration.base_class && !declaration.constructor &&
+      std::ranges::none_of(declaration.fields, [&](const auto& field) {
+        return declaration.IsConstructorField(field);
+      })) {
+    output_ << "### Constructor\n\nConstructor signature inherited from `"
+            << declaration.base_class->ToString() << "`.\n\n";
+    return;
+  }
   if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
     output_ << "### Constructor\n\n```vela\n" << declaration.name;
     Parameters(output_, declaration.constructor->parameters);

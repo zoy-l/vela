@@ -78,6 +78,10 @@ enum class Opcode : std::uint8_t {
   SleepFuture,
   SetField,
   GetField,
+  CheckRecordIndex,
+  GetRecordField,
+  SetRecordField,
+  PushRecord,
   Return,
 };
 

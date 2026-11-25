@@ -3,95 +3,54 @@
 #include "runtime/isolate/external_resources.h"
 
 #include <cassert>
-#include <cstddef>
 #include <expected>
-#include <utility>
+#include <memory>
+#include <type_traits>
 
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/host_callback.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
 
-struct HostRoot::Storage final {
-  Storage(Isolate& owner, Value source) noexcept
-      : isolate(&owner),
-        value(source),
-        root(owner.heap(), &value, 1, ExternalResourceKind::Persistent) {}
-  Isolate* isolate;
-  Value value;
-  RootRange root;
-  std::size_t references = 1;
-};
+HostRoot::Storage::Storage(Isolate& owner, Value source) noexcept
+    : isolate(&owner),
+      value(source),
+      root(owner.heap(), &value, 1, ExternalResourceKind::Persistent) {}
 
 std::expected<HostRoot, ExecutionStatus> HostRoot::Create(Isolate& isolate, Value value) noexcept {
   assert(isolate.scheduler().IsOwnerThread());
   auto& heap = isolate.heap();
   const RootRange source_root(heap, &value, 1, std::nullopt);
-  auto* memory = heap.AllocateNative(sizeof(Storage));
+  const auto* object = value.AsObjectOrNull();
+  const auto* layout = object != nullptr ? Heap::ClassOf(*object) : nullptr;
+  const bool has_callback = layout != nullptr && layout->callable() != nullptr;
+  using Callback = ::vela::internal::BoundScalarCallback;
+  const auto bytes = sizeof(Storage) + (has_callback ? sizeof(Callback) : 0);
+  auto* memory = heap.AllocateNative(bytes);
   if (memory == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  return HostRoot(*::new (memory) Storage(isolate, value));
-}
-
-HostRoot::~HostRoot() {
-  Reset();
-}
-
-HostRoot::HostRoot(const HostRoot& other) noexcept : storage_(other.storage_) {
-  Retain();
-}
-
-HostRoot& HostRoot::operator=(const HostRoot& other) noexcept {
-  if (this != &other) {
-    Reset();
-    storage_ = other.storage_;
-    Retain();
+  auto* storage = std::construct_at(static_cast<Storage*>(memory), isolate, value);
+  if (has_callback) {
+    // 描述随同不可变根一次分配，普通根不承担缓存空间；描述本身不拥有额外资源。
+    static_assert(std::is_trivially_destructible_v<Callback>);
+    std::construct_at(StorageAfter<Callback>(*storage), Callback::Bind(isolate, value));
   }
-  return *this;
+  return HostRoot(*storage);
 }
 
-HostRoot::HostRoot(HostRoot&& other) noexcept : storage_(std::exchange(other.storage_, nullptr)) {}
-
-HostRoot& HostRoot::operator=(HostRoot&& other) noexcept {
-  if (this != &other) {
-    Reset();
-    storage_ = std::exchange(other.storage_, nullptr);
-  }
-  return *this;
+void HostRoot::Destroy(Storage& storage) noexcept {
+  auto& isolate = *storage.isolate;
+  storage.~Storage();
+  isolate.heap().FreeNative(&storage);
 }
 
-void HostRoot::Retain() noexcept {
-  if (storage_ != nullptr) {
-    assert(storage_->isolate->scheduler().IsOwnerThread());
-    ++storage_->references;
-  }
-}
-
-void HostRoot::Reset() noexcept {
-  auto* storage = std::exchange(storage_, nullptr);
-  if (storage == nullptr) {
-    return;
-  }
-  auto& isolate = *storage->isolate;
-  assert(isolate.scheduler().IsOwnerThread());
-  if (--storage->references == 0) {
-    storage->~Storage();
-    isolate.heap().FreeNative(storage);
-  }
-}
-
-Isolate& HostRoot::isolate() const noexcept {
-  assert(storage_ != nullptr);
-  return *storage_->isolate;
-}
-
-Value HostRoot::value() const noexcept {
-  assert(storage_ != nullptr);
-  assert(storage_->isolate->scheduler().IsOwnerThread());
-  return storage_->value;
+bool HostRoot::IsOwnerThread() const noexcept {
+  return storage_->isolate->scheduler().IsOwnerThread();
 }
 
 }  // namespace vela::runtime
