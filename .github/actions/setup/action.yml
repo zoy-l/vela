@@ -57,6 +57,6 @@ runs:
         subprocess.run([str(gclient), 'sync', '--no-history'], env=environment, check=True)
         subprocess.run([sys.executable, '-m', 'tools.vl', 'doctor'], check=True)
 
-    - name: Verify sccache
+    - name: Start sccache server
       shell: bash
-      run: sccache --show-stats
+      run: sccache --start-server

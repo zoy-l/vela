@@ -19,6 +19,8 @@ concurrency:
 env:
   PYTHONUTF8: '1'
   SCCACHE_GHA_ENABLED: 'true'
+  # Keep build statistics through test suites that exceed the default idle timeout.
+  SCCACHE_IDLE_TIMEOUT: '0'
 
 jobs:
   build:
