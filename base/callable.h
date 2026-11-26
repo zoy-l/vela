@@ -31,6 +31,7 @@ struct CallSignature final {
   };
   std::vector<Parameter> parameters;
   std::optional<std::uint32_t> result = std::nullopt;
+  std::optional<std::uint32_t> narrowed_parameter = std::nullopt;
   std::uint8_t hidden_parameters = 0;
   std::optional<std::uint32_t> receiver = std::nullopt;
 

@@ -72,6 +72,106 @@ TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
   }
 }
 
+TEST(PreparationTest, ConstructorConversionsOnlyCheckActualTypeBoundaries) {
+  WithPreparedModes(R"(
+enum Choice { first }
+export class Box {
+  value: int;
+  maybe: int? = null;
+  choice: Choice = Choice.first;
+  constructor(this.value, this.maybe, this.choice);
+}
+export class Fields { value: int; maybe: int? = null; }
+export func make(): Box { return Box(42); }
+export func checked(value: dynamic): int { return value as int; }
+)",
+                    [](const Program& program, NativeProgramMode) {
+                      bool has_dynamic_check = false;
+                      for (const auto& function : program.functions) {
+                        for (const auto& instruction : function.instructions) {
+                          if (instruction.opcode != Opcode::CheckedCast) {
+                            continue;
+                          }
+                          const auto& input = function.value_types[instruction.lhs];
+                          const auto& target = program.runtime_types[instruction.index];
+                          EXPECT_FALSE(input.kind == target.kind && input.name == target.name &&
+                                       input.nullable == target.nullable)
+                              << function.name;
+                          has_dynamic_check =
+                              has_dynamic_check ||
+                              (input.kind == frontend::TypeDescriptor::Kind::Dynamic &&
+                               target.kind == frontend::TypeDescriptor::Kind::Int);
+                        }
+                      }
+                      EXPECT_TRUE(has_dynamic_check);
+                    });
+}
+
+TEST(PreparationTest, ParameterlessBaseCallsDoNotMaterializeArgumentConstants) {
+  WithPreparedModes(
+      R"(
+class Base { constructor() {} }
+export class Child extends Base { constructor() {} }
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto child = std::ranges::find_if(program.functions, [&](const auto& function) {
+          return function.signature && function.signature->receiver &&
+                 program.runtime_types[*function.signature->receiver].name == "Child";
+        });
+        ASSERT_NE(child, program.functions.end());
+        EXPECT_EQ(std::ranges::count(child->instructions, Opcode::LoadBool, &Instruction::opcode),
+                  0);
+        EXPECT_EQ(std::ranges::count(child->instructions, Opcode::LoadNull, &Instruction::opcode),
+                  1);
+      });
+}
+
+TEST(PreparationTest, StaticBaseFieldPresenceSkipsAbsentConversionsAndRuntimeBranches) {
+  WithPreparedModes(
+      R"(
+class Base { value: int; optional: int = 2; }
+export class Child extends Base { constructor(super.value); }
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto child = std::ranges::find_if(program.functions, [&](const auto& function) {
+          return function.signature && function.signature->receiver &&
+                 program.runtime_types[*function.signature->receiver].name == "Child";
+        });
+        ASSERT_NE(child, program.functions.end());
+        EXPECT_EQ(std::ranges::count(child->instructions, Opcode::SetField, &Instruction::opcode),
+                  1);
+        for (const auto opcode :
+             {Opcode::JumpIfFalse, Opcode::CheckedCast, Opcode::LoadBool, Opcode::BitOrInt}) {
+          EXPECT_EQ(std::ranges::count(child->instructions, opcode, &Instruction::opcode), 0);
+        }
+      });
+}
+
+TEST(PreparationTest, MergedAccessorsKeepSeparateGetterAndSetterParameterShapes) {
+  WithPreparedModes(R"(
+class Box {
+  value: int = 42;
+  get amount(): int { return this.value; }
+  set amount(next: int): void { this.value = next; }
+}
+)",
+                    [](const Program& program, NativeProgramMode) {
+                      std::size_t accessors = 0;
+                      for (const auto& function : program.functions) {
+                        if (!function.signature || !function.name.contains("amount")) {
+                          continue;
+                        }
+                        const auto& signature = *function.signature;
+                        const std::size_t parameters = signature.result ? 0 : 1;
+                        EXPECT_EQ(signature.parameters.size(), parameters) << function.name;
+                        EXPECT_EQ(function.parameter_count,
+                                  parameters + signature.hidden_parameters);
+                        ++accessors;
+                      }
+                      EXPECT_EQ(accessors, 2U);
+                    });
+}
+
 TEST(PreparationTest, SpecializesOnlyProvenClosedIntegerSortOrders) {
   struct Case final {
     std::string_view comparator;

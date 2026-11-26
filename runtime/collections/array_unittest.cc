@@ -16,6 +16,7 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -30,6 +31,54 @@ struct IntegerArrayFixture : public testing::Test {
 using IntegerArrayRangeTest = IntegerArrayFixture<1>;
 using MutableIntegerArrayRangeTest = IntegerArrayFixture<kDefaultGcThreshold>;
 using ArraySortTest = IntegerArrayFixture<1>;
+using ArrayIncludesTest = IntegerArrayFixture<1>;
+
+TEST(ValueEqualityTest, SameValueZeroKeepsKindsAndChangesOnlyNaNEquality) {
+  const auto nan = Value::Double(std::numeric_limits<double>::quiet_NaN());
+  const auto zero = Value::Double(0.0);
+  const auto negative_zero = Value::Double(-0.0);
+  EXPECT_FALSE(IsEqualValue(nan, nan));
+  EXPECT_TRUE(IsSameValueZero(nan, nan));
+  EXPECT_TRUE(IsEqualValue(zero, negative_zero));
+  EXPECT_TRUE(IsSameValueZero(zero, negative_zero));
+  EXPECT_FALSE(IsSameValueZero(Value::Integer(0), zero));
+  EXPECT_FALSE(IsSameValueZero(Value::Boolean(false), Value::Integer(0)));
+  EXPECT_FALSE(IsSameValueZero(Value::Null(), zero));
+}
+
+TEST_F(ArrayIncludesTest, RejectsNonArrayReceiversAtTheBuiltinBoundary) {
+  const auto* object_layout = isolate.CreateClassLayout(0, {});
+  const auto receiver = Value::Object(heap.AllocateInstance(*object_layout));
+  ASSERT_NE(receiver.AsObject(), nullptr);
+  const RootRange roots(heap, &receiver, 1);
+  const std::array arguments{receiver, Value::Integer(42), Value::Integer(0)};
+  const auto result = ExecuteArrayBuiltin(Builtin::ArrayIncludes, arguments, heap);
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error(), ExecutionStatus::TypeError);
+}
+
+TEST_F(ArrayIncludesTest, DoesNotAllocateMutateOrInvalidateIntegerRanges) {
+  const auto array = Value::Object(heap.AllocateArray(*layout, 4));
+  ASSERT_NE(array.AsObject(), nullptr);
+  const RootRange roots(heap, &array, 1);
+  ASSERT_TRUE(heap.SetElement(*array.AsObject(), 0, Value::Integer(42)));
+  ASSERT_TRUE(heap.SetElement(*array.AsObject(), 3, Value::Integer(-1)));
+  const auto mutation = Heap::ArrayMutation(*array.AsObject());
+  const auto range = internal::ArrayBuffer(*array.AsObject()).integer_range;
+  const auto bytes = heap.allocated_bytes();
+  heap.SetAllocationCountLimit(0);
+  const std::array arguments{array, Value::Integer(42), Value::Integer(0)};
+  const auto result = ExecuteArrayBuiltin(Builtin::ArrayIncludes, arguments, heap);
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->AsBoolean());
+  EXPECT_EQ(heap.allocated_bytes(), bytes);
+  EXPECT_EQ(Heap::ArrayMutation(*array.AsObject()), mutation);
+  EXPECT_EQ(internal::ArrayBuffer(*array.AsObject()).integer_range, range);
+  const std::array invalid{array, Value::Boolean(true), Value::Integer(0)};
+  const auto failed = ExecuteArrayBuiltin(Builtin::ArrayIncludes, invalid, heap);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error(), ExecutionStatus::TypeError);
+}
 
 TEST(RecordArrayTest, AppendsWholeRecordsAndPreservesStateWhenGrowthFails) {
   Isolate isolate(1);

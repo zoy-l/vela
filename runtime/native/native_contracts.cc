@@ -33,11 +33,17 @@ bool IsSameSignature(const NativeImage& left_image,
                      const NativeSignatureDescription& left,
                      const NativeImage& right_image,
                      const NativeSignatureDescription& right) {
-  if (left.has_result != right.has_result || left.parameters.size != right.parameters.size) {
+  if (left.has_result != right.has_result || left.parameters.size != right.parameters.size ||
+      left.has_narrowed_parameter != right.has_narrowed_parameter) {
     return false;
   }
-  if (left.has_result != 0 &&
-      !IsSameNativeType(left_image, left.result, right_image, right.result)) {
+  const auto is_same_optional_type = [&](std::uint32_t present, const NativeTypeDescription& first,
+                                         const NativeTypeDescription& second) {
+    return present == 0 || IsSameNativeType(left_image, first, right_image, second);
+  };
+  if (!is_same_optional_type(left.has_result, left.result, right.result) ||
+      !is_same_optional_type(left.has_narrowed_parameter, left.narrowed_parameter,
+                             right.narrowed_parameter)) {
     return false;
   }
   const auto left_parameters = left.parameters.values();
@@ -119,6 +125,12 @@ std::expected<void, NativeContractViolation> CheckFieldContracts(
       continue;
     }
     const auto& next = *matching->second;
+    if ((field.flags & kNativeConstantField) != (next.flags & kNativeConstantField)) {
+      return std::unexpected(NativeContractViolation{
+          .declaration = field.declaration,
+          .message = "field mutability changed; Reload is required",
+      });
+    }
     if (!IsSameNativeType(previous_image, previous_image.types.values().subspan(field.type).front(),
                           candidate_image,
                           candidate_image.types.values().subspan(next.type).front())) {

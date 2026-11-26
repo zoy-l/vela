@@ -479,6 +479,27 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "matches.",
           },
           {
+              {Kind::Array, "filter"},
+              "Returns matching elements in source order in a new independent array. "
+              "Calls callbackFn(value, index, receiver) once per element. Proven predicate "
+              "refinements narrow the result element type across every successful return path. "
+              "Structural changes in the callback throw Error. O(n) time and O(n) storage.",
+          },
+          {
+              {Kind::Array, "find"},
+              "Returns the first matching element, or null. Stops immediately after a match. "
+              "Calls callbackFn(value, index, receiver); proven predicate refinements narrow "
+              "the nullable result type. Structural changes in the callback throw Error. "
+              "O(n) worst-case time and O(1) auxiliary storage.",
+          },
+          {
+              {Kind::Array, "includes"},
+              "Returns whether searchElement occurs at or after fromIndex (default zero). "
+              "Negative indices count from the end and bounds are clamped. Uses Vela equality "
+              "with NaN matching NaN and both signed zeros equal; no numeric coercion. "
+              "O(n) worst-case time with no allocation or callback.",
+          },
+          {
               {Kind::Array, "reduce"},
               "Calls callbackFn(accumulator, value, index, array) in index order. Unused trailing "
               "parameters may be omitted. initialValue is required and determines R. Traversal "

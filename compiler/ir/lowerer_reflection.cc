@@ -65,7 +65,6 @@ reflection::Member DescribeMethodTemplate(const frontend::Function& method,
       .getter = {},
       .setter = {},
       .signature = {},
-      .default_parameters = {},
       .type_arguments = {},
   };
 }
@@ -185,7 +184,6 @@ reflection::Member Lowerer::DescribeReflectionMethod(
       .getter = {},
       .setter = {},
       .signature = std::move(call_signature),
-      .default_parameters = {},
       .type_arguments = {},
   };
   result.signature.hidden_parameters = 0;
@@ -203,23 +201,22 @@ void Lowerer::DescribeReflectionFields(const frontend::Class& owner,
                                        std::uint32_t type) {
   for (const auto& field : owner.fields) {
     const auto is_static = field.storage == frontend::MemberStorage::Static;
-    const auto key =
-        is_static ? QualifiedMemberKey({.owner = owner.name, .name = field.name}) : std::string{};
+    const auto key = is_static ? QualifiedMemberKey({.owner = owner.name, .name = field.name})
+                               : descriptor.FieldKey(field.name);
     const auto& contract =
-        is_static ? descriptor.static_fields.at(field.name) : descriptor.fields.at(field.name);
+        is_static ? descriptor.static_fields.at(field.name) : descriptor.fields.at(key);
     program_.reflection_members.push_back({
-        .declaration =
-            is_static ? declarations_->globals.at(key) : identities.fields.at(field.name),
+        .declaration = is_static ? declarations_->globals.at(key) : identities.fields.at(key),
         .declaring_type = type,
         .name = field.name,
         .kind = MemberKind::Field,
-        .flags = MemberFlags(field.visibility, field.storage),
+        .flags = MemberFlags(field.visibility, field.storage) |
+                 (field.binding == frontend::BindingKind::Constant ? reflection::kConstant : 0U),
         .type = RegisterRuntimeType(contract.type),
         .target = is_static ? global_ids_.at(key) : contract.index,
         .getter = {},
         .setter = {},
         .signature = {},
-        .default_parameters = {},
         .type_arguments = {},
     });
   }
@@ -247,7 +244,6 @@ void Lowerer::DescribeReflectionClass(const frontend::Class& owner) {
             .getter = {},
             .setter = {},
             .signature = {},
-            .default_parameters = {},
             .type_arguments = {},
         });
       }
@@ -281,17 +277,9 @@ void Lowerer::DescribeReflectionConstructor(const frontend::Class& owner,
       .getter = {},
       .setter = {},
       .signature = DescribeCallSignature(descriptor.constructor),
-      .default_parameters = {},
       .type_arguments = {},
   };
   constructor.signature.result = type;
-  if (descriptor.constructor_kind == frontend::ConstructorKind::Generated) {
-    for (std::size_t index = 0; index < constructor.signature.parameters.size(); ++index) {
-      if (constructor.signature.parameters.at(index).optional) {
-        constructor.default_parameters.push_back(static_cast<std::uint32_t>(index));
-      }
-    }
-  }
   program_.reflection_members.push_back(std::move(constructor));
 }
 
@@ -327,7 +315,6 @@ void Lowerer::DescribeReflectionEnum(const frontend::Enum& owner) {
         .getter = {},
         .setter = {},
         .signature = {},
-        .default_parameters = {},
         .type_arguments = {},
     });
   }

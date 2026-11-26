@@ -348,6 +348,9 @@ std::expected<void, ExecutionStatus> WriteReflectedMember(NativeExecution& execu
       !validated) {
     return std::unexpected(validated.error());
   }
+  if ((member.flags & reflection::kConstant) != 0) {
+    return std::unexpected(ExecutionStatus::ReflectionAccessDenied);
+  }
   if (member.kind == static_cast<std::uint32_t>(MemberKind::Property)) {
     const auto setter =
         execution.instance().program().reflection->ResolveAccessor(member, MemberKind::Setter);
@@ -367,10 +370,6 @@ std::expected<void, ExecutionStatus> WriteReflectedMember(NativeExecution& execu
       return std::unexpected(ExecutionStatus::InvalidCast);
     }
     const auto value = UnboxDynamicValue(original, type);
-    if ((instance.image().global_flags.values()[member.target] &
-         static_cast<std::uint32_t>(GlobalFlag::Constant)) != 0) {
-      return std::unexpected(ExecutionStatus::ReflectionAccessDenied);
-    }
     if (dispatch != nullptr) {
       return dispatch->StoreGlobal(member.declaration, value,
                                    instance.program().global_cache(member.target));

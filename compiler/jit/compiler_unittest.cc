@@ -1486,8 +1486,8 @@ export func main(): int { const reader: Reader = Child(); const callback = reade
 )",
                          R"(
 func same<T>(value: T): T { return value; }
-class Box<T> { private stored: T; constructor(value: T) { this.stored = value; }
-  read(): T { return this.stored; } }
+class Box<T> {  #stored: T;   constructor(value: T) { this.#stored = value; }
+  read(): T { return this.#stored; } }
 type IntegerBox = Box<int>;
 export func main(): int { return same<int>(IntegerBox(42).read()); }
 )",

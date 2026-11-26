@@ -135,14 +135,6 @@ std::size_t HashKey(Value value) noexcept {
   std::unreachable();
 }
 
-bool IsSameKey(Value left, Value right) noexcept {
-  if (left.kind() == ValueKind::Double && right.kind() == ValueKind::Double &&
-      std::isnan(left.AsDouble()) && std::isnan(right.AsDouble())) {
-    return true;
-  }
-  return IsEqualValue(left, right);
-}
-
 struct Slot final {
   std::uint32_t bucket = kEmpty;
   std::uint32_t entry = kEmpty;
@@ -176,7 +168,7 @@ Slot FindSlot(const Table& table,
               Value key,
               std::size_t hash) noexcept {
   return FindSlot(table, hash, [&](std::uint32_t entry) {
-    return IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key);
+    return IsSameValueZero(LoadElementStorage(layout.keys, table.keys, entry), key);
   });
 }
 
@@ -324,7 +316,7 @@ std::expected<void, ExecutionStatus> Heap::StoreMapValue(HeapObject& object,
     const auto entry = table.buckets[bucket];
     const auto& layout = *object.collection_layout();
     if (entry < storage.used &&
-        IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key)) {
+        IsSameValueZero(LoadElementStorage(layout.keys, table.keys, entry), key)) {
       StoreCollectionEntry(object, entry, value);
       return {};
     }

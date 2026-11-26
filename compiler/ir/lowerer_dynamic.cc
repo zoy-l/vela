@@ -35,6 +35,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
         .kind = MemberKind::Field,
         .target = field.index,
         .type = RegisterRuntimeType(field.type),
+        .is_read_only = field.binding == frontend::BindingKind::Constant,
     });
   }
   std::vector<std::string> names;

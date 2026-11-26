@@ -226,6 +226,7 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
           builtin == Builtin::StringToLowerCase ? StringCase::Lower : StringCase::Upper));
     }
     case Builtin::ArraySlice:
+    case Builtin::ArrayIncludes:
     case Builtin::ArrayFill:
     case Builtin::ArrayReverse:
     case Builtin::ArrayCapacity:

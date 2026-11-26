@@ -107,6 +107,27 @@ class RuntimeReflectionTest : public ::testing::TestWithParam<NativeCodeTier> {
   std::unique_ptr<runtime::NativeInstance> instance_storage_;
 };
 
+TEST_P(RuntimeReflectionTest, ConstInstanceFieldWritesPreserveFailureControlFlow) {
+  Load(R"(
+[Reflect]
+class Constant { const value: int = 40; }
+export func answer(): int {
+  const object = Constant();
+  const field = Reflect.typeInfo<Constant>().findField('value');
+  if (field == null) { return 0; }
+  let completed = 0;
+  try { field.setValue(object, 1); return 0; }
+  catch (error: Error) {
+    if (error.code != 'ReflectionAccessDenied') { return 0; }
+    completed++;
+  } finally { completed++; }
+  return object.value + completed;
+}
+)");
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
 TEST_P(RuntimeReflectionTest, InheritedConstructorsExposeAndBindTheBaseSignature) {
   Load(R"(
 class Root<T> { value: T; bonus: int = 2; }
@@ -132,6 +153,30 @@ export func answer(): int {
   if (first is Generated && second is Explicit) {
     return first.value + first.bonus + second.value;
   }
+  return 0;
+}
+)");
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, UnifiedConstructorsReflectMergedAndForwardedDefaultParameters) {
+  Load(R"(
+class Root { value: int = 40; }
+[Reflect]
+class Generated extends Root { bonus: int = 2; constructor {} }
+[Reflect]
+class Forwarded extends Root { bonus: int = 2; constructor(super.value, this.bonus); }
+export func answer(): int {
+  const generated = Reflect.typeInfo<Generated>().getConstructor();
+  const forwarded = Reflect.typeInfo<Forwarded>().getConstructor();
+  if (generated == null || forwarded == null) { return -1; }
+  if (generated.parameters.length != 2 || forwarded.parameters.length != 2 ||
+      generated.parameters[0].name != 'value' || !generated.parameters[0].hasDefault ||
+      forwarded.parameters[1].name != 'bonus' || !forwarded.parameters[1].hasDefault) { return -2; }
+  const a = generated.invoke(CallArguments());
+  const b = forwarded.invoke(CallArguments(items: [CallArgument(name: 'value', value: 41), CallArgument(name: 'bonus', value: 1)]));
+  if (a is Generated && b is Forwarded && a.value + a.bonus == 42) { return b.value + b.bonus; }
   return 0;
 }
 )");
@@ -249,8 +294,10 @@ TEST_P(RuntimeReflectionTest, KeepsPrivateMetadataAndRejectsInvalidArgumentsBefo
   Load(R"(
 class Box {
   value: int = 0;
-  private hidden: int = 3;
-  private set amount(value: int): void { this.value = value; }
+
+  #hidden: int = 3;
+  set #amount(value: int): void { this.value = value; }
+
   set only(value: int): void { this.value = value; }
   update(value: int, second: int): int { this.value += value; return second; }
 }
@@ -260,8 +307,8 @@ class Box {
                                   {
                                       test::SelectMember(SelectionKind::Constructor),
                                       test::SelectMember(SelectionKind::Field, "value"),
-                                      test::SelectMember(SelectionKind::Field, "hidden"),
-                                      test::SelectMember(SelectionKind::Setter, "amount"),
+                                      test::SelectMember(SelectionKind::Field, "#hidden"),
+                                      test::SelectMember(SelectionKind::Setter, "#amount"),
                                       test::SelectMember(SelectionKind::Setter, "only"),
                                       test::SelectMember(SelectionKind::Method, "update"),
                                   }),
@@ -277,7 +324,7 @@ class Box {
   const auto object = constructor->Invoke(scope);
   ASSERT_TRUE(object);
   const auto hidden = test::RequireReflectionValue(
-      type->FindField("hidden", {.visibility = MemberVisibilityFilter::Private}));
+      type->FindField("#hidden", {.visibility = MemberVisibilityFilter::Private}));
   ASSERT_TRUE(hidden) << hidden.error();
   const auto denied = hidden->GetValue(scope, *object);
   ASSERT_FALSE(denied);
@@ -875,7 +922,9 @@ TEST_P(RuntimeReflectionTest, InheritedQueriesRespectOverridesOwnersAndInterface
 interface Reader { read(): int; }
 class Base {
   base: int = 10;
-  private hidden: int = 1;
+
+  #hidden: int = 1;
+
   static total: int = 3;
   read(): int { return 1; }
 }
@@ -907,7 +956,7 @@ export func answer(): int {
            test::SelectReflection("Base",
                                   {
                                       test::SelectMember(SelectionKind::Field, "base"),
-                                      test::SelectMember(SelectionKind::Field, "hidden"),
+                                      test::SelectMember(SelectionKind::Field, "#hidden"),
                                       test::SelectMember(SelectionKind::Field, "total"),
                                       test::SelectMember(SelectionKind::Method, "read"),
                                   }),
@@ -1224,9 +1273,13 @@ class Note extends Attribute {}
 [Reflect]
 class Whole {
   value: int = 1;
-  private secret: int = 2;
+
+  #secret: int = 2;
+
   get amount(): int { return this.value; }
-  private set amount(value: int): void { this.value = value; }
+
+  set #amount(value: int): void { this.value = value; }
+
   [Note]
   plain(): int { return 3; }
 }
@@ -1237,8 +1290,10 @@ class Counter {
   reset(): int { this.value = 42; return this.value; }
   [PrimaryButton]
   static run(): int { return 42; }
+
   [Button(label: 'hidden')]
-  private hidden(): int { return -1; }
+  #hidden(): int { return -1; }
+
   [Button(label: 'getter')]
   get amount(): int { return this.value; }
   [Note]

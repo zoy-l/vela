@@ -12,6 +12,7 @@ namespace vela::frontend {
 enum class TokenKind : std::uint8_t {
   EndOfFile,
   Identifier,
+  PrivateIdentifier,
   IntegerLiteral,
   DoubleLiteral,
   StringLiteral,
@@ -23,7 +24,6 @@ enum class TokenKind : std::uint8_t {
   Async,
   Await,
   Type,
-  Private,
   Static,
   Constructor,
   Extends,
@@ -142,8 +142,9 @@ enum class TokenRole : std::uint8_t {
 
 // 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。
 [[nodiscard]] inline bool IsMemberName(TokenKind kind) noexcept {
-  return kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set ||
-         kind == TokenKind::Match || kind == TokenKind::Type;
+  return kind == TokenKind::Identifier || kind == TokenKind::PrivateIdentifier ||
+         kind == TokenKind::Get || kind == TokenKind::Set || kind == TokenKind::Match ||
+         kind == TokenKind::Type;
 }
 
 [[nodiscard]] constexpr bool IsDeclarationName(TokenKind kind) noexcept {

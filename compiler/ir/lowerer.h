@@ -130,6 +130,9 @@ class Lowerer final {
                      const frontend::FunctionDescriptor& function_info,
                      const frontend::Class* owner = nullptr,
                      const frontend::LambdaDescriptor* lambda = nullptr);
+  [[nodiscard]] static const frontend::ClassDescriptor* ScriptConstructorOwner(
+      const frontend::Function& source,
+      const frontend::ClassDescriptor* owner);
   void LowerIntrinsicFunction(Function function,
                               const frontend::Function& source,
                               const frontend::Class* owner,
@@ -152,10 +155,11 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
-  RegisterId LowerParameterDefault(const frontend::Parameter& parameter,
-                                   LoweredValue input,
-                                   RegisterId supplied,
-                                   const frontend::TypeDescriptor& type);
+  RegisterId LowerDefaultValue(const frontend::Expression& initializer,
+                               LoweredValue input,
+                               RegisterId supplied,
+                               const frontend::TypeDescriptor& type,
+                               frontend::SourceLocation location);
   void InitializeArgumentPresence(const frontend::FunctionDescriptor& signature,
                                   std::span<const std::uint32_t> supplied,
                                   RegisterId base,
@@ -170,12 +174,29 @@ class Lowerer final {
     std::uint32_t index;
     std::uint64_t bit;
   };
+  struct ConstructorArgument final {
+    // 无 value 表示静态缺席；有值但无 supplied 表示静态存在。
+    std::optional<RegisterId> value;
+    std::optional<RegisterId> supplied;
+  };
   [[nodiscard]] static ConstructorFieldMask ConstructorMask(FieldId field);
   void LowerBaseConstructor(const frontend::ClassDescriptor& owner);
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
-  CallSignature& RegisterFunctionSignature(Function& function,
-                                           const frontend::Function& source,
-                                           const frontend::FunctionDescriptor& function_info);
+  [[nodiscard]] Construction DescribeConstruction(const frontend::ClassDescriptor& owner,
+                                                  std::span<const std::uint32_t> supplied) const;
+  void LowerConstructorField(const frontend::ClassDescriptor& owner,
+                             const frontend::Field& field,
+                             const frontend::ClassDescriptor::Field& descriptor,
+                             std::uint32_t parameter);
+  void LowerBoundConstructorCall(const frontend::ClassDescriptor& owner,
+                                 RegisterId object,
+                                 std::span<const ConstructorArgument> parameters,
+                                 frontend::SourceLocation location);
+  std::vector<RegisterId> LowerFieldConstructorArguments(
+      const frontend::ClassDescriptor& owner,
+      RegisterId object,
+      std::span<const ConstructorArgument> parameters,
+      frontend::SourceLocation location);
   std::optional<LoweredValue> LowerSuperGetter(const frontend::Expression& expression);
   void LowerCaptures(const frontend::Function& source, const frontend::LambdaDescriptor& lambda);
   void LowerStatement(const frontend::Statement& statement);
@@ -319,6 +340,7 @@ class Lowerer final {
                                                   frontend::SourceLocation location);
   [[nodiscard]] static bool IsInteger(const frontend::TypeDescriptor& type);
   [[nodiscard]] bool IsDynamicExpression(const frontend::Expression& expression) const;
+  [[nodiscard]] bool IsDynamicMember(const frontend::Expression& expression) const;
   void Emit(Instruction instruction);
   [[nodiscard]] std::optional<DeclarationId> ReceiverDeclaration(
       const frontend::TypeDescriptor& type) const;
@@ -406,6 +428,8 @@ class Lowerer final {
                                std::int64_t delete_count,
                                frontend::SourceLocation location);
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
+  LoweredValue LowerArrayAlgorithmBody(const frontend::Expression& expression,
+                                       const LoweredValue& receiver);
   RegisterId EmitArrayCallback(RegisterId callback,
                                std::span<const RegisterId> arguments,
                                const frontend::FunctionDescriptor& signature,
@@ -429,7 +453,27 @@ class Lowerer final {
                                    const frontend::TypeDescriptor& receiver_type,
                                    const frontend::TypeDescriptor& result_type,
                                    frontend::SourceLocation location,
-                                   std::optional<RegisterId> mapped_output = std::nullopt);
+                                   std::optional<RegisterId> output_array = std::nullopt);
+  RegisterId InitializeArrayAlgorithmResult(const ArrayAlgorithmRegisters& inputs,
+                                            ArrayAlgorithm algorithm,
+                                            const frontend::TypeDescriptor& result_type,
+                                            std::optional<RegisterId> output,
+                                            RegisterId zero,
+                                            frontend::SourceLocation location);
+  void EmitArrayFilterValue(const ArrayAlgorithmRegisters& inputs,
+                            const LoweredValue& result,
+                            RegisterId element,
+                            frontend::SourceLocation location);
+  struct ArrayPredicateRegisters final {
+    RegisterId element;
+    RegisterId index;
+    RegisterId matched;
+  };
+  std::optional<std::size_t> LowerArrayPredicateResult(const ArrayAlgorithmRegisters& inputs,
+                                                       ArrayAlgorithm algorithm,
+                                                       const LoweredValue& result,
+                                                       const ArrayPredicateRegisters& values,
+                                                       frontend::SourceLocation location);
   LoweredValue LowerArraySortTraversal(const ArrayAlgorithmRegisters& inputs,
                                        const frontend::TypeDescriptor& result_type,
                                        frontend::SourceLocation location);

@@ -35,6 +35,7 @@ inline constexpr std::uint32_t kNativeReflectionReceiverLayout = 64;
 inline constexpr std::uint32_t kNativeInlineScalarCallback = 1U << 7U;
 inline constexpr std::uint32_t kNativeScalarCallbackReadsCell = 1U << 8U;
 inline constexpr std::uint32_t kNativePrivateField = 1;
+inline constexpr std::uint32_t kNativeConstantField = 2;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
 // 描述表及所有借用字节均不可变，必须覆盖引用它们的程序状态、闭包与续延的生命周期。
@@ -117,6 +118,8 @@ struct NativeSignatureDescription final {
   NativeTable<NativeSignatureParameter> parameters;
   NativeTypeDescription result;
   std::uint32_t has_result = 0;
+  NativeTypeDescription narrowed_parameter;
+  std::uint32_t has_narrowed_parameter = 0;
 };
 
 struct NativeCallParameter final {
@@ -216,6 +219,7 @@ struct NativeMemberDescription final {
   std::uint32_t type = kNoNativeIndex;
   std::uint32_t setter = kNoNativeIndex;
   std::uint32_t kind = 0;
+  std::uint32_t read_only = 0;
 };
 
 struct NativeDeclarationDescription final {

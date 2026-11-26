@@ -71,6 +71,17 @@ std::optional<TypeConstraint> TypeSignature::FlattenedResult() const noexcept {
   return payload;
 }
 
+bool TypeSignature::IsSubtypeOf(const TypeSignature& target) const noexcept {
+  if (this == &target) {
+    return true;
+  }
+  if (parameters != target.parameters || result != target.result) {
+    return false;
+  }
+  return !target.narrowed_parameter ||
+         (narrowed_parameter && narrowed_parameter->IsSubtypeOf(*target.narrowed_parameter));
+}
+
 const ClassLayout* Heap::ClassOf(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::Instance || object.kind == ObjectKind::Host ? object.layout
                                                                                 : nullptr;
@@ -134,6 +145,10 @@ bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
     if (actual == expected) {
       return true;
     }
+    if (actual.callable && expected.callable && actual.signature != nullptr &&
+        expected.signature != nullptr) {
+      return actual.signature->IsSubtypeOf(*expected.signature);
+    }
     if (IsNominalSubtype(actual, expected)) {
       return true;
     }
@@ -171,23 +186,33 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
     return true;
   }
   const auto* object = value.AsObject();
-  if (object == nullptr || object->kind != type.object_kind ||
+  if (object == nullptr) {
+    return false;
+  }
+  const auto* layout = object->layout;
+  if (object->kind != type.object_kind ||
       (type.nominal != nullptr &&
-       (object->layout == nullptr || !object->layout->nominal_type().IsSubtypeOf(*type.nominal))) ||
+       (layout == nullptr || !layout->nominal_type().IsSubtypeOf(*type.nominal))) ||
       (type.array != nullptr && object->array_layout() != type.array) ||
       (type.collection != nullptr && object->collection_layout() != type.collection)) {
     return false;
   }
   if ((type.interface != nullptr) &&
-      (object->layout == nullptr || !object->layout->IsImplementing(*type.interface))) {
+      (layout == nullptr || !layout->IsImplementing(*type.interface))) {
     return false;
   }
   if ((type.signature != nullptr) && !type.callable && !TypeOf(value).IsSubtypeOf(type)) {
     return false;
   }
-  return !type.callable ||
-         (object->layout != nullptr && object->layout->callable() != nullptr &&
-          (type.signature == nullptr || object->layout->callable_type() == type.signature));
+  if (!type.callable) {
+    return true;
+  }
+  if (layout == nullptr || layout->callable() == nullptr) {
+    return false;
+  }
+  const auto* callable_type = layout->callable_type();
+  return type.signature == nullptr ||
+         (callable_type != nullptr && callable_type->IsSubtypeOf(*type.signature));
 }
 
 std::expected<void, ExecutionStatus> Heap::BindRuntimeType(HeapObject& object,

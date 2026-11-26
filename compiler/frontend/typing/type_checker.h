@@ -337,7 +337,21 @@ class TypeChecker final : private InferenceTypeRelations {
   void MergeAccessor(FunctionInfo& existing, const FunctionInfo& incoming, SourceLocation location);
   void CheckAccessor(const Function& method, const FunctionInfo& signature);
   void ResolveClassConstructor(const Class& declaration, ClassInfo& info);
-  void ResolveField(const Field& field, const Class& declaration, ClassInfo& info);
+  Diagnostics ConstructorDiagnostics(const ClassInfo& receiver,
+                                     const Class& source,
+                                     const ClassInfo& owner);
+  void CheckInheritedConstructorInitialization();
+  FunctionInfo ResolveGeneratedConstructor(const Class& declaration,
+                                           ClassInfo& info,
+                                           const ClassInfo* base);
+  FunctionInfo ResolveExplicitConstructor(const Class& declaration,
+                                          ClassInfo& info,
+                                          const ClassInfo* base);
+  std::pair<FunctionInfo::Parameter, ClassInfo::ConstructorBinding> ResolveConstructorBinding(
+      const Parameter& parameter,
+      const ClassInfo& owner,
+      const ClassInfo* base);
+  void ResolveField(const Field& field, ClassInfo& info);
   void ResolveInterfaces(const Program& program);
   void CheckImplementations(const Program& program);
   [[nodiscard]] static bool MatchesImplementationSignature(const FunctionInfo& implementation,
@@ -348,7 +362,7 @@ class TypeChecker final : private InferenceTypeRelations {
   static FunctionInfo AccessorSignature(const FunctionInfo& method, DeclarationKind kind);
   void CheckOverrides(const ClassInfo& info);
   void CheckOverride(const Function& method, const ClassInfo* base);
-  void CheckGenericOverrides(const ClassInfo& info, const ClassInfo* base);
+  void CheckGenericOverride(const Function& method, const ClassInfo* base);
   void MergeBaseClass(std::string_view name);
   void CheckFunction(const Function& function, const ClassInfo* owner);
   void CheckFunctionBody(const Function& function,
@@ -376,13 +390,37 @@ class TypeChecker final : private InferenceTypeRelations {
                            ArrayAlgorithm algorithm,
                            const Type* expected);
   Type CheckArrayAlgorithmResult(ArrayAlgorithm algorithm,
-                                 const Type& result,
-                                 const FunctionInfo& method,
-                                 SourceLocation location);
+                                 const Type& method_result,
+                                 SourceLocation location,
+                                 const Type& callback_result);
+  Type CheckArrayAlgorithmCallback(const Expression& expression,
+                                   const Type& actual,
+                                   const FunctionInfo& context,
+                                   const Type& element,
+                                   ArrayAlgorithm algorithm,
+                                   const Type& result);
   Type CheckExpression(const Expression& expression, const Type* expected);
   Type CheckExpressionType(const Expression& expression, const Type* expected);
   Type CheckLambda(const Expression& expression, const Type* expected);
   void InferLambdaReturn(const Statement& statement);
+  struct PredicateScope final {
+    std::uint32_t binding;
+    Type original;
+    std::optional<Type> matched;
+    bool assigned = false;
+  };
+  void BeginPredicate(const Function& function, const FunctionInfo& signature);
+  [[nodiscard]] static bool CanInferPredicate(const Function& function,
+                                              const FunctionInfo& signature);
+  void RecordPredicateReturn(const Expression& expression);
+  [[nodiscard]] std::optional<Type> PredicateUpperBound(const Type& first,
+                                                        const Type& second) const;
+  std::optional<Type> FinishPredicate();
+  std::optional<Type> ResolvePredicate(const FunctionInfo& signature);
+  std::optional<PredicateScope> predicate_scope_;
+  absl::flat_hash_set<const Statement*> checking_function_bodies_;
+  absl::flat_hash_map<const Statement*, const Function*> predicate_declarations_;
+  absl::flat_hash_map<const Statement*, Type> function_predicates_;
   Type CheckTypeOperation(const Expression& expression);
   enum class MatchPhase : std::uint8_t { Prepare, Complete };
   Type CheckMatch(const Expression& expression,
@@ -409,8 +447,13 @@ class TypeChecker final : private InferenceTypeRelations {
   Type ResolveGenericType(const TypeName& source);
   Type NullableType(Type type);
   Type FunctionType(const FunctionInfo& signature);
+  Type FunctionType(std::span<const FunctionInfo::Parameter> parameters,
+                    const Type& return_type,
+                    std::optional<Type> narrowed_parameter);
   Type FunctionValueType(const FunctionInfo& signature, const Type* expected);
-  Type FunctionValueType(const FunctionInfo& signature, const FunctionInfo& context);
+  Type FunctionValueType(const FunctionInfo& signature,
+                         const FunctionInfo& context,
+                         std::optional<Type> narrowed_parameter);
   static void ApplyIntrinsicDefaults(const Function& function, FunctionInfo& info);
   void CaptureLocal(const Expression& expression, const LocalBinding& binding);
   Type CheckCall(const Expression& expression, const Type* expected);
@@ -464,7 +507,15 @@ class TypeChecker final : private InferenceTypeRelations {
                            const Type& receiver,
                            const Type* expected);
   Type CheckInstanceCall(const Expression& expression, const Type& object, const Type* expected);
-  void CheckMemberAssignment(const Expression& member);
+  enum class CheckStatus : std::uint8_t { Succeeded, Failed };
+  enum class MemberWrite : std::uint8_t { Assignment, Mutation };
+  void CheckMemberAssignment(const Expression& member, MemberWrite mode = MemberWrite::Mutation);
+  void CheckInstanceMemberAssignment(const Expression& member,
+                                     const ClassInfo& owner,
+                                     MemberWrite mode);
+  CheckStatus CheckConstFieldAssignment(const Expression& member,
+                                        const ClassInfo::Field& field,
+                                        MemberWrite mode);
   Type CheckFunctionCall(const FunctionInfo& function,
                          const Expression& expression,
                          std::span<const std::optional<Type>> checked_arguments = {},
@@ -480,6 +531,7 @@ class TypeChecker final : private InferenceTypeRelations {
                          const ClassInfo& owner,
                          const Type* expected);
   Type CheckObjectMember(const Expression& expression, const Type& object, const Type* expected);
+  Type ResolvePrivateReceiver(const Expression& member, Type receiver);
   Type CheckBuiltinMethodValue(const Expression& expression,
                                const Type& receiver,
                                const Type* expected);
@@ -497,14 +549,12 @@ class TypeChecker final : private InferenceTypeRelations {
   [[nodiscard]] const LocalBinding* LookupLocal(std::string_view name) const;
   void BeginScope();
   void EndScope();
-  enum class CheckStatus : std::uint8_t { Succeeded, Failed };
   const LocalBinding* DeclareLocal(std::string_view name,
                                    const Type& type,
                                    SourceLocation location,
                                    BindingKind kind = BindingKind::Mutable,
                                    const void* declaration = nullptr);
   [[nodiscard]] static bool IsAssignable(const Expression& expression);
-  [[nodiscard]] static bool IsSameType(const Type& left, const Type& right);
   // 静态可证明的类型关系：身份、可空提升、class 继承、显式 implements、参数上界与 Future 载荷契约。
   // 不含 dynamic 边界；约束证明只使用此关系，普通赋值另外接受受检查的 dynamic 转换。
   [[nodiscard]] bool IsSubtype(const Type& subtype, const Type& supertype) const;
@@ -518,6 +568,9 @@ class TypeChecker final : private InferenceTypeRelations {
                                  const Type& actual);
   [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
+  void RefineNullComparison(const Expression& condition, ConditionTruth outcome);
+  void RefinePredicateCall(const Expression& condition);
+  void RefineAlternatives(const Expression& condition, ConditionTruth outcome);
   void RefineTypeTest(const Expression& condition);
   void RefineAssignedLocal(const LocalBinding& binding, const Type& value);
   void DiagnoseOperandMismatch(const Expression& operand,
@@ -652,6 +705,11 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::flat_hash_map<std::string, std::int64_t> enum_values_;
   absl::flat_hash_map<std::string, std::size_t> function_value_ids_;
   absl::node_hash_map<std::string, ClassInfo> classes_;
+  // 抽象应用借用完整模板体；签名声明不承担构造期间的接收者观察证明。
+  absl::flat_hash_map<std::string_view, const Class*> class_definitions_;
+  absl::flat_hash_set<const Class*> initialized_definitions_;
+  absl::flat_hash_set<const Class*> deferred_definitions_;
+  std::vector<std::string_view> initialization_receivers_;
   absl::node_hash_map<std::string, FunctionInfo> functions_;
   std::vector<absl::flat_hash_map<std::string, LocalBinding>> scopes_;
   std::size_t loop_depth_ = 0;
@@ -682,7 +740,6 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::node_hash_map<std::string, InterfaceDescriptor> interfaces_;
   absl::node_hash_map<std::string, absl::flat_hash_map<std::string, const Function*>>
       method_applications_;
-  absl::flat_hash_set<std::string> explicit_super_constructors_;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments_;
   absl::flat_hash_map<std::string, std::size_t> enum_sizes_;
   // 解析上界可能登记新的参数；节点容器保持已有条目地址稳定。
@@ -703,6 +760,30 @@ class TypeChecker final : private InferenceTypeRelations {
   std::vector<AttributeBinding> attributes_;
   // 每阶段每个特性只绑定一次；模板定义结束后清空，具体声明重新产生其事实。
   absl::flat_hash_map<const Attribute*, std::optional<AttributeBinding>> attribute_bindings_;
+
+  // 独立函数检查借用检查器，离开时恢复调用方的词法、流分析和控制上下文。
+  class FunctionContext final {
+   public:
+    explicit FunctionContext(TypeChecker& checker);
+    ~FunctionContext();
+    FunctionContext(const FunctionContext&) = delete;
+    FunctionContext& operator=(const FunctionContext&) = delete;
+    FunctionContext(FunctionContext&&) = delete;
+    FunctionContext& operator=(FunctionContext&&) = delete;
+
+   private:
+    TypeChecker* checker_;
+    decltype(TypeChecker::scopes_) scopes_;
+    Refinements refinements_;
+    decltype(TypeChecker::lambda_scopes_) lambdas_;
+    decltype(TypeChecker::constant_bindings_) constants_;
+    std::optional<PredicateScope> predicate_;
+    const ClassInfo* owner_;
+    bool constructor_;
+    bool asynchronous_;
+    std::size_t loop_;
+    std::size_t switching_;
+  };
 };
 
 }  // namespace vela::frontend

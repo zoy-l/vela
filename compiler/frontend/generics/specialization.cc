@@ -532,7 +532,9 @@ void Specializer::Normalize(Function& function, const TypeSubstitutions& substit
   for (auto& parameter : function.parameters) {
     Normalize(parameter.type, substitutions);
     Normalize(parameter.initializer.get(), substitutions);
-    scopes_.back().insert(parameter.name);
+    if (parameter.binding == Parameter::Binding::Local) {
+      scopes_.back().insert(parameter.name);
+    }
   }
   Normalize(function.body.get(), substitutions);
   scopes_.pop_back();

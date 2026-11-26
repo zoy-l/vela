@@ -15,15 +15,19 @@ class Record {
   text: string?;
   step: int = Trace.mark(8);
   values: int[] = [];
-  private hidden: int = Trace.mark(3);
+
+  #hidden: int = Trace.mark(3);
+
   constructor { Trace.mark(4); }
 }
 class Explicit<T> {
   value: T;
   text: string = 'default';
-  private delta: int;
-  constructor(initial: T) { this.value = initial; this.delta = 2; }
-  adjustment(): int { return this.delta; }
+
+  #delta: int;
+
+  constructor(initial: T) { this.value = initial; this.#delta = 2; }
+  adjustment(): int { return this.#delta; }
 }
 class Base { value: int; constructor { this.value++; } }
 class Child extends Base {

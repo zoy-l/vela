@@ -34,5 +34,8 @@ struct DynamicArrayPreparation final {
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArrayOperation(
     Builtin builtin,
     std::span<const Value> input);
+[[nodiscard]] std::expected<Value, ExecutionStatus> AppendDynamicArrayValue(
+    Heap& heap,
+    std::span<const Value> input);
 
 }  // namespace vela::runtime

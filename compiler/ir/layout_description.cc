@@ -122,6 +122,9 @@ void LayoutDescription::Canonicalize(layout::Type type) {
       if (signature.result) {
         Canonicalize(*signature.result);
       }
+      if (signature.narrowed_parameter) {
+        Canonicalize(*signature.narrowed_parameter);
+      }
       break;
     }
     default:
@@ -245,6 +248,9 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
   layout::Signature descriptor{.name = std::string(key), .parameters = {}};
   if (type.kind == SourceType::Kind::Function) {
     const auto& function = model_->function_types.at(key);
+    if (function.narrowed_parameter) {
+      descriptor.narrowed_parameter = Type(*function.narrowed_parameter);
+    }
     for (const auto& parameter : function.parameters) {
       descriptor.parameters.push_back({.type = Type(parameter.type)});
     }
@@ -283,6 +289,9 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
                            ? 1U
                            : 0U;
   layout::Signature descriptor{.name = {}, .parameters = {}};
+  if (call.narrowed_parameter) {
+    descriptor.narrowed_parameter = Type(program.runtime_types.at(*call.narrowed_parameter));
+  }
   for (std::size_t index = skipped; index < call.parameters.size(); ++index) {
     const auto& parameter = call.parameters.at(index);
     descriptor.parameters.push_back({

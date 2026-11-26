@@ -97,10 +97,6 @@ TypeChecker::Type TypeChecker::ArrayType(const Type& element) {
   return result;
 }
 
-bool TypeChecker::IsSameType(const Type& left, const Type& right) {
-  return left.kind == right.kind && left.name == right.name && left.nullable == right.nullable;
-}
-
 TypeChecker::Type TypeChecker::NonNullable(Type type) {
   if (type.kind == Type::Kind::Parameter) {
     type.known_non_null = true;
@@ -127,6 +123,28 @@ bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
   }
   if (IsSameType(subtype, supertype)) {
     return true;
+  }
+  if (subtype.kind == Type::Kind::Function && supertype.kind == Type::Kind::Function &&
+      (!subtype.nullable || supertype.nullable)) {
+    const auto source_name = NonNullableTypeName(subtype);
+    const auto target_name = NonNullableTypeName(supertype);
+    if (source_name == target_name) {
+      return true;
+    }
+    const auto& source = function_types_.at(source_name);
+    const auto& target = function_types_.at(target_name);
+    if (source.parameters.size() != target.parameters.size() ||
+        !IsSameType(source.return_type, target.return_type)) {
+      return false;
+    }
+    for (std::size_t index = 0; index < source.parameters.size(); ++index) {
+      if (!IsSameType(source.parameters[index].type, target.parameters[index].type)) {
+        return false;
+      }
+    }
+    return !target.narrowed_parameter ||
+           (source.narrowed_parameter &&
+            IsSubtype(*source.narrowed_parameter, *target.narrowed_parameter));
   }
   if (subtype.kind != Type::Kind::Class && subtype.kind != Type::Kind::Parameter &&
       subtype.kind != Type::Kind::Future) {

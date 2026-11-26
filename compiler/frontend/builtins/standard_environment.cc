@@ -47,7 +47,9 @@ constexpr auto kDeclarations = std::to_array<StandardDeclaration>({
 /// Numeric parameters use double without implicit int/double conversion.
 /// All methods are static. Math cannot be constructed.
 class Math {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Pi, approximately 3.141592653589793. A read-only double constant.
   static PI: double = 3.141592653589793;
   /// Euler's number e, approximately 2.718281828459045. A read-only double constant.
@@ -111,7 +113,9 @@ class Math {
         .source =
             R"(/// Strict in-memory JSON using native values, dynamic arrays, and ordered maps.
 class JSON {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Parses one complete JSON value. Invalid input throws JsonDecodeError with a byte offset.
   static external func parse(source: string): dynamic;
   /// Decodes the complete input through the target type's public constructor contract.
@@ -127,21 +131,23 @@ class JSON {
         .name = kJsonParseResultTypeName,
         .source = R"(/// An immutable parse state created by JSON.safeParse<T>.
 class JSONParseResult<T> {
-  private successValue: bool = false;
-  private payload: dynamic = null;
-  private constructor() {}
-  get success(): bool { return this.successValue; }
+
+  #successValue: bool = false;
+  #payload: dynamic = null;
+  #constructor() {}
+
+  get success(): bool { return this.#successValue; }
   get value(): T {
-    if (!this.successValue) {
+    if (!this.#successValue) {
       throw Error(message: 'JSON result has no success value', code: 'TypeError');
     }
-    return this.payload as T;
+    return this.#payload as T;
   }
   get error(): JSONParseError {
-    if (this.successValue) {
+    if (this.#successValue) {
       throw Error(message: 'JSON result has no input error', code: 'TypeError');
     }
-    return this.payload as JSONParseError;
+    return this.#payload as JSONParseError;
   }
 }
 )",
@@ -150,19 +156,21 @@ class JSONParseResult<T> {
         .name = kJsonParseErrorTypeName,
         .source = R"(/// A structured input error created by typed JSON decoding.
 class JSONParseError {
-  private codeValue: string = '';
-  private pathValue: string = '$';
-  private expectedValue: string? = null;
-  private actualValue: string? = null;
-  private offsetValue: int? = null;
-  private messageValue: string = '';
-  private constructor() {}
-  get code(): string { return this.codeValue; }
-  get path(): string { return this.pathValue; }
-  get expected(): string? { return this.expectedValue; }
-  get actual(): string? { return this.actualValue; }
-  get offset(): int? { return this.offsetValue; }
-  get message(): string { return this.messageValue; }
+
+  #codeValue: string = '';
+  #pathValue: string = '$';
+  #expectedValue: string? = null;
+  #actualValue: string? = null;
+  #offsetValue: int? = null;
+  #messageValue: string = '';
+  #constructor() {}
+
+  get code(): string { return this.#codeValue; }
+  get path(): string { return this.#pathValue; }
+  get expected(): string? { return this.#expectedValue; }
+  get actual(): string? { return this.#actualValue; }
+  get offset(): int? { return this.#offsetValue; }
+  get message(): string { return this.#messageValue; }
 }
 )",
     },
@@ -172,7 +180,9 @@ class JSONParseError {
             R"(/// An isolate-local, reproducible pseudorandom generator, initially seeded with 0.
 /// The same seed and call sequence produce the same results. Not cryptographically secure.
 class Random {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Resets the random state using all 64 bits of the int seed value.
   /// Returns void. Affects subsequent nextInt() and Math.random() results.
   static external func seed(value: int): void = 'Random.seed';
@@ -188,7 +198,9 @@ class Random {
             R"(/// A monotonic clock for measuring elapsed time in milliseconds, including fractions.
 /// Subtract two now() readings to measure a duration. Its origin is not Unix time.
 class performance {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Returns the current monotonic clock reading in milliseconds as double.
   /// Consecutive readings may be equal. System clock adjustments do not move it backwards.
   /// Example: const start = performance.now();
@@ -201,7 +213,9 @@ class performance {
         .source =
             R"(/// Provides Unix wall-clock time, which may jump when the system clock is adjusted.
 class Date {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Returns integer milliseconds since 1970-01-01T00:00:00Z as int.
   /// Use performance.now() to measure elapsed time.
   static external func now(): int = 'Date.now';
@@ -221,21 +235,23 @@ class Date {
         .name = kDatePartsTypeName,
         .source = R"(/// An immutable UTC calendar snapshot, created by Date.toUTC.
 class DateParts {
-  private yearValue: int = 0;
-  private monthValue: int = 0;
-  private dayValue: int = 0;
-  private hourValue: int = 0;
-  private minuteValue: int = 0;
-  private secondValue: int = 0;
-  private millisecondValue: int = 0;
-  private constructor() {}
-  get year(): int { return this.yearValue; }
-  get month(): int { return this.monthValue; }
-  get day(): int { return this.dayValue; }
-  get hour(): int { return this.hourValue; }
-  get minute(): int { return this.minuteValue; }
-  get second(): int { return this.secondValue; }
-  get millisecond(): int { return this.millisecondValue; }
+
+  #yearValue: int = 0;
+  #monthValue: int = 0;
+  #dayValue: int = 0;
+  #hourValue: int = 0;
+  #minuteValue: int = 0;
+  #secondValue: int = 0;
+  #millisecondValue: int = 0;
+  #constructor() {}
+
+  get year(): int { return this.#yearValue; }
+  get month(): int { return this.#monthValue; }
+  get day(): int { return this.#dayValue; }
+  get hour(): int { return this.#hourValue; }
+  get minute(): int { return this.#minuteValue; }
+  get second(): int { return this.#secondValue; }
+  get millisecond(): int { return this.#millisecondValue; }
 }
 )",
     },
@@ -244,7 +260,9 @@ class DateParts {
         .source =
             R"(/// Fixed-length, zero-initialized raw byte storage. Construct with ByteArray(length: int).
 class ByteArray {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Validates and copies int[] elements in 0..255 into independently owned byte storage.
   static external func from(values: int[]): ByteArray;
 }
@@ -255,7 +273,9 @@ class ByteArray {
         .source =
             R"(/// A typed byte view that retains its ByteArray owner. Construct with ByteData.view.
 class ByteData {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Creates a shared view; offset defaults to zero, length to the remaining bytes.
   static external func view(bytes: ByteArray, offset: int, length: int): ByteData;
 }
@@ -266,7 +286,9 @@ class ByteData {
         .source =
             R"(/// PCRE2 Unicode regular expression with code-point coordinates; no shared cursor.
 class RegExp {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Escapes literal text, including whitespace and extended-mode metacharacters.
   static external func escape(text: string): string;
 }
@@ -277,7 +299,8 @@ class RegExp {
         .source =
             R"(/// Immutable match retaining its input and pattern. Created by RegExp searches.
 class RegExpMatch {
-  private constructor() {}
+
+  #constructor() {}
 }
 )",
     },
@@ -292,7 +315,9 @@ enum Endian { big, little, host }
         .name = kIntTypeName,
         .source = R"(/// Signed 64-bit integers and explicit string parsing.
 class int {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Parses the complete string as int64. radix is 2..36; omitted or null recognizes 0x.
   static external func parse(source: string, radix: int?): int;
   /// Returns null for invalid or overflowing text; an invalid radix still throws InvalidRadix.
@@ -304,7 +329,9 @@ class int {
         .name = kDoubleTypeName,
         .source = R"(/// IEEE 754 binary64 numbers and explicit string parsing.
 class double {
-  private constructor() {}
+
+  #constructor() {}
+
   /// Parses a complete decimal, NaN or Infinity, independently of locale.
   static external func parse(source: string): double;
   /// Returns null when the complete string is not a supported floating-point literal.

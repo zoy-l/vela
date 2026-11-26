@@ -12,6 +12,8 @@ enum class ArrayAlgorithm : std::uint8_t {
   FindIndex,
   Reduce,
   Map,
+  Filter,
+  Find,
 };
 
 }  // namespace vela

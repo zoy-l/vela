@@ -211,7 +211,7 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
     }
   }
   std::optional<layout::Type> write_type;
-  if (member.kind == MemberKind::Field) {
+  if (member.kind == MemberKind::Field && !member.is_read_only) {
     write_type = member_type;
   } else if (member.setter) {
     const auto& setter = program.functions.at(*member.setter);

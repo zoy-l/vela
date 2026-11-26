@@ -60,6 +60,116 @@ func main(): int { return Leaf(value: 40).value; }
             text->PositionAt(source.find("value: T"), PositionEncoding::Utf8));
 }
 
+TEST(SemanticCompletionTest, UnifiedConstructorsExposeMergedParametersAndForwardedTypes) {
+  const std::string source = R"(
+class Base<T> { value: T; }
+class Child extends Base<int> { bonus: int = 2; constructor {} }
+class Explicit extends Base<int> { bonus: int; constructor(super.value, this.bonus); }
+func main(): int { return Child(value: 40).value + Explicit(1, 1).bonus; }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto completions = index.Complete(source.find("Child(value") + 5);
+  const auto child = std::ranges::find(completions, "Child", &Completion::label);
+  ASSERT_NE(child, completions.end());
+  EXPECT_TRUE(child->detail.contains("constructor(value: int, bonus: int = 2)")) << child->detail;
+  const auto explicit_completions = index.Complete(source.find("Explicit(1") + 8);
+  const auto explicit_type =
+      std::ranges::find(explicit_completions, "Explicit", &Completion::label);
+  ASSERT_NE(explicit_type, explicit_completions.end());
+  EXPECT_TRUE(explicit_type->detail.contains("constructor(value: int, bonus: int)"))
+      << explicit_type->detail;
+  EXPECT_TRUE(index.FindDefinition(source.find("value: 40"), PositionEncoding::Utf8));
+}
+
+TEST(SemanticCompletionTest, DuplicateConstructorParametersKeepTheForwardingSourceReference) {
+  const std::string source = R"(
+class Child { y: int = 2; constructor(x: int, x: int, this.y) {} }
+func main(): Child { return Child(1); }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  EXPECT_TRUE(frontend::HasErrors(index.diagnostics()));
+  const auto completions = index.Complete(source.find("Child(1") + 5);
+  const auto child = std::ranges::find(completions, "Child", &Completion::label);
+  ASSERT_NE(child, completions.end());
+  EXPECT_TRUE(child->detail.contains("constructor(x: int, y: int = 2)")) << child->detail;
+  const auto definition = index.FindDefinition(source.find("this.y") + 5, PositionEncoding::Utf8);
+  ASSERT_TRUE(definition);
+  const auto text = SourceText::Create(source);
+  ASSERT_TRUE(text);
+  EXPECT_EQ(definition->range.start,
+            text->PositionAt(source.find("y: int"), PositionEncoding::Utf8));
+}
+
+TEST(SemanticCompletionTest, PrivateFieldFormalsAndDynamicReferencesKeepLexicalOwners) {
+  const std::string source = R"(
+class Base {
+  const #value: int;
+  constructor(this.#value);
+  read(other: dynamic): int { return other.#value; }
+}
+class Child extends Base { #value: int = 2; }
+func main(): int { const child = Child(value: 40); return child.read(child); }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto text = SourceText::Create(source);
+  ASSERT_TRUE(text);
+  const auto expected = text->PositionAt(source.find("#value: int"), PositionEncoding::Utf8);
+  for (const auto position : {
+           source.find("this.#value") + 5,
+           source.find("other.#value") + 6,
+           source.find("value: 40"),
+       }) {
+    const auto definition = index.FindDefinition(position, PositionEncoding::Utf8);
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->range.start, expected);
+  }
+}
+
+TEST(SemanticCompletionTest, ForwardedParametersKeepLocalAndPrivateDefinitionsAcrossOwners) {
+  const std::string source = R"(
+class Leaf extends Mid { extra: int = 0; }
+class Mid extends Root {
+  const #bonus: int;
+  constructor(super.initial, this.#bonus);
+  read(): int { return this.value + this.#bonus; }
+}
+class Root {
+  value: int;
+  constructor(initial: int = 40) { this.value = initial; }
+}
+func main(): int { return Leaf(initial: 40, bonus: 2).read(); }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto text = SourceText::Create(source);
+  ASSERT_TRUE(text);
+  for (const auto& [reference, declaration] :
+       std::to_array<std::pair<std::string_view, std::string_view>>({
+           {"initial: 40", "initial: int"},
+           {"bonus: 2", "#bonus: int"},
+           {"super.initial", "initial: int"},
+           {"this.#bonus", "#bonus: int"},
+       })) {
+    const auto prefix = reference.find('.');
+    const auto offset =
+        source.find(reference) + (prefix == std::string_view::npos ? 0 : prefix + 1);
+    const auto definition = index.FindDefinition(offset, PositionEncoding::Utf8);
+    ASSERT_TRUE(definition) << reference;
+    EXPECT_EQ(definition->range.start,
+              text->PositionAt(source.find(declaration), PositionEncoding::Utf8))
+        << reference;
+  }
+}
+
 TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutAnImport) {
   const std::string source = "func main(): void { Reflect.typeI; }";
   const frontend::SourceInput input{.path = "main.vela", .text = source};
@@ -70,6 +180,26 @@ TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutA
   EXPECT_EQ(function->kind, CompletionKind::Method);
   EXPECT_NE(function->detail.find("<T>"), std::string::npos);
   EXPECT_FALSE(function->documentation.empty());
+}
+
+TEST(SemanticCompletionTest, ConstructorDefaultsUseBoundFieldsAndKeepForwardedValuesOpaque) {
+  const std::string source = R"(
+class Base { count: int = 2; }
+class Box extends Base {
+  static unused: int = 1;
+  #hidden: int = 40;
+  constructor(this.#hidden, super.count);
+}
+func main(): Box { return Box(); }
+)";
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto completions = index.Complete(source.rfind("Box()") + 3);
+  const auto box = std::ranges::find(completions, "Box", &Completion::label);
+  ASSERT_NE(box, completions.end());
+  EXPECT_TRUE(box->detail.contains("constructor(hidden: int = 40, count: int = …)")) << box->detail;
 }
 
 TEST(SemanticAttributeTest, ResolvesAttributeTypesArgumentsAndCommentsThroughNormalSymbols) {

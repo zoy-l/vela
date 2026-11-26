@@ -317,7 +317,9 @@ performs a numeric conversion. Numeric conversions remain explicit
 
 ## Class construction from fields
 
-Class members are public by default; only `private` needs a visibility modifier.
+Class members are public by default. Private names start with `#` in declarations and
+accesses, such as `#count` and `this.#count`. Visibility modifiers and access sections
+are not supported.
 When a class has no explicit constructor parameter list, each public instance
 field declares a same-name named constructor parameter. No field modifier is needed:
 
@@ -326,15 +328,15 @@ class Counter {
   value: int;
   step: int = 1;
 
-  private count: int = 0;
+  #count: int = 0;
 
   constructor {
-    // All required fields are initialized before this body executes.
+    // Fields corresponding to public parameters are initialized before this body executes.
   }
 
   next(): int {
     this.value = this.value + this.step;
-    this.count = this.count + 1;
+    this.#count = this.#count + 1;
     return this.value;
   }
 }
@@ -355,19 +357,19 @@ initializer is required, and one with an initializer supplies the default when
 omitted. Nullable types allow null values but do not make arguments optional:
 `text: string?` is required, while `text: string? = null` may be omitted.
 Private and static fields do not create constructor parameters. Private fields
-need an initializer or assignment by an explicit constructor; static fields need
+need an initializer, a field-formal parameter, or constructor-body assignment; static fields need
 an initializer. Calls retain `ClassName(...)` syntax without `new`.
 
 `constructor { ... }` is an optional body for the generated constructor, not
-a zero-argument parameter declaration. Fields must be initialized before that
+a zero-argument parameter declaration. Fields corresponding to public parameters initialize before that
 body runs. Explicit arguments evaluate once in source order. Omitted defaults
 then evaluate in field declaration order, followed by the constructor body.
 A supplied argument skips its field's default. Defaults cannot access `this`
 or caller locals. Each omitted default is evaluated for each construction;
 an array default such as `values: int[] = []` creates an independent array for
-each instance. The generated constructor keeps its newly allocated receiver
-rooted and stores arguments directly into fields; it does not retain every
-field argument in a separate register until the body starts.
+each instance. Construction keeps its newly allocated receiver rooted. Pure field constructors store
+arguments directly into fields; forwarding ordinary parameters to an explicit base
+constructor uses a parameter window resolved at compile time.
 
 Classes requiring hand-written parameters can instead declare
 `constructor(name: Type, ...) { ... }`. That list defines the complete constructor
@@ -379,10 +381,11 @@ any fields left uninitialized:
 class Box {
   value: int;
   text: string = '';
-  private adjustment: int = 2;
+
+  #adjustment: int = 2;
 
   constructor(initial: int) {
-    this.value = initial + this.adjustment;
+    this.value = initial + this.#adjustment;
   }
 }
 
@@ -395,15 +398,47 @@ no runtime annotation execution, reflection, or argument-name dictionary.
 For explicit constructors, defaults run before the body; definite initialization
 analysis requires every field to be initialized on every returning path. Reading
 an uninitialized field, calling an instance method, or exposing `this` before
-initialization is rejected. `private` is scoped to the declaring class. Private
-members remain inaccessible through dynamic dispatch as well as static access.
+initialization is rejected. `#name` is available only in the declaring class lexical
+scope, including its closures. Base and derived declarations of the same private name
+have independent field slots and methods. Public `name` and private `#name` are distinct
+members. Private members do not override and cannot be accessed through `super.#name`.
+Static private members require the declaring class. Access through a dynamic receiver
+inside that scope checks the declaring class at runtime; outside code cannot bypass privacy.
 
-A derived class that declares no constructor and has no constructor parameters of
-its own inherits the complete base constructor signature and forwards its arguments
-automatically. Parameter names, types, required arguments and defaults are preserved.
-Generated field constructors still require named arguments; explicit constructors
-also accept positional arguments. This applies through generic substitution and
-multiple inheritance levels, including class names used as constructor values:
+Changing `name` to `#name` deletes the old member and creates a private member. Retained version
+handles or closures that still reference the deleted member block an Update until those references
+are released or a Reload occurs. With the same private name, class closures keep their lexical
+declaring class while accessing the current field.
+
+Vela provides the `#constructor(...)` extension, callable only from its declaring class,
+for example through a public static factory. `constructor(this.#value)` binds the private
+field to the visible parameter name `value`, so callers write `ClassName(value: ...)`.
+
+An instance `const` field is initialized once during construction. Defaults, field-formal
+parameters and body assignments all count as initialization. Branches, loops and exception
+paths must establish exactly one initialization on every normal exit. Later assignments,
+compound writes and increments are rejected, including dynamic and reflected writes.
+This is a shallow binding restriction: array and object contents remain mutable, and the
+value need not be a compile-time constant. Static const fields are readonly after lazy initialization.
+
+Inheritance follows four constructor rules. An absent base class or a base with no
+parameters contributes an empty parameter list.
+
+| Derived declaration | Constructor parameters | Base call |
+| --- | --- | --- |
+| No `constructor` | Base parameters followed by own public instance fields | Automatically forward base arguments |
+| `constructor { ... }` without `super(...)` | Base parameters followed by own public instance fields | Automatically call the base, then execute the body |
+| `constructor { ... super(...); ... }` | Own public instance fields only | Execute the written base call |
+| `constructor(...)` | Exactly the explicit parameter list | Execute a written `super(...)`, or forward `super.param` parameters automatically |
+
+The first three forms require named arguments, including when the base declares an
+explicit parameter list. Explicit parameter constructors accept positional and named
+arguments.
+Merged signatures preserve base parameter names, types, requiredness and defaults, then
+append own public fields in declaration order. Duplicate parameter names are compile
+errors; use an explicit parameter list to resolve the conflict.
+Private and static fields contribute no parameters. A private base constructor cannot be
+automatically inherited or called.
 
 ```typescript
 class Component<P> {
@@ -411,60 +446,87 @@ class Component<P> {
 }
 
 class ProgressBar extends Component<int> {
-  private animation: double = 0.0;
+  width: int = 100;
+  constructor { this.width += 1; }
 }
 
-const bar = ProgressBar(props: 42);
-const create: (int) => ProgressBar = ProgressBar;
+const bar = ProgressBar(props: 42); // props = 42, width = 101
+const create: (int, int) => ProgressBar = ProgressBar;
 ```
 
-Private and static fields do not create constructor parameters, so they do not
-prevent signature inheritance. The derived class initializes its own instance field
-defaults before entering base construction. Omitted defaults are evaluated once by
-the base class in their original declaration environment. Private constructors
-cannot be inherited.
-
-A derived class with a `constructor { ... }` body, an explicit parameter constructor,
-or public instance fields uses its own constructor signature. When the base has
-required parameters, that constructor must supply them through an explicit
-`super(...)` call:
+Explicit lists support field-binding parameters `this.field` and base-forwarding
+parameters `super.param`. Each inherits its target's type, requiredness and default; a
+forwarding declaration cannot repeat the type or override the default.
+`this.field` binds an own instance field, including a private field. `super.param` names a
+parameter in the direct base constructor signature. Neither creates a body-local variable;
+read fields through `this.field`.
+An ordinary `name: Type` parameter remains a local variable. Matching names do not
+implicitly assign fields or forward arguments.
 
 ```typescript
-class Counter {
-  value: int;
-}
+class Counter { value: int = 40; }
 
 class BonusCounter extends Counter {
-  bonus: int;
-
-  constructor {
-    super(value: this.bonus * 20);
-  }
+  bonus: int = 2;
+  constructor(super.value, this.bonus);
 }
 
-const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
+const counter = BonusCounter(); // value = 40, bonus = 2
+const other = BonusCounter(41, 1);
 ```
 
-When using its own constructor signature, a derived class may omit `super()` if the
-base has no required parameters. The base constructor then runs implicitly before
-the derived constructor body. In this case, omitting `super(...)` when the base has
-a required parameter is a compile-time error.
+`constructor(...);` is equivalent to the same list with an empty body. A constructor
+cannot combine `super.param` with a written `super(...)`.
+Without a written base call, forwarding parameters must supply every required base
+parameter. Ordinary parameters do not forward automatically.
+Compute base arguments with an explicit call:
 
-A derived class must initialize its own instance fields before entering the base
-constructor, because a virtual call from that constructor can select a derived
-implementation. Field defaults and generated constructor arguments initialize those
-fields before this boundary. An explicit constructor must assign its own fields before
-calling `super(...)`; fields initialized in its body therefore require an explicit
-`super(...)` call after those assignments.
+```typescript
+class ComputedCounter extends Counter {
+  bonus: int;
+  constructor { super(value: this.bonus * 20); }
+}
+
+const computed = ComputedCounter(bonus: 2); // value = 40, bonus = 2
+```
+
+An automatic base call runs before the derived constructor body. A written `super(...)`
+executes at its source position, exactly once on every normal construction path.
+Public instance fields must be initialized before entering the base. Private fields may
+be assigned afterward when base construction cannot observe them. The analysis follows
+virtual dispatch and transitive calls, field reads and writes, receiver escapes and closure
+captures. New derived overrides revalidate ancestor initialization proofs. Every instance
+field must be initialized before construction returns normally. Field defaults, generated
+field parameters and `this.field` bindings take effect before the constructor body.
+
+```typescript
+class Panel { const title: string; const closable: bool = true; }
+class TitledPanel extends Panel {
+  const prefix: string;
+  const #fullHeader: string;
+  constructor(this.prefix, rawTitle: string, closable: bool = true) {
+    super(title: '${this.prefix}: ${rawTitle}', closable: closable);
+    this.#fullHeader = '[${this.title}]';
+  }
+  get header(): string { return this.#fullHeader; }
+}
+```
+
+Omitted base defaults are evaluated once in the base declaration environment. Omission
+remains distinct from explicit null.
+These rules apply through generic substitution, multiple inheritance levels, constructor
+values, Typed JSON and all execution modes.
 
 ## Static members
 
 ```typescript
 class Counts {
-  private static count: int = 0;
+
+  static #count: int = 0;
+
   static next(): int {
-    Counts.count = Counts.count + 1;
-    return Counts.count;
+    Counts.#count = Counts.#count + 1;
+    return Counts.#count;
   }
 }
 ```

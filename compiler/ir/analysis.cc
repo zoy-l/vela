@@ -705,6 +705,7 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
           return {.may_fail = true};
         case Builtin::MapGet:
         case Builtin::CollectionHas:
+        case Builtin::ArrayIncludes:
         case Builtin::CollectionSize:
         case Builtin::StringLength:
         case Builtin::StringByteLength:

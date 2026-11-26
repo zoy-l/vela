@@ -23,6 +23,26 @@ INSTANTIATE_TEST_SUITE_P(
     StaticContracts,
     GenericDefinitionTest,
     testing::Values(
+        R"(
+class Base {}
+class First extends Base {}
+class Second extends Base {}
+func select(values: dynamic[], flag: bool): Base[] {
+  return values.filter(value => {
+    if (flag && value is First) { return true; }
+    if (value is Second) { return true; }
+    if (value is First) { return true; }
+    return false;
+  });
+}
+func futures(values: dynamic[], flag: bool): Future<Base>[] {
+  return values.filter(value => {
+    if (flag && value is Future<Base>) { return true; }
+    if (value is Future<First>) { return true; }
+    return false;
+  });
+}
+)",
         "import 'sdk:test'; import 'sdk:mock'; "
         "func main(): void { const method = MockFunction1<int, int>(MockSession()); "
         "const result: int = method.function(42); expect(result, 42); }",
@@ -121,8 +141,8 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidContract{"interface Mapper{map<T>(value:T):T;} class Bad implements Mapper{}",
                         "missing generic interface method"},
         InvalidContract{"interface Mapper{map<T>(value:T):T;} "
-                        "class Bad implements Mapper{private map<T>(value:T):T{return value;}}",
-                        "generic interface method implementation does not match"},
+                        "class Bad implements Mapper{ #map<T>(value:T):T{return value;}}",
+                        "missing generic interface method"},
         InvalidContract{"interface Mapper{map<T>(value:T):T;} "
                         "class Bad implements Mapper{map<T extends int>(value:T):T{return value;}}",
                         "generic interface method implementation does not match"},

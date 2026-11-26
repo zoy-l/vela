@@ -60,7 +60,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         "interface I { read(): int; } class A implements I {}",
         "interface I { read(): int; } class A implements I { read(): double { return 1.0; } }",
-        "interface I { read(): int; } class A implements I { private read(): int { return 1; } }",
+        "interface I { read(): int; } class A implements I {  #read(): int { return 1; } }",
         "interface I { read(): int; } class A implements I { static read(): int { return 1; } }",
         "interface I {} class A {} func main(): I { return A(); }",
         "class A {} class B implements A {}",

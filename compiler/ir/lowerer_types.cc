@@ -127,10 +127,14 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
           builtin == Builtin::StringToUpperCase || IsByteBuiltin(builtin) ||
           IsRegExpBuiltin(builtin)) {
         RecordValueType(instruction.dst, frontend::BuiltinSignature(builtin).return_type);
-      } else if (builtin == Builtin::ArrayMutation) {
+      } else if (builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayPush ||
+                 builtin == Builtin::ArrayPushMany || builtin == Builtin::ArrayUnshift) {
         RecordValueType(instruction.dst, {.kind = Kind::Int, .name = frontend::kIntTypeName});
-      } else if (builtin == Builtin::ArrayCheckMutation) {
+      } else if (builtin == Builtin::ArrayCheckMutation || builtin == Builtin::ArrayReserve ||
+                 builtin == Builtin::ArrayClear) {
         RecordValueType(instruction.dst, {.kind = Kind::Void, .name = frontend::kVoidTypeName});
+      } else if (builtin == Builtin::ArrayIncludes) {
+        RecordValueType(instruction.dst, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       } else if (builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
         // 投影填充调用窗口中的目标数组，并返回同一个数组。
         const auto type = current_function_->value_types.at(instruction.lhs + 1);

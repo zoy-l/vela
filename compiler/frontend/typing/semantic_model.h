@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -69,6 +70,7 @@ struct TypeDescriptor final {
 };
 
 [[nodiscard]] TypeDescriptor MakeArrayType(const TypeDescriptor& element);
+[[nodiscard]] bool IsSameType(const TypeDescriptor& left, const TypeDescriptor& right) noexcept;
 [[nodiscard]] TypeDescriptor MakeNullableType(TypeDescriptor type);
 [[nodiscard]] std::string_view NonNullableTypeName(const TypeDescriptor& type) noexcept;
 
@@ -81,6 +83,10 @@ struct FunctionDescriptor final {
     bool has_default = false;
   };
   TypeDescriptor return_type;
+  // bool 为 true 时对第一个实参的已证明约束；由函数体流分析产生。
+  std::optional<TypeDescriptor> narrowed_parameter;
+  // 函数体节点在特化声明移动到最终 Program 后仍保持身份。
+  const Statement* declaration_body = nullptr;
   std::vector<Parameter> parameters;
   absl::flat_hash_map<std::string, std::uint32_t> parameter_indices;
   absl::flat_hash_set<std::string> optional_parameters;
@@ -105,7 +111,10 @@ struct FunctionDescriptor final {
                     ParameterPresence presence = ParameterPresence::Required);
 };
 
-[[nodiscard]] TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature);
+[[nodiscard]] TypeDescriptor MakeFunctionType(
+    std::span<const FunctionDescriptor::Parameter> parameters,
+    const TypeDescriptor& return_type,
+    std::optional<TypeDescriptor> narrowed_parameter);
 
 struct GeneratedFunction final {
   std::unique_ptr<Function> declaration;
@@ -141,6 +150,10 @@ struct ClassDescriptor final {
     TypeDescriptor type;
     std::uint32_t index = 0;
     Visibility visibility = Visibility::Public;
+    BindingKind binding = BindingKind::Mutable;
+    std::string_view owner;
+    // 借用字段所属 AST；继承和抽象应用保留各自声明的生命周期。
+    const frontend::Field* declaration = nullptr;
   };
   TypeDescriptor type;
   std::vector<std::string> field_order;
@@ -150,7 +163,15 @@ struct ClassDescriptor final {
   absl::flat_hash_map<std::string, MethodTemplate> method_templates;
   std::optional<std::string> base_class;
   FunctionDescriptor constructor;
-  // 有效签名的绑定方式；继承构造仍保留原始声明的字段或显式参数契约。
+  struct ConstructorBinding final {
+    // 字段合并完成后绑定目标；类表节点及字段表在模型存活期间保持地址稳定。
+    const Field* field = nullptr;
+    std::optional<std::uint32_t> base_parameter;
+    // 显式参数借用原始声明；错误恢复去重后不能再用紧凑下标访问源码列表。
+    const Parameter* declaration = nullptr;
+  };
+  std::vector<ConstructorBinding> constructor_bindings;
+  // 语法决定调用形式，父类构造种类不改变子类的参数绑定契约。
   ConstructorKind constructor_kind = ConstructorKind::Generated;
   const Class* declaration = nullptr;
   absl::flat_hash_map<std::string, Field> static_fields;
@@ -158,10 +179,12 @@ struct ClassDescriptor final {
   absl::flat_hash_map<std::tuple<std::string, std::string, DeclarationKind>, MemberReference>
       virtual_targets;
 
-  [[nodiscard]] bool HasInheritedConstructor() const {
-    return base_class.has_value() && constructor.member_owner != type.name;
-  }
+  [[nodiscard]] bool UsesFieldConstructor() const;
+  [[nodiscard]] std::string FieldKey(std::string_view name) const;
+  [[nodiscard]] const Field* FindField(std::string_view name) const;
 };
+
+[[nodiscard]] std::string ClassFieldKey(std::string_view owner, std::string_view name);
 
 struct InterfaceDescriptor final {
   TypeDescriptor type;
@@ -254,6 +277,7 @@ struct NodeFacts {
   absl::flat_hash_map<const Expression*, MemberReference> instance_members;
   absl::flat_hash_map<const Expression*, MemberReference> interface_members;
   absl::flat_hash_map<const Expression*, MemberReference> super_members;
+  absl::flat_hash_map<const Expression*, std::string> private_members;
   absl::flat_hash_map<const Expression*, TypeDescriptor> type_operands;
   absl::flat_hash_map<const MatchArm*, TypeDescriptor> match_bindings;
   absl::flat_hash_map<const Statement::Catch*, TypeDescriptor> catch_types;
@@ -262,6 +286,7 @@ struct NodeFacts {
 };
 
 struct SemanticModel final : NodeFacts {
+  [[nodiscard]] const ClassDescriptor* FindClassDescriptor(const Class& declaration) const;
   absl::flat_hash_map<std::string, GlobalDescriptor> globals;
   absl::flat_hash_map<std::string, TypeDescriptor> types;
   absl::flat_hash_map<std::string, TypeDescriptor> array_elements;
@@ -271,7 +296,6 @@ struct SemanticModel final : NodeFacts {
   absl::node_hash_map<std::string, ClassDescriptor> classes;
   absl::node_hash_map<std::string, FunctionDescriptor> functions;
   absl::node_hash_map<std::string, InterfaceDescriptor> interfaces;
-  absl::flat_hash_set<std::string> explicit_super_constructors;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments;
   absl::flat_hash_map<TypeParameterId, TypeDescriptor> parameter_bounds;
   absl::flat_hash_map<std::string, TypeName> type_applications;

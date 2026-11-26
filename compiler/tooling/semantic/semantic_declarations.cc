@@ -2,17 +2,21 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+
 #include "base/builtin.h"
 
 #include "compiler/frontend/builtins/standard_environment.h"
-#include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/names.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/documentation/builtin_documentation.h"
 #include "compiler/tooling/documentation/documentation.h"
@@ -22,6 +26,40 @@ namespace vela::tooling {
 namespace {
 using frontend::Expression;
 using frontend::TypeName;
+
+std::optional<std::size_t> FindNamedSymbol(
+    const absl::flat_hash_map<std::string, std::size_t>* symbols,
+    std::string_view name) {
+  if (symbols != nullptr) {
+    const auto found = symbols->find(name);
+    if (found != symbols->end()) {
+      return found->second;
+    }
+  }
+  return std::nullopt;
+}
+
+const Expression* ConstructorDefault(const frontend::ClassDescriptor& owner, std::size_t index) {
+  const auto& binding = owner.constructor_bindings[index];
+  if (binding.base_parameter) {
+    return nullptr;
+  }
+  const auto* initial =
+      binding.declaration != nullptr ? binding.declaration->initializer.get() : nullptr;
+  if (initial != nullptr || binding.field == nullptr) {
+    return initial;
+  }
+  return binding.field->declaration->initializer.get();
+}
+
+void AppendConstructorParameter(std::string& text, std::string_view name, std::string_view type) {
+  if (text.back() != '(') {
+    text += ", ";
+  }
+  text += name;
+  text += ": ";
+  text += type;
+}
 
 std::string TypeText(const TypeName& type) {
   return DisplaySymbolName(type.ToString());
@@ -164,21 +202,62 @@ void SemanticIndex::CollectDeclarations() {
     DeclareSymbol(declaration, CompletionKind::Enum, [] { return "enum"; });
     CollectEnumMembers(declaration);
   }
-  CollectInheritedParameters();
+  if (!model_.classes.empty()) {
+    CollectConstructorParameters();
+  }
 }
 
-void SemanticIndex::CollectInheritedParameters() {
+void SemanticIndex::CollectConstructorParameters() {
+  absl::flat_hash_set<std::string_view> collected;
   for (const auto& [name, owner] : model_.classes) {
-    if (!owner.HasInheritedConstructor()) {
+    CollectConstructorParameters(owner, collected);
+  }
+}
+
+void SemanticIndex::CollectConstructorParameters(const frontend::ClassDescriptor& owner,
+                                                 absl::flat_hash_set<std::string_view>& collected) {
+  if (!collected.insert(owner.type.name).second) {
+    return;
+  }
+  const auto child = names_.find(owner.type.name);
+  const auto& signature = owner.constructor;
+  if (child == names_.end() || signature.parameters.empty()) {
+    return;
+  }
+  const frontend::ClassDescriptor* base = nullptr;
+  if (owner.base_class) {
+    base = &model_.classes.at(*owner.base_class);
+    CollectConstructorParameters(*base, collected);
+  }
+  // 基类先完成；本轮循环不再插入 owner，避免 parameters_ 扩容使借用失效。
+  auto& parameters = parameters_[child->second];
+  const auto members = members_.find(owner.type.name);
+  const auto base_symbol = base != nullptr ? names_.find(base->type.name) : names_.end();
+  const auto* base_parameters =
+      base_symbol != names_.end() ? ParameterSymbols(base_symbol->second) : nullptr;
+  const auto* fields = members != members_.end() ? &members->second : nullptr;
+  for (std::size_t index = 0; index < owner.constructor.parameters.size(); ++index) {
+    const auto& parameter = owner.constructor.parameters[index];
+    const auto& binding = owner.constructor_bindings.at(index);
+    const auto* source = binding.declaration;
+    if (binding.field == nullptr && !binding.base_parameter) {
       continue;
     }
-    const auto child = names_.find(name);
-    const auto base = names_.find(owner.constructor.member_owner);
-    if (child != names_.end() && base != names_.end()) {
-      if (const auto* parameters = ParameterSymbols(base->second)) {
-        auto inherited = *parameters;
-        parameters_.insert_or_assign(child->second, std::move(inherited));
-      }
+    std::optional<std::size_t> symbol;
+    if (binding.base_parameter && base != nullptr) {
+      symbol = FindNamedSymbol(base_parameters,
+                               base->constructor.parameters.at(*binding.base_parameter).name);
+    } else if (binding.field != nullptr) {
+      symbol = FindNamedSymbol(fields, source != nullptr && !source->member_name.empty()
+                                           ? source->member_name
+                                           : parameter.name);
+    }
+    if (!symbol) {
+      continue;
+    }
+    parameters.insert_or_assign(parameter.name, *symbol);
+    if (source != nullptr && source->binding != frontend::Parameter::Binding::Local) {
+      references_.insert_or_assign(KeyAt(source->location), Reference{.symbol = *symbol});
     }
   }
 }
@@ -187,24 +266,33 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
   const auto kind = frontend::IsStandardTypeNamespace(program_, declaration)
                         ? CompletionKind::Type
                         : CompletionKind::Class;
-  const auto* checked = FindClassDescriptor(declaration);
-  const auto class_symbol = DeclareSymbol(
-      declaration, kind, [&] { return ClassCompletion(declaration, checked).detail; });
-  if (checked != nullptr && checked->HasInheritedConstructor()) {
+  const auto* checked = model_.FindClassDescriptor(declaration);
+  std::optional<std::string> detail;
+  const auto class_detail = [&] -> std::string& {
+    if (!detail) {
+      detail = ClassCompletion(declaration, checked).detail;
+    }
+    return *detail;
+  };
+  const auto class_symbol = DeclareSymbol(declaration, kind, class_detail);
+  if (checked != nullptr) {
     const auto origin = program_.origins.find(declaration.name);
     if (!declaration.type_parameters.empty() ||
         (!checked->type.is_abstract &&
          (origin == program_.origins.end() || origin->second.arguments.empty()))) {
       // 初次声明先于类型检查；工厂只创建新符号，此处更新检查后才得到的继承签名。
-      symbols_[class_symbol].completion.detail = ClassCompletion(declaration, checked).detail;
+      symbols_[class_symbol].completion.detail = std::move(class_detail());
     }
   }
+  NamedSymbols* field_parameters = nullptr;
   for (const auto& field : declaration.fields) {
     const auto field_symbol = DeclareMember(declaration.name, field, CompletionKind::Field,
                                             [&] { return TypeText(field.type); });
     if (declaration.IsConstructorField(field)) {
-      parameters_.try_emplace(class_symbol)
-          .first->second.insert_or_assign(field.name, field_symbol);
+      if (field_parameters == nullptr) {
+        field_parameters = &parameters_[class_symbol];
+      }
+      field_parameters->insert_or_assign(field.name, field_symbol);
     }
   }
   for (const auto methods :
@@ -221,10 +309,12 @@ void SemanticIndex::CollectClass(const frontend::Class& declaration) {
       CollectParameters(method_symbol, method);
     }
   }
-  if (declaration.constructor &&
-      declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
-    CollectParameters(class_symbol, *declaration.constructor);
+  if (!declaration.constructor ||
+      declaration.constructor_kind != frontend::ConstructorKind::Explicit) {
+    return;
   }
+  CollectParameters(class_symbol, *declaration.constructor,
+                    checked != nullptr ? &checked->constructor : nullptr);
 }
 
 void SemanticIndex::CollectInterface(const frontend::Interface& declaration) {
@@ -265,13 +355,34 @@ void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
   }
 }
 
-void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Function& function) {
-  auto& declared = parameters_.try_emplace(symbol).first->second;
+void SemanticIndex::CollectParameters(std::size_t symbol,
+                                      const frontend::Function& function,
+                                      const frontend::FunctionDescriptor* checked) {
+  NamedSymbols* declared = nullptr;
   for (const auto& parameter : function.parameters) {
-    const auto parameter_id =
-        AddSymbol(parameter.location, CompletionKind::Variable, TypeText(parameter.type));
-    declared.insert_or_assign(parameter.name, parameter_id);
-    symbols_[parameter_id].role = Symbol::Role::Parameter;
+    if (parameter.binding != frontend::Parameter::Binding::Local) {
+      continue;
+    }
+    const auto detail = [&] {
+      return checked != nullptr
+                 ? DisplayType(
+                       checked->parameters.at(checked->parameter_indices.at(parameter.name)).type)
+                 : TypeText(parameter.type);
+    };
+    bool created = false;
+    const auto parameter_id = DeclareSourceSymbol(parameter, CompletionKind::Variable, [&] {
+      created = true;
+      return detail();
+    });
+    auto& parameter_symbol = symbols_[parameter_id];
+    if (checked != nullptr && !created) {
+      parameter_symbol.completion.detail = detail();
+    }
+    if (declared == nullptr) {
+      declared = &parameters_[symbol];
+    }
+    declared->try_emplace(parameter.name, parameter_id);
+    parameter_symbol.role = Symbol::Role::Parameter;
   }
 }
 
@@ -292,21 +403,6 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
     default:
       return "…";
   }
-}
-
-const frontend::ClassDescriptor* SemanticIndex::FindClassDescriptor(
-    const frontend::Class& declaration) const {
-  auto name = declaration.name;
-  if (!declaration.type_parameters.empty()) {
-    std::vector<frontend::TypeName> arguments;
-    arguments.reserve(declaration.type_parameters.size());
-    for (const auto& parameter : declaration.type_parameters) {
-      arguments.push_back(frontend::ParameterTypeName(parameter, parameter.location));
-    }
-    name = frontend::SpecializationName(name, arguments);
-  }
-  const auto found = model_.classes.find(name);
-  return found == model_.classes.end() ? nullptr : &found->second;
 }
 
 Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration,
@@ -330,10 +426,6 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration,
     return result;
   }
   text += " {\n  ";
-  if (declaration.constructor &&
-      declaration.constructor->visibility == frontend::Visibility::Private) {
-    text += "private ";
-  }
   text += ConstructorParameters(declaration, checked);
   text += "\n}";
   return result;
@@ -342,28 +434,27 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration,
 std::string SemanticIndex::ConstructorParameters(const frontend::Class& declaration,
                                                  const frontend::ClassDescriptor* checked) const {
   std::string text;
+  if (declaration.constructor &&
+      declaration.constructor->visibility == frontend::Visibility::Private) {
+    text += frontend::kPrivateNamePrefix;
+  }
   text += "constructor(";
-  const auto append = [&](std::string_view name, const std::string& type) {
-    if (text.back() != '(') {
-      text += ", ";
-    }
-    text += name;
-    text += ": ";
-    text += type;
-  };
-  if (checked != nullptr && checked->HasInheritedConstructor()) {
+  if (checked != nullptr) {
     const auto& constructor = checked->constructor;
-    for (const auto& parameter : constructor.parameters) {
-      append(parameter.name, DisplayType(parameter.type));
+    for (std::size_t index = 0; index < constructor.parameters.size(); ++index) {
+      const auto& parameter = constructor.parameters[index];
+      AppendConstructorParameter(text, parameter.name, DisplayType(parameter.type));
       if (constructor.optional_parameters.contains(parameter.name)) {
-        text += " = …";
+        const auto* initial = ConstructorDefault(*checked, index);
+        text += " = ";
+        text += initial != nullptr ? DefaultValue(*initial) : "…";
       }
     }
     return text + ");";
   }
   if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
     for (const auto& parameter : declaration.constructor->parameters) {
-      append(parameter.name, TypeText(parameter.type));
+      AppendConstructorParameter(text, parameter.name, TypeText(parameter.type));
     }
     return text + ");";
   }
@@ -371,7 +462,7 @@ std::string SemanticIndex::ConstructorParameters(const frontend::Class& declarat
     if (!declaration.IsConstructorField(field)) {
       continue;
     }
-    append(field.name, TypeText(field.type));
+    AppendConstructorParameter(text, field.name, TypeText(field.type));
     if (field.initializer) {
       text += " = " + DefaultValue(*field.initializer);
     }

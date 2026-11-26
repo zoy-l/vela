@@ -24,25 +24,43 @@
 namespace vela::frontend {
 namespace {
 
+using FieldBits = absl::InlinedVector<std::uint64_t, 1>;
+constexpr auto kWordBits = std::numeric_limits<std::uint64_t>::digits;
+
+void InsertFieldBit(FieldBits& bits, std::size_t index) {
+  bits[index / kWordBits] |= std::uint64_t{1} << (index % kWordBits);
+}
+
+bool IsFieldBitSet(const FieldBits& bits, std::size_t index) {
+  return (bits[index / kWordBits] & (std::uint64_t{1} << (index % kWordBits))) != 0;
+}
+
+void MergeFieldBits(FieldBits& target, const FieldBits& source) {
+  for (std::size_t index = 0; index < target.size(); ++index) {
+    target[index] |= source[index];
+  }
+}
+
 struct Initialized final {
   enum class Base : unsigned char { Pending, Complete, Maybe };
-  static constexpr auto kWordBits = std::numeric_limits<std::uint64_t>::digits;
-  absl::InlinedVector<std::uint64_t, 1> fields;
+  FieldBits fields;
+  FieldBits written;
   Base base = Base::Pending;
   bool operator==(const Initialized&) const = default;
 
   void Insert(std::size_t index) {
-    fields.at(index / kWordBits) |= std::uint64_t{1} << (index % kWordBits);
+    InsertFieldBit(fields, index);
+    InsertFieldBit(written, index);
   }
-  [[nodiscard]] bool Has(std::size_t index) const {
-    return (fields.at(index / kWordBits) & (std::uint64_t{1} << (index % kWordBits))) != 0;
-  }
+  [[nodiscard]] bool Has(std::size_t index) const { return IsFieldBitSet(fields, index); }
+  [[nodiscard]] bool WasWritten(std::size_t index) const { return IsFieldBitSet(written, index); }
 };
 using Path = std::optional<Initialized>;
 
 void Intersect(Initialized& left, const Initialized& right) {
   for (std::size_t index = 0; index < left.fields.size(); ++index) {
-    left.fields.at(index) &= right.fields.at(index);
+    left.fields[index] &= right.fields[index];
+    left.written[index] |= right.written[index];
   }
   if (left.base != right.base) {
     left.base = Initialized::Base::Maybe;
@@ -86,14 +104,36 @@ class Initialization final {
     const Statement* body = nullptr;
     std::size_t control_depth = 0;
   };
+  struct PossibleWrites final {
+    FieldBits fields;
+    bool calls_base = false;
+
+    [[nodiscard]] Initialized ExceptionEntry(Initialized entry) const {
+      if (calls_base && entry.base == Initialized::Base::Pending) {
+        entry.base = Initialized::Base::Maybe;
+      }
+      MergeFieldBits(entry.written, fields);
+      return entry;
+    }
+    void Include(const PossibleWrites& other) {
+      calls_base = calls_base || other.calls_base;
+      MergeFieldBits(fields, other.fields);
+    }
+  };
   void RequireComplete(const Initialized& initialized, SourceLocation location);
-  void RequireOwnFields(const Initialized& initialized,
-                        SourceLocation location,
-                        std::string_view operation);
+  enum class RequiredFields : unsigned char { All, ObservedByBase };
+  void RequireFields(const Initialized& initialized,
+                     SourceLocation location,
+                     std::string_view operation,
+                     RequiredFields required);
+  void WriteField(const Expression& target, Initialized& initialized);
+  void CheckRepeatedConstInitialization(const Initialized& before,
+                                        const Initialized& after,
+                                        SourceLocation location);
   void Error(SourceLocation location, std::string message);
   void Walk(const Expression* expression, Initialized& initialized);
   void WalkSuper(const Expression& expression, Initialized& initialized);
-  void MarkBaseComplete(Initialized& initialized);
+  void MarkBaseComplete(Initialized& initialized) const;
   bool WalkSpecial(const Expression& expression, Initialized& initialized);
   Path Walk(const Statement& statement, Initialized initialized);
   Path Loop(const Statement& statement, Initialized initialized);
@@ -103,11 +143,12 @@ class Initialization final {
 
   const Class& owner_;
   const ConstructorInitializationFacts& facts_;
-  absl::flat_hash_map<std::string_view, std::size_t> field_indices_;
+  absl::flat_hash_map<std::string_view, const ClassDescriptor::Field*> visible_fields_;
   std::vector<std::pair<const Field*, std::size_t>> instance_fields_;
   Diagnostics diagnostics_;
   std::vector<Control> controls_;
   std::vector<Finally> finalizers_;
+  std::vector<PossibleWrites> write_scopes_;
 };
 
 void Initialization::Error(SourceLocation location, std::string message) {
@@ -118,16 +159,58 @@ void Initialization::RequireComplete(const Initialized& initialized, SourceLocat
   if (owner_.base_class && initialized.base != Initialized::Base::Complete) {
     Error(location, "derived constructor must call super(...) before this escapes or returns");
   }
-  RequireOwnFields(initialized, location, "this escapes or the constructor returns");
+  RequireFields(initialized, location, "this escapes or the constructor returns",
+                RequiredFields::All);
 }
 
-void Initialization::RequireOwnFields(const Initialized& initialized,
-                                      SourceLocation location,
-                                      std::string_view operation) {
+void Initialization::RequireFields(const Initialized& initialized,
+                                   SourceLocation location,
+                                   std::string_view operation,
+                                   RequiredFields required) {
+  const auto* observation = facts_.base_observation;
+  const bool all_fields =
+      required == RequiredFields::All || (observation != nullptr && observation->escapes_receiver);
   for (const auto& [field, index] : instance_fields_) {
-    if (!initialized.Has(index)) {
+    if (initialized.Has(index)) {
+      continue;
+    }
+    if (all_fields || field->visibility == Visibility::Public ||
+        (observation != nullptr &&
+         observation->fields.contains(static_cast<std::uint32_t>(index)))) {
+      auto message = "field '" + field->name + "' must be initialized before ";
+      message += operation;
+      Error(location, std::move(message));
+    }
+  }
+}
+
+void Initialization::WriteField(const Expression& target, Initialized& initialized) {
+  const auto found = visible_fields_.find(target.text);
+  if (found == visible_fields_.end()) {
+    return;
+  }
+  const auto& field = *found->second;
+  const auto index = field.index;
+  if (field.binding == BindingKind::Constant && initialized.WasWritten(index)) {
+    Error(target.location, "const field '" + target.text + "' may only be initialized once");
+  }
+  initialized.Insert(index);
+  for (auto& scope : write_scopes_) {
+    InsertFieldBit(scope.fields, index);
+  }
+}
+
+void Initialization::CheckRepeatedConstInitialization(const Initialized& before,
+                                                      const Initialized& after,
+                                                      SourceLocation location) {
+  if (before.base == Initialized::Base::Pending && after.base != Initialized::Base::Pending) {
+    Error(location, "super(...) may be called repeatedly by the loop");
+  }
+  for (const auto& [field, index] : instance_fields_) {
+    if (field->binding == BindingKind::Constant && !before.WasWritten(index) &&
+        after.WasWritten(index)) {
       Error(location,
-            "field '" + field->name + "' must be initialized before " + std::string(operation));
+            "const field '" + field->name + "' may be initialized repeatedly by the loop");
     }
   }
 }
@@ -139,18 +222,21 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
   if (initialized.base != Initialized::Base::Pending) {
     Error(expression.location, "super(...) must be called exactly once on each constructor path");
   }
-  RequireOwnFields(initialized, expression.location, "super(...)");
+  RequireFields(initialized, expression.location, "super(...)", RequiredFields::ObservedByBase);
+  for (auto& scope : write_scopes_) {
+    scope.calls_base = true;
+  }
   MarkBaseComplete(initialized);
 }
 
-void Initialization::MarkBaseComplete(Initialized& initialized) {
+void Initialization::MarkBaseComplete(Initialized& initialized) const {
   initialized.base = Initialized::Base::Complete;
   const auto* base = facts_.base;
   if (base == nullptr) {
     return;
   }
   for (const auto& name : base->field_order) {
-    initialized.Insert(field_indices_.at(name));
+    initialized.Insert(base->fields.at(name).index);
   }
 }
 
@@ -185,16 +271,13 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
   if (expression.kind == Expression::Kind::Binary && expression.operation == TokenKind::Equal &&
       expression.left->kind == Expression::Kind::Member && IsThis(*expression.left->object)) {
     Walk(expression.right.get(), initialized);
-    const auto field = field_indices_.find(expression.left->text);
-    if (field != field_indices_.end()) {
-      initialized.Insert(field->second);
-    }
+    WriteField(*expression.left, initialized);
     return true;
   }
   if (expression.kind == Expression::Kind::Member && IsThis(*expression.object)) {
-    const auto field = field_indices_.find(expression.text);
-    const bool is_field = field != field_indices_.end();
-    if (is_field && !initialized.Has(field->second)) {
+    const auto field = visible_fields_.find(expression.text);
+    const bool is_field = field != visible_fields_.end();
+    if (is_field && !initialized.Has(field->second->index)) {
       Error(expression.location, "field '" + expression.text + "' is read before initialization");
     } else if (!is_field) {
       RequireComplete(initialized, expression.location);
@@ -223,19 +306,7 @@ void Initialization::Walk(const Expression* expression, Initialized& initialized
   if (WalkSpecial(*expression, initialized)) {
     return;
   }
-  for (const auto* child : ExpressionOperands(*expression)) {
-    Walk(child, initialized);
-  }
-  for (const auto& argument : expression->arguments) {
-    Walk(argument.value.get(), initialized);
-  }
-  for (const auto& element : expression->elements) {
-    Walk(element.get(), initialized);
-  }
-  for (const auto& entry : expression->entries) {
-    Walk(entry.key.get(), initialized);
-    Walk(entry.value.get(), initialized);
-  }
+  VisitExpressionChildren(*expression, [&](const Expression* child) { Walk(child, initialized); });
 }
 
 Path Initialization::Loop(const Statement& statement, Initialized initialized) {
@@ -259,6 +330,7 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
   body = Merge(std::move(body), controls_.at(control).continues);
   if (body) {
     Walk(statement.increment.get(), *body);
+    CheckRepeatedConstInitialization(initialized, *body, statement.location);
   }
   auto exits = std::move(controls_.at(control).breaks);
   controls_.pop_back();
@@ -388,15 +460,34 @@ Path Initialization::Try(const Statement& statement, const Initialized& initiali
     finalizers_.push_back(
         {.body = statement.finally_branch.get(), .control_depth = controls_.size()});
   }
-  auto after = Walk(*statement.then_branch, initialized);
+  const auto track = [&](const Statement& body, Initialized entry, PossibleWrites& writes) {
+    write_scopes_.push_back({.fields = FieldBits(initialized.written.size(), 0)});
+    auto result = Walk(body, std::move(entry));
+    writes = std::move(write_scopes_.back());
+    write_scopes_.pop_back();
+    return result;
+  };
+  PossibleWrites try_writes;
+  auto after = track(*statement.then_branch, initialized, try_writes);
+  PossibleWrites possible_writes;
+  if (statement.finally_branch) {
+    possible_writes = try_writes;
+  }
   for (const auto& clause : statement.catches) {
-    after = Merge(std::move(after), Walk(*clause.body, initialized));
+    PossibleWrites caught_writes;
+    auto entry = try_writes.ExceptionEntry(initialized);
+    auto caught = statement.finally_branch ? track(*clause.body, std::move(entry), caught_writes)
+                                           : Walk(*clause.body, std::move(entry));
+    after = Merge(std::move(after), caught);
+    if (statement.finally_branch) {
+      possible_writes.Include(caught_writes);
+    }
   }
   if (statement.finally_branch) {
     finalizers_.pop_back();
-    // 异常可在字段写入之前发生；finally 的异常入口不继承普通出口的初始化事实。
+    // 异常入口保留 try 前的确定初始化事实，仅合并可能写入，避免 finally 重复写 const。
     const bool same_input = after && *after == initialized;
-    auto exceptional = Walk(*statement.finally_branch, initialized);
+    auto exceptional = Walk(*statement.finally_branch, possible_writes.ExceptionEntry(initialized));
     if (same_input) {
       after = std::move(exceptional);
     } else if (after) {
@@ -410,22 +501,32 @@ Diagnostics Initialization::Run() {
   Initialized initialized;
   const auto& info = *facts_.owner;
   const auto& fields = info.field_order;
-  field_indices_.reserve(fields.size());
-  for (std::size_t index = 0; index < fields.size(); ++index) {
-    field_indices_.emplace(fields.at(index), index);
+  visible_fields_.reserve(fields.size());
+  for (const auto& name : fields) {
+    const auto& field = info.fields.at(name);
+    if (field.visibility == Visibility::Public || field.owner == info.type.name) {
+      visible_fields_.emplace(field.declaration->name, &field);
+    }
   }
-  initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
+  initialized.fields.resize((fields.size() + kWordBits - 1) / kWordBits);
+  initialized.written.resize(initialized.fields.size());
+  for (const auto& binding : info.constructor_bindings) {
+    if (binding.field != nullptr) {
+      initialized.Insert(binding.field->index);
+    }
+  }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
-      const auto index = field_indices_.at(field.name);
+      const auto& descriptor = *visible_fields_.at(field.name);
+      const auto index = descriptor.index;
       instance_fields_.emplace_back(&field, index);
-      if (field.initializer || owner_.IsConstructorField(field)) {
+      if (field.initializer) {
         initialized.Insert(index);
       }
     }
   }
   if (facts_.base != nullptr && !facts_.has_explicit_super_call) {
-    RequireOwnFields(initialized, owner_.location, "implicit super()");
+    RequireFields(initialized, owner_.location, "implicit super()", RequiredFields::ObservedByBase);
     MarkBaseComplete(initialized);
   }
   if (owner_.constructor) {

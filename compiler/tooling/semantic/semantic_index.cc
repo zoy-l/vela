@@ -475,6 +475,9 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
   VisitType(function.return_type);
   const auto body = FunctionScope(function, scope);
   for (const auto& parameter : function.parameters) {
+    if (parameter.binding != frontend::Parameter::Binding::Local) {
+      continue;
+    }
     VisitType(parameter.type);
     VisitExpression(parameter.initializer.get(), body);
     auto detail = DisplaySymbolName(parameter.type.ToString());
@@ -632,6 +635,11 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
 
 void SemanticIndex::IndexMemberExpression(const Expression& expression) {
   auto receiver = ReceiverFor(*expression.object);
+  const auto& facts = FactsFor(expression);
+  if (const auto found = facts.private_members.find(&expression);
+      found != facts.private_members.end()) {
+    receiver.type = model_.classes.at(found->second).type;
+  }
   if (expression.null_safe && receiver.type.nullable) {
     receiver.type.name = frontend::NonNullableTypeName(receiver.type);
     receiver.type.nullable = false;

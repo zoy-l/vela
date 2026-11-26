@@ -227,11 +227,14 @@ struct TypeSignature final {
   };
   std::vector<Parameter> parameters;
   std::optional<TypeConstraint> result = std::nullopt;
+  std::optional<TypeConstraint> narrowed_parameter = std::nullopt;
   [[nodiscard]] std::optional<TypeConstraint> FlattenedResult() const noexcept;
+  [[nodiscard]] bool IsSubtypeOf(const TypeSignature& target) const noexcept;
   bool operator==(const TypeSignature&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const TypeSignature& signature) {
-    return H::combine(std::move(hash), signature.parameters, signature.result);
+    return H::combine(std::move(hash), signature.parameters, signature.result,
+                      signature.narrowed_parameter);
   }
 };
 

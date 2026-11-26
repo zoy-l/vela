@@ -85,13 +85,18 @@ TEST_F(DocumentationTest, DescribesClassVisibilityConstructorDefaultsAndMethods)
 export class Counter<T> {
   /// Initial value.
   value: T;
-  private secret: int = 1;
+
+  #secret: int = 1;
+
   static count: int = 0;
-  private internal: int = 0;
-  constructor { this.internal = this.secret; }
+
+  #internal: int = 0;
+
+  constructor { this.#internal = this.#secret; }
   /// Read the stored value.
   read(): T { return this.value; }
-  private reset(): void {}
+
+  #reset(): void {}
 }
 )");
   ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
@@ -111,7 +116,7 @@ TEST_F(DocumentationTest, DescribesInheritedSignaturesInsteadOfEmptyConstructors
   const auto result = Generate(R"(
 class Root<T> { value: T; }
 export class Child<U> extends Root<U> {}
-export class Leaf extends Child<int> { private state: int = 0; }
+export class Leaf extends Child<int> { #state: int = 0; }
 )");
   ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
   EXPECT_TRUE(result.markdown.contains("Constructor signature inherited from `Root<U>`."));
@@ -133,6 +138,18 @@ export class Box implements Reader { read(): int[]?[] { return []; } }
   EXPECT_TRUE(result.markdown.contains("class Box implements Reader"));
 }
 
+TEST_F(DocumentationTest, DocumentsUnifiedConstructorSignaturesAndForwardingSyntax) {
+  const auto result = Generate(R"(
+class Base<T> { value: T; }
+export class Child<U> extends Base<U> { bonus: int = 2; constructor {} }
+export class Explicit extends Base<int> { bonus: int; constructor(super.value, this.bonus); }
+)");
+  ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
+  EXPECT_TRUE(result.markdown.contains("Child(value: U, bonus: int = …);")) << result.markdown;
+  EXPECT_TRUE(result.markdown.contains("constructor(super.value, this.bonus)"));
+  EXPECT_TRUE(result.markdown.contains("Explicit(value: int, bonus: int);"));
+}
+
 TEST_F(DocumentationTest, ExplicitConstructorsOwnSignaturesAndPrivateConstructorsAreNotCallable) {
   const auto result = Generate(R"(
 export class Box {
@@ -140,16 +157,16 @@ export class Box {
   label: string = '';
   constructor(initial: int) { this.value = initial; }
 }
-export class Hidden { private constructor() {} }
-export class GeneratedHidden { value: int; private constructor {} }
+export class Hidden {  #constructor() {} }
+export class GeneratedHidden { value: int;  #constructor {} }
 )");
   ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
   EXPECT_TRUE(result.markdown.contains("constructor(initial: int) { … }"));
   EXPECT_TRUE(result.markdown.contains("Box(initial: int);"));
   EXPECT_FALSE(result.markdown.contains("Box(value:"));
   EXPECT_FALSE(result.markdown.contains("named constructor parameter"));
-  EXPECT_TRUE(result.markdown.contains("private constructor() { … }"));
-  EXPECT_TRUE(result.markdown.contains("private constructor { … }"));
+  EXPECT_TRUE(result.markdown.contains("\n  #constructor() { … }"));
+  EXPECT_TRUE(result.markdown.contains("\n  #constructor { … }"));
   EXPECT_FALSE(result.markdown.contains("Hidden();"));
   EXPECT_FALSE(result.markdown.contains("GeneratedHidden(value:"));
 }
@@ -162,6 +179,28 @@ export type Nested = Map<string, ((int[]) => string?)?>;
   ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
   EXPECT_TRUE(result.markdown.contains("type Operations = ((int) => string)[]?;"));
   EXPECT_TRUE(result.markdown.contains("type Nested = Map<string, ((int[]) => string?)?>;"));
+}
+
+TEST_F(DocumentationTest, ResolvesMultipleGenericConstructorParametersWithoutBindingSourceNames) {
+  {
+    std::ofstream dependency(directory() / "dependency.vela");
+    dependency << "export class Item<T> { value: T; }";
+  }
+  const auto result = Generate(R"(
+import 'dependency.vela' as dependency;
+export class Pair<T, U> {
+  first: T;
+  second: U;
+  constructor(this.first, this.second);
+}
+export class Wrapped<T> extends Pair<dependency.Item<T>, T> {}
+)");
+  ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
+  EXPECT_TRUE(result.markdown.contains("Pair(first: T, second: U);")) << result.markdown;
+  EXPECT_TRUE(result.markdown.contains("extends Pair<dependency.Item<T>, T>"));
+  EXPECT_TRUE(result.markdown.contains("Wrapped(first: Item<T>, second: T);")) << result.markdown;
+  EXPECT_TRUE(result.markdown.contains("constructor(this.first, this.second)"));
+  EXPECT_FALSE(result.markdown.contains("$module"));
 }
 
 TEST_F(DocumentationTest, PreservesBoundsOwnerParametersAndMethodParameters) {

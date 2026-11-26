@@ -447,7 +447,9 @@ void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
   for (auto& parameter : function.parameters) {
     BindType(parameter.type);
     BindExpression(parameter.initializer.get());
-    DeclareLocal(parameter.name);
+    if (parameter.binding == Parameter::Binding::Local) {
+      DeclareLocal(parameter.name);
+    }
   }
   BindStatement(function.body.get());
   EndScope();

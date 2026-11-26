@@ -59,6 +59,7 @@ struct Class final {
     DeclarationId declaration;
     std::uint32_t type = 0;
     frontend::Visibility visibility = frontend::Visibility::Public;
+    frontend::BindingKind binding = frontend::BindingKind::Mutable;
     std::uint32_t initializer = kInvalidFunctionTarget;
   };
   enum class Kind : std::uint8_t {

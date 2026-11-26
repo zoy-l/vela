@@ -10,6 +10,9 @@
 namespace vela::frontend {
 
 void TypeChecker::RefineAssignedLocal(const LocalBinding& binding, const Type& value) {
+  if (predicate_scope_ && predicate_scope_->binding == binding.id) {
+    predicate_scope_->assigned = true;
+  }
   refinements_.Erase(binding.id);
   if (binding.type.kind != Type::Kind::Dynamic && IsPotentiallyNullable(binding.type) &&
       IsValid(value) && !IsPotentiallyNullable(value)) {
@@ -50,9 +53,12 @@ void TypeChecker::DiagnoseBinaryOperandMismatch(const Expression& expression,
 void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;
   using Truth = ConditionTruth;
+  if (condition.kind == Kind::Call && outcome == Truth::AlwaysTrue) {
+    RefinePredicateCall(condition);
+    return;
+  }
   if (condition.kind == Kind::Unary && condition.operation == TokenKind::Bang) {
-    RefineCondition(*condition.operand,
-                    outcome == Truth::AlwaysTrue ? Truth::AlwaysFalse : Truth::AlwaysTrue);
+    RefineCondition(*condition.operand, NegateConditionTruth(outcome));
     return;
   }
   if (condition.kind == Kind::TypeTest && outcome == Truth::AlwaysTrue &&
@@ -60,7 +66,16 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
     RefineTypeTest(condition);
     return;
   }
+  if (condition.kind == Kind::Conditional) {
+    RefineAlternatives(condition, outcome);
+    return;
+  }
   if (condition.kind != Kind::Binary) {
+    return;
+  }
+  if ((condition.operation == TokenKind::OrOr && outcome == Truth::AlwaysTrue) ||
+      (condition.operation == TokenKind::AndAnd && outcome == Truth::AlwaysFalse)) {
+    RefineAlternatives(condition, outcome);
     return;
   }
   if ((condition.operation == TokenKind::AndAnd && outcome == Truth::AlwaysTrue) ||
@@ -71,6 +86,12 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
     RefineCondition(*condition.right, outcome);
     return;
   }
+  RefineNullComparison(condition, outcome);
+}
+
+void TypeChecker::RefineNullComparison(const Expression& condition, ConditionTruth outcome) {
+  using Kind = Expression::Kind;
+  using Truth = ConditionTruth;
   if (condition.operation != TokenKind::EqualEqual && condition.operation != TokenKind::BangEqual) {
     return;
   }

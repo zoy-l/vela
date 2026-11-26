@@ -58,6 +58,35 @@ func main(): int {
   return calls == 1 && first.value == 42 ? second.value : 0;
 })"));
 
+INSTANTIATE_TEST_SUITE_P(UnifiedConstructors,
+                         TypedJSONProgramTest,
+                         testing::Values(
+                             R"(
+class Base<T> { value: T; }
+class Child extends Base<int> { bonus: int = 2; constructor {} }
+func main(): int { const v = JSON.parse<Child>('{"value":40}'); return v.value + v.bonus; }
+)",
+                             R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Base { value: int; constructor(initial: int = initial()) { this.value = initial; } }
+class Child extends Base { bonus: int = 2; }
+func main(): int {
+  const first = JSON.parse<Child>('{}');
+  const second = JSON.parse<Child>('{"initial":41,"bonus":1}');
+  return calls == 1 && first.value + first.bonus == 42 ? second.value + second.bonus : 0;
+}
+)",
+                             R"(
+class Base { value: int = 40; }
+class Child extends Base { bonus: int = 2; constructor(super.value, this.bonus); }
+func main(): int {
+  const v = JSON.parse<Child>('{}');
+  const other = JSON.parse<Child>('{"value":41,"bonus":1}');
+  return v.value + v.bonus == 42 ? other.value + other.bonus : 0;
+}
+)"));
+
 INSTANTIATE_TEST_SUITE_P(
     DecodeContracts,
     TypedJSONProgramTest,
@@ -103,9 +132,11 @@ func main(): int {
   return !failed.success && failed.error.path == '$.last' && calls == 0 ? 42 : 0;
 })",
         R"(class Secret {
-  private value: int = 0;
-  constructor(input: int) { this.value = input; }
-  read(): int { return this.value; }
+
+  #value: int = 0;
+
+  constructor(input: int) { this.#value = input; }
+  read(): int { return this.#value; }
 }
 func main(): int {
   const good = JSON.parse<Secret>('{"input":42}');
@@ -213,7 +244,9 @@ func main(): int {
 })",
         R"(class Fields {
   value: int = 42;
-  private secret: int = 0;
+
+  #secret: int = 0;
+
   static shared: int = 0;
   get computed(): int { return 1; }
 }
@@ -440,7 +473,7 @@ INSTANTIATE_TEST_SUITE_P(
         "func main(): void { JSON.parse<Future<int>[]>('[]'); }",
         "interface User {} func main(): void { JSON.safeParse<User?>('null'); }",
         "enum Role { one } func main(): void { JSON.safeParse<Role[]>('[]'); }",
-        "class User { private constructor() {} } func main(): void { JSON.parse<User>('{}'); }",
+        "class User {  #constructor() {} } func main(): void { JSON.parse<User>('{}'); }",
         "class User { value: Set<int>; } func main(): void { JSON.parse<User[]>('[]'); }",
         "func main(): void { JSON.parse<(int) => int>('null'); }",
         "func main(): void { JSON.safeParse<int>(42); }",

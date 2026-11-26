@@ -120,6 +120,7 @@ std::vector<Fingerprint> ClassInputs(const ir::Program& program) {
       Put(fields, field.type);
       Put(fields, field.initializer);
       Put(fields, field.visibility);
+      Put(fields, field.binding);
     });
     Put(output, type.callable.has_value());
     if (type.callable) {

@@ -206,6 +206,11 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
   const auto* member =
       reflection_members_.empty() ? nullptr : reflection_members_[instruction_index_];
   if (member != nullptr) {
+    if (operation != reflection::Operation::GetValue &&
+        (member->flags & reflection::kConstant) != 0) {
+      Fail(Status(builder_, ExecutionStatus::ReflectionAccessDenied));
+      return;
+    }
     // 封闭映像的描述符来源、非空接收者类型和字段槽均已证明；字段存储沿用
     // 普通静态访问的布局契约，写入仍保留动态值检查和 GC 写屏障。
     auto* receiver = Reference(instruction.lhs + 2);
@@ -280,6 +285,9 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
   if (operation == reflection::Operation::GetValue) {
     Store(instruction.dst, ReadStoredValue(address, result_type), result_type);
   } else {
+    auto* writable = load(builder_.getInt8Ty(), offsetof(ReflectedFieldCache, writable));
+    Check(builder_.CreateICmpNE(writable, builder_.getInt8(0)),
+          ExecutionStatus::ReflectionAccessDenied);
     auto value = LoadStoredValue(instruction.lhs + 3);
     auto* kind = builder_.CreateExtractValue(EncodeStoredValue(value), 1);
     auto* expected_kind = load(builder_.getInt8Ty(), offsetof(ReflectedFieldCache, kind));

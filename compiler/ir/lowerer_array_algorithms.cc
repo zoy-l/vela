@@ -174,14 +174,31 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
 }
 
 Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) {
-  const auto& result_type = model_.expression_types.at(&expression);
-  const auto algorithm = model_.array_algorithms.at(&expression);
   const auto location = expression.location;
   // 所有输入先保存到帧槽；实参中的赋值不能改变已求值的 receiver 或其他实参。
   const auto slots = std::max<std::size_t>(expression.arguments.size() + 1, 3);
   const auto base = AllocateRegisterWindow(slots, location);
   const auto receiver = LowerExpression(*expression.callee->object);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
+  std::optional<std::size_t> null_jump;
+  if (expression.callee->null_safe) {
+    null_jump = BeginNullSafe(base, location);
+  }
+  const auto& receiver_type = receiver.type.nullable
+                                  ? model_.types.at(frontend::NonNullableTypeName(receiver.type))
+                                  : receiver.type;
+  auto result = LowerArrayAlgorithmBody(expression, {.reg = base, .type = receiver_type});
+  FinishNullSafe(null_jump, result.reg, location);
+  result.type = model_.expression_types.at(&expression);
+  return result;
+}
+
+Lowerer::LoweredValue Lowerer::LowerArrayAlgorithmBody(const frontend::Expression& expression,
+                                                       const LoweredValue& receiver) {
+  const auto base = receiver.reg;
+  const auto& result_type = model_.call_targets.at(&expression).signature.return_type;
+  const auto algorithm = model_.array_algorithms.at(&expression);
+  const auto location = expression.location;
   const auto& order = model_.argument_order.at(&expression);
   const frontend::FunctionDescriptor* signature = nullptr;
   const frontend::Expression* callback_expression = nullptr;
@@ -357,37 +374,26 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
   return value;
 }
 
-Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters& inputs,
+RegisterId Lowerer::InitializeArrayAlgorithmResult(const ArrayAlgorithmRegisters& inputs,
                                                    ArrayAlgorithm algorithm,
-                                                   const frontend::TypeDescriptor& receiver_type,
                                                    const frontend::TypeDescriptor& result_type,
-                                                   frontend::SourceLocation location,
-                                                   std::optional<RegisterId> mapped_output) {
+                                                   std::optional<RegisterId> output,
+                                                   RegisterId zero,
+                                                   frontend::SourceLocation location) {
   using Algorithm = ArrayAlgorithm;
   const auto base = inputs.array;
-  const auto callback = inputs.callback;
   const auto length = inputs.length;
-  const auto guard = inputs.guard;
-  const auto callback_arity = inputs.callback_arity;
-  const auto* signature = inputs.signature;
-  if (algorithm == Algorithm::Sort) {
-    return LowerArraySortTraversal(inputs, result_type, location);
-  }
-  const auto zero =
-      EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 0, .location = location});
-  const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
-  const auto index = EmitTemporary({.opcode = Opcode::Move, .lhs = zero, .location = location});
   Instruction initial{.opcode = Opcode::LoadNull, .location = location};
   if (algorithm == Algorithm::Reduce) {
     initial.opcode = Opcode::Move;
     initial.lhs = base + 2;
-  } else if (algorithm == Algorithm::Map) {
-    if (mapped_output) {
+  } else if (algorithm == Algorithm::Map || algorithm == Algorithm::Filter) {
+    if (output) {
       initial.opcode = Opcode::Move;
-      initial.lhs = *mapped_output;
+      initial.lhs = *output;
     } else {
       initial.opcode = Opcode::NewDynamicArray;
-      initial.lhs = length;
+      initial.lhs = algorithm == Algorithm::Filter ? zero : length;
       initial.index = RegisterArrayType(result_type);
     }
   } else if (algorithm == Algorithm::FindIndex) {
@@ -399,6 +405,90 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
   }
   const auto result = EmitTemporary(initial);
   RecordValueType(result, result_type);
+  if (algorithm == Algorithm::Filter) {
+    // 只遍历和调用谓词一次；预留长度上界，匹配值直接写入连续结果存储。
+    const std::array reserve{result, length};
+    EmitBuiltinCall(Builtin::ArrayReserve, AllocateRegister(location), reserve, location);
+  }
+  return result;
+}
+
+void Lowerer::EmitArrayFilterValue(const ArrayAlgorithmRegisters& inputs,
+                                   const LoweredValue& result,
+                                   RegisterId element,
+                                   frontend::SourceLocation location) {
+  const auto plan = inputs.validation_plan;
+  if (plan) {
+    const std::array append{*plan, element};
+    EmitBuiltinCall(Builtin::DynamicArrayAppend, AllocateRegister(location), append, location);
+    return;
+  }
+  const auto& output_element = model_.array_elements.at(result.type.name);
+  const auto selected =
+      LowerConversion({.reg = element, .type = inputs.element_type}, output_element, location);
+  const std::array append{result.reg, selected.reg};
+  EmitBuiltinCall(Builtin::ArrayPush, AllocateRegister(location), append, location);
+}
+
+std::optional<std::size_t> Lowerer::LowerArrayPredicateResult(const ArrayAlgorithmRegisters& inputs,
+                                                              ArrayAlgorithm algorithm,
+                                                              const LoweredValue& result,
+                                                              const ArrayPredicateRegisters& values,
+                                                              frontend::SourceLocation location) {
+  const auto element = values.element;
+  const auto index = values.index;
+  const auto matched = values.matched;
+  const auto skip_condition =
+      algorithm == ArrayAlgorithm::Every
+          ? EmitTemporary({.opcode = Opcode::NotBool, .lhs = matched, .location = location})
+          : matched;
+  const auto skip = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = skip_condition, .location = location});
+  std::optional<std::size_t> short_exit;
+  if (algorithm == ArrayAlgorithm::Filter) {
+    EmitArrayFilterValue(inputs, result, element, location);
+  } else {
+    auto selected = matched;
+    if (algorithm == ArrayAlgorithm::FindIndex) {
+      selected = index;
+    } else if (algorithm == ArrayAlgorithm::Find) {
+      selected = element;
+      if (inputs.element_type.name != result.type.name &&
+          inputs.element_type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+        selected =
+            LowerConversion({.reg = element, .type = inputs.element_type}, result.type, location)
+                .reg;
+      }
+    }
+    Emit({.opcode = Opcode::Move, .dst = result.reg, .lhs = selected, .location = location});
+    short_exit = current_function_->instructions.size();
+    Emit({.opcode = Opcode::Jump, .location = location});
+  }
+  BindJump(skip);
+  return short_exit;
+}
+
+Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters& inputs,
+                                                   ArrayAlgorithm algorithm,
+                                                   const frontend::TypeDescriptor& receiver_type,
+                                                   const frontend::TypeDescriptor& result_type,
+                                                   frontend::SourceLocation location,
+                                                   std::optional<RegisterId> output_array) {
+  using Algorithm = ArrayAlgorithm;
+  const auto base = inputs.array;
+  const auto callback = inputs.callback;
+  const auto length = inputs.length;
+  const auto guard = inputs.guard;
+  const auto callback_arity = inputs.callback_arity;
+  const auto* signature = inputs.signature;
+  if (algorithm == Algorithm::Sort) {
+    return LowerArraySortTraversal(inputs, result_type, location);
+  }
+  const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
+  const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
+  const auto index = EmitTemporary({.opcode = Opcode::Move, .lhs = zero, .location = location});
+  const auto result =
+      InitializeArrayAlgorithmResult(inputs, algorithm, result_type, output_array, zero, location);
   const auto loop = static_cast<std::uint32_t>(current_function_->instructions.size());
   const auto condition =
       EmitTemporary({.opcode = Opcode::LessInt, .lhs = index, .rhs = length, .location = location});
@@ -427,22 +517,9 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
     const LoweredValue output{.reg = result, .type = result_type};
     EmitIndexWrite(output, index, value, location);
   } else if (algorithm != Algorithm::ForEach) {
-    const auto skip_condition =
-        algorithm == Algorithm::Every
-            ? EmitTemporary({.opcode = Opcode::NotBool, .lhs = value, .location = location})
-            : value;
-    // NotBool 可能发出一条指令，因此跳转下标在其后记录。
-    const auto skip_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfFalse, .lhs = skip_condition, .location = location});
-    Emit({
-        .opcode = Opcode::Move,
-        .dst = result,
-        .lhs = algorithm == Algorithm::FindIndex ? index : value,
-        .location = location,
-    });
-    short_exit = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = location});
-    BindJump(skip_jump);
+    short_exit =
+        LowerArrayPredicateResult(inputs, algorithm, {.reg = result, .type = result_type},
+                                  {.element = element, .index = index, .matched = value}, location);
   }
   Emit({.opcode = Opcode::AddInt, .dst = index, .lhs = index, .rhs = one, .location = location});
   Emit({.opcode = Opcode::Jump, .index = loop, .location = location});

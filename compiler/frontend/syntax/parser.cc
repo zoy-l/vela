@@ -277,9 +277,10 @@ bool Parser::Match(TokenKind kind) {
   return true;
 }
 
-const Token* Parser::TakeName() {
+const Token* Parser::TakeName(NameContext context) {
   const auto kind = Peek().kind;
-  if (IsDeclarationName(kind)) {
+  if (IsDeclarationName(kind) ||
+      (context == NameContext::Member && kind == TokenKind::PrivateIdentifier)) {
     return &Advance();
   }
   return nullptr;
@@ -313,14 +314,19 @@ void Parser::Synchronize() {
   }
 }
 
+std::unique_ptr<Statement> Parser::MakeBlockStatement(SourceLocation location) {
+  auto block = std::make_unique<Statement>();
+  block->kind = Statement::Kind::Block;
+  block->location = location;
+  return block;
+}
+
 std::unique_ptr<Statement> Parser::ParseBlock(BlockKind kind) {
   const auto* left_brace = Expect(TokenKind::LeftBrace, "expected '{'");
   if (left_brace == nullptr) {
     return nullptr;
   }
-  auto block = std::make_unique<Statement>();
-  block->kind = Statement::Kind::Block;
-  block->location = left_brace->location;
+  auto block = MakeBlockStatement(left_brace->location);
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
     if (IsDeclarationStart(Peek().kind) && !IsVariableDeclaration()) {
       AddDiagnostic(Peek().location, "expected '}' before declaration");
@@ -481,9 +487,7 @@ std::unique_ptr<Statement> Parser::ParseSwitchStatement() {
     if (Expect(TokenKind::Colon, "expected ':' after switch label") == nullptr) {
       return nullptr;
     }
-    branch.body = std::make_unique<Statement>();
-    branch.body->kind = Statement::Kind::Block;
-    branch.body->location = branch.location;
+    branch.body = MakeBlockStatement(branch.location);
     while (!Check(TokenKind::Case) && !Check(TokenKind::Default) && !Check(TokenKind::RightBrace) &&
            !IsAtEnd()) {
       auto child = ParseStatement();
@@ -1107,6 +1111,7 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters) {
         .name = name.lexeme,
         .location = name.location,
         .initializer = {},
+        .member_name = {},
     });
   } else {
     auto parsed_parameters = ParseParameters(ParameterTyping::Inferred);
@@ -1139,9 +1144,7 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters) {
     statement->kind = Statement::Kind::Return;
     statement->location = value->location;
     statement->expression = std::move(value);
-    function->body = std::make_unique<Statement>();
-    function->body->kind = Statement::Kind::Block;
-    function->body->location = expression->location;
+    function->body = MakeBlockStatement(expression->location);
     function->body->statements.push_back(std::move(statement));
   }
   if (!function->body) {

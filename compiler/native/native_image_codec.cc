@@ -69,7 +69,8 @@ auto Fields(Record& value) {
 template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, NativeSignatureDescription>
 auto Fields(Record& value) {
-  return std::tie(value.name, value.parameters, value.result, value.has_result);
+  return std::tie(value.name, value.parameters, value.result, value.has_result,
+                  value.narrowed_parameter, value.has_narrowed_parameter);
 }
 
 template <class Record>
@@ -116,7 +117,7 @@ template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, NativeMemberDescription>
 auto Fields(Record& value) {
   return std::tie(value.name, value.receiver_type, value.target, value.type, value.setter,
-                  value.kind);
+                  value.kind, value.read_only);
 }
 
 template <class Record>

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -12,16 +13,20 @@
 #include <span>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "runtime/collections/index_range.h"
 #include "runtime/heap/array_storage.h"
+#include "runtime/heap/element_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 
@@ -39,6 +44,107 @@ ExecutionStatus ArrayExecutionStatus(ArrayAccessError error) {
 }
 
 namespace {
+
+template <class Values, class Projection>
+bool IncludesObjects(const Values& values, const HeapObject& target, Projection project) {
+  const auto* layout = Heap::ClassOf(target);
+  if (layout == nullptr || (!layout->HasReflectionIdentity() && !layout->IsEnum())) {
+    return std::ranges::find(values, &target, project) != values.end();
+  }
+  return std::ranges::any_of(values, [&](const auto& element) {
+    const auto* value = project(element);
+    return value != nullptr && IsEqualObject(*value, target);
+  });
+}
+
+template <class Predicate>
+bool IncludesTagged(std::span<const Value> values, ValueKind kind, Predicate matches) {
+  return std::ranges::any_of(values,
+                             [=](Value value) { return value.kind() == kind && matches(value); });
+}
+
+bool IncludesValues(std::span<const Value> values, Value searched) {
+  const auto kind = searched.kind();
+  switch (kind) {
+    case ValueKind::Null:
+      return std::ranges::any_of(values, [](Value value) { return value.IsNull(); });
+    case ValueKind::Boolean: {
+      const auto target = searched.AsBoolean();
+      return IncludesTagged(values, kind,
+                            [target](Value value) { return value.AsBoolean() == target; });
+    }
+    case ValueKind::Integer: {
+      const auto target = searched.AsInteger();
+      return IncludesTagged(values, kind,
+                            [target](Value value) { return value.AsInteger() == target; });
+    }
+    case ValueKind::Double: {
+      const auto target = searched.AsDouble();
+      return std::isnan(target)
+                 ? IncludesTagged(values, kind,
+                                  [](Value value) { return std::isnan(value.AsDouble()); })
+                 : IncludesTagged(values, kind,
+                                  [target](Value value) { return value.AsDouble() == target; });
+    }
+    case ValueKind::String: {
+      const auto* target = searched.AsString();
+      return IncludesTagged(values, kind, [target](Value value) {
+        return IsEqualString(*value.AsString(), *target);
+      });
+    }
+    case ValueKind::Object:
+      return IncludesObjects(values, *searched.AsObject(),
+                             [](Value value) { return value.AsObjectOrNull(); });
+  }
+  std::unreachable();
+}
+
+std::expected<Value, ExecutionStatus> ArrayIncludes(const HeapObject& array,
+                                                    std::span<const Value> arguments) {
+  const auto* layout = Heap::ArrayTypeOf(array);
+  const auto searched = arguments[1];
+  const auto from = arguments[2];
+  if (layout == nullptr || !from.IsInteger()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto length = *Heap::ArrayLength(array);
+  if (!Heap::IsValueOfType(searched, layout->element)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto start = RelativeIndex(from.AsInteger(), length);
+  const auto bytes = internal::ElementBytes(array, *layout, length);
+  // 无用户回调、分配或 GC；只在入口选择一次存储表示，不逐元素装箱或检查边界。
+  const auto found =
+      VisitElementStorage(*layout, bytes, [searched, start]<class T>(std::span<const T> elements) {
+        const auto values = elements.subspan(start);
+        if constexpr (std::is_same_v<T, Value>) {
+          return IncludesValues(values, searched);
+        } else if constexpr (std::is_same_v<T, double>) {
+          const auto number = searched.AsDouble();
+          return std::isnan(number)
+                     ? std::ranges::any_of(values, [](double value) { return std::isnan(value); })
+                     : std::ranges::find(values, number) != values.end();
+        } else if constexpr (std::is_pointer_v<T>) {
+          const auto* target = ElementValue<T>(searched);
+          if (target == nullptr) {
+            return std::ranges::find(values, nullptr) != values.end();
+          }
+          if constexpr (std::is_same_v<T, HeapObject*>) {
+            return IncludesObjects(values, *target, std::identity{});
+          } else {
+            return std::ranges::any_of(values, [target](const auto* value) {
+              if (value == nullptr) {
+                return false;
+              }
+              return IsEqualString(*value, *target);
+            });
+          }
+        } else {
+          return std::ranges::find(values, ElementValue<T>(searched)) != values.end();
+        }
+      });
+  return Value::Boolean(found);
+}
 
 std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
                                                 std::span<const Value> arguments,
@@ -240,6 +346,8 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
     return Value::Integer(static_cast<std::int64_t>(value));
   };
   switch (builtin) {
+    case Builtin::ArrayIncludes:
+      return ArrayIncludes(array, arguments);
     case Builtin::ArraySortDefault:
       return SortByDefault(array, heap);
     case Builtin::ArraySortIntAscending:

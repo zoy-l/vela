@@ -369,7 +369,8 @@ void Lowerer::LowerBuiltinDefaults(Builtin builtin,
       });
     }
   }
-  if (builtin == Builtin::RegExpAllMatches || builtin == Builtin::RegExpMatchAsPrefix) {
+  if (builtin == Builtin::RegExpAllMatches || builtin == Builtin::RegExpMatchAsPrefix ||
+      builtin == Builtin::ArrayIncludes) {
     Emit({.opcode = Opcode::LoadInt, .dst = base + 2, .location = location});
   }
   if (builtin == Builtin::ArrayJoin) {

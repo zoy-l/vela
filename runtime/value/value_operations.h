@@ -30,6 +30,9 @@ template <auto Last>
 }
 
 [[nodiscard]] bool IsEqualValue(Value left, Value right) noexcept;
+[[nodiscard]] bool IsEqualObject(const HeapObject& left, const HeapObject& right) noexcept;
+// 数组 includes 与集合键共用 SameValueZero；普通语言相等仍不匹配 NaN。
+[[nodiscard]] bool IsSameValueZero(Value left, Value right) noexcept;
 [[nodiscard]] std::expected<Value, ExecutionStatus> ConcatenateValues(Heap& heap,
                                                                       Value left,
                                                                       Value right);

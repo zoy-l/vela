@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <span>
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/flow/constructor_observation.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -17,6 +18,7 @@ struct ConstructorInitializationFacts final {
   const absl::flat_hash_map<const Expression*, std::size_t>* lambda_indices{};
   const absl::flat_hash_map<const Statement*, StatementFlow>* control_flow{};
   bool has_explicit_super_call = false;
+  const ConstructorObservation* base_observation = nullptr;
 };
 
 [[nodiscard]] Diagnostics CheckConstructorInitialization(

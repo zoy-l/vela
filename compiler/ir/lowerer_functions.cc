@@ -19,11 +19,11 @@
 
 namespace vela::ir {
 
-RegisterId Lowerer::LowerParameterDefault(const frontend::Parameter& parameter,
-                                          LoweredValue input,
-                                          RegisterId supplied,
-                                          const frontend::TypeDescriptor& type) {
-  const auto location = parameter.location;
+RegisterId Lowerer::LowerDefaultValue(const frontend::Expression& initializer,
+                                      LoweredValue input,
+                                      RegisterId supplied,
+                                      const frontend::TypeDescriptor& type,
+                                      frontend::SourceLocation location) {
   const auto result = AllocateRegister(location);
   RecordValueType(result, type);
   const auto missing = current_function_->instructions.size();
@@ -33,7 +33,7 @@ RegisterId Lowerer::LowerParameterDefault(const frontend::Parameter& parameter,
   const auto done = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = location});
   BindJump(missing);
-  const auto initial = LowerExpression(*parameter.initializer);
+  const auto initial = LowerExpression(initializer);
   Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
   BindJump(done);
   return result;
@@ -83,7 +83,10 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   const auto target = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
   const auto shape = callable_signature == nullptr
                          ? std::string_view{}
-                         : frontend::MakeFunctionType(*callable_signature).name;
+                         : frontend::MakeFunctionType(callable_signature->parameters,
+                                                      callable_signature->return_type,
+                                                      callable_signature->narrowed_parameter)
+                               .name;
   const auto key = std::pair(target, shape);
   const auto existing = callable_classes_.find(key);
   if (existing != callable_classes_.end()) {

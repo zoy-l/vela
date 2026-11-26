@@ -81,6 +81,67 @@ TEST_P(JitStateTest, ParameterDefaultsFollowPublicationsWhileCapturedMethodsKeep
   EXPECT_EQ(Entry("captured").Invoke({})->AsInteger(), 10);
 }
 
+TEST_P(JitStateTest, UnifiedConstructorsBindInheritedFieldsAndForwardParameterPresence) {
+  const auto update = Update(R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class FieldBase { value: int = initial(); }
+class FieldChild extends FieldBase { bonus: int = 2; constructor {} }
+class Forwarded extends FieldBase { bonus: int = 2; constructor(super.value, this.bonus); }
+class ValueBase { value: int; constructor(initial: int = initial()) { this.value = initial; } }
+class Mixed extends ValueBase { bonus: int = 2; constructor {} }
+class Leaf extends Mixed { extra: int = 0; }
+export func answer(): int {
+  const a = FieldChild(value: 40);
+  const b = Forwarded();
+  const c = Leaf();
+  const d = Leaf(initial: 41, bonus: 1);
+  const make: () => Forwarded = Forwarded;
+  const e = make();
+  const f = JSON.parse<Leaf>('{"initial":40}');
+  return calls == 3 && a.value + a.bonus == 42 && b.value + b.bonus == 42 &&
+         c.value + c.bonus == 42 && d.value + d.bonus == 42 && e.value + e.bonus == 42
+             ? f.value + f.bonus : 0;
+}
+)");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_TRUE(test::ReturnsInteger(Entry("answer"), 42));
+}
+
+TEST_P(JitStateTest, DeferredPrivateConstFieldsKeepConstructionProofsAcrossPublications) {
+  const std::string shared = R"(
+class Base { value: int = 40; }
+class Child extends Base {
+
+  const #header: int;
+
+  constructor { this.#header = this.value; }
+  read(): int { return this.#header; }
+}
+const kept = Child(value: 42);
+export func stored(): int { return kept.read(); }
+export func fresh(): int { return Child(value: 42).read(); }
+)";
+  auto update = Update(shared);
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_TRUE(test::ReturnsInteger(Entry("stored"), 42));
+  update = Update(shared + "export func revision(): int { return 2; }");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_TRUE(test::ReturnsInteger(Entry("stored"), 42));
+  EXPECT_TRUE(test::ReturnsInteger(Entry("fresh"), 42));
+}
+
+TEST_P(JitStateTest, ChangingFieldMutabilityRequiresReload) {
+  const std::string shared =
+      "const kept = Counter(value: 42); export func read(): int { return kept.value; }";
+  auto update = Update("class Counter { value: int; } " + shared);
+  ASSERT_TRUE(update) << update.error();
+  update = Update("class Counter { const value: int; } " + shared);
+  ASSERT_FALSE(update);
+  EXPECT_NE(update.error().find("field mutability changed"), std::string::npos);
+  EXPECT_TRUE(test::ReturnsInteger(Entry("read"), 42));
+}
+
 TEST_P(JitStateTest, MapLiteralAllocationAndInsertionFailuresStopWithoutPublishingPartialMaps) {
   ASSERT_TRUE(isolate_.RegisterNative(runtime::NativeFunction::Bind<FreezeMapHeap>("freeze")));
   const auto update = Update(R"(
@@ -746,9 +807,9 @@ TEST_P(JitStateTest, ConstructionArgumentsRunBeforeTheInitializationBarrierAndBo
   static_cast<void>(isolate_.FreezeBindings());
   const auto update = Update(
       "external func constructing(): bool; "
-      "class Box { private value: int; "
-      "constructor(value: int) { this.value = value + (constructing() ? 2 : 0); } "
-      "read(): int { return this.value; } } "
+      "class Box {  #value: int;   "
+      "constructor(value: int) { this.#value = value + (constructing() ? 2 : 0); } "
+      "read(): int { return this.#value; } } "
       "export func main(): int { return Box(constructing() ? 0 : 40).read(); }");
   ASSERT_TRUE(update) << update.error();
   EXPECT_EQ(Entry("main").Invoke({})->AsInteger(), 42);
@@ -875,7 +936,7 @@ TEST_P(JitStateTest, EnumKeysAndDynamicEqualityUseNominalIdentityAcrossLayoutVer
   EXPECT_EQ(Entry("main").Invoke({})->AsInteger(), 42);
 }
 
-TEST_P(JitStateTest, FieldPrivacyRejectsRetainedForeignReadersAndAllowsRetainedClassLambdas) {
+TEST_P(JitStateTest, PublicToPrivateFieldRenamesRequireReleasingRetainedReaders) {
   auto update = Update(
       "class Box { stored: int = 42; "
       "reader(): () => int { return (): int => this.stored; } "
@@ -888,26 +949,37 @@ TEST_P(JitStateTest, FieldPrivacyRejectsRetainedForeignReadersAndAllowsRetainedC
   const auto object_storage = runtime::HostRoot::Create(isolate_, *Entry("make").Invoke({}));
   ASSERT_TRUE(object_storage);
   const auto& object = *object_storage;
-  const auto callback_storage =
+  auto callback_storage =
       runtime::HostRoot::Create(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
   ASSERT_TRUE(callback_storage);
   const auto& callback = *callback_storage;
   std::optional<runtime::NativeVersionEntry> reader = *Entry("read").Capture();
   const std::string changed =
-      "class Box { private stored: int = 100; "
-      "reader(): () => int { return (): int => this.stored; } "
-      "read(): int { return this.stored; } } "
+      "class Box {  #stored: int = 100;   "
+      "reader(): () => int { return (): int => this.#stored; } "
+      "read(): int { return this.#stored; } } "
       "export func make(): Box { return Box(); } "
       "export func read(value: Box): int { return value.read(); } "
       "export func callback(value: Box): () => int { return value.reader(); } "
       "export func invoke(value: () => int): int { return value(); }";
   update = Update(changed);
   ASSERT_FALSE(update);
-  EXPECT_NE(update.error().find("private field"), std::string::npos);
+  EXPECT_NE(update.error().find("deleted field"), std::string::npos);
   reader.reset();
   update = Update(changed);
-  ASSERT_TRUE(update) << update.error();
+  ASSERT_FALSE(update);
+  EXPECT_NE(update.error().find("deleted field"), std::string::npos);
   EXPECT_EQ(Entry("invoke").Invoke(std::array{callback.value()})->AsInteger(), 42);
+  callback_storage->Reset();
+  isolate_.heap().Collect();
+  update = Update(changed);
+  ASSERT_TRUE(update) << update.error();
+  const auto private_callback =
+      runtime::HostRoot::Create(isolate_, *Entry("callback").Invoke(std::array{object.value()}));
+  ASSERT_TRUE(private_callback);
+  update = Update(changed + "export func revision(): int { return 3; }");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("invoke").Invoke(std::array{private_callback->value()})->AsInteger(), 100);
 }
 
 TEST_P(JitStateTest, RetainedCallsRejectInstanceToStaticBindingChanges) {
@@ -1131,7 +1203,7 @@ TEST_P(JitStateTest, FailedConstantPreparationReleasesObjectsBeforeRollingBackTh
   }
 }
 
-TEST_P(JitStateTest, StaticFieldPrivacyChecksRetainedAccessesUsingTheirLexicalClass) {
+TEST_P(JitStateTest, PublicToPrivateStaticRenamesKeepDistinctSlotsAndLexicalAccess) {
   const std::string methods =
       "static callback(): () => int { return () => Box.value; } } "
       "export func factory(): () => int { return Box.callback(); } "
@@ -1141,20 +1213,34 @@ TEST_P(JitStateTest, StaticFieldPrivacyChecksRetainedAccessesUsingTheirLexicalCl
   ASSERT_TRUE(update) << update.error();
   std::optional<runtime::NativeVersionEntry> external = *Entry("read").Capture();
   EXPECT_EQ(external->Invoke({})->AsInteger(), 42);
-  const auto internal_storage = runtime::HostRoot::Create(isolate_, *Entry("factory").Invoke({}));
+  auto internal_storage = runtime::HostRoot::Create(isolate_, *Entry("factory").Invoke({}));
   ASSERT_TRUE(internal_storage);
   const auto& internal = *internal_storage;
-  const auto changed = "class Box { private static value: int = 100; " + methods +
-                       "export func read(): int { return 0; }";
+  const std::string changed =
+      "class Box { static #value: int = 100; "
+      "static callback(): () => int { return () => Box.#value; } } "
+      "export func factory(): () => int { return Box.callback(); } "
+      "export func invoke(value: () => int): int { return value(); } "
+      "export func read(): int { return 0; }";
   update = Update(changed);
   ASSERT_FALSE(update);
-  EXPECT_NE(update.error().find("private static field"), std::string::npos);
+  EXPECT_NE(update.error().find("deleted global"), std::string::npos);
   external.reset();
   update = Update(changed);
-  ASSERT_TRUE(update) << update.error();
+  ASSERT_FALSE(update);
+  EXPECT_NE(update.error().find("deleted global"), std::string::npos);
   const auto value = Entry("invoke").Invoke(std::array{internal.value()});
   ASSERT_TRUE(value);
   EXPECT_EQ(value->AsInteger(), 42);
+  internal_storage->Reset();
+  isolate_.heap().Collect();
+  update = Update(changed);
+  ASSERT_TRUE(update) << update.error();
+  const auto private_callback = runtime::HostRoot::Create(isolate_, *Entry("factory").Invoke({}));
+  ASSERT_TRUE(private_callback);
+  update = Update(changed + "export func revision(): int { return 3; }");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("invoke").Invoke(std::array{private_callback->value()})->AsInteger(), 100);
 }
 
 TEST_P(JitStateTest, FieldStorageChangesRequireReloadWithoutRetainedAccessorsOrLiveInstances) {

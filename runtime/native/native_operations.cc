@@ -292,7 +292,7 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
   if (builtin == Builtin::DynamicAsync) {
     return StoreNativeResult(result, ExecuteNativeDynamicAsync(*execution, decoded));
   }
-  if (builtin >= Builtin::DynamicCall && builtin <= Builtin::DynamicArrayValidate) {
+  if (builtin >= Builtin::DynamicCall && builtin <= Builtin::DynamicArrayAppend) {
     return StoreNativeResult(result, ExecuteNativeDynamicCall(*execution, builtin, decoded));
   }
   if (builtin == Builtin::JsonParse || builtin == Builtin::JsonStringify) {

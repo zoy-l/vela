@@ -145,6 +145,24 @@ argument-validation ABI. Direct compiler-bound reflection calls retain their wra
 code references; reloadable images retain the complete entry set.
 
 Script parameter defaults use a trailing presence window in the ordinary native call contract.
+Constructor signatures merge base parameters and own public instance fields unless a body supplies
+its own super call or an explicit parameter list defines the signature. The semantic class descriptor
+records field bindings and base-parameter forwarding independently of signature ownership. Field
+bindings borrow resolved descriptors after inheritance merging; class nodes and completed field
+tables retain stable addresses for the semantic model's lifetime. Field and super forwarding
+parameters inherit their target's type and omission contract without creating body
+locals. Pure field constructors retain direct field arguments and presence masks; constructors that
+forward ordinary values use the same parameter/presence ABI as ordinary functions. Base defaults
+remain evaluated by the base declaration. Public own fields initialize before the base call. Private
+fields may initialize afterward only when transitive construction observation, including final-receiver
+virtual dispatch, cannot reach them. Derived overrides revalidate ancestor proofs. All normal exits
+require complete initialization. Const fields track both definite initialization and possible writes
+to reject duplicate initialization through branches, loops and exception paths. Private names use
+lexical declaring-class identity; inherited private slots remain physically distinct, and dynamic
+private access checks that class instead of entering name-based dispatch. Changing a public name to
+a private name deletes one declaration and creates another; retained references enforce the ordinary
+deleted-field or deleted-global publication boundary. Constructor values, typed
+JSON, reflection and editor signatures consume the resolved constructor contract.
 Logical signatures distinguish defaulted parameters from their types, preserving the difference
 between omission and explicit null. The callee evaluates defaults in declaration order before its
 body. Static, virtual, dynamic, reflected, host, and captured-function calls supply the same presence
@@ -505,6 +523,20 @@ registration context when errors are forwarded. Reporters receive copied strings
 resolved frames; interaction records do not retain machine-code owners. See
 [the testing contract](../docs/zh-CN/testing.md#12-mock-扩展) for the public API and failure
 categories.
+
+## Array predicate contracts
+
+Boolean function bodies infer a first-parameter refinement from all successful return paths
+through the shared flow checker. Assignment or mutable capture of that parameter invalidates
+the proof. Function values retain this contract through layout descriptions, native images,
+serialization, AOT reachability and runtime signature interning. Erasing a refinement to an
+ordinary boolean function type is allowed; it cannot manufacture a stronger predicate.
+Virtual dispatch cannot acquire a refinement solely from a base implementation's body.
+Array filter and find consume the same proof. Filter allocates storage for the refined element
+type, including dynamic dispatch; find retains the element read before the callback and returns
+its nullable refined type. Both check structural mutation after every callback and before any
+short-circuit return. Includes scans the existing element representation without allocation,
+using language equality with NaN matching NaN.
 
 ## Assertion boundaries and cleanup
 

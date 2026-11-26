@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -9,6 +10,7 @@
 #include <benchmark/benchmark.h>
 
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/parser.h"
 #include "compiler/tooling/semantic/semantic_index.h"
 
 namespace vela::benchmarks {
@@ -76,6 +78,49 @@ BENCHMARK_CAPTURE(CompleteProject, Index, CompletionReuse::Index)
     ->Name("tooling/completion/reuse_index")
     ->Arg(8)
     ->Arg(32);
+
+void CompleteInheritedConstructor(benchmark::State& state) {
+  std::string source;
+  const auto count = state.range(0);
+  constexpr int kFieldsPerClass = 4;
+  for (std::int64_t owner = 0; owner < count; ++owner) {
+    source += "class Record" + std::to_string(owner);
+    if (owner != 0) {
+      source += " extends Record" + std::to_string(owner - 1);
+    }
+    source += " {";
+    for (int field = 0; field < kFieldsPerClass; ++field) {
+      source += " field" + std::to_string(owner) + "_" + std::to_string(field) + ": int = 42;";
+    }
+    source += " }";
+  }
+  source += "func main(): void { const value = Record" + std::to_string(count - 1) + "(); }";
+  const auto parsed = frontend::ParseSourceSnapshot(source);
+  const auto query = tooling::PrepareArgumentCompletion(*parsed.source, source.rfind("();") + 1);
+  if (!query) {
+    state.SkipWithError("missing constructor argument query");
+    return;
+  }
+  const frontend::SourceInput input{.path = "constructor-completion.vela", .text = query->source};
+  frontend::ModuleCache modules;
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    const tooling::SemanticIndex index(input.path, modules, std::span(&input, 1));
+    auto completions = index.CompleteArguments(*query);
+    if (std::ranges::none_of(completions,
+                             [](const auto& item) { return item.label == "field0_0:"; })) {
+      state.SkipWithError("inherited constructor completion failed");
+      return;
+    }
+    benchmark::DoNotOptimize(completions);
+  }
+}
+
+BENCHMARK(CompleteInheritedConstructor)
+    ->Name("tooling/completion/inherited_constructor")
+    ->Arg(8)
+    ->Arg(32)
+    ->UseRealTime();
 
 }  // namespace
 }  // namespace vela::benchmarks

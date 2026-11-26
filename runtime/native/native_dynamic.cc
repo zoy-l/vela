@@ -151,6 +151,9 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
   const auto& instance = execution.instance();
   const auto& types = instance.layouts().types;
   if (member.kind == MemberKind::Field) {
+    if (member.is_read_only) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
     const auto& field_type = member.type;
     if (!field_type) {
       std::unreachable();
@@ -306,7 +309,10 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
     return request ? InvokeFunction(execution, request->callback, *request->arguments, nullptr)
                    : std::unexpected(request.error());
   }
-  if (builtin >= Builtin::DynamicArrayCallback && builtin <= Builtin::DynamicArrayValidate) {
+  if (builtin == Builtin::DynamicArrayAppend) {
+    return AppendDynamicArrayValue(execution.isolate().heap(), arguments);
+  }
+  if (builtin >= Builtin::DynamicArrayCallback && builtin < Builtin::DynamicArrayAppend) {
     return ReadDynamicArrayOperation(builtin, arguments);
   }
   const auto first = arguments.front();

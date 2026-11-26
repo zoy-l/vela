@@ -21,12 +21,57 @@ from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX
                                     PROGRAM_CASES)
 
 
+RAW_SOURCE = r'R"(?P<delimiter>\w*)\((?P<source>.*?)\)(?P=delimiter)"'
+
+
+def corpus_sources(contents: str):
+    constants: dict[str, list[str]] = {}
+    declarations = r'\bconstexpr\s+std::string_view\s+(?P<name>\w+)\s*=\s*' + RAW_SOURCE
+    for declaration in re.finditer(declarations, contents, re.DOTALL):
+        constants.setdefault(declaration['name'], []).append(declaration['source'])
+    for index, literal in enumerate(re.finditer(RAW_SOURCE, contents, re.DOTALL)):
+        source = literal['source']
+        end = literal.end()
+        while reference := re.match(r'\s*\+\s*std::string\(\s*(\w+)\s*\)', contents[end:]):
+            name = reference[1]
+            fragments = constants.get(name, [])
+            if len(fragments) != 1:
+                raise ValueError(f"expected one constexpr source fragment for {name}")
+            source += fragments[0]
+            end += reference.end()
+        yield index, source
+
+
+class CorpusSourcesTest(unittest.TestCase):
+    def test_assembles_only_explicitly_appended_fragments(self) -> None:
+        contents = '''
+constexpr std::string_view kPredicate = R"(func predicate(): bool { return true; })";
+ExpectRunAnswer(R"(func main(): int { return predicate() ? 42 : 0; })"
+                + std::string(kPredicate));
+ExpectRunAnswer(R"(func main(): int { return 42; })");
+'''
+        sources = list(corpus_sources(contents))
+        self.assertEqual(sources, [
+            (0, "func predicate(): bool { return true; }"),
+            (1, "func main(): int { return predicate() ? 42 : 0; }"
+                "func predicate(): bool { return true; }"),
+            (2, "func main(): int { return 42; }"),
+        ])
+
+    def test_rejects_missing_or_ambiguous_fragments(self) -> None:
+        declaration = 'constexpr std::string_view kShared = R"(func helper(): void {})";'
+        use = 'ExpectRunAnswer(R"(func main(): int { return 42; })" + std::string(kShared));'
+        for contents in (use, declaration + declaration + use):
+            with self.subTest(contents=contents), self.assertRaisesRegex(ValueError, "kShared"):
+                list(corpus_sources(contents))
+
+
 @unittest.skipUnless(NATIVE_PACKAGE_AVAILABLE,
                      "This platform requires an audited VELA_TEST_TARGET_SUPPORT_SPEC")
 class NativeDistributionTest(unittest.TestCase):
     def test_existing_language_corpus_matches_jit(self) -> None:
         categories = [
-            "class", "constructor_reference", "default_parameter", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
+            "class", "constructor_reference", "constructor_initialization", "default_parameter", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
             "builtin_function_value", "string", "regexp", "json", "typed_json", "standard_library", "async_contract",
             "language_basics", "control_flow", "match", "cast", "optimization", "recursion",
@@ -53,10 +98,8 @@ class NativeDistributionTest(unittest.TestCase):
                 else:
                     corpus = ROOT / "compiler/language" / (category + "_unittest.cc")
                 contents = corpus.read_text(encoding="utf-8")
-                cases = re.finditer(r'R"(\w*)\((.*?)\)\1"', contents, re.DOTALL)
                 count = 0
-                for index, match in enumerate(cases):
-                    source_text = match.group(2)
+                for index, source_text in corpus_sources(contents):
                     # 自定义宿主绑定由 standalone native host 测试覆盖；本矩阵覆盖 CLI 能直接运行的程序。
                     if not re.search(r"\bfunc main\(\)", source_text) or re.search(r"\bexternal\s+func\b", source_text):
                         continue

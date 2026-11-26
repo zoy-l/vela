@@ -68,6 +68,10 @@ std::vector<std::string_view> SemanticIndex::MemberOwners(frontend::TypeDescript
 }
 
 std::string SemanticIndex::DisplayType(frontend::TypeDescriptor type) const {
+  return tooling::DisplayType(model_, type);
+}
+
+std::string DisplayType(const frontend::SemanticModel& model, frontend::TypeDescriptor type) {
   using Kind = frontend::TypeDescriptor::Kind;
   if (type.kind == Kind::Parameter) {
     return type.parameter->name + (type.nullable ? "?" : "");
@@ -75,36 +79,39 @@ std::string SemanticIndex::DisplayType(frontend::TypeDescriptor type) const {
   if (type.nullable) {
     type.name = frontend::NonNullableTypeName(type);
     type.nullable = false;
-    return (type.kind == Kind::Function ? "(" + DisplayType(type) + ")" : DisplayType(type)) + '?';
+    return (type.kind == Kind::Function ? "(" + DisplayType(model, type) + ")"
+                                        : DisplayType(model, type)) +
+           '?';
   }
-  if (const auto application = model_.type_applications.find(type.name);
-      application != model_.type_applications.end()) {
+  if (const auto application = model.type_applications.find(type.name);
+      application != model.type_applications.end()) {
     return DisplaySymbolName(application->second.ToString());
   }
-  if (const auto element = model_.array_elements.find(type.name);
-      element != model_.array_elements.end()) {
-    return DisplayType(element->second) + "[]";
+  if (const auto element = model.array_elements.find(type.name);
+      element != model.array_elements.end()) {
+    return DisplayType(model, element->second) + "[]";
   }
-  if (const auto function = model_.function_types.find(type.name);
-      function != model_.function_types.end()) {
+  if (const auto function = model.function_types.find(type.name);
+      function != model.function_types.end()) {
     std::string text = "(";
     for (const auto& parameter : function->second.parameters) {
-      text += (text.size() == 1 ? "" : ", ") + DisplayType(parameter.type);
+      text += (text.size() == 1 ? "" : ", ") + DisplayType(model, parameter.type);
     }
-    return text + ") => " + DisplayType(function->second.return_type);
+    return text + ") => " + DisplayType(model, function->second.return_type);
   }
-  if (const auto application = model_.generic_arguments.find(type.name);
-      application != model_.generic_arguments.end()) {
+  if (const auto application = model.generic_arguments.find(type.name);
+      application != model.generic_arguments.end()) {
     const auto& arguments = application->second;
     switch (type.kind) {
       case Kind::Future:
-        return "Future<" + DisplayType(arguments.front()) + '>';
+        return "Future<" + DisplayType(model, arguments.front()) + '>';
       case Kind::Completer:
-        return "Completer<" + DisplayType(arguments.front()) + '>';
+        return "Completer<" + DisplayType(model, arguments.front()) + '>';
       case Kind::Set:
-        return "Set<" + DisplayType(arguments.front()) + '>';
+        return "Set<" + DisplayType(model, arguments.front()) + '>';
       case Kind::Map:
-        return "Map<" + DisplayType(arguments.front()) + ", " + DisplayType(arguments.back()) + '>';
+        return "Map<" + DisplayType(model, arguments.front()) + ", " +
+               DisplayType(model, arguments.back()) + '>';
       default:
         break;
     }

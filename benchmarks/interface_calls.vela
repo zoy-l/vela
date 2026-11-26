@@ -3,8 +3,10 @@ interface Counter {
 }
 
 class Increment implements Counter {
-  private count: int = 0;
-  next(): int { this.count = this.count + 1; return this.count; }
+
+  #count: int = 0;
+
+  next(): int { this.#count = this.#count + 1; return this.#count; }
 }
 
 func run(counter: Counter): int {

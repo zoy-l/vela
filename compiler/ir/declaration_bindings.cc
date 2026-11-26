@@ -321,7 +321,7 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
       result_.named_functions.emplace(InitializerKey(InitializerKind::StaticField, name), target);
       BindExpression(field.initializer.get(), target);
     } else {
-      fields.fields.emplace(field.name, identity);
+      fields.fields.emplace(frontend::ClassFieldKey(owner.name, field.name), identity);
       if (field.initializer != nullptr) {
         const auto target = initializer(identity, kind, field.name);
         result_.named_functions.emplace(

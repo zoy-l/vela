@@ -151,7 +151,7 @@ void TypeChecker::BindAttributeFields(const ClassInfo& owner,
     if (field.storage != MemberStorage::Instance) {
       continue;
     }
-    const auto& contract = owner.fields.at(field.name);
+    const auto& contract = *owner.FindField(field.name);
     const auto found = arguments.find(field.name);
     const auto* value = found != arguments.end() ? found->second : field.initializer.get();
     if (found != arguments.end() && field.initializer) {

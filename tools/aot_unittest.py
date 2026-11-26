@@ -932,13 +932,27 @@ class Base<T> {
   values: int[] = [];
   constructor { collect(); }
 }
-class Leaf<U> extends Base<U> { private state: int = 1; }
+class Leaf<U> extends Base<U> {  #state: int = 1;   bonus: int = 2; constructor {} }
+class Forwarded extends Base<int> {
+  bonus: int = 2;
+  constructor(super.value, this.bonus) { collect(); }
+}
 class Explicit {
   value: int;
   constructor(value: int = initial(), answer: int = value + 2) { this.value = answer; collect(); }
 }
-class Middle extends Explicit {}
-class Child extends Middle {}
+class Middle extends Explicit { bonus: int = 2; constructor {} }
+class Child extends Middle { extra: int = 0; }
+class Panel { const title: string; constructor(this.title) { collect(); } }
+[Reflect]
+class TitledPanel extends Panel {
+  const prefix: string;
+
+  const #header: string;
+
+  constructor(this.prefix, raw: string) { super(title: '${this.prefix}: ${raw}'); this.#header = '[${this.title}]'; }
+  read(): string { return this.#header; }
+}
 func build<P, C extends Base<P>>(value: P, factory: (P) => C): C { return factory(value); }
 export func calculate(): int {
   const generated = build(value: 40, factory: Leaf);
@@ -946,8 +960,21 @@ export func calculate(): int {
   const omitted = Child();
   const supplied = Child(answer: 42, value: 0);
   const decoded = JSON.parse<Leaf<int>>('{"value":42}');
+  const forwarded = Forwarded(40);
+  const decodedForward = JSON.parse<Forwarded>('{"value":40}');
+  const panel = TitledPanel('Vela', 'panel');
+  const dynamicPanel: dynamic = panel;
+  try { dynamicPanel.prefix = 'changed'; return 0; }
+  catch (error: Error) { if (error.code != 'TypeError') { return 0; } }
+  const field = Reflect.typeInfo<TitledPanel>().findField('prefix');
+  if (field == null) { return 0; }
+  if (field.getValue(panel) != 'Vela') { return 0; }
+  try { field.setValue(panel, 'changed'); return 0; }
+  catch (error: Error) { if (error.code != 'ReflectionAccessDenied') { return 0; } }
   collect();
-  return calls == 1 && omitted.value == 42 && supplied.value == 42 && decoded.value == 42
+  return calls == 1 && omitted.value == 42 && supplied.value == 42 && decoded.value == 42 &&
+         forwarded.value + forwarded.bonus == 42 && decodedForward.value + decodedForward.bonus == 42 &&
+         panel.read() == '[Vela: panel]'
       ? generated.value + generated.values[0] : 0;
 }
 """)
@@ -986,6 +1013,64 @@ export func calculate(): int {
                           + RECORD_ARRAY_TESTS.replace("RECORD_IMAGE", manifest["image"]),
                           encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("record_arrays")
+        compile_native_host(self, [source], executable,
+                            [object_file, *native_test_libraries(self.output)],
+                            NATIVE_TEST_INCLUDES, cwd=self.directory)
+        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+
+    def test_array_predicates_preserve_refined_layouts_without_compiler_state(self) -> None:
+        object_file, manifest = self.emit("array_search", """
+class Item { value: int; }
+func checkOptional(values: int[]?): int {
+  const filtered = values?.filter(value => value > 0);
+  const found = values?.find(value => value > 0);
+  const included = values?.includes(42);
+  if (values == null) {
+    return filtered == null && found == null && included == null ? 21 : 0;
+  }
+  return filtered != null && filtered[0] == 42 && found == 42 && included == true ? 21 : 0;
+}
+export func calculate(): int {
+  const mixed: dynamic[] = [Item(value: 42), 1, null];
+  const items: Item[] = mixed.filter(value => {
+    if (value is Item) { return true; } return false;
+  });
+  const erased: dynamic = mixed;
+  const integers: int[] = erased.filter((value: dynamic) => {
+    if (value is int) { return true; } return false;
+  }) as int[];
+  const found: Item? = mixed.find(value => value is Item);
+  const nullable: int?[] = [null, 42];
+  const present: int[] = nullable.filter(value => value != null);
+  if (items.length != 1 || integers[0] != 1 || found == null ||
+      !items.includes(found) || !mixed.includes(null) || present[0] != 42) { return 0; }
+  return checkOptional(null) + checkOptional([found.value]);
+}
+""")
+        source = self.directory / "array_search_host.cc"
+        source.write_text(r'''
+#include <gtest/gtest.h>
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+extern "C" const vela::runtime::NativeImage* SEARCH_IMAGE() noexcept;
+TEST(ArraySearchAotTest, RetainsPredicateTypesAcrossCollection) {
+  vela::runtime::Isolate isolate(1);
+  const auto instance = vela::runtime::NativeInstance::Instantiate(isolate, *SEARCH_IMAGE());
+  ASSERT_TRUE(instance) << instance.error().message;
+  const auto entry = (*instance)->FindFunction("calculate");
+  ASSERT_TRUE(entry);
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    isolate.heap().Collect();
+    const auto result = vela::runtime::ExecuteNativeFunction(**instance, *entry);
+    ASSERT_TRUE(result.Succeeded()) << result.message;
+    EXPECT_EQ(result.value.AsInteger(), 42);
+  }
+}
+'''.replace("SEARCH_IMAGE", manifest["image"]), encoding="utf-8", newline="\n")
+        executable = self.directory / executable_name("array_search")
         compile_native_host(self, [source], executable,
                             [object_file, *native_test_libraries(self.output)],
                             NATIVE_TEST_INCLUDES, cwd=self.directory)

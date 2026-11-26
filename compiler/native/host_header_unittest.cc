@@ -30,7 +30,7 @@ TEST(HostHeaderTest, NominalContractsIgnoreImportOrderAndIncludeConcreteGenericA
         frontend::SourceInput{
             .path = "library.vela",
             .text = R"(
-export class Box<T> { value: T; private hidden: int = 0; }
+export class Box<T> { value: T;  #hidden: int = 0; }
 export interface View<T> { read(): T; }
 )",
         },

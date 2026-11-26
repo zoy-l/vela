@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -231,12 +232,12 @@ TypeDescriptor FutureType(const TypeDescriptor& element) {
 
 TypeDescriptor CallbackType(const TypeDescriptor& result,
                             std::span<const TypeDescriptor> parameters) {
-  FunctionDescriptor signature;
-  signature.return_type = result;
+  std::vector<FunctionDescriptor::Parameter> signature;
+  signature.reserve(parameters.size());
   for (const auto& parameter : parameters) {
-    signature.AddParameter(std::to_string(signature.parameters.size()), parameter);
+    signature.push_back({.name = {}, .type = parameter});
   }
-  return MakeFunctionType(signature);
+  return MakeFunctionType(signature, result, std::nullopt);
 }
 
 }  // namespace

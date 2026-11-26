@@ -49,6 +49,19 @@ TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
             "    value = value + 1;\n  }\n  return value;\n}\n");
 }
 
+TEST(FormatterTest, FormatsPrivateNamesAndFieldFormals) {
+  const auto result = FormatSource(
+      "class Example{const "
+      "value:int;#hidden:string;constructor(this.value,this.#hidden);}");
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_EQ(*result,
+            "class Example {\n  const value: int;\n  #hidden: string;\n  "
+            "constructor(this.value, this.#hidden);\n}\n");
+  const auto again = FormatSource(*result);
+  ASSERT_TRUE(again);
+  EXPECT_EQ(*again, *result);
+}
+
 TEST(FormatterTest, SpacesRemainderExpressionsAndAssignmentsBeforeParentheses) {
   const auto result = FormatSource(
       "func remainder(value:int,modulus:int):int{value%=(modulus+1);return value%(modulus+1);}");
@@ -293,8 +306,8 @@ INSTANTIATE_TEST_SUITE_P(
         "enum Mode{light,dark,}",
         "import \"math.vela\" as math; export func root(value:double):double{return "
         "math.sqrt(value);}",
-        "class Counter{value:int;private "
-        "step:int=1;constructor{this.value=this.value+step;}"
+        "class Counter{value:int; #step:int=1;  "
+        "constructor{this.value=this.value+step;}"
         "next():int{this.value=this.value+1;return this.value;}}",
         "func main():int{const op:(int,int)=>int=(x:int,y:int):int=>{return x+y;};return "
         "op(40,2);}",

@@ -63,7 +63,8 @@ class Parser final {
   [[nodiscard]] bool IsAtEnd() const;
   [[nodiscard]] bool Check(TokenKind kind) const;
   bool Match(TokenKind kind);
-  const Token* TakeName();
+  enum class NameContext : std::uint8_t { Declaration, Member };
+  const Token* TakeName(NameContext context = NameContext::Declaration);
   enum class SignatureContext : std::uint8_t { Function, Interface };
   std::optional<Function> ParseSignature(Function function, SignatureContext context);
   const Token* Expect(TokenKind kind, std::string_view message);
@@ -76,11 +77,15 @@ class Parser final {
   struct MemberModifiers final {
     Visibility visibility = Visibility::Public;
     MemberStorage storage = MemberStorage::Instance;
+    BindingKind binding = BindingKind::Mutable;
     bool is_override = false;
     bool is_getter = false;
     bool is_setter = false;
+    bool is_async = false;
   };
   MemberModifiers ParseMemberModifiers();
+  std::optional<Function> ParseExternalMethod(MemberModifiers modifiers);
+  std::optional<Function> ParseClassMethod(const Token& name, MemberModifiers modifiers);
   enum class MemberParseResult : std::uint8_t { Parsed, Failed };
   MemberParseResult ParseClassMember(Class& declaration);
   MemberParseResult ParseNativeClassMember(Class& declaration, std::vector<Attribute> attributes);
@@ -96,13 +101,14 @@ class Parser final {
   std::optional<Class> ParseClass(ClassKind kind = ClassKind::Script);
   std::optional<Interface> ParseInterface();
   std::optional<Function> ParseInterfaceMethod();
-  std::optional<Function> ParseFunction();
+  std::optional<Function> ParseFunction(NameContext context = NameContext::Declaration);
   std::unique_ptr<Statement> ParseTry();
   std::unique_ptr<Statement> ParseThrow();
   std::optional<Function> ParseFunctionBody(const Token& name,
                                             std::string native_symbol = {},
                                             bool is_async = false);
-  enum class ParameterTyping : std::uint8_t { Required, Inferred };
+  enum class ParameterTyping : std::uint8_t { Required, Inferred, Constructor };
+  std::optional<Parameter::Binding> ParseParameterBinding(ParameterTyping typing);
   std::optional<Parameter> ParseParameter(ParameterTyping typing = ParameterTyping::Required);
   std::optional<std::vector<Parameter>> ParseParameters(
       ParameterTyping typing = ParameterTyping::Required);
@@ -119,6 +125,7 @@ class Parser final {
   bool MatchTypeGreater();
   [[nodiscard]] bool IsVariableDeclaration() const;
   enum class BlockKind : std::uint8_t { Ordinary, Lambda };
+  static std::unique_ptr<Statement> MakeBlockStatement(SourceLocation location);
   std::unique_ptr<Statement> ParseBlock(BlockKind kind = BlockKind::Ordinary);
   std::unique_ptr<Statement> ParseStatement();
   std::unique_ptr<Statement> ParseVariableDeclaration();

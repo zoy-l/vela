@@ -33,8 +33,9 @@ class Reflect extends Attribute {
 }
 /// A method's metadata, copied annotation data and separate instance or static operation.
 class MethodAttributeMatch<T extends Attribute> {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get method(): MemberInfo;
   get attribute(): T;
   get instanceMethod(): MethodInfo<dynamic>?;
@@ -61,14 +62,15 @@ class CallArgument { value: dynamic; name: string? = null; }
 /// A stable ordered argument snapshot is read when invoke starts.
 class CallArguments { items: CallArgument[] = []; }
 /// An opaque canonical type identity, comparable and usable as a collection key.
-class TypeId { private data: dynamic = null; private constructor() {} }
+class TypeId { #data: dynamic = null; }
 /// An opaque stable member identity, comparable and usable as a collection key.
-class MemberId { private data: dynamic = null; private constructor() {} }
+class MemberId { #data: dynamic = null; }
 
 /// Common metadata accepts descriptors of different statically known types.
 class TypeDescriptor {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get id(): TypeId;
   get name(): string;
   get module(): string?;
@@ -84,7 +86,6 @@ class TypeDescriptor {
 }
 /// T constrains instance receivers; runtime-selected member values retain their actual types.
 class TypeInfo<T> extends TypeDescriptor {
-  private constructor() {}
   getFields(query: MemberQuery): FieldInfo<T>[];
   findField(name: string, query: MemberQuery): FieldInfo<T>?;
   getProperties(query: MemberQuery): PropertyInfo<T>[];
@@ -103,8 +104,9 @@ class TypeInfo<T> extends TypeDescriptor {
 }
 /// A member descriptor resolves its stable declaration in the current publication.
 class MemberInfo {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get id(): MemberId;
   get name(): string;
   get declaringType(): TypeInfo<dynamic>;
@@ -113,19 +115,16 @@ class MemberInfo {
   get isStatic(): bool;
 }
 class FieldInfo<T> extends MemberInfo {
-  private constructor() {}
   get type(): TypeInfo<dynamic>;
   getValue(receiver: T): dynamic;
   setValue(receiver: T, value: dynamic): void;
 }
 class StaticFieldInfo extends MemberInfo {
-  private constructor() {}
   get type(): TypeInfo<dynamic>;
   getValue(): dynamic;
   setValue(value: dynamic): void;
 }
 class PropertyInfo<T> extends MemberInfo {
-  private constructor() {}
   get type(): TypeInfo<dynamic>;
   get canRead(): bool;
   get canWrite(): bool;
@@ -135,7 +134,6 @@ class PropertyInfo<T> extends MemberInfo {
   setValue(receiver: T, value: dynamic): void;
 }
 class StaticPropertyInfo extends MemberInfo {
-  private constructor() {}
   get type(): TypeInfo<dynamic>;
   get canRead(): bool;
   get canWrite(): bool;
@@ -145,7 +143,6 @@ class StaticPropertyInfo extends MemberInfo {
   setValue(value: dynamic): void;
 }
 class MethodInfo<T> extends MemberInfo {
-  private constructor() {}
   get parameters(): ParameterInfo[];
   get returnType(): TypeInfo<dynamic>;
   get typeArguments(): TypeInfo<dynamic>[];
@@ -153,7 +150,6 @@ class MethodInfo<T> extends MemberInfo {
   invoke(receiver: T, arguments: CallArguments): dynamic;
 }
 class StaticMethodInfo extends MemberInfo {
-  private constructor() {}
   get parameters(): ParameterInfo[];
   get returnType(): TypeInfo<dynamic>;
   get typeArguments(): TypeInfo<dynamic>[];
@@ -161,19 +157,18 @@ class StaticMethodInfo extends MemberInfo {
   invoke(arguments: CallArguments): dynamic;
 }
 class ConstructorInfo extends MemberInfo {
-  private constructor() {}
   get parameters(): ParameterInfo[];
   invoke(arguments: CallArguments): dynamic;
 }
 class EnumMemberInfo extends MemberInfo {
-  private constructor() {}
   get ordinal(): int;
   get value(): dynamic;
 }
 /// A copied logical declaration parameter; defaults are described without evaluation.
 class ParameterInfo {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get name(): string;
   get position(): int;
   get type(): TypeInfo<dynamic>;
@@ -183,14 +178,16 @@ class ParameterInfo {
 }
 /// A structural function signature has no invented declaration parameter names.
 class SignatureInfo {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get parameters(): SignatureParameterInfo[];
   get returnType(): TypeInfo<dynamic>;
 }
 class SignatureParameterInfo {
-  private data: dynamic = null;
-  private constructor() {}
+
+  #data: dynamic = null;
+
   get type(): TypeInfo<dynamic>;
   get isOptional(): bool;
   get isRest(): bool;

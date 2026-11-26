@@ -38,7 +38,7 @@ void SteadyValue(benchmark::State& state,
     return;
   }
   if (baseline_timing == HeapBaseline::AfterWarmup) {
-    // 全局正则模式在预热时初始化；临时分配以这些持久对象为基线。
+    // 全局对象在预热时初始化；临时分配以这些持久对象为基线。
     heap.FinishCollection();
     heap.Collect();
     baseline = heap.allocated_bytes();

@@ -88,7 +88,9 @@ func main(): int { const create: () => Base = Child; return create().read(); }
                              R"(
 class Counter {
   value: int;
-  private constructor(value: int) { this.value = value; }
+
+  #constructor(value: int) { this.value = value; }
+
   static factory(): (int) => Counter { return Counter; }
 }
 func main(): int { const create = Counter.factory(); return create(42).value; }
@@ -97,6 +99,25 @@ func main(): int { const create = Counter.factory(); return create(42).value; }
 class Counter { value: int = 42; }
 type FactoryResult = Counter;
 func main(): int { const create: () => Counter = FactoryResult; return create().value; }
+)"));
+
+INSTANTIATE_TEST_SUITE_P(UnifiedConstructors,
+                         ConstructorReferenceTest,
+                         testing::Values(
+                             R"(
+class Base<T> { value: T; }
+class Child<T> extends Base<T> { bonus: int; constructor {} }
+func main(): int { const make: (int, int) => Child<int> = Child; const v = make(40, 2); return v.value + v.bonus; }
+)",
+                             R"(
+class Base { value: int; constructor(initial: int) { this.value = initial; } }
+class Child extends Base { bonus: int = 2; }
+func main(): int { const make: (int) => Child = Child; return make(40).value + 2; }
+)",
+                             R"(
+class Base { value: int = 40; }
+class Child extends Base { bonus: int = 2; constructor(super.value, this.bonus); }
+func main(): int { const make: () => Child = Child; const v = make(); return v.value + v.bonus; }
 )"));
 
 class InvalidConstructorReferenceTest : public testing::TestWithParam<std::string_view> {};
@@ -108,7 +129,7 @@ TEST_P(InvalidConstructorReferenceTest, RejectsInaccessibleOrIncompatibleFactori
 INSTANTIATE_TEST_SUITE_P(
     VisibilityAndTypes,
     InvalidConstructorReferenceTest,
-    testing::Values("class Counter { private constructor() {} } "
+    testing::Values("class Counter {  #constructor() {} } "
                     "func main(): void { const create: () => Counter = Counter; }",
                     "class Counter { value: int; } "
                     "func main(): void { const create: () => Counter = Counter; }",

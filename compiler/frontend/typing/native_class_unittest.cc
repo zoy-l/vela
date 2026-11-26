@@ -106,7 +106,7 @@ TEST(NativeClassTest, RejectsUnsupportedExternalClassSyntax) {
       "external class C = 'app.C' { field: int; }",
       "external class C = 'app.C' { constructor() {} }",
       "external class C = 'app.C' { f(): int { return 1; } }",
-      "external class C = 'app.C' { private f(): int; }",
+      "external class C = 'app.C' {  #f(): int; }",
       "external class C = 'app.C' { override f(): int; }",
       "external class C = 'app.C' { static get value(): int; }",
       "external class C = 'app.C' { f<T>(value: T): T; }",

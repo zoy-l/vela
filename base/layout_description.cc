@@ -101,6 +101,10 @@ void AppendTypeKey(std::string& output, const Program& program, const Type& type
       } else {
         output += "void";
       }
+      if (signature.narrowed_parameter) {
+        output += "predicate:";
+        AppendTypeKey(output, program, *signature.narrowed_parameter);
+      }
       break;
     }
     default:
@@ -265,6 +269,9 @@ Type ImportType(Program& target, const Program& source, const Type& type) {
       }
       if (signature.result) {
         imported.result = ImportType(target, source, *signature.result);
+      }
+      if (signature.narrowed_parameter) {
+        imported.narrowed_parameter = ImportType(target, source, *signature.narrowed_parameter);
       }
       result.index = static_cast<std::uint32_t>(target.signatures.size());
       target.signatures.push_back(std::move(imported));

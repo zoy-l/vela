@@ -75,7 +75,7 @@ template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, MemberDefinition>
 auto Fields(Record& value) {
   return std::tie(value.receiver_type, value.name, value.kind, value.target, value.type,
-                  value.setter);
+                  value.setter, value.is_read_only);
 }
 
 template <class Record>
@@ -154,7 +154,8 @@ auto Fields(Record& value) {
 template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, ir::Class::Field>
 auto Fields(Record& value) {
-  return std::tie(value.declaration, value.type, value.visibility, value.initializer);
+  return std::tie(value.declaration, value.type, value.visibility, value.binding,
+                  value.initializer);
 }
 
 template <class Record>
@@ -214,7 +215,7 @@ template <class Record>
 auto Fields(Record& value) {
   return std::tie(value.declaration, value.declaring_type, value.name, value.kind, value.flags,
                   value.type, value.target, value.getter, value.setter, value.signature,
-                  value.default_parameters, value.type_arguments);
+                  value.type_arguments);
 }
 
 template <class Record>

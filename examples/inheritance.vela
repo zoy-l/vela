@@ -33,10 +33,7 @@ class Counter {
 class BonusCounter extends Counter implements Measurable, Named {
   bonus: int;
 
-  constructor(value: int, bonus: int) {
-    this.bonus = bonus;
-    super(value);
-  }
+  constructor(super.value, this.bonus);
 
   override measure(): int {
     return super.measure() + this.bonus;
@@ -49,6 +46,7 @@ class BonusCounter extends Counter implements Measurable, Named {
 
 func main(): void {
   print(DefaultBonusCounter(bonus: 2).total()); // 2: implicit super() uses value's default.
+  print(DefaultBonusCounter(value: 40, bonus: 2).total()); // 42: inherited and own parameters.
 
   const counter = BonusCounter(40, 2);
   print(counter.value); // 40: inherited field

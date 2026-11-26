@@ -32,5 +32,7 @@ class AstCloneTransform {
 [[nodiscard]] Interface CloneInterface(const Interface& source, AstCloneTransform& transform);
 // 单个解析单元的位置重定位到合并程序或交互提交中的实际起点。
 [[nodiscard]] Program CloneProgram(const Program& source, SourceLocation origin);
+// 保留源码声明与初始化表达式，省略所有函数体；供只读声明的工具消费。
+[[nodiscard]] Program CloneProgramDeclaration(const Program& source);
 
 }  // namespace vela::frontend

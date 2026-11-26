@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include "base/builtin.h"
 #include "base/declaration.h"
@@ -229,10 +230,13 @@ template <class Node>
 }
 
 struct Parameter final {
+  enum class Binding : std::uint8_t { Local, Field, Super };
   TypeName type;
   std::string name;
   SourceLocation location;
   std::unique_ptr<Expression> initializer;
+  Binding binding = Binding::Local;
+  std::string member_name;
 };
 
 struct Field final {
@@ -328,6 +332,8 @@ struct Function final {
   bool is_override = false;
   bool is_getter = false;
   bool is_setter = false;
+  // 构造签名在检查函数体之前解析；保留源码是否接管父类调用。
+  bool has_super_call = false;
   std::vector<Attribute> attributes;
 
   [[nodiscard]] bool IsVirtualMethod() const {
@@ -335,6 +341,17 @@ struct Function final {
            native_symbol.empty() && !intrinsic;
   }
 };
+
+[[nodiscard]] bool HasSuperConstructorCall(const Statement& body);
+// 只枚举直接子节点；lambda 函数体及递归、短路和作用域策略由调用者控制。
+void VisitExpressionChildren(const Expression& expression,
+                             absl::FunctionRef<void(const Expression*)> visit);
+void VisitStatementChildren(const Statement& statement,
+                            absl::FunctionRef<void(const Expression*)> expression,
+                            absl::FunctionRef<void(const Statement*)> child);
+void VisitFunctionChildren(const Function& function,
+                           absl::FunctionRef<void(const Expression*)> expression,
+                           absl::FunctionRef<void(const Statement*)> statement);
 
 struct Enum final {
   std::string name;
@@ -370,6 +387,10 @@ struct Class final {
   [[nodiscard]] bool IsConstructorField(const Field& field) const {
     return constructor_kind == ConstructorKind::Generated &&
            field.storage == MemberStorage::Instance && field.visibility == Visibility::Public;
+  }
+
+  [[nodiscard]] bool HasExplicitSuperCall() const {
+    return constructor != nullptr && constructor->has_super_call;
   }
 };
 

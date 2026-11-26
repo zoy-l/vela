@@ -562,6 +562,10 @@ void TypeChecker::RegisterSpecializations() {
   }
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
+    if (specializer_->IsAbstractClass(index)) {
+      class_definitions_.insert_or_assign(InternTypeName(source.name),
+                                          specializer_->ClassSource(index));
+    }
     ResolveClass(source, classes_.at(source.name));
     CollectCapturedMutableDeclarations(source, captured_declarations_);
   }

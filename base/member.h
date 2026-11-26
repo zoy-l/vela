@@ -18,6 +18,7 @@ struct MemberDefinition final {
   std::uint32_t target = 0;
   std::optional<std::uint32_t> type = std::nullopt;
   std::optional<std::uint32_t> setter = std::nullopt;
+  bool is_read_only = false;
 };
 
 }  // namespace vela

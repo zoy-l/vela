@@ -39,8 +39,8 @@ Parser::MemberParseResult Parser::ParseNativeConstructor(Class& declaration,
 Parser::MemberParseResult Parser::ParseNativeClassMember(Class& declaration,
                                                          std::vector<Attribute> attributes) {
   const auto modifiers = ParseMemberModifiers();
-  if (modifiers.visibility != Visibility::Public || modifiers.is_override ||
-      (modifiers.is_getter && modifiers.is_setter)) {
+  if (modifiers.visibility != Visibility::Public || modifiers.binding == BindingKind::Constant ||
+      modifiers.is_override || modifiers.is_async || (modifiers.is_getter && modifiers.is_setter)) {
     AddDiagnostic(Peek().location, "external members must be public non-override declarations");
     return MemberParseResult::Failed;
   }

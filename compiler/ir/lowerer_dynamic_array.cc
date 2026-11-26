@@ -58,7 +58,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   };
 
   signature.parameters.front().type = dynamic;
-  if (algorithm == ArrayAlgorithm::Map) {
+  if (algorithm == ArrayAlgorithm::Map || algorithm == ArrayAlgorithm::Filter) {
     signature.return_type = dynamic;
   }
   auto function = CreateMemberFunction(receiver, name, signature);
@@ -89,7 +89,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = 0, .location = {}});
   EmitBuiltinCall(Builtin::ArrayMutation, guard + 1, 0, {});
   std::optional<RegisterId> output;
-  if (algorithm == ArrayAlgorithm::Map) {
+  if (algorithm == ArrayAlgorithm::Map || algorithm == ArrayAlgorithm::Filter) {
     output = AllocateRegister({});
     EmitBuiltinCall(Builtin::DynamicArrayOutput, *output, plan_argument, {});
   }

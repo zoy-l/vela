@@ -108,8 +108,8 @@ TEST(RecordArrayTest, KeepsExportedGlobalsAndReferenceFieldsInOrdinaryStorage) {
       "class Point { x: double?; } let points: Point[] = []; "
       "export func append(): int { return points.push(Point(x: null)); }",
       "class Point { x: double; } [Reflect] class Store { "
-      "private static points: Point[] = []; "
-      "static append(): int { return Store.points.push(Point(x: 1.0)); } } "
+      " static #points: Point[] = [];   "
+      "static append(): int { return Store.#points.push(Point(x: 1.0)); } } "
       "export func append(): int { return Store.append(); }",
   };
   for (const auto* source : kSources) {

@@ -35,10 +35,6 @@ void SortUnique(std::vector<std::size_t>& values) {
   values.erase(duplicates.begin(), duplicates.end());
 }
 
-bool IsSameType(const frontend::TypeDescriptor& left, const frontend::TypeDescriptor& right) {
-  return left.kind == right.kind && left.nullable == right.nullable && left.name == right.name;
-}
-
 bool CanCallDirectly(const ir::Instruction& instruction,
                      const ir::Function& caller,
                      const ir::Function& callee,

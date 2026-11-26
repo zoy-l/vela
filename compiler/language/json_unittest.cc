@@ -298,7 +298,9 @@ func main(): int {
 class Item {
   value: int;
   flag: Flag = Flag.yes;
-  private secret: int = 9;
+
+  #secret: int = 9;
+
   add(first: int, second: int): int { return this.value + first + second; }
   get twice(): int { return this.value * 2; }
   set twice(value: int): void { this.value = value / 2; }

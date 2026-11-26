@@ -126,6 +126,9 @@ layout::Signature DescribeSignature(const NativeSignatureDescription& source) {
   if (source.has_result != 0) {
     result.result = DescribeType(source.result);
   }
+  if (source.has_narrowed_parameter != 0) {
+    result.narrowed_parameter = DescribeType(source.narrowed_parameter);
+  }
   return result;
 }
 
@@ -338,6 +341,7 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
         .target = target,
         .type = OptionalIndex(member.type),
         .setter = OptionalIndex(member.setter),
+        .is_read_only = member.read_only != 0,
     });
   }
   return members;

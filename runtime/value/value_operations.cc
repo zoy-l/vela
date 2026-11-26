@@ -2,6 +2,7 @@
 #include "runtime/reflection/reflection_handle.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <expected>
 #include <limits>
@@ -28,6 +29,29 @@ ExecutionStatus IndexError(ArrayAccessError error) {
                                                 : ExecutionStatus::TypeError;
 }
 
+template <class DoubleEquality>
+bool IsEqualWithDouble(Value left, Value right, const DoubleEquality& equal) noexcept {
+  const auto kind = left.kind();
+  if (kind != right.kind()) {
+    return false;
+  }
+  switch (kind) {
+    case ValueKind::Null:
+      return true;
+    case ValueKind::Boolean:
+      return left.AsBoolean() == right.AsBoolean();
+    case ValueKind::Integer:
+      return left.AsInteger() == right.AsInteger();
+    case ValueKind::Double:
+      return equal(left.AsDouble(), right.AsDouble());
+    case ValueKind::String:
+      return IsEqualString(*left.AsString(), *right.AsString());
+    case ValueKind::Object:
+      return IsEqualObject(*left.AsObject(), *right.AsObject());
+  }
+  std::unreachable();
+}
+
 }  // namespace
 
 std::expected<Value, ExecutionStatus> AllocatedValue(HeapObject* object) noexcept {
@@ -49,37 +73,30 @@ std::int64_t EnumOrdinal(const HeapObject& object) noexcept {
 }
 
 bool IsEqualValue(Value left, Value right) noexcept {
-  if (left.kind() != right.kind()) {
-    return false;
+  return IsEqualWithDouble(left, right,
+                           [](double first, double second) { return first == second; });
+}
+
+bool IsEqualObject(const HeapObject& left, const HeapObject& right) noexcept {
+  if (&left == &right) {
+    return true;
   }
-  switch (left.kind()) {
-    case ValueKind::Null:
-      return true;
-    case ValueKind::Boolean:
-      return left.AsBoolean() == right.AsBoolean();
-    case ValueKind::Integer:
-      return left.AsInteger() == right.AsInteger();
-    case ValueKind::Double:
-      return left.AsDouble() == right.AsDouble();
-    case ValueKind::String:
-      return IsEqualString(*left.AsString(), *right.AsString());
-    case ValueKind::Object: {
-      const auto* left_object = left.AsObject();
-      const auto* right_object = right.AsObject();
-      const auto* layout = Heap::ClassOf(*left_object);
-      if (layout != nullptr && layout->HasReflectionIdentity()) {
-        return IsEqualReflectionIdentity(*left_object, *right_object);
-      }
-      if (layout != nullptr && layout->IsEnum()) {
-        const auto* right_layout = Heap::ClassOf(*right_object);
-        return right_layout != nullptr &&
-               &layout->nominal_type() == &right_layout->nominal_type() &&
-               EnumOrdinal(*left_object) == EnumOrdinal(*right_object);
-      }
-      return left_object == right_object;
-    }
+  const auto* layout = Heap::ClassOf(left);
+  if (layout != nullptr && layout->HasReflectionIdentity()) {
+    return IsEqualReflectionIdentity(left, right);
   }
-  std::unreachable();
+  if (layout != nullptr && layout->IsEnum()) {
+    const auto* right_layout = Heap::ClassOf(right);
+    return right_layout != nullptr && &layout->nominal_type() == &right_layout->nominal_type() &&
+           EnumOrdinal(left) == EnumOrdinal(right);
+  }
+  return false;
+}
+
+bool IsSameValueZero(Value left, Value right) noexcept {
+  return IsEqualWithDouble(left, right, [](double first, double second) {
+    return first == second || (std::isnan(first) && std::isnan(second));
+  });
 }
 
 std::expected<Value, ExecutionStatus> ConcatenateValues(Heap& heap, Value left, Value right) {

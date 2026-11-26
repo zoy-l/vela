@@ -14,21 +14,23 @@ class Vitals {
 }
 
 class HudModel {
-  private vitals: Vitals = Reactive(Vitals());
-  private hitCount: int = Reactive(0);
+
+  #vitals: Vitals = Reactive(Vitals());
+  #hitCount: int = Reactive(0);
+
 
   hpLabel(): string {
-    return 'HP: ${this.vitals.hp}';
+    return 'HP: ${this.#vitals.hp}';
   }
 
   shieldLabel(): string {
-    return 'Shield: ${this.vitals.shield}';
+    return 'Shield: ${this.#vitals.shield}';
   }
 
   takeDamage(amount: int): void {
     Reactive.update(() => {
-      this.vitals.hp -= amount;
-      this.hitCount += 1;
+      this.#vitals.hp -= amount;
+      this.#hitCount += 1;
     });
   }
 }
@@ -47,8 +49,8 @@ class HudModel {
 | 写法 | 响应式存储 |
 | --- | --- |
 | `[Reactive] class Vitals { ... }` | 本类声明的每个可写实例字段分别拥有依赖身份。继承字段沿用其声明处的规则。 |
-| `[Reactive] private hp: int = 100;` | 只追踪这个实例字段。 |
-| `private hp: int = Reactive(100);` | 与同一字段上的 `[Reactive]` 等价。 |
+| `[Reactive] #hp: int = 100;` | 只追踪这个实例字段。 |
+| `#hp: int = Reactive(100);` | 与同一字段上的 `[Reactive]` 等价。 |
 | `let count = Reactive(0);` | 声明一个类型为 `int` 的响应式局部变量。每次执行声明创建独立的存储身份。 |
 
 首版接纳脚本类的实例字段和函数内的可变 `let`。标准 `Reactive(initial)` 接受单个位置实参，

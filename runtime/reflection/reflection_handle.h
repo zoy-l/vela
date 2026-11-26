@@ -39,6 +39,7 @@ struct ReflectedFieldCache final {
   bool nullable = false;
   bool dynamic = false;
   bool reloadable = false;
+  bool writable = false;
 };
 
 // 脚本句柄只通过普通 GC 边保留封闭状态和结构类型；会话不持有历史发布。

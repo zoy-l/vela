@@ -568,6 +568,9 @@ void MockGenerator::Arguments(const frontend::Function& method) {
 }
 
 void MockGenerator::EmitInterface(const frontend::Interface& declaration) {
+  constexpr std::string_view kObjectField = "#objectValue";
+  constexpr std::string_view kCallsField = "#callsValue";
+  constexpr std::string_view kControlField = "#controlValue";
   const auto& origin = program_->origins.at(declaration.name);
   const auto wrapper = "Mock" + origin.name;
   const auto implementation = AllocateName(wrapper + "Object");
@@ -583,12 +586,12 @@ void MockGenerator::EmitInterface(const frontend::Interface& declaration) {
         << ". Source: " << RelativeModule(origin.module_uri, directory_) << ':'
         << declaration.location.line << "\n"
         << "export class " << wrapper << " {\n"
-        << "private objectValue: " << interface_type << ";\n"
-        << "private callsValue: " << calls << ";\n"
-        << "private controlValue: " << sdk_ << ".MockControl;\n"
-        << "constructor(session: " << sdk_ << ".MockSession) {\n"
+        << kObjectField << ": " << interface_type << ";\n"
+        << kCallsField << ": " << calls << ";\n"
+        << kControlField << ": " << sdk_ << ".MockControl;\n"
+        << "\nconstructor(session: " << sdk_ << ".MockSession) {\n"
         << "const " << control << " = " << sdk_ << ".MockControl(session);\n"
-        << "this.controlValue = " << control << ";\n";
+        << "this." << kControlField << " = " << control << ";\n";
   for (std::size_t index = 0; index < fields.size(); ++index) {
     const auto& method = declaration.methods.at(index);
     const auto identity =
@@ -608,16 +611,18 @@ void MockGenerator::EmitInterface(const frontend::Interface& declaration) {
   const auto object = AllocateName("mockObject");
   body_ << "const " << object << " = " << implementation << '(';
   field_arguments();
-  body_ << ");\nthis.objectValue = " << object << ";\nthis.callsValue = " << calls << '(';
+  body_ << ");\nthis." << kObjectField << " = " << object << ";\nthis." << kCallsField << " = "
+        << calls << '(';
   field_arguments();
   body_ << ");\n";
   for (std::size_t index = 0; index < fields.size(); ++index) {
     body_ << fields.at(index) << ".bind(" << object << '.' << declaration.methods.at(index).name
           << ");\n";
   }
-  body_ << "}\nget object(): " << interface_type << " { return this.objectValue; }\n"
-        << "get calls(): " << calls << " { return this.callsValue; }\n"
-        << "get control(): " << sdk_ << ".MockControl { return this.controlValue; }\n}\n";
+  body_ << "}\nget object(): " << interface_type << " { return this." << kObjectField << "; }\n"
+        << "get calls(): " << calls << " { return this." << kCallsField << "; }\n"
+        << "get control(): " << sdk_ << ".MockControl { return this." << kControlField
+        << "; }\n}\n";
   EmitAdapter(declaration, fields, AdapterKind::Implementation, implementation);
   EmitAdapter(declaration, fields, AdapterKind::Pattern, calls);
 }

@@ -234,8 +234,10 @@ Function AstCloner::CloneFunction(const Function& source) {
         .name = parameter.name,
         .location = Relocate(parameter.location),
         .initializer = CloneExpression(parameter.initializer.get()),
+        .binding = parameter.binding,
+        .member_name = parameter.member_name,
     });
-    if (transform_ != nullptr) {
+    if (transform_ != nullptr && parameter.binding == Parameter::Binding::Local) {
       transform_->Declare(parameter.name);
     }
   }
@@ -261,6 +263,7 @@ Function AstCloner::CloneFunction(const Function& source) {
   result.is_override = source.is_override;
   result.is_getter = source.is_getter;
   result.is_setter = source.is_setter;
+  result.has_super_call = source.has_super_call;
   if (transform_ != nullptr) {
     transform_->EndScope();
   }
@@ -469,6 +472,10 @@ Interface CloneInterface(const Interface& source, AstCloneTransform& transform) 
 }
 Program CloneProgram(const Program& source, SourceLocation origin) {
   return AstCloner(origin).CloneProgram(source);
+}
+
+Program CloneProgramDeclaration(const Program& source) {
+  return AstCloner(std::nullopt, nullptr, AstCloner::Bodies::Exclude).CloneProgram(source);
 }
 
 }  // namespace vela::frontend

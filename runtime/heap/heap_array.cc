@@ -21,12 +21,6 @@
 namespace vela::runtime {
 namespace {
 
-std::span<std::byte> ElementBytes(HeapObject& array,
-                                  const ArrayLayout& layout,
-                                  std::size_t length) {
-  return internal::ArrayBytes(array, layout).first(layout.element_size() * length);
-}
-
 void UpdateIntegerRange(HeapObject& array, Value value) noexcept {
   auto& range = internal::ArrayBuffer(array).integer_range;
   // 仅无标签 int 数组能持有窄域事实，调用方已通过 ValueLayout/IsValueOfType 验证写入。
@@ -105,7 +99,7 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
       !layout.HasTaggedElements()) {
     buffer.integer_range = internal::IntegerArrayRange::Nonnegative31;
   }
-  const auto storage = ElementBytes(*object, layout, length);
+  const auto storage = internal::ElementBytes(*object, layout, length);
   if (contents.empty()) {
     if (layout.record_fields != 0) {
       std::uninitialized_value_construct_n(storage.data(), storage.size());
@@ -119,13 +113,6 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   }
   Publish(*object, allocation);
   return object;
-}
-
-std::expected<std::uint32_t, ArrayAccessError> Heap::ArrayLength(const HeapObject& array) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
-  }
-  return array.length;
 }
 
 std::expected<std::uint32_t, ArrayAccessError> Heap::ArrayCapacity(
@@ -151,7 +138,8 @@ std::expected<std::span<std::int64_t>, ArrayAccessError> internal::BorrowInteger
       layout->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  return ElementSlots<std::int64_t>(ElementBytes(array, *layout, *Heap::ArrayLength(array)));
+  return ElementSlots<std::int64_t>(
+      internal::ElementBytes(array, *layout, *Heap::ArrayLength(array)));
 }
 
 std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
@@ -339,7 +327,7 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
                  tail);
   }
   if (inserted != 0) {
-    const auto input = ElementBytes(items, layout, inserted);
+    const auto input = internal::ElementBytes(items, layout, inserted);
     std::memcpy(storage.subspan(static_cast<std::size_t>(start) * element_size).data(),
                 input.data(), input.size());
     if (internal::ArrayBuffer(items).integer_range == internal::IntegerArrayRange::Unknown) {
@@ -390,7 +378,7 @@ std::expected<void, ArrayAccessError> Heap::ClearArray(HeapObject& array) noexce
 
 void Heap::MarkArray(HeapObject& array) noexcept {
   const auto& layout = *array.array_layout();
-  MarkElements(layout, ElementBytes(array, layout, array.length));
+  MarkElements(layout, internal::ElementBytes(array, layout, array.length));
 }
 
 void Heap::MarkElements(const ArrayLayout& layout, std::span<const std::byte> storage) noexcept {
@@ -433,7 +421,7 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
   RootRange roots(*this, &source, 1, std::nullopt);
   const auto& layout = *array.array_layout();
   const auto element_size = layout.element_size();
-  const auto input = ElementBytes(array, layout, array.length)
+  const auto input = internal::ElementBytes(array, layout, array.length)
                          .subspan(static_cast<std::size_t>(start) * element_size,
                                   static_cast<std::size_t>(end - start) * element_size);
   auto* copy = AllocateArrayStorage(layout, end - start, input);
@@ -457,7 +445,7 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
   const auto size = layout.element_size();
-  const auto storage = ElementBytes(array, layout, array.length)
+  const auto storage = internal::ElementBytes(array, layout, array.length)
                            .subspan(static_cast<std::size_t>(start) * size,
                                     static_cast<std::size_t>(end - start) * size);
   VisitElementStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
@@ -475,7 +463,7 @@ std::expected<void, ArrayAccessError> Heap::ReverseArray(HeapObject& array) noex
     return std::unexpected(ArrayAccessError::NotArray);
   }
   const auto& layout = *array.array_layout();
-  const auto storage = ElementBytes(array, layout, array.length);
+  const auto storage = internal::ElementBytes(array, layout, array.length);
   VisitElementStorage(layout, storage,
                       [](auto elements) -> void { std::ranges::reverse(elements); });
   return {};

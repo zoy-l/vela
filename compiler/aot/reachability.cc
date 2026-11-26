@@ -28,6 +28,20 @@
 namespace vela::compiler::aot {
 namespace {
 
+// CallSignature 保存类型索引，layout::Signature 保存类型描述；两者共享值契约中的类型槽。
+template <class Signature, class Visit>
+void VisitSignatureTypes(Signature& signature, const Visit& visit) {
+  for (auto& parameter : signature.parameters) {
+    visit(parameter.type);
+  }
+  if (signature.result) {
+    visit(*signature.result);
+  }
+  if (signature.narrowed_parameter) {
+    visit(*signature.narrowed_parameter);
+  }
+}
+
 enum class NodeKind : std::uint8_t {
   Function,
   Class,
@@ -189,12 +203,8 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
     if (signature.receiver) {
       Mark(NodeKind::Type, *signature.receiver, exposure);
     }
-    for (const auto& parameter : signature.parameters) {
-      Mark(NodeKind::Type, parameter.type, exposure);
-    }
-    if (signature.result) {
-      Mark(NodeKind::Type, *signature.result, exposure);
-    }
+    VisitSignatureTypes(signature,
+                        [&](std::uint32_t type) { Mark(NodeKind::Type, type, exposure); });
   }
   for (const auto& instruction : function.instructions) {
     switch (instruction.opcode) {
@@ -342,16 +352,10 @@ void Reachability::Visit(Node node) {
       }
       break;
     }
-    case NodeKind::Signature: {
-      const auto& signature = layouts.signatures.at(node.index);
-      for (const auto& parameter : signature.parameters) {
-        VisitLayout(parameter.type, node.exposure);
-      }
-      if (signature.result) {
-        VisitLayout(*signature.result, node.exposure);
-      }
+    case NodeKind::Signature:
+      VisitSignatureTypes(layouts.signatures.at(node.index),
+                          [&](const auto& type) { VisitLayout(type, node.exposure); });
       break;
-    }
     case NodeKind::Interface:
       for (const auto target : implementations_.at(node.index)) {
         Mark(NodeKind::Class, target, node.exposure);
@@ -465,13 +469,7 @@ void VisitLayoutTypes(layout::Program& program, Visit visit) {
     }
   }
   for (auto& signature : program.signatures) {
-    for (auto& parameter : signature.parameters) {
-      visit(parameter.type);
-    }
-    auto& result = signature.result;
-    if (result) {
-      visit(*result);
-    }
+    VisitSignatureTypes(signature, visit);
   }
   for (auto& [name, nominal] : program.nominals) {
     for (auto& argument : nominal.arguments) {

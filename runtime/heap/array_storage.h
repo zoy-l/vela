@@ -55,5 +55,10 @@ inline std::span<const std::byte> ArrayBytes(const HeapObject& array,
   return {buffer.data, static_cast<std::size_t>(buffer.capacity) * layout.element_size()};
 }
 
+template <class Array>
+inline auto ElementBytes(Array& array, const ArrayLayout& layout, std::size_t length) noexcept {
+  return ArrayBytes(array, layout).first(layout.element_size() * length);
+}
+
 }  // namespace internal
 }  // namespace vela::runtime

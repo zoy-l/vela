@@ -15,55 +15,17 @@ void WalkExpression(const Expression* expression, LambdaVisitor visitor) {
     visitor(*expression);
     VisitLambdas(*expression->function, visitor);
   }
-  for (auto* child : ExpressionOperands(*expression)) {
-    WalkExpression(child, visitor);
-  }
-  for (const auto& element : expression->elements) {
-    WalkExpression(element.get(), visitor);
-  }
-  for (const auto& entry : expression->entries) {
-    WalkExpression(entry.key.get(), visitor);
-    WalkExpression(entry.value.get(), visitor);
-  }
-  for (const auto& argument : expression->arguments) {
-    WalkExpression(argument.value.get(), visitor);
-  }
-  for (const auto& arm : expression->arms) {
-    WalkExpression(arm.pattern.get(), visitor);
-    WalkExpression(arm.value.get(), visitor);
-  }
+  VisitExpressionChildren(*expression,
+                          [&](const Expression* child) { WalkExpression(child, visitor); });
 }
 
 void WalkStatement(const Statement* statement, LambdaVisitor visitor) {
   if (statement == nullptr) {
     return;
   }
-  for (auto* expression : {
-           statement->expression.get(),
-           statement->condition.get(),
-           statement->increment.get(),
-           statement->iterable.get(),
-       }) {
-    WalkExpression(expression, visitor);
-  }
-  for (auto* child : {
-           statement->then_branch.get(),
-           statement->else_branch.get(),
-           statement->initializer.get(),
-           statement->finally_branch.get(),
-       }) {
-    WalkStatement(child, visitor);
-  }
-  for (const auto& child : statement->statements) {
-    WalkStatement(child.get(), visitor);
-  }
-  for (const auto& branch : statement->cases) {
-    WalkExpression(branch.label.get(), visitor);
-    WalkStatement(branch.body.get(), visitor);
-  }
-  for (const auto& caught : statement->catches) {
-    WalkStatement(caught.body.get(), visitor);
-  }
+  VisitStatementChildren(
+      *statement, [&](const Expression* child) { WalkExpression(child, visitor); },
+      [&](const Statement* child) { WalkStatement(child, visitor); });
 }
 
 }  // namespace
@@ -75,10 +37,9 @@ void VisitLambdas(const Statement& statement, LambdaVisitor visitor) {
   WalkStatement(&statement, visitor);
 }
 void VisitLambdas(const Function& function, LambdaVisitor visitor) {
-  for (const auto& parameter : function.parameters) {
-    WalkExpression(parameter.initializer.get(), visitor);
-  }
-  WalkStatement(function.body.get(), visitor);
+  VisitFunctionChildren(
+      function, [&](const Expression* child) { WalkExpression(child, visitor); },
+      [&](const Statement* child) { WalkStatement(child, visitor); });
 }
 
 }  // namespace vela::frontend

@@ -7,6 +7,7 @@
 
 #include "base/builtin.h"
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/member.h"
 #include "base/native_program_mode.h"
 #include "base/reflection.h"
@@ -68,7 +69,9 @@ class Counter extends Base {
   value: int = 10;
   static total: int = 0;
   get amount(): int { return this.value; }
-  private set amount(value: int): void { this.value = value; }
+
+  set #amount(value: int): void { this.value = value; }
+
   add(value: int): int { return this.value + value; }
 }
 )",
@@ -119,15 +122,18 @@ class Counter extends Base {
     EXPECT_NE(type->base, kInvalidFunctionTarget);
     const auto& members = program.reflection_members;
     const auto property = std::ranges::find_if(members, [&](const auto& member) {
-      return member.declaring_type == type->type && member.kind == reflection::MemberKind::Property;
+      return member.declaring_type == type->type &&
+             member.kind == reflection::MemberKind::Property && member.name == "amount";
     });
     ASSERT_NE(property, members.end());
     EXPECT_EQ(property->flags & reflection::kVirtual, 0U);
     EXPECT_NE(property->declaration, property->getter);
-    EXPECT_NE(property->getter, property->setter);
+    EXPECT_EQ(property->setter, DeclarationId{});
     EXPECT_NE(property->flags & reflection::kRegistered, 0U);
-    const auto setter =
-        std::ranges::find(members, property->setter, &reflection::Member::declaration);
+    const auto setter = std::ranges::find_if(members, [&](const auto& member) {
+      return member.declaring_type == type->type && member.name == "#amount" &&
+             member.kind == reflection::MemberKind::Setter;
+    });
     ASSERT_NE(setter, members.end());
     EXPECT_EQ(setter->flags & reflection::kRegistered, 0U);
     EXPECT_NE(setter->flags & reflection::kPrivate, 0U);
@@ -145,10 +151,13 @@ class Counter extends Base {
     });
     ASSERT_NE(constructor, members.end());
     ASSERT_NE(constructor->target, kInvalidFunctionTarget);
-    EXPECT_EQ(constructor->signature.parameters.size(), 1U);
-    EXPECT_EQ(constructor->default_parameters.size(), 1U);
+    ASSERT_EQ(constructor->signature.parameters.size(), 2U);
+    EXPECT_EQ(constructor->signature.parameters[0].name, "base");
+    EXPECT_EQ(constructor->signature.parameters[1].name, "value");
+    EXPECT_TRUE(constructor->signature.parameters[0].has_default);
+    EXPECT_TRUE(constructor->signature.parameters[1].has_default);
     EXPECT_EQ(constructor->signature.hidden_parameters, 0U);
-    EXPECT_EQ(program.functions.at(constructor->target).parameter_count, 2U);
+    EXPECT_EQ(program.functions.at(constructor->target).parameter_count, 4U);
     const auto field = std::ranges::find_if(members, [&](const auto& member) {
       return member.declaring_type == type->type && member.name == "total";
     });

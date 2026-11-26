@@ -543,8 +543,7 @@ void Formatter::Emit(std::size_t index) {
   const auto next = next_index < items_.size() ? items_[next_index].kind : TokenKind::EndOfFile;
   if (kind == TokenKind::Comma && !scopes_.empty()) {
     const auto& scope = scopes_.back();
-    if (!scope.multiline && CanHaveTrailingComma(scope.role) &&
-        next_index == scope.closing) {
+    if (!scope.multiline && CanHaveTrailingComma(scope.role) && next_index == scope.closing) {
       return;
     }
   }

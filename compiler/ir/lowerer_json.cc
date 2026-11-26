@@ -2,10 +2,8 @@
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
-#include <bit>
 #include <cstdint>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -155,7 +153,6 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
                                       const std::string& name) {
   const auto& declaration = *owner.declaration;
   const auto location = declaration.location;
-  const bool generated = owner.constructor_kind == frontend::ConstructorKind::Generated;
   const auto count = static_cast<std::uint32_t>(owner.constructor.parameters.size());
   auto function = PrepareConstructorFactory(owner, name);
   BeginFunctionBody(function, &declaration);
@@ -171,17 +168,16 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
   }
   std::optional<Construction> construction;
   if (native_mode_ == NativeProgramMode::Reloadable) {
-    const auto& identities = declarations_->classes.at(owner.type.name);
-    construction.emplace(Construction{
-        .type = identities.declaration,
-        .supplied = {},
-        .generated = generated,
-    });
-    if (generated) {
-      for (const auto& parameter : owner.constructor.parameters) {
-        construction->supplied.push_back(identities.fields.at(parameter.name));
+    std::vector<std::uint32_t> required;
+    if (owner.UsesFieldConstructor()) {
+      required.reserve(count);
+      for (std::uint32_t index = 0; index < count; ++index) {
+        if (!owner.constructor.parameters[index].has_default) {
+          required.push_back(index);
+        }
       }
     }
+    construction = DescribeConstruction(owner, required);
   }
   const auto object = EmitTemporary({
       .opcode = Opcode::NewInstance,
@@ -190,62 +186,16 @@ void Lowerer::LowerConstructorFactory(const frontend::ClassDescriptor& owner,
       .construction = std::move(construction),
   });
   RecordValueType(object, owner.type);
-  std::vector<RegisterId> arguments;
-  const auto masks = ConstructorMaskCount(owner);
-  arguments.reserve(masks + count);
-  for (std::uint32_t mask = 0; mask < masks; ++mask) {
-    arguments.push_back(EmitTemporary({.opcode = Opcode::LoadInt, .location = location}));
-  }
+  const bool needs_presence = owner.UsesFieldConstructor() || owner.constructor.HasDefaults();
+  std::vector<ConstructorArgument> parameters;
+  parameters.reserve(count);
   for (std::uint32_t parameter = 0; parameter < count; ++parameter) {
-    const auto& source = owner.constructor.parameters.at(parameter);
-    const auto skip = function.instructions.size();
-    if (generated) {
-      Emit({.opcode = Opcode::JumpIfFalse, .lhs = count + parameter, .location = location});
-    }
-    const auto target_type =
-        !generated && owner.constructor.optional_parameters.contains(source.name)
-            ? frontend::MakeNullableType(source.type)
-            : source.type;
-    const auto value = LowerConversion(
-        {.reg = parameter, .type = function.value_types.at(parameter)}, target_type, location);
-    if (generated) {
-      const auto field = owner.fields.at(source.name).index;
-      Emit({
-          .opcode = Opcode::SetField,
-          .dst = object,
-          .lhs = value.reg,
-          .index = field,
-          .location = location,
-          .field_declaration = FieldDeclaration(owner.type, field),
-      });
-      if (!arguments.empty()) {
-        const auto field_mask = ConstructorMask(field);
-        const auto bit = EmitTemporary({
-            .opcode = Opcode::LoadInt,
-            .immediate = std::bit_cast<std::int64_t>(field_mask.bit),
-            .location = location,
-        });
-        const auto mask = arguments.at(field_mask.index);
-        Emit({
-            .opcode = Opcode::BitOrInt,
-            .dst = mask,
-            .lhs = mask,
-            .rhs = bit,
-            .location = location,
-        });
-      }
-      BindJump(skip);
-    } else {
-      arguments.push_back(value.reg);
-    }
+    parameters.push_back({
+        .value = parameter,
+        .supplied = needs_presence ? std::optional(count + parameter) : std::nullopt,
+    });
   }
-  if (owner.constructor.HasDefaults()) {
-    const auto supplied = std::views::iota(count, function.parameter_count);
-    arguments.insert(arguments.end(), supplied.begin(), supplied.end());
-  }
-  if (HasInstanceInitialization(owner) || native_mode_ == NativeProgramMode::Reloadable) {
-    EmitConstructorInitialization(owner, object, arguments, location);
-  }
+  LowerBoundConstructorCall(owner, object, parameters, location);
   if (native_mode_ == NativeProgramMode::Reloadable) {
     function.instructions.back().completes_construction = true;
   }

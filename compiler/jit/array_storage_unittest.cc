@@ -208,5 +208,45 @@ export func fail(values: Item[]): int { return values[2].value; }
   }
 }
 
+TEST(JitArrayStorageTest, PredicateSearchPreservesRefinedLayoutsInBothReloadableTiers) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = test::CompileText(**compiler, R"(
+class Item { value: int; }
+func checkOptional(values: int[]?): int {
+  const filtered = values?.filter(value => value > 0);
+  const found = values?.find(value => value > 0);
+  const included = values?.includes(42);
+  if (values == null) {
+    return filtered == null && found == null && included == null ? 21 : 0;
+  }
+  return filtered != null && filtered[0] == 42 && found == 42 && included == true ? 21 : 0;
+}
+export func calculate(): int {
+  const values: dynamic[] = [Item(value: 42), 1, null];
+  const selected: Item[] = values.filter(value => {
+    if (value is Item) { return true; } return false;
+  });
+  const found: Item? = values.find(value => value is Item);
+  const erased: dynamic = values;
+  const integers: int[] = erased.filter((value: dynamic) => value is int) as int[];
+  if (selected.length != 1 || found == null || integers[0] != 1 ||
+      !values.includes(null) || !selected.includes(found)) { return 0; }
+  return checkOptional(null) + checkOptional([found.value]);
+}
+)",
+                                            tier);
+    ASSERT_TRUE(compiled) << frontend::DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "calculate");
+    ASSERT_TRUE(entry);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+    isolate.heap().Collect();
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+  }
+}
+
 }  // namespace
 }  // namespace vela::compiler::jit

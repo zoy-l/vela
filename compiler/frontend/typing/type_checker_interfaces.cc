@@ -5,12 +5,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "base/declaration.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/names.h"
 
 namespace vela::frontend {
 
@@ -218,20 +220,13 @@ void TypeChecker::MergeBaseClass(std::string_view name) {
     }
     MergeInheritedMembers(info, base->second);
   }
+  ResolveClassConstructor(*info.declaration, info);
   CheckOverrides(info);
   visiting_classes_.erase(name);
   merged_classes_.insert(std::string(name));
 }
 
 void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) {
-  if (!info.declaration->constructor && info.constructor.parameters.empty()) {
-    if (base.constructor.visibility == Visibility::Private) {
-      AddDiagnostic(info.declaration->location, "cannot inherit a private constructor");
-    }
-    info.constructor = base.constructor;
-    info.constructor.return_type = info.type;
-    info.constructor_kind = base.constructor_kind;
-  }
   const auto own_fields = info.field_order;
   for (const auto& field_name : own_fields) {
     info.fields.at(field_name).index += static_cast<std::uint32_t>(base.field_order.size());
@@ -242,6 +237,9 @@ void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) 
   info.field_order = base.field_order;
   info.field_order.insert(info.field_order.end(), own_fields.begin(), own_fields.end());
   for (const auto& [method_name, method] : base.methods) {
+    if (method_name == kConstructorName || method.visibility == Visibility::Private) {
+      continue;
+    }
     const auto found = info.methods.find(method_name);
     if (found == info.methods.end()) {
       info.methods.emplace(method_name, method);
@@ -259,7 +257,9 @@ void TypeChecker::MergeInheritedMembers(ClassInfo& info, const ClassInfo& base) 
     }
   }
   for (const auto& [method_name, method] : base.method_templates) {
-    info.method_templates.try_emplace(method_name, method);
+    if (method.declaration->visibility == Visibility::Public) {
+      info.method_templates.try_emplace(method_name, method);
+    }
   }
   for (const auto& interface_name : base.interfaces) {
     info.interfaces.insert(interface_name);
@@ -284,13 +284,25 @@ TypeChecker::FunctionInfo TypeChecker::AccessorSignature(const FunctionInfo& met
 
 void TypeChecker::CheckOverrides(const ClassInfo& info) {
   const auto* base = info.base_class ? &classes_.at(*info.base_class) : nullptr;
-  for (const auto& method : info.declaration->methods) {
-    CheckOverride(method, base);
+  for (const auto methods :
+       {std::span(info.declaration->methods), std::span(info.declaration->method_templates)}) {
+    for (const auto& method : methods) {
+      CheckOverride(method, base);
+    }
   }
-  CheckGenericOverrides(info, base);
 }
 
 void TypeChecker::CheckOverride(const Function& method, const ClassInfo* base) {
+  if (method.visibility == Visibility::Private) {
+    if (method.is_override) {
+      AddDiagnostic(method.location, "private members cannot override base members");
+    }
+    return;
+  }
+  if (!method.type_parameters.empty()) {
+    CheckGenericOverride(method, base);
+    return;
+  }
   if (base != nullptr && base->method_templates.contains(method.name)) {
     AddDiagnostic(method.location, "generic base method requires a generic override");
     return;
@@ -320,25 +332,22 @@ void TypeChecker::CheckOverride(const Function& method, const ClassInfo* base) {
   }
 }
 
-void TypeChecker::CheckGenericOverrides(const ClassInfo& info, const ClassInfo* base) {
-  for (const auto& method : info.declaration->method_templates) {
-    const Function* inherited = nullptr;
-    if (base != nullptr) {
-      const auto found = base->method_templates.find(method.name);
-      if (found != base->method_templates.end()) {
-        inherited = found->second.declaration;
-      }
+void TypeChecker::CheckGenericOverride(const Function& method, const ClassInfo* base) {
+  const Function* inherited = nullptr;
+  if (base != nullptr) {
+    const auto found = base->method_templates.find(method.name);
+    if (found != base->method_templates.end()) {
+      inherited = found->second.declaration;
     }
-    if (inherited == nullptr) {
-      if (method.is_override || (base != nullptr && base->methods.contains(method.name))) {
-        AddDiagnostic(method.location, "generic override requires a generic base method");
-      }
-    } else if (!method.is_override) {
-      AddDiagnostic(method.location, "base method override requires 'override'");
-    } else if (!IsMatchingGenericSignature(method, *inherited)) {
-      AddDiagnostic(method.location,
-                    "generic override signature or bounds do not match base method");
+  }
+  if (inherited == nullptr) {
+    if (method.is_override || (base != nullptr && base->methods.contains(method.name))) {
+      AddDiagnostic(method.location, "generic override requires a generic base method");
     }
+  } else if (!method.is_override) {
+    AddDiagnostic(method.location, "base method override requires 'override'");
+  } else if (!IsMatchingGenericSignature(method, *inherited)) {
+    AddDiagnostic(method.location, "generic override signature or bounds do not match base method");
   }
 }
 

@@ -38,8 +38,7 @@ bool IsSameMember(const ir::Program& before,
                   const reflection::Member& right) {
   if (left.kind != right.kind || left.name != right.name || left.flags != right.flags ||
       left.getter != right.getter || left.setter != right.setter ||
-      !IsSameType(before, left.type, after, right.type) ||
-      left.default_parameters != right.default_parameters) {
+      !IsSameType(before, left.type, after, right.type)) {
     return false;
   }
   const auto& previous = left.signature;
@@ -49,7 +48,7 @@ bool IsSameMember(const ir::Program& before,
          std::ranges::equal(
              previous.parameters, current.parameters, [&](const auto& first, const auto& second) {
                return first.name == second.name && first.optional == second.optional &&
-                      first.rest == second.rest &&
+                      first.rest == second.rest && first.has_default == second.has_default &&
                       IsSameType(before, first.type, after, second.type);
              });
 }

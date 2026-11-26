@@ -232,7 +232,9 @@ TEST(ReflectionRegistrationTest, LoadsAndSpecializesOnlyExplicitlySelectedDeclar
           .text = R"(
 class Box<T> {
   value: T;
-  private secret: int = 7;
+
+  #secret: int = 7;
+
   echo<U>(value: U): U { return value; }
 }
 )",
@@ -240,7 +242,7 @@ class Box<T> {
   };
   auto selection = Select("Box<int>");
   selection.members = {
-      {.kind = ReflectionMemberKind::Field, .name = "secret", .type_arguments = {}, .location = {}},
+      {.kind = ReflectionMemberKind::Field, .name = "#secret", .type_arguments = {}, .location = {}},
       {
           .kind = ReflectionMemberKind::Method,
           .name = "echo",
@@ -257,7 +259,7 @@ class Box<T> {
   EXPECT_EQ(reflected.front().type.name, "$module1.Box<int>");
   const auto& members = reflected.front().members;
   ASSERT_EQ(members.size(), 2U);
-  EXPECT_EQ(members.front().name, "secret");
+  EXPECT_EQ(members.front().name, "#secret");
   EXPECT_EQ(members.back().name, "echo");
   ASSERT_EQ(members.back().type_arguments.size(), 1U);
   EXPECT_EQ(members.back().type_arguments.front().name, "string");

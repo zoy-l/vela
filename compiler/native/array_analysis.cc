@@ -234,6 +234,7 @@ std::optional<ArrayAccess> ClassifyArrayAccess(const ir::Instruction& instructio
         case Builtin::ArrayPush:
           return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::Elements};
         case Builtin::ArraySlice:
+        case Builtin::ArrayIncludes:
           return ArrayAccess{.reg = instruction.lhs, .use = ArrayAccessUse::FixedStorage};
         default:
           return std::nullopt;

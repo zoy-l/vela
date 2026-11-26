@@ -135,6 +135,8 @@ std::span<const std::pair<std::string_view, ArrayAlgorithm>> ArrayAlgorithms() n
       {"findIndex", ArrayAlgorithm::FindIndex},
       {"reduce", ArrayAlgorithm::Reduce},
       {"map", ArrayAlgorithm::Map},
+      {"filter", ArrayAlgorithm::Filter},
+      {"find", ArrayAlgorithm::Find},
   });
   return kAlgorithms;
 }
@@ -169,6 +171,7 @@ std::span<const std::pair<std::string_view, Builtin>> CollectionMethods(Kind rec
 std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
   static constexpr auto kMethods = std::to_array<std::pair<std::string_view, Builtin>>({
       {"slice", Builtin::ArraySlice},
+      {"includes", Builtin::ArrayIncludes},
       {"fill", Builtin::ArrayFill},
       {"reverse", Builtin::ArrayReverse},
       {"push", Builtin::ArrayPush},
@@ -188,6 +191,12 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin, const TypeDescriptor& e
   signature.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
   const TypeDescriptor integer{.kind = Kind::Int, .name = kIntTypeName};
   switch (builtin) {
+    case Builtin::ArrayIncludes:
+      signature.return_type = {.kind = Kind::Bool, .name = kBoolTypeName};
+      signature.AddParameter("searchElement", element);
+      signature.AddParameter("fromIndex", integer);
+      signature.optional_parameters = {"fromIndex"};
+      break;
     case Builtin::ArraySlice:
       signature.return_type = receiver;
       signature.AddParameter("start", integer);
@@ -270,25 +279,32 @@ FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
 
 FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
                                            const FunctionDescriptor& callback) {
+  const auto& element = callback.parameters.front().type;
   FunctionDescriptor method;
   method.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
   if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every) {
     method.return_type = {.kind = Kind::Bool, .name = kBoolTypeName};
   } else if (algorithm == ArrayAlgorithm::FindIndex) {
     method.return_type = {.kind = Kind::Int, .name = kIntTypeName};
+  } else if (algorithm == ArrayAlgorithm::Find) {
+    method.return_type = MakeNullableType(element);
+  } else if (algorithm == ArrayAlgorithm::Filter) {
+    method.return_type = MakeArrayType(element);
   } else if (algorithm == ArrayAlgorithm::Map) {
     method.return_type = MakeArrayType(callback.return_type);
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     method.return_type = callback.return_type;
   } else if (algorithm == ArrayAlgorithm::Sort) {
-    method.return_type = MakeArrayType(callback.parameters.front().type);
+    method.return_type = MakeArrayType(element);
     method.optional_parameters.insert("compareFn");
   }
   std::string parameter = "callbackFn";
   if (algorithm == ArrayAlgorithm::Sort) {
     parameter = "compareFn";
   }
-  method.AddParameter(std::move(parameter), MakeFunctionType(callback));
+  method.AddParameter(
+      std::move(parameter),
+      MakeFunctionType(callback.parameters, callback.return_type, callback.narrowed_parameter));
   if (algorithm == ArrayAlgorithm::Reduce) {
     method.AddParameter("initialValue", callback.return_type);
   }

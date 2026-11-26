@@ -111,6 +111,8 @@ struct ArgumentCompletionQuery final {
 [[nodiscard]] std::string CompletionSource(const frontend::SourceSnapshot& snapshot,
                                            std::size_t offset);
 [[nodiscard]] std::string DisplaySymbolName(std::string_view name);
+[[nodiscard]] std::string DisplayType(const frontend::SemanticModel& model,
+                                      frontend::TypeDescriptor type);
 
 // 索引拥有 AST 与 checker 模型；模型中的节点借用始终由同一个索引覆盖。
 class SemanticIndex final {
@@ -224,8 +226,6 @@ class SemanticIndex final {
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
   [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration,
                                            const frontend::ClassDescriptor* checked) const;
-  [[nodiscard]] const frontend::ClassDescriptor* FindClassDescriptor(
-      const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
   void MarkTypeParameters(std::span<const frontend::TypeParameter> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
@@ -255,7 +255,9 @@ class SemanticIndex final {
                     std::string_view name,
                     const frontend::Expression* expression = nullptr);
   void CollectDeclarations();
-  void CollectInheritedParameters();
+  void CollectConstructorParameters();
+  void CollectConstructorParameters(const frontend::ClassDescriptor& owner,
+                                    absl::flat_hash_set<std::string_view>& collected);
   std::string ConstructorParameters(const frontend::Class& declaration,
                                     const frontend::ClassDescriptor* checked) const;
   void CollectClass(const frontend::Class& declaration);
@@ -264,7 +266,9 @@ class SemanticIndex final {
                               const frontend::Class& owner,
                               const frontend::Function& method);
   void CollectEnumMembers(const frontend::Enum& declaration);
-  void CollectParameters(std::size_t symbol, const frontend::Function& function);
+  void CollectParameters(std::size_t symbol,
+                         const frontend::Function& function,
+                         const frontend::FunctionDescriptor* checked = nullptr);
   void CollectImports();
   std::optional<TypeReference> VisitType(const frontend::TypeName& type);
   void VisitFunction(const frontend::Function& function,

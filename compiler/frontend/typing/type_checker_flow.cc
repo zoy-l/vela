@@ -13,11 +13,7 @@ ConditionTruth EvaluateCondition(const Expression& expression) {
     return expression.boolean_value ? Truth::AlwaysTrue : Truth::AlwaysFalse;
   }
   if (expression.kind == Expression::Kind::Unary && expression.operation == TokenKind::Bang) {
-    const auto operand = EvaluateCondition(*expression.operand);
-    if (operand == Truth::Unknown) {
-      return operand;
-    }
-    return operand == Truth::AlwaysTrue ? Truth::AlwaysFalse : Truth::AlwaysTrue;
+    return NegateConditionTruth(EvaluateCondition(*expression.operand));
   }
   if (expression.kind != Expression::Kind::Binary ||
       (expression.operation != TokenKind::AndAnd && expression.operation != TokenKind::OrOr)) {

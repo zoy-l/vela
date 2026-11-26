@@ -3,6 +3,7 @@
 #include <string>
 
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {

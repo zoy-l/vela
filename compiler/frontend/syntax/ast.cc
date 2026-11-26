@@ -13,12 +13,108 @@
 #include <utility>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/integer_literal.h"
+#include "compiler/frontend/syntax/names.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
+namespace {
+
+bool ContainsSuperCall(const Expression* expression) {
+  if (expression == nullptr || expression->kind == Expression::Kind::Lambda) {
+    return false;
+  }
+  if (expression->kind == Expression::Kind::Call &&
+      expression->callee->kind == Expression::Kind::Name &&
+      expression->callee->text == kSuperName) {
+    return true;
+  }
+  bool found = false;
+  VisitExpressionChildren(
+      *expression, [&](const Expression* child) { found = found || ContainsSuperCall(child); });
+  return found;
+}
+
+bool ContainsSuperCall(const Statement* statement) {
+  if (statement == nullptr) {
+    return false;
+  }
+  bool found = false;
+  VisitStatementChildren(
+      *statement, [&](const Expression* child) { found = found || ContainsSuperCall(child); },
+      [&](const Statement* child) { found = found || ContainsSuperCall(child); });
+  return found;
+}
+
+}  // namespace
+
+void VisitExpressionChildren(const Expression& expression,
+                             absl::FunctionRef<void(const Expression*)> visit) {
+  for (const auto* child : ExpressionOperands(expression)) {
+    visit(child);
+  }
+  for (const auto& child : expression.elements) {
+    visit(child.get());
+  }
+  for (const auto& entry : expression.entries) {
+    visit(entry.key.get());
+    visit(entry.value.get());
+  }
+  for (const auto& argument : expression.arguments) {
+    visit(argument.value.get());
+  }
+  for (const auto& arm : expression.arms) {
+    visit(arm.pattern.get());
+    visit(arm.value.get());
+  }
+}
+
+void VisitStatementChildren(const Statement& statement,
+                            absl::FunctionRef<void(const Expression*)> expression,
+                            absl::FunctionRef<void(const Statement*)> child) {
+  for (const auto* node : {
+           statement.expression.get(),
+           statement.condition.get(),
+           statement.increment.get(),
+           statement.iterable.get(),
+       }) {
+    expression(node);
+  }
+  for (const auto* node : {
+           statement.then_branch.get(),
+           statement.else_branch.get(),
+           statement.initializer.get(),
+           statement.finally_branch.get(),
+       }) {
+    child(node);
+  }
+  for (const auto& node : statement.statements) {
+    child(node.get());
+  }
+  for (const auto& branch : statement.cases) {
+    expression(branch.label.get());
+    child(branch.body.get());
+  }
+  for (const auto& caught : statement.catches) {
+    child(caught.body.get());
+  }
+}
+
+void VisitFunctionChildren(const Function& function,
+                           absl::FunctionRef<void(const Expression*)> expression,
+                           absl::FunctionRef<void(const Statement*)> statement) {
+  for (const auto& parameter : function.parameters) {
+    expression(parameter.initializer.get());
+  }
+  statement(function.body.get());
+}
+
+bool HasSuperConstructorCall(const Statement& body) {
+  return ContainsSuperCall(&body);
+}
 
 void TypeName::SetSourceId(std::uint32_t source_id) {
   location.source_id = source_id;

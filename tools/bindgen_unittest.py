@@ -232,7 +232,7 @@ class VELA_CLASS("app.Counter") Counter {
         self.assertEqual(members["Cancel"]["result"]["kind"], "CancellationToken")
 
     def test_generated_script_header_round_trips_nominals_generics_and_source_dependencies(self) -> None:
-        dependency = self.write("types.vela", "export class Box<T> { value: T; private hidden: int = 0; }\n")
+        dependency = self.write("types.vela", "export class Box<T> { value: T; #hidden: int = 0; }\n")
         entry = self.write("api.vela", "import 'types.vela' as types;\n"
                            "func fail(): int { throw Error(message: 'must not run'); }\n"
                            "const initialized = fail();\n"

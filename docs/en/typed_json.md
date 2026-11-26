@@ -102,12 +102,12 @@ Decoders must invoke the target's public construction path. They must not write 
 
 | Constructor form | JSON object contract |
 | --- | --- |
-| Generated field constructor, including `constructor { ... }` | Named parameters from the current class's public instance fields; fields without initializers are required, and fields with initializers may be omitted |
-| Explicit `constructor(name: Type, ...)` | The complete explicit parameter list; field names add no keys, and all explicit parameters in the current language are required |
+| Generated field constructor, including `constructor { ... }` | The complete generated signature: merge base parameters and own public fields when there is no written `super(...)`; preserve requiredness and defaults |
+| Explicit `constructor(name: Type, ...)` | The complete explicit parameter list; field names add no keys; ordinary parameters, `this.field` and `super.param` retain their ordinary default rules |
 | Explicit `constructor()` | Accept only an empty object, then execute ordinary defaults and the constructor body |
 | Non-public constructor | Target is not decodable at compile time |
 
-A derived class uses only its own constructor signature. Base arguments and `super(...)` follow [ordinary construction rules](core_language.md#class-construction-from-fields). Private/static fields, getters, setters, and ordinary methods do not add JSON keys. An explicit parameter may initialize a private field through the constructor body, as in an ordinary call.
+A derived class uses its complete merged or explicitly declared signature. Base arguments and `super(...)` follow [unified construction rules](core_language.md#class-construction-from-fields). Private/static fields, getters, setters, and ordinary methods do not add JSON keys. An explicit parameter may initialize a private field through the constructor body, as in an ordinary call.
 
 Absence and null are distinct. `nickname: string?` is required; `nickname: string? = null` may be omitted. Explicit null does not select a default and fails for a non-nullable target. A supplied value with the wrong type must not fall back to a default. Omitted defaults execute exactly once in existing field declaration order. Each instance constructs its own mutable defaults.
 

@@ -1,4 +1,5 @@
 #include "compiler/tooling/documentation/documentation.h"
+#include "compiler/frontend/syntax/names.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -11,13 +12,18 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
-#include "compiler/frontend/typing/checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/tooling/semantic/semantic_index.h"
 #include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
@@ -41,24 +47,38 @@ void TypeParameters(std::ostream& output, const std::vector<frontend::TypeParame
   output << '>';
 }
 
+template <class Parameters, class Render>
+void RenderParameters(std::ostream& output, const Parameters& parameters, const Render& render) {
+  output << '(';
+  std::string_view separator;
+  for (const auto& parameter : parameters) {
+    output << separator;
+    const auto default_value = render(parameter);
+    if (!default_value.empty()) {
+      output << " = " << default_value;
+    }
+    separator = ", ";
+  }
+  output << ')';
+}
+
 void Parameters(std::ostream& output,
                 const std::vector<frontend::Parameter>& parameters,
                 std::span<const std::string> optional = {}) {
-  output << '(';
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    if (index != 0) {
-      output << ", ";
+  RenderParameters(output, parameters, [&](const auto& parameter) -> std::string_view {
+    if (parameter.binding != frontend::Parameter::Binding::Local) {
+      const bool is_field = parameter.binding == frontend::Parameter::Binding::Field;
+      output << (is_field ? "this." : "super.")
+             << (is_field ? parameter.member_name : parameter.name);
+      return {};
     }
-    const auto& parameter = parameters.at(index);
     output << parameter.name << ": " << parameter.type.ToString();
-    if (parameter.initializer) {
-      output << (parameter.initializer->kind == frontend::Expression::Kind::NullLiteral ? " = null"
-                                                                                        : " = …");
-    } else if (std::ranges::find(optional, parameter.name) != optional.end()) {
-      output << " = null";
+    const auto* initial = parameter.initializer.get();
+    if (initial != nullptr) {
+      return initial->kind == frontend::Expression::Kind::NullLiteral ? "null" : "…";
     }
-  }
-  output << ')';
+    return std::ranges::find(optional, parameter.name) != optional.end() ? "null" : "";
+  });
 }
 
 void Signature(std::ostream& output, const frontend::Function& function) {
@@ -94,8 +114,16 @@ void AddDeclarations(std::vector<Declaration>& output,
 
 class Documentation final {
  public:
-  Documentation(const frontend::Program& program, const frontend::SourceSnapshot& source)
-      : program_(&program), source_(&source) {}
+  Documentation(const frontend::Program& program,
+                const frontend::SourceSnapshot& source,
+                const frontend::SemanticModel& model,
+                std::span<const frontend::Class> class_templates)
+      : program_(&program), source_(&source), model_(&model) {
+    class_templates_.reserve(class_templates.size());
+    for (const auto& declaration : class_templates) {
+      class_templates_.emplace(declaration.name, &declaration);
+    }
+  }
   std::string Generate();
 
  private:
@@ -113,6 +141,8 @@ class Documentation final {
 
   const frontend::Program* program_;
   const frontend::SourceSnapshot* source_;
+  const frontend::SemanticModel* model_;
+  absl::flat_hash_map<std::string_view, const frontend::Class*> class_templates_;
   std::ostringstream output_;
 };
 
@@ -182,8 +212,8 @@ void Documentation::ClassDeclaration(const frontend::Class& declaration) {
   if (constructor != nullptr) {
     Attributes(constructor->attributes, "  ");
     output_ << "  ";
-    if (constructor->visibility != frontend::Visibility::Public) {
-      output_ << "private ";
+    if (constructor->visibility == frontend::Visibility::Private) {
+      output_ << frontend::kPrivateNamePrefix;
     }
     output_ << "constructor";
     if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
@@ -227,6 +257,9 @@ void Documentation::FieldDeclaration(const frontend::Field& field) {
   output_ << "  ";
   if (field.storage == frontend::MemberStorage::Static) {
     output_ << "static ";
+  }
+  if (field.binding == frontend::BindingKind::Constant) {
+    output_ << "const ";
   }
   output_ << field.name << ": " << field.type.ToString();
   if (field.initializer) {
@@ -272,35 +305,24 @@ void Documentation::Constructor(const frontend::Class& declaration) {
       declaration.constructor->visibility == frontend::Visibility::Private) {
     return;
   }
+  output_ << "### Constructor\n\n";
   if (declaration.base_class && !declaration.constructor &&
       std::ranges::none_of(declaration.fields, [&](const auto& field) {
         return declaration.IsConstructorField(field);
       })) {
-    output_ << "### Constructor\n\nConstructor signature inherited from `"
-            << declaration.base_class->ToString() << "`.\n\n";
-    return;
+    output_ << "Constructor signature inherited from `" << declaration.base_class->ToString()
+            << "`.\n\n";
   }
-  if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
-    output_ << "### Constructor\n\n```vela\n" << declaration.name;
-    Parameters(output_, declaration.constructor->parameters);
-    output_ << ";\n```\n\n";
-    return;
-  }
-  output_ << "### Constructor\n\n```vela\n" << declaration.name << '(';
-  std::size_t parameter_index = 0;
-  for (const auto& field : declaration.fields) {
-    if (!declaration.IsConstructorField(field)) {
-      continue;
-    }
-    if (parameter_index++ != 0) {
-      output_ << ", ";
-    }
-    output_ << field.name << ": " << field.type.ToString();
-    if (field.initializer) {
-      Initializer(*field.initializer);
-    }
-  }
-  output_ << ");\n```\n\n";
+  // 泛型参数身份由绑定阶段赋予；原始声明仅保留用户书写的类型和导入别名。
+  const auto& bound =
+      declaration.type_parameters.empty() ? declaration : *class_templates_.at(declaration.name);
+  const auto& signature = model_->FindClassDescriptor(bound)->constructor;
+  output_ << "```vela\n" << declaration.name;
+  RenderParameters(output_, signature.parameters, [&](const auto& parameter) -> std::string_view {
+    output_ << parameter.name << ": " << DisplayType(*model_, parameter.type);
+    return signature.optional_parameters.contains(parameter.name) ? "…" : "";
+  });
+  output_ << ";\n```\n\n";
 }
 
 void Documentation::Emit(Declaration declaration) {
@@ -452,16 +474,19 @@ DocumentationResult GenerateDocumentation(std::string_view entry,
   if (!graph.diagnostics.empty()) {
     return {.markdown = {}, .diagnostics = std::move(graph.diagnostics)};
   }
-  auto documentation =
-      Documentation(graph.modules.front().program, *graph.sources.front().syntax).Generate();
+  const auto original = frontend::CloneProgramDeclaration(graph.modules.front().program);
+  const auto source = graph.sources.front().syntax;
   auto loaded = frontend::BindModuleGraph(std::move(graph));
   if (!loaded.diagnostics.empty()) {
     return {.markdown = {}, .diagnostics = std::move(loaded.diagnostics)};
   }
-  auto checked = frontend::CheckProgram(loaded.program, options);
+  auto& program = loaded.program;
+  auto checked = frontend::TypeChecker(options).Check(program);
   if (!checked.Succeeded()) {
     return {.markdown = {}, .diagnostics = std::move(checked.diagnostics)};
   }
+  auto documentation =
+      Documentation(original, *source, checked.model, program.templates.classes).Generate();
   return {.markdown = std::move(documentation), .diagnostics = std::move(checked.diagnostics)};
 }
 

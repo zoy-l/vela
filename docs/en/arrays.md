@@ -121,7 +121,7 @@ of retaining raw buffer pointers across callbacks.
 
 ## Callbacks and structural mutation
 
-`map`, `forEach`, `reduce`, `some`, `every`, `findIndex` and `sort` capture the
+`map`, `filter`, `find`, `forEach`, `reduce`, `some`, `every`, `findIndex` and `sort` capture the
 receiver and its structural mutation counter before invoking callbacks. Each
 callback result is checked before further array accesses or short-circuit return.
 Push, nonempty pop/shift/clear and nonempty splice changes increment the counter. A
@@ -169,5 +169,40 @@ and named argument completion consume the same array-method signatures.
 - capacity, reserve and clear remain explicit performance extensions. Removed
   copy/insert/removeAt names have no compatibility aliases; use slice()/splice().
 
-This migration aligns existing APIs and adds shift/unshift/splice. It does not
-add filter, find, includes, concat, flat or the copying sort/reverse methods.
+## Filtering and searching
+
+`filter(callbackFn)` returns matching elements in source order in an independent shallow-copy
+array. `find(callbackFn)` returns the first matching element, or null. Predicates receive
+`(value, index, receiver)`, may omit unused trailing parameters, and must return bool. Both
+methods enforce the structural mutation checks above, including before find returns a match.
+Filter reserves the input-length capacity bound and calls the predicate once per element in
+one traversal: O(n) time and O(n) storage. Find short-circuits with O(n) worst-case time and
+O(1) auxiliary storage.
+
+The compiler proves element constraints on every return-true path, including null checks,
+is tests, early returns, multiple return branches, named predicates and saved predicate values.
+Filter uses the narrowed element type and find uses its nullable form. An unproven successful
+path, parameter assignment or mutable capture invalidates narrowing.
+
+```vela
+const optional: int?[] = [null, 1, 42];
+const present: int[] = optional.filter(value => {
+  if (value == null) { return false; }
+  return value > 0;
+});
+const mixed: dynamic[] = [1, 'text', 42];
+const integers: int[] = mixed.filter(value => value is int);
+const found: int? = mixed.find(value => {
+  if (value is int) { return value > 10; }
+  return false;
+});
+```
+
+`includes(searchElement: T, fromIndex?: int): bool` searches from fromIndex, which defaults to
+zero. Negative indices count from the end and clamp to `[0, length]`. Empty arrays and starts
+at or beyond the end return false. It uses Vela equality with NaN matching NaN and both signed
+zeros equal. Strings compare by content; ordinary objects and nested arrays compare by identity.
+Dynamic arrays do not coerce int to double. It scans contiguous storage without allocating or
+calling callbacks: O(n) worst-case time.
+
+Concat, flat and the copying sort/reverse methods are not provided.

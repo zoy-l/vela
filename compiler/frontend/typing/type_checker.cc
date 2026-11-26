@@ -103,6 +103,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
       break;
     }
   }
+  CheckInheritedConstructorInitialization();
   specializer.Publish();
   ResolveNominalArguments(program);
   for (const auto& source : program.classes) {
@@ -126,7 +127,6 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
   model.interfaces = std::move(interfaces_);
-  model.explicit_super_constructors = std::move(explicit_super_constructors_);
   model.generic_arguments = std::move(generic_arguments_);
   static_cast<NodeFacts&>(model) = std::exchange(facts_, {});
   model.type_applications = specializer.TakeTypeApplications();
@@ -189,6 +189,7 @@ void TypeChecker::ApplyIntrinsicDefaults(const Function& function, FunctionInfo&
 TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function,
                                                         const FunctionInfo* context) {
   FunctionInfo info;
+  info.declaration_body = function.body.get();
   info.intrinsic = function.intrinsic;
   info.intrinsic_operation = function.intrinsic_operation;
   info.optional_parameters.insert(function.optional_parameters.begin(),
@@ -219,6 +220,8 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
     Type type;
     if (parameter.type.kind != TypeName::Kind::Inferred) {
       type = ResolveType(parameter.type, VoidTypePolicy::Forbidden);
+    } else if (context != nullptr && parameter.binding != Parameter::Binding::Local) {
+      type = context->parameters.at(context->parameter_indices.at(parameter.name)).type;
     } else if (context != nullptr && index < context->parameters.size()) {
       type = context->parameters.at(index).type;
     } else {
@@ -236,6 +239,9 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
         info.optional_parameters.insert(parameter.name);
       }
     }
+  }
+  if (info.declaration_body != nullptr && CanInferPredicate(function, info)) {
+    predicate_declarations_.insert_or_assign(info.declaration_body, &function);
   }
   return info;
 }
@@ -263,6 +269,11 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
 void TypeChecker::CheckFunctionBody(const Function& function,
                                     const FunctionInfo& function_info,
                                     const ClassInfo* owner) {
+  const auto* body = function.body.get();
+  if (body != nullptr &&
+      (facts_.control_flow.contains(body) || !checking_function_bodies_.insert(body).second)) {
+    return;
+  }
   owner_ = owner;
   in_async_function_ = function.is_async;
   refinements_.Clear();
@@ -285,17 +296,22 @@ void TypeChecker::CheckFunctionBody(const Function& function,
                                                   .scope = scopes_.size() - 1,
                                               });
     // 方法节点在发布泛型方法应用时可能移动；接收者绑定以函数体节点为键。
-    facts_.bindings.emplace(function.body.get(), LookupLocal(kReceiverName)->id);
+    facts_.bindings.emplace(body, LookupLocal(kReceiverName)->id);
   }
   if (!in_constructor_) {
     DeclareFunctionParameters(function, function_info, BindingKind::Mutable);
   }
-  if (function.body) {
-    const auto flow = CheckSequence(*function.body, return_type);
-    facts_.control_flow.insert_or_assign(function.body.get(), flow);
+  if (body != nullptr) {
+    BeginPredicate(function, function_info);
+    const auto flow = CheckSequence(*body, return_type);
+    facts_.control_flow.insert_or_assign(body, flow);
     if (!CanFallThrough(function, return_type) && flow.can_fall_through) {
       AddDiagnostic(function.location, "non-void function may fall through without returning");
     }
+    if (const auto predicate = FinishPredicate()) {
+      function_predicates_.insert_or_assign(body, *predicate);
+    }
+    checking_function_bodies_.erase(body);
   }
   EndScope();
   owner_ = nullptr;
@@ -420,7 +436,6 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
     if (base == classes_.end()) {
       return InvalidType();
     }
-    explicit_super_constructors_.insert(std::string(owner_->type.name));
     return CheckClassConstruction(base->second, expression);
   }
   if (callee.kind == Expression::Kind::Member && callee.object->kind == Expression::Kind::Name &&
@@ -558,6 +573,10 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
   }
   auto object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
   object = ParameterCapability(object, receiver.location);
+  object = ResolvePrivateReceiver(*expression.callee, object);
+  if (!IsValid(object)) {
+    return InvalidType();
+  }
   if (object.kind == Type::Kind::Dynamic) {
     if (!expression.callee->type_arguments.empty()) {
       AddDiagnostic(expression.callee->location,
@@ -580,6 +599,10 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
 
 TypeChecker::Type TypeChecker::CheckSuperMethodCall(const Expression& expression,
                                                     const Type* expected) {
+  if (IsPrivateName(expression.callee->text)) {
+    AddDiagnostic(expression.location, "private members cannot be accessed through super");
+    return InvalidType();
+  }
   const auto* base = CheckSuperClass(expression.location);
   if (base == nullptr) {
     return InvalidType();
@@ -687,13 +710,12 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
           MemberReference{.owner = method->second.member_owner, .member = expression.callee->text});
       return CheckFunctionCall(method->second, expression);
     }
-    const auto field = owner.fields.find(expression.callee->text);
-    if (field != owner.fields.end() &&
-        (field->second.type.kind == Type::Kind::Dynamic ||
-         (field->second.type.kind == Type::Kind::Function && !field->second.type.nullable))) {
-      CheckAccess(field->second.visibility, object.name, expression.location);
-      facts_.expression_types.insert_or_assign(expression.callee.get(), field->second.type);
-      return CheckIndirectCall(expression, field->second.type);
+    const auto* field = owner.FindField(expression.callee->text);
+    if (field != nullptr && (field->type.kind == Type::Kind::Dynamic ||
+                             (field->type.kind == Type::Kind::Function && !field->type.nullable))) {
+      CheckAccess(field->visibility, object.name, expression.location);
+      facts_.expression_types.insert_or_assign(expression.callee.get(), field->type);
+      return CheckIndirectCall(expression, field->type);
     }
   }
   AddDiagnostic(expression.location, "expression is not callable");
@@ -945,6 +967,9 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
     AddDiagnostic(statement.location, "non-void function must return a value");
   } else {
     const Type value = CheckExpression(*statement.expression, &expected_type);
+    if (expected_type.kind == Type::Kind::Bool && !expected_type.nullable && IsValid(value)) {
+      RecordPredicateReturn(*statement.expression);
+    }
     if (!in_async_function_ || value.kind != Type::Kind::Dynamic) {
       RecordConversion(*statement.expression, expected_type, value);
     } else {
@@ -1384,7 +1409,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
     left = binding->type;
   }
   if (target.kind == Expression::Kind::Member) {
-    CheckMemberAssignment(target);
+    CheckMemberAssignment(target, MemberWrite::Assignment);
   }
   CheckBuiltinAssignment(target);
   const Type right = CheckExpression(value, &left);
@@ -1449,33 +1474,77 @@ TypeChecker::CheckStatus TypeChecker::CheckAssignmentTarget(const Expression& ta
   return CheckStatus::Succeeded;
 }
 
-void TypeChecker::CheckMemberAssignment(const Expression& member) {
+TypeChecker::CheckStatus TypeChecker::CheckConstFieldAssignment(const Expression& member,
+                                                                const ClassInfo::Field& field,
+                                                                MemberWrite mode) {
+  if (field.binding != BindingKind::Constant) {
+    return CheckStatus::Succeeded;
+  }
+  if (mode == MemberWrite::Assignment && in_constructor_ && lambda_scopes_.empty() &&
+      owner_->type.name == field.owner && member.object->kind == Expression::Kind::Name &&
+      member.object->text == kReceiverName) {
+    return CheckStatus::Succeeded;
+  }
+  AddDiagnostic(member.location, "cannot assign to const field '" + member.text + "'");
+  return CheckStatus::Failed;
+}
+
+void TypeChecker::CheckInstanceMemberAssignment(const Expression& member,
+                                                const ClassInfo& owner,
+                                                MemberWrite mode) {
+  if (const auto* field = owner.FindField(member.text); field != nullptr) {
+    static_cast<void>(CheckConstFieldAssignment(member, *field, mode));
+    return;
+  }
+  bool read_only = false;
+  const auto& methods = owner.methods;
+  const auto method = methods.find(member.text);
+  if (method != methods.end()) {
+    const auto& signature = method->second;
+    if (signature.is_setter) {
+      CheckAccess(signature.setter_visibility, signature.setter_owner, member.location);
+      read_only = !signature.setter_parameter_type.has_value();
+    } else {
+      read_only = true;
+    }
+  }
+  if (read_only) {
+    AddDiagnostic(member.location, "methods and enum members are immutable");
+  }
+}
+
+void TypeChecker::CheckMemberAssignment(const Expression& member, MemberWrite mode) {
   bool read_only =
       facts_.interface_members.contains(&member) || facts_.builtin_method_values.contains(&member);
   if (const auto found = facts_.static_members.find(&member);
       found != facts_.static_members.end()) {
     const auto& owner = classes_.at(found->second.owner);
+    if (const auto field = owner.static_fields.find(found->second.member);
+        field != owner.static_fields.end() &&
+        CheckConstFieldAssignment(member, field->second, mode) == CheckStatus::Failed) {
+      return;
+    }
     const auto source_id = owner.declaration->location.source_id;
     read_only = read_only || owner.methods.contains(found->second.member) ||
                 (source_id < sources_.size() &&
                  sources_[source_id].path.starts_with(kStandardSourcePrefix));
-  } else if (const auto object = facts_.expression_types.find(member.object.get());
-             object != facts_.expression_types.end() && object->second.kind == Type::Kind::Class) {
-    const auto& methods = classes_.at(NonNullable(object->second).name).methods;
-    const auto method = methods.find(member.text);
-    if (method != methods.end()) {
-      const auto& signature = method->second;
-      if (signature.is_setter) {
-        CheckAccess(signature.setter_visibility, signature.setter_owner, member.location);
-        read_only = read_only || !signature.setter_parameter_type.has_value();
-      } else {
-        read_only = true;
-      }
+  } else {
+    const auto object = facts_.expression_types.find(member.object.get());
+    const auto private_owner = IsPrivateName(member.text) ? facts_.private_members.find(&member)
+                                                          : facts_.private_members.end();
+    const bool has_private_owner = private_owner != facts_.private_members.end();
+    if (object != facts_.expression_types.end() &&
+        (object->second.kind == Type::Kind::Class || has_private_owner)) {
+      const auto& owner =
+          classes_.at(has_private_owner ? private_owner->second : NonNullable(object->second).name);
+      CheckInstanceMemberAssignment(member, owner, mode);
+      return;
     }
-  } else if (member.object->kind == Expression::Kind::Name &&
-             LookupLocal(member.object->text) == nullptr) {
-    const auto type = types_.find(member.object->text);
-    read_only = read_only || (type != types_.end() && type->second.kind == Type::Kind::Enum);
+    if (member.object->kind == Expression::Kind::Name &&
+        LookupLocal(member.object->text) == nullptr) {
+      const auto type = types_.find(member.object->text);
+      read_only = read_only || (type != types_.end() && type->second.kind == Type::Kind::Enum);
+    }
   }
   if (read_only) {
     AddDiagnostic(member.location, "methods and enum members are immutable");

@@ -66,7 +66,7 @@ Push 与插入操作在需要时按几何级数扩容，并附带溢出受查的
 
 ## 回调函数与并发结构修改检测
 
-`map`、`forEach`、`reduce`、`some`、`every`、`findIndex` 和 `sort` 在触发回调前会先捕获接收者数组及其结构修改计数器。在进行下一次数组访问或短路返回前，每次回调返回后均会重新核验该计数器。Push、非空的 pop/shift/clear 以及非空的 splice 操作均会递增该计数器。成对的 push/pop 即使最终恢复了原始长度也能被准确检测出来。
+`map`、`filter`、`find`、`forEach`、`reduce`、`some`、`every`、`findIndex` 和 `sort` 在触发回调前会先捕获接收者数组及其结构修改计数器。在进行下一次数组访问或短路返回前，每次回调返回后均会重新核验该计数器。Push、非空的 pop/shift/clear 以及非空的 splice 操作均会递增该计数器。成对的 push/pop 即使最终恢复了原始长度也能被准确检测出来。
 
 若在回调期间发生并发结构修改，将抛出状态为 `ConcurrentModification` 的 `Error` 异常，并通过标准原生栈展开进行传播。已发生的修改本身保持生效，不进行事务回滚。回调函数可以安全修改已有元素的值、修改其它独立数组或预留容量。遍历过程中对后续元素的就地修改保持可见。异常抛出不会使数组陷入死锁状态，原生实例依然可继续正常复用。
 
@@ -85,4 +85,26 @@ Push 与插入操作在需要时按几何级数扩容，并附带溢出受查的
 - join 与默认排序支持基本类型与可空元素。对象与嵌套数组排序必须提供显式比较函数；join 不调用隐式的对象转换。数字输出采用与 JS 相同的 -0、NaN、Infinity 及十进制/指数记法，而 int 保留 Vela 完整的 64 位精确表示。
 - capacity、reserve 与 clear 是显式提供的性能扩展 API。已删除的旧式 copy/insert/removeAt 方法不设立兼容别名，统一迁移至 slice()/splice()。
 
-本次重构统一了现有 API 并新增了 shift/unshift/splice。未引入 filter、find、includes、concat、flat 或产生拷贝的 toSorted/toReversed 方法。
+## 筛选与检索
+
+`filter(callbackFn)` 按顺序调用谓词并返回独立的浅拷贝数组，`find(callbackFn)` 返回第一个匹配的元素，无匹配返回 null。谓词接收 `(value, index, receiver)`，可以省略末尾参数，必须返回 bool。两者沿用上述结构修改检测，包括 find 命中后返回之前的检测。filter 预留输入长度的容量上界，单次遍历且每个元素只调用一次谓词；时间和存储均为 O(n)。find 命中即返回，最坏 O(n) 时间、O(1) 辅助存储。
+
+编译器根据每条返回 true 的路径推导元素约束，支持空值检查、is 类型检查、提前返回、多个返回分支、命名谓词和保存的谓词函数值。能够证明时，filter 返回收窄后的数组类型，find 返回收窄后的可空类型。任意成功路径无法证明约束、参数被重写或可变捕获使证明失效时，结果保留原元素类型。
+
+```vela
+const optional: int?[] = [null, 1, 42];
+const present: int[] = optional.filter(value => {
+  if (value == null) { return false; }
+  return value > 0;
+});
+const mixed: dynamic[] = [1, 'text', 42];
+const integers: int[] = mixed.filter(value => value is int);
+const found: int? = mixed.find(value => {
+  if (value is int) { return value > 10; }
+  return false;
+});
+```
+
+`includes(searchElement: T, fromIndex?: int): bool` 从 fromIndex 检索，默认 0；负数从末尾倒数并限制在 `[0, length]`。超出末尾和空数组返回 false。比较沿用 Vela 的相等语义，另规定 NaN 匹配 NaN，正负零相等。字符串按内容、普通对象与嵌套数组按引用身份比较；动态数组中的 int 和 double 不进行数值强转。实现直接扫描连续存储，不分配、不调用回调，最坏 O(n) 时间。
+
+concat、flat 以及产生拷贝的 toSorted/toReversed 方法尚未提供。

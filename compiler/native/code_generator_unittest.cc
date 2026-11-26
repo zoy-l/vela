@@ -106,7 +106,7 @@ TEST(NativeImageCodecTest, RoundTripsEmptyAndLengthDelimitedTextWithEmbeddedNull
 
 TEST(NativeImageCodecTest, RetainsPhysicalRecordArrayLayouts) {
   const std::array arrays{
-      runtime::NativeArrayDescription{.record_fields = 6},
+      runtime::NativeArrayDescription{.name = {}, .element = {}, .record_fields = 6},
       runtime::NativeArrayDescription{},
   };
   runtime::NativeImage image;

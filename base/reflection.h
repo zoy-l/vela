@@ -79,6 +79,7 @@ inline constexpr std::uint32_t kPrivate = 2;
 inline constexpr std::uint32_t kStatic = 4;
 inline constexpr std::uint32_t kAsync = 8;
 inline constexpr std::uint32_t kVirtual = 16;
+inline constexpr std::uint32_t kConstant = 32;
 
 // 逻辑签名描述源码调用，不包含接收者、构造 presence 位或机器 ABI 参数。
 struct Member final {
@@ -92,7 +93,6 @@ struct Member final {
   DeclarationId getter;
   DeclarationId setter;
   CallSignature signature;
-  std::vector<std::uint32_t> default_parameters;
   std::vector<std::uint32_t> type_arguments;
 };
 

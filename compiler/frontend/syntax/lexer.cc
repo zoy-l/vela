@@ -25,7 +25,6 @@ constexpr std::size_t kBracedUnicodeDigits = 6;
 
 constexpr auto kKeywords = std::to_array<std::pair<std::string_view, TokenKind>>({
     {"type", TokenKind::Type},
-    {"private", TokenKind::Private},
     {"static", TokenKind::Static},
     {"constructor", TokenKind::Constructor},
     {"extends", TokenKind::Extends},
@@ -153,6 +152,10 @@ LexResult Lexer::Tokenize() {
 
 void Lexer::ScanToken(std::size_t start) {
   const char character = Advance();
+  if (character == kPrivateNamePrefix && IsIdentifierStart(Peek())) {
+    ScanIdentifier();
+    return;
+  }
   if (ScanPunctuation(character, start)) {
     return;
   }
@@ -407,7 +410,8 @@ void Lexer::ScanIdentifier() {
     Advance();
   }
   const std::string_view text = source_.substr(start, current_ - start);
-  AddToken(IdentifierKind(text), start);
+  AddToken(text.front() == kPrivateNamePrefix ? TokenKind::PrivateIdentifier : IdentifierKind(text),
+           start);
 }
 
 void Lexer::ScanNumber() {

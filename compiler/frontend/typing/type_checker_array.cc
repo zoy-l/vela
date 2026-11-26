@@ -19,31 +19,59 @@
 namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::CheckArrayAlgorithmResult(ArrayAlgorithm algorithm,
-                                                         const Type& result,
-                                                         const FunctionInfo& method,
-                                                         SourceLocation location) {
+                                                         const Type& method_result,
+                                                         SourceLocation location,
+                                                         const Type& callback_result) {
   if (algorithm == ArrayAlgorithm::Map) {
-    if (!IsValid(result) || result.kind == Type::Kind::Void || result.kind == Type::Kind::Null) {
+    if (!IsValid(callback_result) || callback_result.kind == Type::Kind::Void ||
+        callback_result.kind == Type::Kind::Null) {
       AddDiagnostic(location, "map callback must return a value with a concrete type");
       return InvalidType();
     }
-    return ArrayType(result);
+    return ArrayType(callback_result);
   }
   if (algorithm == ArrayAlgorithm::Sort) {
-    if (result.nullable || (result.kind != Type::Kind::Int && result.kind != Type::Kind::Double)) {
+    if (callback_result.nullable ||
+        (callback_result.kind != Type::Kind::Int && callback_result.kind != Type::Kind::Double)) {
       AddDiagnostic(location, "sort comparator must return int or double");
     }
-    return method.return_type;
+    return method_result;
   }
   if (algorithm == ArrayAlgorithm::ForEach) {
-    return method.return_type;
+    return method_result;
   }
   const Type boolean{.kind = Type::Kind::Bool, .name = kBoolTypeName};
-  const auto& expected = algorithm == ArrayAlgorithm::Reduce ? method.return_type : boolean;
-  if (!CanAssign(expected, result)) {
+  const auto& expected = algorithm == ArrayAlgorithm::Reduce ? method_result : boolean;
+  if (!CanAssign(expected, callback_result)) {
     AddDiagnostic(location, "array callback return type does not match");
   }
-  return method.return_type;
+  return method_result;
+}
+
+TypeChecker::Type TypeChecker::CheckArrayAlgorithmCallback(const Expression& expression,
+                                                           const Type& actual,
+                                                           const FunctionInfo& context,
+                                                           const Type& element,
+                                                           ArrayAlgorithm algorithm,
+                                                           const Type& result) {
+  if (actual.kind != Type::Kind::Function) {
+    return InvalidType();
+  }
+  CheckCallbackContract(expression, actual, context, CallbackArity::Prefix,
+                        CallbackParameters::Assignable);
+  const auto& signature = function_types_.at(actual.name);
+  const auto& callback_result = signature.return_type;
+  if (algorithm == ArrayAlgorithm::Reduce) {
+    DiagnoseDynamicConversion(expression, result, callback_result);
+  }
+  auto checked = CheckArrayAlgorithmResult(algorithm, result, expression.location, callback_result);
+  const bool selects = algorithm == ArrayAlgorithm::Filter || algorithm == ArrayAlgorithm::Find;
+  const auto& narrowed = signature.narrowed_parameter;
+  if (selects && narrowed &&
+      (element.kind == Type::Kind::Dynamic || IsSubtype(*narrowed, element))) {
+    checked = algorithm == ArrayAlgorithm::Filter ? ArrayType(*narrowed) : NullableType(*narrowed);
+  }
+  return checked;
 }
 
 TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
@@ -53,6 +81,9 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
   const auto element = array_elements_.at(receiver.name);
   auto callback = ArrayCallbackSignature(algorithm, element, element);
   auto method = ArrayAlgorithmSignature(algorithm, callback);
+  if (algorithm == ArrayAlgorithm::Find) {
+    method.return_type = NullableType(element);
+  }
   facts_.call_targets.insert_or_assign(&expression, CallDescriptor{.signature = method});
   const auto& callback_parameter = method.parameters.front();
   if (expression.arguments.empty() &&
@@ -95,7 +126,9 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
     source.parameters.push_back(
         {.type = variable, .name = "initialValue", .location = expression.location});
   }
-  auto inferred = InferInvocation(source, expression, expected, {}, CallbackArity::Prefix);
+  const bool selects = algorithm == ArrayAlgorithm::Filter || algorithm == ArrayAlgorithm::Find;
+  auto inferred =
+      InferInvocation(source, expression, selects ? nullptr : expected, {}, CallbackArity::Prefix);
   if (!inferred) {
     return InvalidType();
   }
@@ -112,17 +145,10 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
       std::unreachable();
     }
     const auto& actual = *actual_type;
-    if (actual.kind != Type::Kind::Function) {
-      return InvalidType();
-    }
-    CheckCallbackContract(*argument.value, actual,
-                          function_types_.at(inferred->signature.parameters.front().type.name),
-                          CallbackArity::Prefix, CallbackParameters::Assignable);
-    const auto result = function_types_.at(actual.name).return_type;
-    if (algorithm == ArrayAlgorithm::Reduce) {
-      DiagnoseDynamicConversion(*argument.value, method.return_type, result);
-    }
-    method.return_type = CheckArrayAlgorithmResult(algorithm, result, method, argument.location);
+    method.return_type = CheckArrayAlgorithmCallback(
+        *argument.value, actual,
+        function_types_.at(inferred->signature.parameters.front().type.name), element, algorithm,
+        method.return_type);
     inferred->signature.parameters.front().type = actual;
   }
   if (algorithm == ArrayAlgorithm::Sort && expression.arguments.empty() &&

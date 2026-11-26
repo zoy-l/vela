@@ -254,12 +254,14 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeSignatureParameter, flags),
       });
   signature_ = RecordType<NativeSignatureDescription>(
-      "vela.signature", std::to_array<llvm::Type*>({text_, table_, type_, word_}),
+      "vela.signature", std::to_array<llvm::Type*>({text_, table_, type_, word_, type_, word_}),
       std::array{
           offsetof(NativeSignatureDescription, name),
           offsetof(NativeSignatureDescription, parameters),
           offsetof(NativeSignatureDescription, result),
           offsetof(NativeSignatureDescription, has_result),
+          offsetof(NativeSignatureDescription, narrowed_parameter),
+          offsetof(NativeSignatureDescription, has_narrowed_parameter),
       });
   call_parameter_ = RecordType<NativeCallParameter>(
       "vela.call.parameter", std::to_array<llvm::Type*>({text_, word_, word_}),
@@ -370,7 +372,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeFunctionDependencies, blocks),
       });
   member_ = RecordType<NativeMemberDescription>(
-      "vela.member", std::to_array<llvm::Type*>({text_, word_, word_, word_, word_, word_}),
+      "vela.member", std::to_array<llvm::Type*>({text_, word_, word_, word_, word_, word_, word_}),
       std::array{
           offsetof(NativeMemberDescription, name),
           offsetof(NativeMemberDescription, receiver_type),
@@ -378,6 +380,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeMemberDescription, type),
           offsetof(NativeMemberDescription, setter),
           offsetof(NativeMemberDescription, kind),
+          offsetof(NativeMemberDescription, read_only),
       });
   json_parameter_ = RecordType<NativeJSONDecodeParameter>(
       "vela.json.parameter", std::to_array<llvm::Type*>({text_, word_, word_}),
@@ -664,6 +667,8 @@ llvm::Constant* ImageEmitter::Signatures(std::span<const NativeSignatureDescript
                                                Table(signature_parameter_, parameters),
                                                Type(type.result),
                                                Word(type.has_result),
+                                               Type(type.narrowed_parameter),
+                                               Word(type.has_narrowed_parameter),
                                            }));
   }
   return Table(signature_, constants);
@@ -765,6 +770,7 @@ llvm::Constant* ImageEmitter::Members(std::span<const NativeMemberDescription> m
                                             Word(member.type),
                                             Word(member.setter),
                                             Word(static_cast<std::uint32_t>(member.kind)),
+                                            Word(member.read_only),
                                         }));
   }
   return Table(member_, constants);

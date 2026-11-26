@@ -11,11 +11,88 @@
 #include <gtest/gtest.h>
 
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
 namespace {
+
+TEST(ParserTest, DeclarationClonesKeepDefaultsAndSourceBodiesRemainOwnedByTheOriginal) {
+  const auto parsed = ParseSource(R"(
+export class Box<T> {
+  value: T;
+  count: int = 1;
+  constructor(this.value) { this.count = 2; }
+  read(offset: int = 3): int { return this.count + offset; }
+}
+export func read(value: int = 42): int { return value; }
+export const callback = (): int => 42;
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto copied = CloneProgramDeclaration(parsed.program);
+  ASSERT_EQ(copied.classes.size(), 1U);
+  const auto& original = parsed.program.classes.front();
+  const auto& owner = copied.classes.front();
+  EXPECT_EQ(owner.name, original.name);
+  EXPECT_EQ(owner.type_parameters.front().name, "T");
+  ASSERT_NE(owner.constructor, nullptr);
+  EXPECT_EQ(owner.constructor->body, nullptr);
+  EXPECT_EQ(owner.constructor->parameters.front().binding, Parameter::Binding::Field);
+  ASSERT_NE(owner.fields[1].initializer, nullptr);
+  EXPECT_EQ(owner.fields[1].initializer->text, "1");
+  EXPECT_EQ(owner.methods.front().body, nullptr);
+  ASSERT_NE(owner.methods.front().parameters.front().initializer, nullptr);
+  EXPECT_EQ(owner.methods.front().parameters.front().initializer->text, "3");
+  ASSERT_EQ(copied.functions.size(), 1U);
+  EXPECT_EQ(copied.functions.front().body, nullptr);
+  ASSERT_NE(copied.functions.front().parameters.front().initializer, nullptr);
+  EXPECT_EQ(copied.functions.front().parameters.front().initializer->text, "42");
+  ASSERT_EQ(copied.globals.size(), 1U);
+  ASSERT_NE(copied.globals.front().initializer->function, nullptr);
+  EXPECT_EQ(copied.globals.front().initializer->function->body, nullptr);
+  EXPECT_NE(original.constructor->body, nullptr);
+  EXPECT_NE(original.methods.front().body, nullptr);
+  EXPECT_NE(parsed.program.functions.front().body, nullptr);
+  EXPECT_NE(parsed.program.globals.front().initializer->function->body, nullptr);
+}
+
+TEST(ParserTest, ConstNonFieldsShareTheDiagnosticAtTheMemberName) {
+  for (const auto& [source, name] : std::to_array<std::pair<std::string_view, std::string_view>>({
+           {"class C { const constructor() {} }", "constructor"},
+           {"class C { const #constructor() {} }", "#constructor"},
+           {"class C { const external func read(): int; }", "external"},
+           {"class C { const read(): int { return 42; } }", "read"},
+       })) {
+    SCOPED_TRACE(source);
+    const auto parsed = ParseSource(source);
+    ASSERT_FALSE(parsed.diagnostics.empty());
+    const auto& diagnostic = parsed.diagnostics.front();
+    EXPECT_EQ(diagnostic.message, "const applies only to fields");
+    EXPECT_EQ(diagnostic.location.column, source.find(name) + 1);
+  }
+}
+
+TEST(LexerTest, PrivateNamesConsumeTheSameIdentifierPartsWithoutBecomingKeywords) {
+  constexpr std::string_view kSource = "#constructor #class #_field42 ordinary42 class";
+  const auto lexed = Lexer(kSource).Tokenize();
+  ASSERT_TRUE(lexed.diagnostics.empty());
+  ASSERT_EQ(lexed.tokens.size(), 6U);
+  const auto names = std::to_array<std::string_view>({"#constructor", "#class", "#_field42"});
+  for (std::size_t index = 0; index < names.size(); ++index) {
+    const auto& token = lexed.tokens[index];
+    EXPECT_EQ(token.kind, TokenKind::PrivateIdentifier);
+    EXPECT_EQ(token.lexeme, names[index]);
+    EXPECT_EQ(token.offset, kSource.find(names[index]));
+    EXPECT_EQ(token.length, names[index].size());
+  }
+  EXPECT_EQ(lexed.tokens[3].kind, TokenKind::Identifier);
+  EXPECT_EQ(lexed.tokens[3].lexeme, "ordinary42");
+  EXPECT_EQ(lexed.tokens[4].kind, TokenKind::Class);
+  for (const auto* const source : {"#", "#1"}) {
+    EXPECT_FALSE(Lexer(source).Tokenize().diagnostics.empty());
+  }
+}
 
 TEST(ParserTest, ParsesStandaloneTypesWithTheLanguageGrammar) {
   for (const std::string_view source : {"int", "Box<int?>[]", "Map<string, Future<int>>", "void"}) {
@@ -36,6 +113,70 @@ TEST(ParserTest, ParsesStandaloneTypesWithTheLanguageGrammar) {
     const auto parsed = ParseTypeSource(source);
     ASSERT_FALSE(parsed) << source;
     EXPECT_FALSE(parsed.error().empty());
+  }
+}
+
+TEST(ParserTest, ConstructorSuperDetectionStopsAtLambdaBoundaries) {
+  const auto parsed = ParseSource(R"(
+class Child extends Base {
+  constructor { const f = () => { super(value: 1); }; }
+}
+class Direct extends Base {
+  constructor { if (true) { super(value: 1); } }
+}
+class Nested extends Base {
+  constructor { try { super(value: 1); } finally {} }
+}
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  ASSERT_EQ(parsed.program.classes.size(), 3U);
+  EXPECT_FALSE(parsed.program.classes[0].constructor->has_super_call);
+  EXPECT_TRUE(parsed.program.classes[1].constructor->has_super_call);
+  EXPECT_TRUE(parsed.program.classes[2].constructor->has_super_call);
+}
+
+TEST(ParserTest, PrivateNamesAndConstFieldsRetainIndependentClassScopes) {
+  const auto parsed = ParseSource(R"(
+class Example {
+  const value: int;
+
+  const #hidden: string;
+  #read(): string { return this.#hidden; }
+
+  static const version: int = 1;
+  constructor(this.value, this.#hidden);
+}
+class Other { value: int; }
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  ASSERT_EQ(parsed.program.classes.size(), 2U);
+  const auto& owner = parsed.program.classes.front();
+  ASSERT_EQ(owner.fields.size(), 3U);
+  EXPECT_EQ(owner.fields[0].binding, BindingKind::Constant);
+  EXPECT_EQ(owner.fields[0].visibility, Visibility::Public);
+  EXPECT_EQ(owner.fields[1].visibility, Visibility::Private);
+  EXPECT_EQ(owner.methods[0].visibility, Visibility::Private);
+  EXPECT_EQ(owner.constructor->visibility, Visibility::Public);
+  EXPECT_EQ(owner.fields[2].storage, MemberStorage::Static);
+  EXPECT_EQ(parsed.program.classes[1].fields[0].visibility, Visibility::Public);
+}
+
+TEST(ParserTest, ForwardingParameterDiagnosticsExplainInheritedTypesAndDefaults) {
+  for (const auto* const parameter :
+       {"this.value: int", "super.value: int", "this.value = 1", "super.value = 1"}) {
+    const auto parsed = ParseSource("class C { constructor(" + std::string(parameter) + "); }");
+    ASSERT_FALSE(parsed.diagnostics.empty());
+    EXPECT_TRUE(parsed.diagnostics.front().message.contains("inherited from its target"));
+  }
+}
+
+TEST(ParserTest, RejectsConstructorAccessorAsyncAndOverrideModifiers) {
+  for (const auto* const modifier : {"get", "set", "async", "override"}) {
+    for (const auto* const name : {"constructor", "#constructor"}) {
+      const auto source = "class C { " + std::string(modifier) + " " + name + "() {} }";
+      const auto parsed = ParseSource(source);
+      EXPECT_FALSE(parsed.diagnostics.empty()) << source;
+    }
   }
 }
 

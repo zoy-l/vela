@@ -161,27 +161,25 @@ std::optional<Class> Parser::ParseClass(ClassKind kind) {
 
 Parser::MemberModifiers Parser::ParseMemberModifiers() {
   MemberModifiers modifiers;
-  bool has_visibility = false;
   bool has_storage = false;
   const auto is_accessor_modifier = [&] {
     return (Check(TokenKind::Get) || Check(TokenKind::Set)) &&
            IsMemberName(tokens_[current_ + 1].kind);
   };
-  while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
+  while (Check(TokenKind::Static) || Check(TokenKind::Const) || Check(TokenKind::Override) ||
          is_accessor_modifier()) {
     const auto modifier = Advance();
-    if (modifier.kind == TokenKind::Private) {
-      if (has_visibility) {
-        AddDiagnostic(modifier.location, "duplicate visibility modifier");
-      }
-      has_visibility = true;
-      modifiers.visibility = Visibility::Private;
-    } else if (modifier.kind == TokenKind::Static) {
+    if (modifier.kind == TokenKind::Static) {
       if (has_storage) {
         AddDiagnostic(modifier.location, "duplicate static modifier");
       }
       has_storage = true;
       modifiers.storage = MemberStorage::Static;
+    } else if (modifier.kind == TokenKind::Const) {
+      if (modifiers.binding == BindingKind::Constant) {
+        AddDiagnostic(modifier.location, "duplicate const modifier");
+      }
+      modifiers.binding = BindingKind::Constant;
     } else if (modifier.kind == TokenKind::Override) {
       modifiers.is_override = true;
     } else if (modifier.kind == TokenKind::Get) {
@@ -190,6 +188,9 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
       modifiers.is_setter = true;
     }
   }
+  modifiers.is_async = Match(TokenKind::Async);
+  modifiers.visibility =
+      Check(TokenKind::PrivateIdentifier) ? Visibility::Private : Visibility::Public;
   return modifiers;
 }
 
@@ -208,6 +209,10 @@ std::unique_ptr<Function> Parser::CreateConstructor(SourceLocation location) {
 }
 
 std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers) {
+  if (modifiers.is_async || modifiers.is_getter || modifiers.is_setter || modifiers.is_override) {
+    AddDiagnostic(Previous().location, "constructor cannot be async, accessor or override");
+    return nullptr;
+  }
   const auto visibility = modifiers.visibility;
   const auto storage = modifiers.storage;
   if (declaration.constructor || storage == MemberStorage::Static) {
@@ -218,7 +223,7 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
   constructor->visibility = visibility;
   if (Match(TokenKind::LeftParen)) {
     declaration.constructor_kind = ConstructorKind::Explicit;
-    auto parameters = ParseParameters();
+    auto parameters = ParseParameters(ParameterTyping::Constructor);
     if (!parameters) {
       return nullptr;
     }
@@ -227,8 +232,28 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
       return nullptr;
     }
   }
+  if (declaration.constructor_kind == ConstructorKind::Explicit && Match(TokenKind::Semicolon)) {
+    constructor->body = MakeBlockStatement(Previous().location);
+    return constructor;
+  }
   constructor->body = ParseBlock();
+  if (constructor->body) {
+    constructor->has_super_call = HasSuperConstructorCall(*constructor->body);
+  }
   return constructor->body ? std::move(constructor) : nullptr;
+}
+
+std::optional<Function> Parser::ParseExternalMethod(MemberModifiers modifiers) {
+  if (modifiers.is_async) {
+    AddDiagnostic(Peek().location, "external methods cannot be async");
+    return std::nullopt;
+  }
+  auto method = ParseFunction(NameContext::Member);
+  if (method && modifiers.storage != MemberStorage::Static) {
+    AddDiagnostic(method->location, "external methods must be static");
+    return std::nullopt;
+  }
+  return method;
 }
 
 Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
@@ -240,32 +265,51 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     return ParseNativeClassMember(declaration, std::move(*attributes));
   }
   const auto modifiers = ParseMemberModifiers();
-  const bool is_async = Match(TokenKind::Async);
+  const auto& member = Peek();
+  const auto kind = member.kind;
+  const bool external = kind == TokenKind::External;
+  const bool is_constructor =
+      kind == TokenKind::Constructor ||
+      (kind == TokenKind::PrivateIdentifier && member.lexeme == kPrivateConstructorName);
+  if (!external && !is_constructor) {
+    if (!IsMemberName(kind)) {
+      AddDiagnostic(member.location, "expected field or method name");
+      return MemberParseResult::Failed;
+    }
+    Advance();
+    if (!Check(TokenKind::LeftParen) && !Check(TokenKind::Less)) {
+      auto field = ParseField(member, modifiers);
+      if (!field) {
+        return MemberParseResult::Failed;
+      }
+      field->attributes = std::move(*attributes);
+      declaration.fields.push_back(std::move(*field));
+      return MemberParseResult::Parsed;
+    }
+  }
+  if (modifiers.binding == BindingKind::Constant) {
+    AddDiagnostic(member.location, "const applies only to fields");
+    return MemberParseResult::Failed;
+  }
   const auto append_method = [&declaration, &attributes, modifiers](Function method) -> void {
     method.attributes = std::move(*attributes);
-    method.visibility = modifiers.visibility;
+    method.visibility = IsPrivateName(method.name) ? Visibility::Private : Visibility::Public;
     method.storage = modifiers.storage;
     method.is_override = modifiers.is_override;
     method.is_getter = modifiers.is_getter;
     method.is_setter = modifiers.is_setter;
     declaration.methods.push_back(std::move(method));
   };
-  if (Check(TokenKind::External)) {
-    if (is_async) {
-      AddDiagnostic(Peek().location, "external methods cannot be async");
-    }
-    auto method = ParseFunction();
+  if (external) {
+    auto method = ParseExternalMethod(modifiers);
     if (!method) {
-      return MemberParseResult::Failed;
-    }
-    if (modifiers.storage != MemberStorage::Static) {
-      AddDiagnostic(method->location, "external methods must be static");
       return MemberParseResult::Failed;
     }
     append_method(std::move(*method));
     return MemberParseResult::Parsed;
   }
-  if (Match(TokenKind::Constructor)) {
+  if (is_constructor) {
+    Advance();
     auto constructor = ParseConstructor(declaration, modifiers);
     if (!constructor) {
       return MemberParseResult::Failed;
@@ -274,34 +318,21 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     declaration.constructor = std::move(constructor);
     return MemberParseResult::Parsed;
   }
-  std::optional<Token> member;
-  if (IsMemberName(Peek().kind)) {
-    member = Advance();
-  } else {
-    AddDiagnostic(Peek().location, "expected field or method name");
-  }
-  if (!member) {
+  auto method = ParseClassMethod(member, modifiers);
+  if (!method) {
     return MemberParseResult::Failed;
   }
-  if (Check(TokenKind::LeftParen) || Check(TokenKind::Less)) {
-    auto method = ParseFunctionBody(*member, {}, is_async);
-    if (!method) {
-      return MemberParseResult::Failed;
-    }
-    if ((modifiers.is_getter || modifiers.is_setter) && !method->type_parameters.empty()) {
-      AddDiagnostic(method->location, "accessors cannot declare generic parameters");
-      return MemberParseResult::Failed;
-    }
-    append_method(std::move(*method));
-    return MemberParseResult::Parsed;
-  }
-  auto field = ParseField(*member, modifiers);
-  if (!field) {
-    return MemberParseResult::Failed;
-  }
-  field->attributes = std::move(*attributes);
-  declaration.fields.push_back(std::move(*field));
+  append_method(std::move(*method));
   return MemberParseResult::Parsed;
+}
+
+std::optional<Function> Parser::ParseClassMethod(const Token& name, MemberModifiers modifiers) {
+  auto method = ParseFunctionBody(name, {}, modifiers.is_async);
+  if (method && (modifiers.is_getter || modifiers.is_setter) && !method->type_parameters.empty()) {
+    AddDiagnostic(method->location, "accessors cannot declare generic parameters");
+    return std::nullopt;
+  }
+  return method;
 }
 
 std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modifiers) {
@@ -328,6 +359,7 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
       .location = name.location,
       .visibility = modifiers.visibility,
       .storage = modifiers.storage,
+      .binding = modifiers.binding,
       .initializer = std::move(initializer),
       .attributes = {},
   };
@@ -367,7 +399,7 @@ std::optional<Interface> Parser::ParseInterface() {
 
 std::optional<Function> Parser::ParseInterfaceMethod() {
   const auto member = Peek();
-  if (!IsMemberName(member.kind)) {
+  if (!IsMemberName(member.kind) || member.kind == TokenKind::PrivateIdentifier) {
     AddDiagnostic(Peek().location, "expected interface method name");
     return std::nullopt;
   }
@@ -420,13 +452,13 @@ std::optional<Function> Parser::ParseSignature(Function function, SignatureConte
   return function;
 }
 
-std::optional<Function> Parser::ParseFunction() {
+std::optional<Function> Parser::ParseFunction(NameContext context) {
   const bool is_async = Match(TokenKind::Async);
   const bool external = Match(TokenKind::External);
   if (Expect(TokenKind::Func, "expected 'func' before function declaration") == nullptr) {
     return std::nullopt;
   }
-  const auto* const name = TakeName();
+  const auto* const name = TakeName(context);
   if (name == nullptr) {
     AddDiagnostic(Peek().location, "expected function name");
     return std::nullopt;
@@ -489,20 +521,59 @@ std::optional<std::vector<Parameter>> Parser::ParseParameters(ParameterTyping ty
   return parameters;
 }
 
+std::optional<Parameter::Binding> Parser::ParseParameterBinding(ParameterTyping typing) {
+  auto binding = Parameter::Binding::Local;
+  const auto& token = Peek();
+  const auto kind = token.kind;
+  const bool super = kind == TokenKind::Super;
+  if (typing == ParameterTyping::Constructor &&
+      (super || (kind == TokenKind::Identifier && token.lexeme == kReceiverName))) {
+    binding = super ? Parameter::Binding::Super : Parameter::Binding::Field;
+    Advance();
+    if (Expect(TokenKind::Dot, "expected '.' in constructor forwarding parameter") == nullptr) {
+      return std::nullopt;
+    }
+  }
+  return binding;
+}
+
 std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
-  const auto* const name = TakeName();
+  const auto parsed_binding = ParseParameterBinding(typing);
+  if (!parsed_binding) {
+    return std::nullopt;
+  }
+  const auto binding = *parsed_binding;
+  const bool is_field = binding == Parameter::Binding::Field;
+  const auto* const name = TakeName(is_field ? NameContext::Member : NameContext::Declaration);
   if (name == nullptr) {
     AddDiagnostic(Peek().location, "expected parameter name");
     return std::nullopt;
   }
+  const auto& lexeme = name->lexeme;
+  const auto location = name->location;
   Parameter parameter{
-      .type = {.name = {}, .location = name->location, .arguments = {}, .parameter = {}},
-      .name = name->lexeme,
-      .location = name->location,
+      .type = {.name = {}, .location = location, .arguments = {}, .parameter = {}},
+      .name = name->kind == TokenKind::PrivateIdentifier ? lexeme.substr(1) : lexeme,
+      .location = location,
       .initializer = {},
+      .binding = binding,
+      .member_name = is_field ? lexeme : std::string(),
   };
+  if (binding != Parameter::Binding::Local) {
+    if (Check(TokenKind::Colon)) {
+      AddDiagnostic(Peek().location,
+                    "forwarding parameter type is inherited from its target; omit ': Type'");
+      return std::nullopt;
+    }
+    if (Check(TokenKind::Equal)) {
+      AddDiagnostic(Peek().location,
+                    "forwarding parameter default is inherited from its target; omit '= default'");
+      return std::nullopt;
+    }
+    return parameter;
+  }
   if (!Match(TokenKind::Colon)) {
-    if (typing == ParameterTyping::Required) {
+    if (typing != ParameterTyping::Inferred) {
       AddDiagnostic(Peek().location, "expected ':' after parameter name");
       return std::nullopt;
     }

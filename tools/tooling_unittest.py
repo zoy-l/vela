@@ -635,7 +635,7 @@ func main(): int {
 
     def test_class_hover_displays_constructor_parameters_defaults_and_documentation(self) -> None:
         source = ("/// A counter.\nclass Counter { value: int; step: int = -1; "
-                  "label: string = 'Vela'; static other: int = 0; private hidden: bool = true; }\n"
+                  "label: string = 'Vela'; static other: int = 0;  #hidden: bool = true; }\n"
                   "class Pair { value: int; constructor(value: int) { this.value = value; } }\n"
                   "func main(): void { Counter(value: 40); Pair(42); print(Error(message: 'bad')); }")
         messages = self.session([self.open(source),
@@ -675,7 +675,7 @@ func main(): int {
         completion = next(item for item in self.reply(messages, 'completion')['result'] if item['label'] == 'sqrt')
         self.assertIn(completion['documentation']['value'], sqrt)
         math = next(item for item in self.reply(messages, 'global')['result'] if item['label'] == 'Math')
-        self.assertIn('private constructor()', math['detail'])
+        self.assertIn('\n  #constructor()', math['detail'])
         self.assertIn('Mathematical', math['documentation']['value'])
 
     def test_enum_interface_and_members_follow_typescript_hover_conventions(self) -> None:
@@ -907,7 +907,7 @@ func main(): int {
     def test_constructor_argument_completion_inserts_names_and_shows_types_and_defaults(self) -> None:
         items = self.argument_completions(
             'class Counter { value: int; step: int = 1; '
-            'static other: int = 0; private unused: int = 0; constructor {} }\n'
+            'static other: int = 0;  #unused: int = 0;   constructor {} }\n'
             'func main(): void { const initial = 40; Counter(¦); }')
         parameters = {item['label']: item for item in items if item['label'].endswith(':')}
         self.assertEqual(parameters.keys(), {'value:', 'step:'})
@@ -943,7 +943,7 @@ func main(): int {
 
     def test_explicit_constructor_completion_uses_only_declared_parameters(self) -> None:
         items = self.argument_completions(
-            'class Box { value: int; text: string = ""; private cache: int = 0; '
+            'class Box { value: int; text: string = "";  #cache: int = 0;   '
             'constructor(initial: int) { this.value = initial; } }\n'
             'func main(): void { Box(¦); }')
         parameters = {item['label'] for item in items if item['label'].endswith(':')}
@@ -954,7 +954,7 @@ func main(): int {
         messages = self.session([self.open(source),
             self.symbol_query('completion', source, source.index('print('), 'keywords')])
         labels = {item['label'] for item in self.reply(messages, 'keywords')['result']}
-        self.assertIn('private', labels)
+        self.assertNotIn('private', labels)
         self.assertNotIn('public', labels)
         self.assertNotIn('param', labels)
 
@@ -1033,7 +1033,7 @@ func main(): int {
             self.symbol_query('hover', source, source.index('Date.now') + len('Date.'), 'wall')])
         self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
         arrays = {item['label'] for item in self.reply(messages, 'array')['result']}
-        self.assertTrue({'some', 'map'} <= arrays)
+        self.assertTrue({'some', 'map', 'filter', 'find', 'includes'} <= arrays)
         self.assertFalse({'any', 'transform'} & arrays)
         sets = {item['label'] for item in self.reply(messages, 'set')['result']}
         self.assertTrue({'size', 'delete'} <= sets)
@@ -1100,6 +1100,27 @@ func main(): int {
         arguments = {item['label'] for item in self.reply(messages, 'arguments')['result']}
         self.assertIn('start:', arguments)
         self.assertNotIn('items:', arguments)
+
+    def test_array_predicates_narrow_hover_and_named_search_arguments(self) -> None:
+        source = ("func main(): void { const values: dynamic[] = [1, 'x']; "
+                  "const integers = values.filter(value => { if (value is int) { return true; } "
+                  "return false; }); const found = values.find(value => value is int); "
+                  "print(integers.includes(searchElement: 1, fromIndex: 0)); }")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('hover', source, source.index('integers.includes'), 'integers'),
+            self.symbol_query('hover', source, source.index('found ='), 'found'),
+            self.symbol_query('hover', source, source.index('includes('), 'includes'),
+            self.symbol_query('completion', source, source.index('searchElement:'), 'arguments'),
+            self.symbol_query('completion', source, source.index('fromIndex:'), 'start')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertIn('const integers: int[]', self.reply(messages, 'integers')['result']['contents']['value'])
+        self.assertIn('const found: int?', self.reply(messages, 'found')['result']['contents']['value'])
+        self.assertIn('no allocation', self.reply(messages, 'includes')['result']['contents']['value'])
+        arguments = {item['label'] for item in self.reply(messages, 'arguments')['result']}
+        self.assertIn('searchElement:', arguments)
+        starts = {item['label'] for item in self.reply(messages, 'start')['result']}
+        self.assertIn('fromIndex:', starts)
 
     def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
         source = ("class Item { value: int; }\n"
@@ -1461,7 +1482,7 @@ func main(): int {
 
     def test_completes_incomplete_members_with_correct_visibility_and_storage(self) -> None:
         header = ("class Counter {\n  value: int;\n"
-                  "  private secret: int = 1;\n  static total: int = 0;\n"
+                  "\n  #secret: int = 1;\n\n  static total: int = 0;\n"
                   "  increment(): int { return this.value + 1; }\n}\n")
         for receiver, expected in (("counter", {"value", "increment"}), ("Counter", {"total"})):
             with self.subTest(receiver=receiver):
@@ -1473,7 +1494,7 @@ func main(): int {
         offset = source.index("this.;") + len("this.")
         messages = self.session([self.open(source), self.symbol_query("completion", source, offset)])
         labels = {item["label"] for item in self.reply(messages, "query")["result"]}
-        self.assertEqual(labels, {"value", "secret", "increment"})
+        self.assertEqual(labels, {"value", "#secret", "increment"})
 
     def test_completes_builtin_members_and_respects_null_refinement(self) -> None:
         for declaration, expected in (

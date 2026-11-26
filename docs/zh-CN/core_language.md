@@ -223,22 +223,22 @@ func requireRectangle(value: Measurable): Rectangle {
 
 ## 按字段生成的类构造模型
 
-类成员默认公开，仅私有成员需要标记 `private`。类没有显式构造参数列表时，每个公开实例字段都会生成同名的命名构造参数，字段不需要额外修饰符：
+类成员默认公开，私有成员的名字以 `#` 开头，声明和访问均保留 `#`，例如 `#count` 与 `this.#count`。不支持 `private` / `public` 修饰符或访问分块。类没有显式构造参数列表时，每个公开实例字段都会生成同名的命名构造参数，字段不需要额外修饰符：
 
 ```typescript
 class Counter {
   value: int;
   step: int = 1;
 
-  private count: int = 0;
+  #count: int = 0;
 
   constructor {
-    // 在本代码块执行前，所有必需字段均已完成初始化。
+    // 在本代码块执行前，公开参数对应的字段均已完成初始化。
   }
 
   next(): int {
     this.value = this.value + this.step;
-    this.count = this.count + 1;
+    this.#count = this.#count + 1;
     return this.value;
   }
 }
@@ -254,9 +254,9 @@ func main(): void {
 }
 ```
 
-自动构造的实参均为命名实参：公开实例字段没有默认值时必填，带有默认值时可以省略。可空类型仅表示允许传入 null，不表示可以省略：`text: string?` 仍为必填，`text: string? = null` 才可省略。私有字段与静态字段不生成构造参数。私有字段需要默认值或由显式构造函数赋值，静态字段必须有初始值。调用语法保留 `ClassName(...)`，不使用 `new`。
+自动构造的实参均为命名实参：公开实例字段没有默认值时必填，带有默认值时可以省略。可空类型仅表示允许传入 null，不表示可以省略：`text: string?` 仍为必填，`text: string? = null` 才可省略。私有字段与静态字段不生成构造参数。私有字段需要默认值、字段绑定参数或构造体赋值，静态字段必须有初始值。调用语法保留 `ClassName(...)`，不使用 `new`。
 
-`constructor { ... }` 是自动生成的构造函数的执行体，并非无参构造函数的声明。在执行该函数体之前，所有必需字段已完成赋值初始化。显式传入的实参按源码书写顺序精确求值一次；被省略的默认值表达式随后按字段声明顺序依次求值，紧接着执行 constructor 代码体。显式提供了实参的字段跳过默认值求值。默认值表达式不可访问 `this` 或调用方的局部变量。每次构造时都会重新执行被省略字段的默认表达式，因此 `values: int[] = []` 会为每个实例创建独立数组。生成的构造函数将新分配的接收者实例始终保持保根，并将实参直接写入字段内存；绝不将所有字段实参暂存在独立寄存器中直至函数体启动。
+`constructor { ... }` 是自动生成的构造函数的执行体，并非无参构造函数的声明。在执行该函数体之前，公开参数对应的字段已完成赋值初始化。显式传入的实参按源码书写顺序精确求值一次；被省略的默认值表达式随后按字段声明顺序依次求值，紧接着执行 constructor 代码体。显式提供了实参的字段跳过默认值求值。默认值表达式不可访问 `this` 或调用方的局部变量。每次构造时都会重新执行被省略字段的默认表达式，因此 `values: int[] = []` 会为每个实例创建独立数组。构造过程始终保根新分配的接收者。纯字段构造将实参直接写入字段内存；向显式父类构造转发普通参数时，使用编译期确定的参数窗口。
 
 需要自定义参数的类可以声明 `constructor(name: Type, ...) { ... }`。这份列表就是完整的构造签名，字段不再自动追加参数；`constructor()` 因此表示无参构造。字段默认值仍在函数体前执行，剩余字段由函数体赋值：
 
@@ -264,21 +264,39 @@ func main(): void {
 class Box {
   value: int;
   text: string = '';
-  private adjustment: int = 2;
+
+  #adjustment: int = 2;
 
   constructor(initial: int) {
-    this.value = initial + this.adjustment;
+    this.value = initial + this.#adjustment;
   }
 }
 
 const box = Box(initial: 40); // value = 42；构造参数中没有 value 或 text
 ```
 
-参数绑定与字段偏移量在编译期直接解析。运行时不执行任何注解反射，亦不维护参数名称字符串字典。对于显式构造函数，字段默认值在函数体前执行；确定性初始化分析强制要求在每条返回路径上所有字段均已完成初始化。读取未初始化的字段、调用实例方法或在初始化完成前暴露 `this` 均会被静态拦截。`private` 仅对声明该成员的类本身可见，静态访问与动态分派均遵循此限制。
+参数绑定与字段偏移量在编译期直接解析。运行时不执行任何注解反射，亦不维护参数名称字符串字典。对于显式构造函数，字段默认值在函数体前执行；确定性初始化分析强制要求在每条返回路径上所有字段均已完成初始化。读取未初始化的字段、调用实例方法或在初始化完成前暴露 `this` 均会被静态拦截。
 
-子类没有声明构造函数、也没有自有自动构造参数时，会继承父类的完整构造签名并自动转发参数。
-参数名称、类型、必填规则与默认值保持不变；父类的自动字段构造仍只接受命名实参，显式构造仍支持位置实参。
-这条规则支持泛型替换和多层继承，也适用于将类名用作构造函数值：
+`#name` 仅在声明它的类的词法作用域中可用，闭包保留此作用域。父类和子类可以各自声明同名私有成员，两者的字段槽和方法互相独立；`name` 与 `#name` 也是不同成员。私有成员不参与继承覆盖，不能通过 `super.#name` 访问。静态私有成员必须通过声明类访问。类内部的 `dynamic` 接收者访问使用相同的私有身份，并在运行时检查接收者是否属于声明类；类外无法通过动态分派绕过私有访问。
+
+将 `name` 改为 `#name` 会删除旧成员并新增私有成员。热更新时，仍引用旧成员的版本句柄或闭包会阻止更新；必须先释放这些引用或执行 Reload。保持同一私有名字时，类内闭包按原词法归属访问当前字段。
+
+Vela 提供 `#constructor(...)` 扩展，构造入口只能由本类代码调用，例如由公开静态工厂返回实例。`constructor(this.#value)` 将私有字段绑定到参数名 `value`；调用仍写作 `ClassName(value: ...)`。
+
+实例 `const` 字段只允许在构造期间初始化一次。字段默认值、字段绑定参数和构造体赋值都会计入初始化；分支、循环、异常路径都必须保证每条正常退出路径恰好完成一次初始化。构造结束后禁止赋值、复合赋值和自增自减，动态写入与反射写入同样受限。`const` 是浅层只读绑定，不冻结数组或对象内容，也不要求值是编译期常量。静态 `const` 字段在惰性初始化后只读。
+
+继承构造统一遵循以下四条规则。没有父类时，父类参数列表为空；父类没有参数时也不需要另设规则。
+
+| 子类声明 | 最终构造参数 | 父类调用 |
+| --- | --- | --- |
+| 不写 `constructor` | 父类构造参数＋本类公开实例字段 | 自动转发父类参数 |
+| `constructor { ... }`，没有 `super(...)` | 父类构造参数＋本类公开实例字段 | 自动调用父类，然后执行构造体 |
+| `constructor { ... super(...); ... }` | 只有本类公开实例字段 | 按构造体里的显式调用执行 |
+| `constructor(...)` | 完整显式参数列表 | 有 `super(...)` 时按代码执行，否则通过 `super.param` 转发 |
+
+前三种形式统一只接受命名实参，即使父类声明了显式参数列表也是如此。显式参数列表支持位置实参与命名实参。
+合并签名保留父类参数的名称、类型、必填性和默认值；本类参数按公开实例字段的声明顺序追加。同名参数产生编译错误，需使用显式参数列表消除歧义。
+私有字段与静态字段不增加构造参数。私有父类构造不能自动继承或调用。
 
 ```typescript
 class Component<P> {
@@ -286,48 +304,71 @@ class Component<P> {
 }
 
 class ProgressBar extends Component<int> {
-  private animation: double = 0.0;
+  width: int = 100;
+  constructor { this.width += 1; }
 }
 
-const bar = ProgressBar(props: 42);
-const create: (int) => ProgressBar = ProgressBar;
+const bar = ProgressBar(props: 42); // props = 42，width = 101
+const create: (int, int) => ProgressBar = ProgressBar;
 ```
 
-子类私有字段和静态字段不生成构造参数，因此不阻止继承签名。子类自有实例字段的默认值先初始化，
-随后进入父类构造流程；被省略的默认参数仍由父类在原声明环境中求值，不会重复执行。私有构造函数不能继承。
-
-子类声明了 `constructor { ... }`、显式参数构造函数，或有自有公开实例字段时，使用它自己的构造签名。
-父类有必填参数时，子类必须在构造体中显式调用 `super(...)`：
+显式参数列表支持字段绑定参数 `this.field` 与父类转发参数 `super.param`。它们从目标声明继承类型、必填性和默认值，不能重复标注类型或覆盖默认值。
+`this.field` 只能绑定本类实例字段，包括私有字段；`super.param` 必须对应直接父类构造签名中的参数。两种绑定都不引入构造体局部变量；读取字段使用 `this.field`。
+普通 `name: Type` 参数仍是局部变量，不能仅凭同名自动赋值或转发。
 
 ```typescript
-class Counter {
-  value: int;
-}
+class Counter { value: int = 40; }
 
 class BonusCounter extends Counter {
-  bonus: int;
-
-  constructor {
-    super(value: this.bonus * 20);
-  }
+  bonus: int = 2;
+  constructor(super.value, this.bonus);
 }
 
-const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
+const counter = BonusCounter(); // value = 40，bonus = 2
+const other = BonusCounter(41, 1);
 ```
 
-使用自有构造签名时，如果父类没有必填参数，子类可以省略 `super()`；父类构造函数会在子类构造体前隐式执行。
-这时省略 `super(...)` 而父类仍有必填参数，编译器报告错误。
+`constructor(...);` 等价于相同参数列表的空构造体。`super.param` 与显式 `super(...)` 不能混用。
+省略显式父类调用时，所有父类必填参数都必须通过转发参数满足；普通参数不会自动转发。
+若需要计算父类实参，则使用显式调用：
 
-子类自有实例字段必须在进入父类构造函数前完成初始化，避免父类构造期间的虚方法调用读取未初始化的子类字段。字段默认值和自动构造参数在此边界前生效；显式构造函数需要先赋值自有字段，再调用 `super(...)`。若依赖构造体赋值完成这些字段，就必须使用显式 `super(...)`。
+```typescript
+class ComputedCounter extends Counter {
+  bonus: int;
+  constructor { super(value: this.bonus * 20); }
+}
+
+const computed = ComputedCounter(bonus: 2); // value = 40，bonus = 2
+```
+
+自动父类调用在本类构造体前执行。显式 `super(...)` 在源码指定的位置执行，每条正常构造路径必须恰好调用一次。公开实例字段必须在进入父类前初始化；私有字段可以延后到 `super(...)` 之后赋值，前提是父类构造期间无法观察到该字段。编译器沿父类构造、虚方法分派及其传递调用分析字段读取、写入、接收者逃逸和闭包捕获；新增子类覆盖也会重新验证祖先的延后初始化条件。所有实例字段在构造正常返回前都必须完成初始化。字段默认值、自动字段参数与 `this.field` 绑定在构造体前生效。下面的私有字段无需假默认值：
+
+```typescript
+class Panel { const title: string; const closable: bool = true; }
+class TitledPanel extends Panel {
+  const prefix: string;
+  const #fullHeader: string;
+  constructor(this.prefix, rawTitle: string, closable: bool = true) {
+    super(title: '${this.prefix}: ${rawTitle}', closable: closable);
+    this.#fullHeader = '[${this.title}]';
+  }
+  get header(): string { return this.#fullHeader; }
+}
+```
+
+被省略的父类默认值始终在父类的声明环境中求值一次；显式 null 与省略保持区别。
+上述规则贯穿泛型替换、多层继承、构造函数值、Typed JSON 和各执行模式。
 
 ## 静态成员
 
 ```typescript
 class Counts {
-  private static count: int = 0;
+
+  static #count: int = 0;
+
   static next(): int {
-    Counts.count = Counts.count + 1;
-    return Counts.count;
+    Counts.#count = Counts.#count + 1;
+    return Counts.#count;
   }
 }
 ```

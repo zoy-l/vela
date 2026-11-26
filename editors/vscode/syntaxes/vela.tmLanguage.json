@@ -82,10 +82,10 @@
         { "include": "#attribute" },
         { "include": "#function-declaration" },
         { "include": "#modifiers" },
-        { "name": "storage.modifier.vela", "match": "\\b(?:get|set)\\b(?=\\s+[A-Za-z_])" },
+        { "name": "storage.modifier.vela", "match": "\\b(?:get|set)\\b(?=\\s+#?[A-Za-z_])" },
         {
           "name": "meta.member.declaration.vela",
-          "begin": "\\b(?:(constructor)|([A-Za-z_][A-Za-z_0-9]*)(?=\\s*[<(])|([A-Za-z_][A-Za-z_0-9]*))\\b",
+          "begin": "(?<![A-Za-z_0-9])(?:(#?constructor)|(#?[A-Za-z_][A-Za-z_0-9]*)(?=\\s*[<(])|(#?[A-Za-z_][A-Za-z_0-9]*))\\b",
           "beginCaptures": {
             "1": { "name": "storage.type.vela" },
             "2": { "name": "entity.name.function.vela" },
@@ -327,11 +327,11 @@
     },
     "modifiers": {
       "name": "storage.modifier.vela",
-      "match": "\\b(?:private|static|external|override|let|const|async)\\b"
+      "match": "\\b(?:static|external|override|let|const|async)\\b"
     },
     "identifier": {
       "patterns": [
-        { "name": "variable.other.property.vela", "match": "(?<=\\.)[A-Za-z_][A-Za-z_0-9]*\\b" },
+        { "name": "variable.other.property.vela", "match": "(?<=\\.)#?[A-Za-z_][A-Za-z_0-9]*\\b" },
         { "name": "variable.other.readwrite.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*\\b" }
       ]
     },

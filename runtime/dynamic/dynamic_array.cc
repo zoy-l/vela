@@ -12,6 +12,7 @@
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "runtime/collections/array_operations.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
@@ -145,24 +146,30 @@ OperationResult InitializeOutput(Isolate& isolate,
                                  ArrayAlgorithm algorithm,
                                  std::uint32_t length,
                                  const TypeConstraint& accumulator) {
-  auto& heap = isolate.heap();
-  if (algorithm == ArrayAlgorithm::Map) {
-    const auto result = signature.result;
-    if (!result) {
-      std::unreachable();
+  std::optional<TypeConstraint> type;
+  if (algorithm == ArrayAlgorithm::Filter) {
+    const auto receiver = Heap::ValueSlots(plan)[kReceiver];
+    const auto* layout = Heap::ArrayTypeOf(*receiver.AsObject());
+    auto selected = layout->value_type();
+    const auto narrowed = signature.narrowed_parameter;
+    if (narrowed && (selected.dynamic || narrowed->IsSubtypeOf(selected))) {
+      selected = *narrowed;
     }
-    const auto output = AllocateOutput(isolate, *result, length);
-    if (!output) {
-      return std::unexpected(output.error());
-    }
-    heap.SetValueSlot(plan, kOutput, Value::Object(*output));
+    type = selected;
+  } else if (algorithm == ArrayAlgorithm::Map) {
+    type = signature.result;
   } else if (algorithm == ArrayAlgorithm::Reduce) {
-    const auto output = AllocateOutput(isolate, accumulator, 0);
-    if (!output) {
-      return std::unexpected(output.error());
-    }
-    heap.SetValueSlot(plan, kOutput, Value::Object(*output));
+    type = accumulator;
   }
+  if (!type) {
+    return {};
+  }
+  const auto count = algorithm == ArrayAlgorithm::Map ? length : 0;
+  const auto output = AllocateOutput(isolate, *type, count);
+  if (!output) {
+    return std::unexpected(output.error());
+  }
+  isolate.heap().SetValueSlot(plan, kOutput, Value::Object(*output));
   return {};
 }
 
@@ -178,7 +185,7 @@ std::expected<DynamicArrayPreparation, ExecutionStatus> PrepareDynamicArray(
   const auto initial = input.subspan(2).front();
   const auto selector = input.subspan(3).front();
   const auto wrapper = input.subspan(4).front();
-  const auto decoded = DecodeOperation<ArrayAlgorithm::Map>(selector);
+  const auto decoded = DecodeOperation<ArrayAlgorithm::Find>(selector);
   if (!receiver.IsObject() || !decoded) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -279,6 +286,20 @@ std::expected<Value, ExecutionStatus> ReadDynamicArrayOperation(Builtin builtin,
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
   return value;
+}
+
+std::expected<Value, ExecutionStatus> AppendDynamicArrayValue(Heap& heap,
+                                                              std::span<const Value> input) {
+  const auto slots = Heap::ValueSlots(*input.front().AsObject());
+  auto& output = *slots[kOutput].AsObject();
+  const auto* source = Heap::ArrayTypeOf(*slots[kReceiver].AsObject());
+  auto value = input[1];
+  if (source->element.dynamic) {
+    value = UnboxDynamicValue(value, Heap::ArrayTypeOf(output)->element);
+  }
+  const auto appended = heap.PushArray(output, value);
+  return appended ? std::expected<Value, ExecutionStatus>{Value::Null()}
+                  : std::unexpected(ArrayExecutionStatus(appended.error()));
 }
 
 }  // namespace vela::runtime

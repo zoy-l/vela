@@ -26,9 +26,13 @@ class Counter implements Reader {
   static get shared(): int { return Counter.total; }
   static set shared(value: int): void { Counter.total = value; }
   static twice(value: int): int { return value * 2; }
-  [Reflect] private hidden: int = 9;
+
+  [Reflect] #hidden: int = 9;
+
   get amount(): int { return this.value; }
-  [Reflect] private set amount(value: int): void { this.value = value; }
+
+  [Reflect] set #amount(value: int): void { this.value = value; }
+
   add(amount: int): int { this.value += amount; return this.value; }
   [Button(label: 'first')]
   [Button(label: 'second')]
@@ -57,7 +61,7 @@ export func calculate(): int {
   const property = info.findProperty('amount');
   if (property == null || !property.canRead || property.canWrite) { return -4; }
   try { property.setValue(object, 50); return -5; }
-  catch (error: Error) { if (error.code != 'ReflectionAccessDenied') { return -6; } }
+  catch (error: Error) { if (error.code != 'TypeError') { return -6; } }
   const method = info.findMethod('add');
   if (method == null || method.parameters[0].name != 'amount') { return -7; }
   const answer = method.invoke(object, CallArguments(items: [CallArgument(value: 22, name: 'amount')]));

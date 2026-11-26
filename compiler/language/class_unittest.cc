@@ -223,13 +223,17 @@ TEST(ClassDispatchTest, DynamicPropertiesRespectEachAccessorVisibilityAndInherit
   test::ExpectRunAnswer(R"(
 class Base {
   stored: int = 21;
-  private set value(next: int): void { this.stored = next; }
+
+  set #value(next: int): void { this.stored = next; }
+
   get value(): int { return this.stored; }
 }
 class Child extends Base { override get value(): int { return super.value; } }
 class WriteOnly {
   stored: int = 0;
-  private get value(): int { return this.stored; }
+
+  get #value(): int { return this.stored; }
+
   set value(next: int): void { this.stored = next; }
 }
 func main(): int {
@@ -251,7 +255,8 @@ TEST(ClassDispatchTest, StaticWritesCheckSetterVisibilityForEveryMutation) {
 class Counter {
   stored: int = 0;
   get amount(): int { return this.stored; }
-  private set amount(next: int): void { this.stored = next; }
+
+  set #amount(next: int): void { this.stored = next; }
 }
 func main(): void { const value = Counter();
 )") + mutation + " }");
@@ -270,9 +275,11 @@ INSTANTIATE_TEST_SUITE_P(GeneratedAndExplicitConstructors,
 class Counter {
   value: int;
   step: int = 1;
-  private count: int = 0;
-  constructor { this.count = this.count + 1; }
-  next(): int { this.value = this.value + this.step; return this.value + this.count; }
+
+  #count: int = 0;
+
+  constructor { this.#count = this.#count + 1; }
+  next(): int { this.value = this.value + this.step; return this.value + this.#count; }
 }
 func main(): int { const c = Counter(value: 40); return c.next(); }
 )",
@@ -291,19 +298,23 @@ func main(): int {
                              R"(
 class Pair {
   value: int;
-  private label: string = "a" + "b";
+
+  #label: string = "a" + "b";
+
   constructor(value: int, positive: bool) {
     if (positive) { this.value = value; } else { this.value = -value; }
   }
-  read(): int { return this.value + this.label.length; }
+  read(): int { return this.value + this.#label.length; }
 }
 func main(): int { return Pair(40, true).read(); }
 )",
                              R"(
 class Box<T> {
-  private value: T;
-  constructor(value: T) { this.value = value; }
-  get(): T { return this.value; }
+
+  #value: T;
+
+  constructor(value: T) { this.#value = value; }
+  get(): T { return this.#value; }
 }
 type IntegerBox = Box<int>;
 func main(): int { return IntegerBox(value: 42).get(); }
@@ -329,8 +340,10 @@ func main(): int { return Box(42).value; }
 )",
                              R"(
 class Counter {
-  private static value: int = 40;
-  static next(): int { Counter.value = Counter.value + 1; return Counter.value; }
+
+  static #value: int = 40;
+
+  static next(): int { Counter.#value = Counter.#value + 1; return Counter.#value; }
 }
 func main(): int { const f: () => int = Counter.next; f(); return f(); }
 )",
@@ -351,8 +364,10 @@ func main(): int { return Value().value; }
 class Box {
   value: int;
   text: string = 'default';
-  private adjustment: int = 2;
-  constructor(initial: int) { this.value = initial + this.adjustment; }
+
+  #adjustment: int = 2;
+
+  constructor(initial: int) { this.value = initial + this.#adjustment; }
 }
 func main(): int { return Box(initial: 40).value; }
 )",
@@ -364,8 +379,8 @@ func main(): int {
 }
 )",
                              R"(
-class Box { public: int; param: int; }
-func main(): int { return Box(public: 40, param: 2).public + 2; }
+class Box { value: int; param: int; }
+func main(): int { return Box(value: 40, param: 2).value + 2; }
 )"));
 
 INSTANTIATE_TEST_SUITE_P(Inheritance,
@@ -497,8 +512,10 @@ class Base<P> {
   ready(): int { return 0; }
 }
 class Child extends Base<int> {
-  private adjustment: int = 2;
-  override ready(): int { return this.adjustment; }
+
+  #adjustment: int = 2;
+
+  override ready(): int { return this.#adjustment; }
 }
 func main(): int { return Child(props: 40).props + 2; }
 )",
@@ -521,7 +538,7 @@ class Leaf extends Middle {}
 func main(): int {
   const first = Leaf();
   const second = Leaf(answer: 42, value: 1);
-  const third = Leaf(40);
+  const third = Leaf(value: 40);
   return calls == 1 && first.value == 42 && second.value == 42 ? third.value : 0;
 }
 )",
@@ -532,7 +549,7 @@ class Root {
   value: int = mark('base');
   constructor(value: int = mark('default')) { this.value = value; order += 'body'; }
 }
-class Leaf extends Root { private state: int = mark('child'); }
+class Leaf extends Root {  #state: int = mark('child'); }
 func main(): int {
   const value = Leaf();
   return order == 'childbasedefaultbody' ? value.value : 0;
@@ -565,7 +582,112 @@ class Root {
   constructor(value: string? = 'default') { this.value = value; }
 }
 class Leaf extends Root {}
-func main(): int { return Leaf().value == 'default' && Leaf(null).value == null ? 42 : 0; }
+func main(): int { return Leaf().value == 'default' && Leaf(value: null).value == null ? 42 : 0; }
+)"));
+
+INSTANTIATE_TEST_SUITE_P(UnifiedConstructors,
+                         ClassConstructionTest,
+                         testing::Values(
+                             R"(
+let calls = 0;
+func initial(): string? { calls++; return 'default'; }
+class Base { value: string? = initial(); }
+class Child extends Base { bonus: int = 2; constructor(super.value, this.bonus); }
+func main(): int {
+  const a = Child();
+  const b = Child(null);
+  return calls == 1 && a.value == 'default' && b.value == null && b.bonus == 2 ? 42 : 0;
+}
+)",
+                             R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Base { value: int; constructor(first: int = initial(), second: int = first + 2) { this.value = second; } }
+class Child extends Base { constructor(super.second, super.first); }
+func main(): int {
+  const a = Child();
+  const b = Child(first: 1, second: 42);
+  return calls == 1 && a.value == 42 ? b.value : 0;
+}
+)",
+                             R"(
+class Base { value: int; }
+class Child extends Base {
+
+  #bonus: int = 2;
+
+  constructor(super.value, this.#bonus) { this.#bonus += 0; }
+  total(): int { return this.value + this.#bonus; }
+}
+func main(): int { return Child(40).total(); }
+)",
+                             R"(
+class Base { value: int; enabled: bool = true; }
+class Child extends Base { bonus: int; }
+func main(): int {
+  const first = Child(value: 40, bonus: 2);
+  const second = Child(value: 1, enabled: false, bonus: 1);
+  return first.enabled && !second.enabled ? first.value + first.bonus : 0;
+}
+)",
+                             R"(
+class Base { value: int; }
+class Child extends Base { bonus: int; constructor { this.bonus++; } }
+class Leaf extends Child { extra: int; constructor { this.extra++; } }
+func main(): int { const v = Leaf(value: 38, bonus: 1, extra: 1); return v.value + v.bonus + v.extra; }
+)",
+                             R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Base { value: int; constructor(initial: int = initial()) { this.value = initial; } }
+class Child extends Base { bonus: int = 2; constructor { this.bonus += 0; } }
+class Leaf extends Child {}
+func main(): int {
+  const first = Leaf();
+  const second = Leaf(initial: 41, bonus: 1);
+  return calls == 1 && first.value + first.bonus == 42 ? second.value + second.bonus : 0;
+}
+)",
+                             R"(
+class Base { value: int; }
+class Child extends Base { bonus: int; constructor(super.value, this.bonus); }
+func main(): int { const v = Child(40, 2); return v.value + v.bonus; }
+)",
+                             R"(
+let calls = 0;
+func initial(): int { calls++; return 40; }
+class Base { value: int = initial(); }
+class Child extends Base { bonus: int = 2; constructor(super.value, this.bonus); }
+func main(): int {
+  const first = Child();
+  const second = Child(bonus: 1, value: 41);
+  return calls == 1 && first.value + first.bonus == 42 ? second.value + second.bonus : 0;
+}
+)",
+                             R"(
+class Base<T> { value: T; constructor(initial: T) { this.value = initial; } }
+class Child<U> extends Base<U> { bonus: int; constructor(super.initial, this.bonus); }
+class Leaf<V> extends Child<V> { extra: int = 0; }
+func main(): int { const v = Leaf(initial: 40, bonus: 2); return v.value + v.bonus + v.extra; }
+)",
+                             R"(
+class Empty { constructor(); }
+class Child extends Empty { value: int; constructor(this.value); }
+class Ordinary { value: int = 42; constructor(this.value); }
+func main(): int { return Child(Ordinary().value).value; }
+)",
+                             R"(
+class Base { value: int; constructor(value: int) { this.value = value; } }
+class Child extends Base {
+  bonus: int;
+  constructor(value: int, this.bonus) { super(value: value * 2); }
+}
+func main(): int { const v = Child(20, 2); return v.value + v.bonus; }
+)",
+                             R"(
+class Base { value: int; constructor { if (this.ready() != 2) throw Error(message: 'not ready'); } ready(): int { return 0; } }
+class Child extends Base { bonus: int; constructor(super.value, this.bonus); override ready(): int { return this.bonus; } }
+func main(): int { return Child(40, 2).value + 2; }
 )"));
 
 struct ClassError final {
@@ -590,6 +712,16 @@ INSTANTIATE_TEST_SUITE_P(
     ClassContractErrorTest,
     testing::Values(
         ClassError{"class A extends B {} class B extends A {}", "class inheritance cycle"},
+        ClassError{"class A { constructor(value: int) {} } class B extends A { value: int; }",
+                   "duplicate constructor parameter 'value'"},
+        ClassError{"class A { constructor(super.value); }", "unknown super constructor parameter"},
+        ClassError{"class A { static value: int = 1; constructor(this.value); }",
+                   "own instance field"},
+        ClassError{"class A { value: int; } class B extends A { constructor(this.value); }",
+                   "own instance field"},
+        ClassError{"class A { value: int; } class B extends A { constructor(super.value) { "
+                   "super(value: value); } }",
+                   "cannot be combined"},
         ClassError{"class A {} class B extends A { value: int; "
                    "constructor() { super(); this.value = 42; } }",
                    "initialized before super"},
@@ -606,10 +738,12 @@ INSTANTIATE_TEST_SUITE_P(
                    "class B extends A { bonus: int; constructor { super(value: 40); } } "
                    "func main(): B { return B(value: 40, bonus: 2); }",
                    "unknown named argument 'value'"},
-        ClassError{"class A { value: int; } class B extends A { bonus: int; }", "must call super"},
-        ClassError{"class A { value: int; } class B extends A { constructor {} }",
+        ClassError{"class A { value: int; } class B extends A { bonus: int; "
+                   "constructor(bonus: int) { this.bonus = bonus; } }",
                    "must call super"},
-        ClassError{"class A { private constructor() {} } class B extends A {}",
+        ClassError{"class A { value: int; } class B extends A { constructor() {} }",
+                   "must call super"},
+        ClassError{"class A {  #constructor() {} } class B extends A {}",
                    "cannot inherit a private constructor"},
         ClassError{"class A { value: int; } class B extends A {} "
                    "func main(): B { return B(42); }",
@@ -639,8 +773,8 @@ INSTANTIATE_TEST_SUITE_P(
                    "exactly once"},
         ClassError{"class A { x: int; } func main(): A { return A(1); }", "must be named"},
         ClassError{"class A { x: int; } func main(): A { return A(); }", "missing argument 'x'"},
-        ClassError{"class A { private x: int; }", "requires an initializer"},
-        ClassError{"class A { private x: int = 0; } func main(): A { return A(x: 42); }",
+        ClassError{"class A {  #x: int; }", "requires an initializer"},
+        ClassError{"class A {  #x: int = 0; } func main(): A { return A(x: 42); }",
                    "unknown named argument 'x'"},
         ClassError{"class A { text: string?; } func main(): A { return A(); }",
                    "missing argument 'text'"},
@@ -656,12 +790,12 @@ INSTANTIATE_TEST_SUITE_P(
                    "must be initialized"},
         ClassError{"class A { x: int; constructor() { return; } }", "must be initialized"},
         ClassError{"class A { x: int = this.x; }", "unknown name"},
-        ClassError{"class A { private x: int = 1; } func main(): int { return A().x; }",
+        ClassError{"class A {  #x: int = 1; } func main(): int { return A().#x; }",
                    "private member"},
         ClassError{
-            "class A { private get(): int { return 1; } } func main(): int { return A().get(); }",
+            "class A {  #get(): int { return 1; } } func main(): int { return A().#get(); }",
             "private member"},
-        ClassError{"class A { private constructor() {} } func main(): A { return A(); }",
+        ClassError{"class A {  #constructor() {} } func main(): A { return A(); }",
                    "private member"},
         ClassError{"class A { static x: int = 0; } func main(): A { return A(x: 1); }",
                    "unknown named argument 'x'"},
@@ -671,7 +805,7 @@ INSTANTIATE_TEST_SUITE_P(
             "through its class"},
         ClassError{"class A { read(): int { return 1; } } func main(): int { return A.read(); }",
                    "static member"},
-        ClassError{"class A { private static x: int = 1; } func main(): int { return A.x; }",
+        ClassError{"class A {  static #x: int = 1; } func main(): int { return A.#x; }",
                    "private member"},
         ClassError{
             "class A { f(): int { return 1; } } func main(): void { A().f = (): int => 42; }",
@@ -724,7 +858,9 @@ class Trace {
 class Target {
   first: int = Trace.mark(9);
   second: int = Trace.mark(8);
-  private tail: int = Trace.mark(3);
+
+  #tail: int = Trace.mark(3);
+
   constructor { Trace.mark(4); }
 }
 func main(): int {
@@ -779,9 +915,11 @@ let reads = 0;
 let writes = 0;
 let receivers = 0;
 class Counter {
-  private stored: int = 39;
-  get value(): int { reads++; return this.stored; }
-  set value(next: int): void { writes++; this.stored = next; }
+
+  #stored: int = 39;
+
+  get value(): int { reads++; return this.#stored; }
+  set value(next: int): void { writes++; this.#stored = next; }
 }
 let counter = Counter();
 func target(): Counter { receivers++; return counter; }
@@ -810,6 +948,37 @@ TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgum
       "box.value63 + box.value64 + box.value127 + box.value128 : 0; }";
   runtime::Isolate isolate(1);
   test::ExpectRunAnswer(source, isolate);
+}
+
+TEST(ClassInitializationTest, MergedInheritedFieldDefaultsCrossMaskWords) {
+  std::string source =
+      "class Trace { static calls: int = 0; static next(): int { Trace.calls++; return 0; } } "
+      "class Base {";
+  constexpr int kFields = 65;
+  for (int index = 0; index < kFields; ++index) {
+    source += "base" + std::to_string(index) + ": int = Trace.next();";
+  }
+  source += "} class Child extends Base {";
+  for (int index = 0; index < kFields; ++index) {
+    source += "child" + std::to_string(index) + ": int = Trace.next();";
+  }
+  source +=
+      "constructor {} } func main(): int { "
+      "const v = Child(base63: 10, base64: 10, child62: 10, child63: 12); "
+      "return Trace.calls == 126 ? v.base63 + v.base64 + v.child62 + v.child63 : 0; }";
+  test::ExpectRunAnswer(source);
+}
+
+TEST(ClassInitializationTest, ForwardingParametersBindTargetsWithoutShadowingGlobals) {
+  test::ExpectRunAnswer(R"(
+const bonus = 2;
+class Base { value: int; }
+class Child extends Base {
+  bonus: int;
+  constructor(super.value, this.bonus) { this.bonus += bonus; }
+}
+func main(): int { const v = Child(36, 4); return v.value + v.bonus; }
+)");
 }
 
 }  // namespace

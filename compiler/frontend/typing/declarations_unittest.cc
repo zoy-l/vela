@@ -2,12 +2,44 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {
 
 class DeclarationErrorTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(DeclarationTest, FieldLookupKeepsPublicNamesAndLexicalPrivateOwnersDistinct) {
+  auto parsed = ParseTestSource(R"(
+class Base { publicFieldWithALongName: int = 42; #value: int = 1; }
+class Child extends Base { #value: int = 2; }
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto checked = TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded());
+  const auto& base = checked.model.classes.at("Base");
+  const auto& child = checked.model.classes.at("Child");
+  const auto* inherited = child.FindField("publicFieldWithALongName");
+  const auto* declared = base.FindField("publicFieldWithALongName");
+  ASSERT_NE(inherited, nullptr);
+  ASSERT_NE(declared, nullptr);
+  EXPECT_EQ(inherited->index, declared->index);
+  ASSERT_EQ(base.constructor_bindings.size(), 1U);
+  ASSERT_EQ(child.constructor_bindings.size(), 1U);
+  EXPECT_EQ(base.constructor_bindings.front().field, declared);
+  EXPECT_EQ(child.constructor_bindings.front().field, declared);
+  const auto* base_private = base.FindField("#value");
+  const auto* child_private = child.FindField("#value");
+  ASSERT_NE(base_private, nullptr);
+  ASSERT_NE(child_private, nullptr);
+  EXPECT_EQ(base_private->owner, "Base");
+  EXPECT_EQ(child_private->owner, "Child");
+  EXPECT_NE(base_private->index, child_private->index);
+  EXPECT_EQ(child.FindField("missing"), nullptr);
+}
 
 TEST_P(DeclarationErrorTest, RejectsInvalidDeclarationsAndConstWrites) {
   EXPECT_FALSE(CheckTestSource(GetParam()).Succeeded());
@@ -61,6 +93,29 @@ func main(): int {
 }
 )";
   EXPECT_TRUE(CheckTestSource(source).Succeeded());
+}
+
+TEST(DeclarationTest, DuplicateConstructorParametersPreserveForwardingBindingsAndDefaults) {
+  for (const std::string_view source : {
+           "class Child { y: int = 2; constructor(x: int, x: int, this.y) {} }",
+           "class Base { y: int = 2; } class Child extends Base { constructor(x: int, x: int, "
+           "super.y) {} }",
+       }) {
+    auto parsed = ParseTestSource(source);
+    ASSERT_TRUE(parsed.diagnostics.empty());
+    const auto checked = TypeChecker().Check(parsed.program);
+    EXPECT_FALSE(checked.Succeeded());
+    const auto& child = checked.model.classes.at("Child");
+    ASSERT_EQ(child.constructor.parameters.size(), 2U);
+    ASSERT_EQ(child.constructor_bindings.size(), 2U);
+    const auto& parameter = child.constructor.parameters[1];
+    EXPECT_EQ(parameter.name, "y");
+    EXPECT_EQ(parameter.type.kind, TypeDescriptor::Kind::Int);
+    EXPECT_TRUE(parameter.has_default);
+    EXPECT_TRUE(child.constructor.optional_parameters.contains("y"));
+    EXPECT_EQ(child.constructor_bindings[1].declaration,
+              &child.declaration->constructor->parameters[2]);
+  }
 }
 
 class EnumMemberSyntaxTest : public testing::TestWithParam<std::string_view> {};

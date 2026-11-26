@@ -196,6 +196,9 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
   if (description.result) {
     result.result = Constraint(*description.result);
   }
+  if (description.narrowed_parameter) {
+    result.narrowed_parameter = Constraint(*description.narrowed_parameter);
+  }
   stored = isolate_->CreateTypeSignature(std::move(result));
   if (!description.name.empty()) {
     cache_->signatures.emplace(description.name, stored);

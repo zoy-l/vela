@@ -186,7 +186,9 @@ TEST(HostObjectTest, PublicMembersRetainProgramAndExecutePropertyAndBoundMethodS
 interface CounterView { add(value: int): int; }
 class Counter implements CounterView {
   value: int = 40;
-  private secret: int = 99;
+
+  #secret: int = 99;
+
   get next(): int { this.value += 1; return this.value; }
   get readonly(): int { return this.value; }
   set next(value: int): void { this.value = value + 1; }
@@ -327,7 +329,7 @@ export class Counter extends Base {
   value: int;
   constructor(value: int) { this.value = value; super(); this.value += this.base; }
 }
-class Secret { private constructor() {} }
+class Secret {  #constructor() {} }
 export func count(): int { return calls; }
 )",
                                                  isolate);

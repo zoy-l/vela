@@ -331,7 +331,12 @@ class Heap final {
   [[nodiscard]] static std::expected<std::span<std::int64_t>, ArrayAccessError> IntegerElements(
       HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<std::uint32_t, ArrayAccessError> ArrayLength(
-      const HeapObject& array) noexcept;
+      const HeapObject& array) noexcept {
+    if (array.kind != ObjectKind::Array) {
+      return std::unexpected(ArrayAccessError::NotArray);
+    }
+    return array.length;
+  }
   [[nodiscard]] static std::expected<std::uint32_t, ArrayAccessError> ArrayCapacity(
       const HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<std::uint64_t, ArrayAccessError> ArrayMutation(

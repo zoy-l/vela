@@ -153,72 +153,74 @@ export func captureThat(matcher: dynamic): dynamic {
 
 /// Owns mock identities, ordering and cleanup for one executing test.
 export class MockSession {
-  private scope: int;
-  private identity: int = 0;
-  private sequence: int = 0;
-  private controls: MockControl[] = [];
-  private closed: bool = false;
-  private matching: bool = false;
+
+  #scope: int;
+  #identity: int = 0;
+  #sequence: int = 0;
+  #controls: MockControl[] = [];
+  #closed: bool = false;
+  #matching: bool = false;
+
 
   constructor() {
-    this.scope = currentTestScope();
-    if (this.scope == 0) {
+    this.#scope = currentTestScope();
+    if (this.#scope == 0) {
       raiseUsageError('MockSession requires an executing test, setUp or tearDown');
     }
-    this.identity = registerFinalizer(() => {
+    this.#identity = registerFinalizer(() => {
       this.close();
     });
   }
 
   get mockSessionID(): int {
-    return this.identity;
+    return this.#identity;
   }
 
   check(): void {
-    if (currentTestScope() != this.scope) {
+    if (currentTestScope() != this.#scope) {
       raiseUsageError('mock operation belongs to a different test scope');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw MockSessionClosed('mock session is closed');
     }
-    if (this.matching) {
+    if (this.#matching) {
       raiseUsageError('mock operations cannot reenter an argument matcher');
     }
   }
 
   attach(control: MockControl): int {
     this.check();
-    this.controls.push(control);
-    return this.controls.length;
+    this.#controls.push(control);
+    return this.#controls.length;
   }
 
   nextSequence(): int {
     this.check();
-    this.sequence ++;
-    return this.sequence;
+    this.#sequence ++;
+    return this.#sequence;
   }
   beginMatch(): void {
     this.check();
-    this.matching = true;
+    this.#matching = true;
   }
   endMatch(): void {
-    this.matching = false;
+    this.#matching = false;
   }
   /// Closes after all user teardown hooks; explicit repeated close has no extra effect.
   close(): void {
-    if (this.closed) {
+    if (this.#closed) {
       return;
     }
     this.check();
     let pending = 0;
     let report: MockDetails? = null;
-    for (const control in this.controls) {
+    for (const control in this.#controls) {
       if (report == null) { report = control.unfinished(); }
       pending += control.finish();
     }
-    this.controls.clear();
-    this.closed = true;
-    releaseFinalizer(this.identity);
+    this.#controls.clear();
+    this.#closed = true;
+    releaseFinalizer(this.#identity);
     if (pending != 0) {
       const error = MockUsageError('${pending} mock stub builder(s) were not completed');
       error.mock = report;
@@ -229,42 +231,44 @@ export class MockSession {
 
 /// Shared control for the methods of one generated interface or function substitute.
 export class MockControl {
-  private owner: MockSession;
-  private identity: int = 0;
-  private methods: MockMethod[] = [];
+
+  #owner: MockSession;
+  #identity: int = 0;
+  #methods: MockMethod[] = [];
+
 
   constructor(session: MockSession) {
-    this.owner = session;
-    this.identity = session.attach(this);
+    this.#owner = session;
+    this.#identity = session.attach(this);
   }
 
   get session(): MockSession {
-    return this.owner;
+    return this.#owner;
   }
   get mockID(): int {
-    return this.identity;
+    return this.#identity;
   }
   attach(method: MockMethod): void {
-    this.owner.check();
-    this.methods.push(method);
+    this.#owner.check();
+    this.#methods.push(method);
   }
 
   clear(): void {
-    this.owner.check();
-    for (const method in this.methods) {
+    this.#owner.check();
+    for (const method in this.#methods) {
       method.clear();
     }
   }
 
   reset(): void {
-    this.owner.check();
-    for (const method in this.methods) {
+    this.#owner.check();
+    for (const method in this.#methods) {
       method.reset();
     }
   }
 
   unfinished(): MockDetails? {
-    for (const method in this.methods) {
+    for (const method in this.#methods) {
       const report = method.unfinished();
       if (report != null) { return report; }
     }
@@ -273,16 +277,16 @@ export class MockControl {
 
   finish(): int {
     let pending = 0;
-    for (const method in this.methods) {
+    for (const method in this.#methods) {
       pending += method.finish();
     }
-    this.methods.clear();
+    this.#methods.clear();
     return pending;
   }
 
   verifyEmpty(includeVerified: bool): void {
-    this.owner.check();
-    for (const method in this.methods) {
+    this.#owner.check();
+    for (const method in this.#methods) {
       for (const record in method.history()) {
         const invocation = record.invocation;
         if (includeVerified || !record.verified) {
@@ -299,14 +303,16 @@ export class MockControl {
 
 /// Read-only description of one real invocation. Argument objects retain their identity.
 export class MockInvocation {
-  private sessionIdentity: int;
-  private mockIdentity: int;
-  private methodIdentity: string;
-  private order: int;
-  private values: dynamic[];
-  private names: Map<string, int>;
-  private registeredAt: ByteArray;
-  private calledAt: ByteArray;
+
+  #sessionIdentity: int;
+  #mockIdentity: int;
+  #methodIdentity: string;
+  #order: int;
+  #values: dynamic[];
+  #names: Map<string, int>;
+  #registeredAt: ByteArray;
+  #calledAt: ByteArray;
+
 
   constructor(
     sessionID: int,
@@ -318,84 +324,86 @@ export class MockInvocation {
     registrationTrace: ByteArray,
     callTrace: ByteArray
   ) {
-    this.sessionIdentity = sessionID;
-    this.mockIdentity = mockID;
-    this.methodIdentity = methodName;
-    this.order = sequence;
-    this.values = arguments.slice(0, arguments.length);
-    this.names = names;
-    this.registeredAt = registrationTrace;
-    this.calledAt = callTrace;
+    this.#sessionIdentity = sessionID;
+    this.#mockIdentity = mockID;
+    this.#methodIdentity = methodName;
+    this.#order = sequence;
+    this.#values = arguments.slice(0, arguments.length);
+    this.#names = names;
+    this.#registeredAt = registrationTrace;
+    this.#calledAt = callTrace;
   }
 
   get mockSessionID(): int {
-    return this.sessionIdentity;
+    return this.#sessionIdentity;
   }
   get mockID(): int {
-    return this.mockIdentity;
+    return this.#mockIdentity;
   }
   get methodName(): string {
-    return this.methodIdentity;
+    return this.#methodIdentity;
   }
   get sequence(): int {
-    return this.order;
+    return this.#order;
   }
   get arguments(): dynamic[] {
-    return this.values.slice(0, this.values.length);
+    return this.#values.slice(0, this.#values.length);
   }
   get registrationLocation(): MockSourceFrame[] {
-    return traceFrames(this.registeredAt);
+    return traceFrames(this.#registeredAt);
   }
   get callLocation(): MockSourceFrame[] {
-    return traceFrames(this.calledAt);
+    return traceFrames(this.#calledAt);
   }
 
   report(): CallReport {
     const arguments: string[] = [];
-    const count = this.values.length < reportArgumentBudget ? this.values.length : reportArgumentBudget;
+    const count = this.#values.length < reportArgumentBudget ? this.#values.length : reportArgumentBudget;
     for (let index = 0; index < count; index ++) {
-      arguments.push(displayValue(this.values[index]));
+      arguments.push(displayValue(this.#values[index]));
     }
     return CallReport(
-      sequence: this.order,
+      sequence: this.#order,
       arguments: arguments,
-      omittedArguments: this.values.length - count,
-      trace: this.calledAt.slice(0, this.calledAt.length)
+      omittedArguments: this.#values.length - count,
+      trace: this.#calledAt.slice(0, this.#calledAt.length)
     );
   }
 
   argumentAt(index: int): dynamic {
-    if (index < 0 || index >= this.values.length) {
+    if (index < 0 || index >= this.#values.length) {
       raiseUsageError('mock argument index is out of range');
     }
-    return this.values[index];
+    return this.#values[index];
   }
 
   argument(name: string): dynamic {
-    const index = this.names.get(name);
+    const index = this.#names.get(name);
     if (index == null) {
       throw MockUsageError('unknown mock argument: ${name}');
     }
-    return this.values[index];
+    return this.#values[index];
   }
 }
 
 /// Immutable call pattern. Constructing it never records or dispatches a real call.
 export class MockCall {
-  private target: MockMethod;
-  private matchers: testing.Matcher[] = [];
-  private captures: bool[] = [];
-  private capturing: bool = false;
-  private source: ByteArray;
-  private descriptionValue: string;
+
+  #target: MockMethod;
+  #matchers: testing.Matcher[] = [];
+  #captures: bool[] = [];
+  #capturing: bool = false;
+  #source: ByteArray;
+  #descriptionValue: string;
+
 
   constructor(method: MockMethod, arguments: dynamic[]) {
     method.control.session.check();
     if (arguments.length != method.arity) {
       raiseUsageError('wrong number of mock arguments');
     }
-    this.target = method;
-    this.source = captureTrace();
+    this.#target = method;
+    this.#source = captureTrace();
     const descriptions: string[] = [];
     for (const value in arguments) {
       const capture = value is Capture;
@@ -404,45 +412,45 @@ export class MockCall {
           value is testing.Matcher || capture ? '<matcher>' : displayValue(value)
         );
       }
-      this.captures.push(capture);
+      this.#captures.push(capture);
       if (value is Capture) {
-        this.matchers.push(value.matcher);
-        this.capturing = true;
+        this.#matchers.push(value.matcher);
+        this.#capturing = true;
       } else {
-        this.matchers.push(argumentMatcher(value));
+        this.#matchers.push(argumentMatcher(value));
       }
     }
     if (arguments.length > descriptions.length) {
       descriptions.push('...');
     }
-    this.descriptionValue = '${method.methodName}(${descriptions.join(', ')})';
+    this.#descriptionValue = '${method.methodName}(${descriptions.join(', ')})';
   }
 
   get method(): MockMethod {
-    return this.target;
+    return this.#target;
   }
   get hasCaptures(): bool {
-    return this.capturing;
+    return this.#capturing;
   }
   get description(): string {
-    return this.descriptionValue;
+    return this.#descriptionValue;
   }
   get configurationTrace(): ByteArray {
-    return this.source.slice(0, this.source.length);
+    return this.#source.slice(0, this.#source.length);
   }
 
   match (invocation: MockInvocation): CallMatch {
-    const session = this.target.control.session;
+    const session = this.#target.control.session;
     session.beginMatch();
     try {
       const captured: dynamic[] = [];
-      for (let index = 0; index < this.matchers.length; index ++) {
+      for (let index = 0; index < this.#matchers.length; index ++) {
         const argument = invocation.argumentAt(index);
-        const result = this.matchers[index].match (argument);
+        const result = this.#matchers[index].match (argument);
         if (!result.success) {
           return CallMatch(success: false, captured: [], result: result);
         }
-        if (this.captures[index]) {
+        if (this.#captures[index]) {
           captured.push(argument);
         }
       }
@@ -476,12 +484,14 @@ class Wait {
   completion: Completer<MockInvocation> = Completer<MockInvocation>();
   trace: ByteArray = captureTrace();
 
-  private async evaluate(invocation: MockInvocation): Future<bool> {
+
+  async #evaluate(invocation: MockInvocation): Future<bool> {
     return this.call.match (invocation).success;
   }
 
+
   observe(invocation: MockInvocation): void {
-    if (observeMatch(this.evaluate(invocation), this.completion)) {
+    if (observeMatch(this.#evaluate(invocation), this.completion)) {
       this.completion.complete(invocation);
     }
   }
@@ -499,79 +509,81 @@ enum CloseReason {
 
 /// Generated adapters supply a real typed method to retain its callable contract.
 export class MockMethod {
-  private owner: MockControl;
-  private name: string;
-  private signature: dynamic = null;
-  private names: Map<string, int> = Map<string, int>();
-  private count: int = 0;
-  private voidResult: bool = false;
-  private records: Record[] = [];
-  private responses: Response[] = [];
-  private pending: Map<int, MockCall> = Map<int, MockCall>();
-  private nextStub: int = 0;
-  private generation: int = 0;
-  private historyGeneration: int = 0;
-  private waits: Wait[] = [];
-  private registeredAt: ByteArray;
+
+  #owner: MockControl;
+  #name: string;
+  #signature: dynamic = null;
+  #names: Map<string, int> = Map<string, int>();
+  #count: int = 0;
+  #voidResult: bool = false;
+  #records: Record[] = [];
+  #responses: Response[] = [];
+  #pending: Map<int, MockCall> = Map<int, MockCall>();
+  #nextStub: int = 0;
+  #generation: int = 0;
+  #historyGeneration: int = 0;
+  #waits: Wait[] = [];
+  #registeredAt: ByteArray;
+
 
   constructor(control: MockControl, name: string) {
-    this.owner = control;
-    this.name = name;
-    this.registeredAt = captureTrace();
+    this.#owner = control;
+    this.#name = name;
+    this.#registeredAt = captureTrace();
     control.attach(this);
   }
 
   bind(signature: dynamic): void {
-    this.owner.session.check();
-    if (this.signature != null) {
+    this.#owner.session.check();
+    if (this.#signature != null) {
       raiseUsageError('mock method signature is already bound');
     }
-    this.signature = signature;
+    this.#signature = signature;
     const count = signatureArity(signature);
     if (count == null) {
       throw MockUsageError('mock method requires a real callable signature');
     }
-    this.count = count;
-    this.voidResult = isVoidSignature(signature);
-    for (let index = 0; index < this.count; index ++) {
+    this.#count = count;
+    this.#voidResult = isVoidSignature(signature);
+    for (let index = 0; index < this.#count; index ++) {
       const parameter: string = parameterName(signature, index);
-      this.names.set(parameter, index);
+      this.#names.set(parameter, index);
     }
   }
 
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   get methodName(): string {
-    return this.name;
+    return this.#name;
   }
   get arity(): int {
-    return this.count;
+    return this.#count;
   }
   get epoch(): int {
-    return this.generation;
+    return this.#generation;
   }
   get historyEpoch(): int {
-    return this.historyGeneration;
+    return this.#historyGeneration;
   }
   query(arguments: dynamic[]): MockCall {
     return MockCall(this, arguments);
   }
   history(): Record[] {
-    return this.records.slice(0, this.records.length);
+    return this.#records.slice(0, this.#records.length);
   }
   get recordCount(): int {
-    return this.records.length;
+    return this.#records.length;
   }
   recordAt(index: int): Record {
-    return this.records[index];
+    return this.#records[index];
   }
   firstAfter(sequence: int): int {
     let start = 0;
-    let end = this.records.length;
+    let end = this.#records.length;
     while (start < end) {
       const middle = start + (end - start) / 2;
-      if (this.records[middle].invocation.sequence <= sequence) {
+      if (this.#records[middle].invocation.sequence <= sequence) {
         start = middle + 1;
       } else {
         end = middle;
@@ -580,75 +592,76 @@ export class MockMethod {
     return start;
   }
   beginStub(call: MockCall): int {
-    this.owner.session.check();
-    this.nextStub++;
-    this.pending.set(this.nextStub, call);
-    return this.nextStub;
+    this.#owner.session.check();
+    this.#nextStub++;
+    this.#pending.set(this.#nextStub, call);
+    return this.#nextStub;
   }
 
   validateValue(value: dynamic): void {
     if (
-      this.voidResult || kindOfValue(value) == 4 || !(acceptsReturn(this.signature, value))
+      this.#voidResult || kindOfValue(value) == 4 || !(acceptsReturn(this.#signature, value))
     ) {
-      raiseUsageError('thenReturn requires a non-Future value satisfying ${this.name}');
+      raiseUsageError('thenReturn requires a non-Future value satisfying ${this.#name}');
     }
   }
 
   validateCallback(callback: dynamic, isVoid: bool): void {
-    const sample = this.describe([], 0);
+    const sample = this.#describe([], 0);
     if (
-      isVoid != this.voidResult || !((isVoid ? acceptsVoidAnswer(callback, sample) : acceptsAnswer(callback, sample))) || (!isVoid && !(acceptsResponseSignature(this.signature, callback)))
+      isVoid != this.#voidResult || !((isVoid ? acceptsVoidAnswer(callback, sample) : acceptsAnswer(callback, sample))) || (!isVoid && !(acceptsResponseSignature(this.#signature, callback)))
     ) {
       raiseUsageError('response must accept MockInvocation and return the required value or void');
     }
   }
 
   commit(response: Response, identity: int): void {
-    this.owner.session.check();
+    this.#owner.session.check();
     // 同一不可变模式的新响应完全遮蔽旧响应，移除后也不会重复求值 matcher。
-    for (let index = this.responses.length - 1; index >= 0; index--) {
-      if (this.responses[index].call == response.call) { this.responses.splice(index, 1); }
+    for (let index = this.#responses.length - 1; index >= 0; index--) {
+      if (this.#responses[index].call == response.call) { this.#responses.splice(index, 1); }
     }
-    this.responses.push(response);
-    this.pending.delete(identity);
+    this.#responses.push(response);
+    this.#pending.delete(identity);
   }
 
-  private describe(arguments: dynamic[], sequence: int): MockInvocation {
-    const session = this.owner.session;
+
+  #describe(arguments: dynamic[], sequence: int): MockInvocation {
+    const session = this.#owner.session;
     return MockInvocation(
       session.mockSessionID,
-      this.owner.mockID,
-      this.name,
+      this.#owner.mockID,
+      this.#name,
       sequence,
       arguments,
-      this.names,
-      this.registeredAt,
+      this.#names,
+      this.#registeredAt,
       captureTrace()
     );
   }
 
-  private record(arguments: dynamic[]): MockInvocation {
-    const sequence = this.owner.session.nextSequence();
-    if (arguments.length != this.count) {
+  #record(arguments: dynamic[]): MockInvocation {
+    const sequence = this.#owner.session.nextSequence();
+    if (arguments.length != this.#count) {
       raiseUsageError('wrong number of real mock arguments');
     }
-    const invocation = this.describe(arguments, sequence);
-    this.records.push(Record(invocation: invocation));
+    const invocation = this.#describe(arguments, sequence);
+    this.#records.push(Record(invocation: invocation));
     const pending: Wait[] = [];
-    for (const wait in this.waits) {
+    for (const wait in this.#waits) {
       wait.observe(invocation);
       if (!wait.completion.isCompleted) {
         pending.push(wait);
       }
     }
-    this.waits = pending;
+    this.#waits = pending;
     return invocation;
   }
 
-  private select(invocation: MockInvocation): Response {
+  #select(invocation: MockInvocation): Response {
     let mismatch: testing.MatchResult? = null;
-    for (let index = this.responses.length - 1; index >= 0; index --) {
-      const response = this.responses[index];
+    for (let index = this.#responses.length - 1; index >= 0; index --) {
+      const response = this.#responses[index];
       const matched = response.call.match (invocation);
       if (matched.success) {
         return response;
@@ -657,12 +670,12 @@ export class MockMethod {
         mismatch = matched.result;
       }
     }
-    const error = MockMissingStub('no matching stub for ${this.name} #${invocation.sequence}');
+    const error = MockMissingStub('no matching stub for ${this.#name} #${invocation.sequence}');
     const details = this.report('a matching configured response', 0, null);
     for (
-      let index = this.responses.length - 1; index >= 0 && details.configurations.length < reportCallBudget; index --
+      let index = this.#responses.length - 1; index >= 0 && details.configurations.length < reportCallBudget; index --
     ) {
-      const call = this.responses[index].call;
+      const call = this.#responses[index].call;
       details.configurations.push(call.description);
       details.configurationTraces.push(call.configurationTrace);
     }
@@ -673,14 +686,16 @@ export class MockMethod {
     throw error;
   }
 
+
   invoke<R>(arguments: dynamic[]): R {
     // 响应注册已按真实签名验证；此处是擦除载荷恢复名义返回类型的唯一边界。
-    return this.resolveResponse(arguments) as R;
+    return this.#resolveResponse(arguments) as R;
   }
 
-  private resolveResponse(arguments: dynamic[]): dynamic {
-    const invocation = this.record(arguments);
-    const response = this.select(invocation);
+
+  #resolveResponse(arguments: dynamic[]): dynamic {
+    const invocation = this.#record(arguments);
+    const response = this.#select(invocation);
     if (response.kind == 0) {
       return response.value;
     }
@@ -688,7 +703,7 @@ export class MockMethod {
       const values = response.value;
       const index = response.index++;
       if (index >= values.length) {
-        const error = MockStubExhausted('response sequence exhausted for ${this.name}');
+        const error = MockStubExhausted('response sequence exhausted for ${this.#name}');
         const details = this.report(response.call.description, response.index, null);
         details.configurations.push(response.call.description);
         details.configurationTraces.push(response.call.configurationTrace);
@@ -706,9 +721,10 @@ export class MockMethod {
     throw MockUsageError('void response requires a void adapter');
   }
 
+
   invokeVoid(arguments: dynamic[]): void {
-    const invocation = this.record(arguments);
-    const response = this.select(invocation);
+    const invocation = this.#record(arguments);
+    const response = this.#select(invocation);
     if (response.kind == 2) {
       throw response.value;
     }
@@ -719,25 +735,25 @@ export class MockMethod {
   }
 
   clear(): void {
-    this.records.clear();
-    this.historyGeneration ++;
+    this.#records.clear();
+    this.#historyGeneration ++;
   }
 
   report(expected: string, count: int, verificationTrace: ByteArray?): MockDetails {
     const calls: CallReport[] = [];
     for (
-      let index = this.records.length - 1; index >= 0 && calls.length < reportCallBudget; index --
+      let index = this.#records.length - 1; index >= 0 && calls.length < reportCallBudget; index --
     ) {
-      const record = this.records[index];
+      const record = this.#records[index];
       if (!record.verified) {
         calls.push(record.invocation.report());
       }
     }
     calls.reverse();
     return MockDetails(
-      mockSessionID: this.owner.session.mockSessionID,
-      mockID: this.owner.mockID,
-      method: this.name,
+      mockSessionID: this.#owner.session.mockSessionID,
+      mockID: this.#owner.mockID,
+      method: this.#name,
       expected: expected,
       actualCount: count,
       calls: calls,
@@ -746,45 +762,47 @@ export class MockMethod {
   }
 
   wait(call: MockCall): Future<MockInvocation> {
-    this.owner.session.check();
+    this.#owner.session.check();
     if (call.hasCaptures) {
       raiseUsageError('capture patterns are only valid in verification');
     }
     const wait = Wait(call: call);
     const future = wait.completion.future;
     trackCallWait(future);
-    for (const record in this.records) {
+    for (const record in this.#records) {
       wait.observe(record.invocation);
       if (wait.completion.isCompleted) {
         return future;
       }
     }
-    this.waits.push(wait);
+    this.#waits.push(wait);
     return future;
   }
 
-  private closeWaits(reason: CloseReason): void {
-    for (const wait in this.waits) {
+
+  #closeWaits(reason: CloseReason): void {
+    for (const wait in this.#waits) {
       if (reason == CloseReason.reset) {
         wait.fail(MockReset('mock was reset before the expected call'));
       } else {
         wait.fail(MockSessionClosed('mock session closed before the expected call'));
       }
     }
-    this.waits.clear();
+    this.#waits.clear();
   }
+
 
   reset(): void {
     this.clear();
-    this.responses.clear();
-    this.pending.clear();
-    this.generation ++;
-    this.closeWaits(CloseReason.reset);
+    this.#responses.clear();
+    this.#pending.clear();
+    this.#generation ++;
+    this.#closeWaits(CloseReason.reset);
   }
   unfinished(): MockDetails? {
-    if (this.pending.size == 0) { return null; }
-    const report = this.report('complete every stub builder', this.pending.size, null);
-    for (const call in this.pending.values()) {
+    if (this.#pending.size == 0) { return null; }
+    const report = this.report('complete every stub builder', this.#pending.size, null);
+    for (const call in this.#pending.values()) {
       if (report.configurations.length == reportCallBudget) { break; }
       report.configurations.push(call.description);
       report.configurationTraces.push(call.configurationTrace);
@@ -793,76 +811,80 @@ export class MockMethod {
   }
 
   finish(): int {
-    const pending = this.pending.size;
-    this.closeWaits(CloseReason.session);
+    const pending = this.#pending.size;
+    this.#closeWaits(CloseReason.session);
     this.reset();
-    this.signature = null;
+    this.#signature = null;
     return pending;
   }
 }
 
 /// A configuration builder publishes exactly one completed response.
 export class MockStub {
-  private call: MockCall;
-  private generation: int;
-  private identity: int;
-  private completed: bool = false;
+
+  #call: MockCall;
+  #generation: int;
+  #identity: int;
+  #completed: bool = false;
+
 
   constructor(call: MockCall) {
     if (call.hasCaptures) {
       raiseUsageError('capture patterns are only valid in verification');
     }
     const method = call.method;
-    this.identity = method.beginStub(call);
-    this.call = call;
-    this.generation = method.epoch;
+    this.#identity = method.beginStub(call);
+    this.#call = call;
+    this.#generation = method.epoch;
   }
 
-  private check(): void {
-    const method = this.call.method;
+
+  #check(): void {
+    const method = this.#call.method;
     method.control.session.check();
-    if (this.completed || this.generation != method.epoch) {
+    if (this.#completed || this.#generation != method.epoch) {
       raiseUsageError('mock stub builder is stale or completed');
     }
   }
 
-  private commit(kind: int, value: dynamic): void {
-    this.call.method.commit(Response(call: this.call, kind: kind, value: value), this.identity);
-    this.completed = true;
+  #commit(kind: int, value: dynamic): void {
+    this.#call.method.commit(Response(call: this.#call, kind: kind, value: value), this.#identity);
+    this.#completed = true;
   }
 
+
   thenReturn(value: dynamic): void {
-    this.check();
-    this.call.method.validateValue(value);
-    this.commit(0, value);
+    this.#check();
+    this.#call.method.validateValue(value);
+    this.#commit(0, value);
   }
   thenReturnInOrder(values: dynamic[]): void {
-    this.check();
+    this.#check();
     if (values.length == 0) {
       raiseUsageError('response sequence must not be empty');
     }
-    const method = this.call.method;
+    const method = this.#call.method;
     for (const value in values) {
       method.validateValue(value);
     }
-    this.commit(1, values.slice(0, values.length));
+    this.#commit(1, values.slice(0, values.length));
   }
   thenThrow(error: dynamic): void {
-    this.check();
+    this.#check();
     if (!(isThrowable(error))) {
       raiseUsageError('thenThrow requires a throwable object');
     }
-    this.commit(2, error);
+    this.#commit(2, error);
   }
   thenAnswer(callback: dynamic): void {
-    this.check();
-    this.call.method.validateCallback(callback, false);
-    this.commit(3, callback);
+    this.#check();
+    this.#call.method.validateCallback(callback, false);
+    this.#commit(3, callback);
   }
   thenDo(callback: dynamic): void {
-    this.check();
-    this.call.method.validateCallback(callback, true);
-    this.commit(4, callback);
+    this.#check();
+    this.#call.method.validateCallback(callback, true);
+    this.#commit(4, callback);
   }
 }
 
@@ -872,45 +894,49 @@ export func when(call: MockCall): MockStub {
 
 /// Successful verification results expose copies of ordered captures and call descriptions.
 export class MockVerificationResult {
-  private values: dynamic[];
-  private calls: MockInvocation[];
+
+  #values: dynamic[];
+  #calls: MockInvocation[];
+
   constructor(captured: dynamic[], invocations: MockInvocation[]) {
-    this.values = captured;
-    this.calls = invocations;
+    this.#values = captured;
+    this.#calls = invocations;
   }
   get captured(): dynamic[] {
-    return this.values.slice(0, this.values.length);
+    return this.#values.slice(0, this.#values.length);
   }
   get invocations(): MockInvocation[] {
-    return this.calls.slice(0, this.calls.length);
+    return this.#calls.slice(0, this.#calls.length);
   }
 }
 
 /// Snapshot verification; records are consumed only after a successful called() commit.
 export class MockVerification {
-  private call: MockCall;
-  private epoch: int;
-  private records: Record[] = [];
-  private captured: dynamic[] = [];
-  private completed: bool = false;
-  private source: ByteArray;
 
-  private matchCount(matcher: testing.Matcher): testing.MatchResult {
-    const session = this.call.method.control.session;
+  #call: MockCall;
+  #epoch: int;
+  #records: Record[] = [];
+  #captured: dynamic[] = [];
+  #completed: bool = false;
+  #source: ByteArray;
+
+  #matchCount(matcher: testing.Matcher): testing.MatchResult {
+    const session = this.#call.method.control.session;
     session.beginMatch();
     try {
-      return matcher.match (this.records.length);
+      return matcher.match (this.#records.length);
     } finally {
       session.endMatch();
     }
   }
 
+
   constructor(call: MockCall) {
     const method = call.method;
     method.control.session.check();
-    this.call = call;
-    this.epoch = method.historyEpoch;
-    this.source = captureTrace();
+    this.#call = call;
+    this.#epoch = method.historyEpoch;
+    this.#source = captureTrace();
     for (const record in method.history()) {
       if (record.verified) {
         continue;
@@ -918,22 +944,22 @@ export class MockVerification {
       const invocation = record.invocation;
       const matched = call.match (invocation);
       if (matched.success) {
-        this.records.push(record);
+        this.#records.push(record);
         for (const value in matched.captured) {
-          this.captured.push(value);
+          this.#captured.push(value);
         }
       }
     }
   }
 
   called(count: dynamic): MockVerificationResult {
-    const method = this.call.method;
+    const method = this.#call.method;
     const session = method.control.session;
     session.check();
-    if (this.completed || this.epoch != method.historyEpoch) {
+    if (this.#completed || this.#epoch != method.historyEpoch) {
       raiseUsageError('verification builder is stale or completed');
     }
-    for (const record in this.records) {
+    for (const record in this.#records) {
       if (record.verified) {
         raiseUsageError('verification records were already consumed');
       }
@@ -942,26 +968,26 @@ export class MockVerification {
       raiseUsageError('called requires a nonnegative int or synchronous Matcher');
     }
     const matcher = argumentMatcher(count);
-    const result = this.matchCount(matcher);
+    const result = this.#matchCount(matcher);
     if (!result.success) {
       const error = MockVerificationFailure(
-        '${method.methodName}: matched ${this.records.length} call(s), expected ${result.description}'
+        '${method.methodName}: matched ${this.#records.length} call(s), expected ${result.description}'
       );
       error.difference = result.difference;
       error.mock = method.report(
-        '${this.call.description} called ${result.description}',
-        this.records.length,
-        this.source
+        '${this.#call.description} called ${result.description}',
+        this.#records.length,
+        this.#source
       );
       throw error;
     }
     const invocations: MockInvocation[] = [];
-    for (const record in this.records) {
+    for (const record in this.#records) {
       record.verified = true;
       invocations.push(record.invocation);
     }
-    this.completed = true;
-    return MockVerificationResult(this.captured, invocations);
+    this.#completed = true;
+    return MockVerificationResult(this.#captured, invocations);
   }
 }
 
@@ -1049,138 +1075,162 @@ export func verifyInOrder(calls: MockCall[]): MockVerificationResult {
 
 /// A zero-argument typed function substitute.
 export class MockFunction0<R> {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockFunction0.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockFunction0.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(): R {
-    return this.method.invoke<R>([]);
+
+  #invoke(): R {
+    return this.#method.invoke<R>([]);
   }
+
   get function(): () => R {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(): MockCall {
-    return this.method.query([]);
+    return this.#method.query([]);
   }
 }
 
 /// A one-argument typed function substitute.
 export class MockFunction1<A, R> {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockFunction1.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockFunction1.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(argument: A): R {
-    return this.method.invoke<R>([argument]);
+
+  #invoke(argument: A): R {
+    return this.#method.invoke<R>([argument]);
   }
+
   get function(): (A) => R {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(argument: dynamic): MockCall {
-    return this.method.query([argument]);
+    return this.#method.query([argument]);
   }
 }
 
 /// A two-argument typed function substitute.
 export class MockFunction2<A, B, R> {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockFunction2.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockFunction2.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(first: A, second: B): R {
-    return this.method.invoke<R>([first, second]);
+
+  #invoke(first: A, second: B): R {
+    return this.#method.invoke<R>([first, second]);
   }
+
   get function(): (A, B) => R {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(first: dynamic, second: dynamic): MockCall {
-    return this.method.query([first, second]);
+    return this.#method.query([first, second]);
   }
 }
 
 /// A zero-argument void function substitute.
 export class MockVoidFunction0 {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockVoidFunction0.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockVoidFunction0.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(): void {
-    this.method.invokeVoid([]);
+
+  #invoke(): void {
+    this.#method.invokeVoid([]);
   }
+
   get function(): () => void {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(): MockCall {
-    return this.method.query([]);
+    return this.#method.query([]);
   }
 }
 
 /// A one-argument void function substitute.
 export class MockVoidFunction1<A> {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockVoidFunction1.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockVoidFunction1.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(argument: A): void {
-    this.method.invokeVoid([argument]);
+
+  #invoke(argument: A): void {
+    this.#method.invokeVoid([argument]);
   }
+
   get function(): (A) => void {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(argument: dynamic): MockCall {
-    return this.method.query([argument]);
+    return this.#method.query([argument]);
   }
 }
 
 /// A two-argument void function substitute.
 export class MockVoidFunction2<A, B> {
-  private owner: MockControl;
-  private method: MockMethod;
+
+  #owner: MockControl;
+  #method: MockMethod;
+
   constructor(session: MockSession) {
-    this.owner = MockControl(session);
-    this.method = MockMethod(this.owner, 'MockVoidFunction2.function');
-    this.method.bind(this.invoke);
+    this.#owner = MockControl(session);
+    this.#method = MockMethod(this.#owner, 'MockVoidFunction2.function');
+    this.#method.bind(this.#invoke);
   }
-  private invoke(first: A, second: B): void {
-    this.method.invokeVoid([first, second]);
+
+  #invoke(first: A, second: B): void {
+    this.#method.invokeVoid([first, second]);
   }
+
   get function(): (A, B) => void {
-    return this.invoke;
+    return this.#invoke;
   }
   get control(): MockControl {
-    return this.owner;
+    return this.#owner;
   }
   query(first: dynamic, second: dynamic): MockCall {
-    return this.method.query([first, second]);
+    return this.#method.query([first, second]);
   }
 }

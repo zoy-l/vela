@@ -133,6 +133,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
       .name = "$receiver",
       .location = expression.location,
       .initializer = {},
+      .member_name = {},
   });
   FunctionInfo implementation;
   implementation.return_type = signature.return_type;
@@ -154,6 +155,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
         .name = name,
         .location = expression.location,
         .initializer = {},
+        .member_name = {},
     });
     implementation.AddParameter(name, parameter);
     call->arguments.push_back(

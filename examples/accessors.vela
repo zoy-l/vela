@@ -1,16 +1,18 @@
 class Account {
-  private storedBalance: int = 10;
+
+  #storedBalance: int = 10;
+
 
   get balance(): int {
-    return this.storedBalance;
+    return this.#storedBalance;
   }
 
   set balance(value: int): void {
-    this.storedBalance = value;
+    this.#storedBalance = value;
   }
 
   get doubled(): int {
-    return this.storedBalance * 2;
+    return this.#storedBalance * 2;
   }
 }
 

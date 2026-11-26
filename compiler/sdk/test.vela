@@ -36,15 +36,17 @@ export interface AsyncMatcher {
 
 /// An inherited inactivity timeout. Absolute durations are in milliseconds.
 export class Timeout {
-  private durationValue: int;
-  private factorValue: double = 1.0;
-  private modeValue: int = 0;
+
+  #durationValue: int;
+  #factorValue: double = 1.0;
+  #modeValue: int = 0;
+
 
   constructor(milliseconds: int) {
     if (milliseconds < 0) {
       throw Error(message: 'Timeout milliseconds must be nonnegative');
     }
-    this.durationValue = milliseconds;
+    this.#durationValue = milliseconds;
   }
 
   /// Multiplies the inherited timeout. An inherited disabled timeout stays disabled.
@@ -53,21 +55,21 @@ export class Timeout {
       throw Error(message: 'Timeout factor must be positive and finite');
     }
     const result = Timeout(0);
-    result.modeValue = 1;
-    result.factorValue = value;
+    result.#modeValue = 1;
+    result.#factorValue = value;
     return result;
   }
 
   /// Disables inactivity timeouts for this scope.
   static none(): Timeout {
     const result = Timeout(0);
-    result.modeValue = 2;
+    result.#modeValue = 2;
     return result;
   }
 
-  get milliseconds(): int { return this.durationValue; }
-  get multiplier(): double { return this.factorValue; }
-  get mode(): int { return this.modeValue; }
+  get milliseconds(): int { return this.#durationValue; }
+  get multiplier(): double { return this.#factorValue; }
+  get mode(): int { return this.#modeValue; }
 }
 
 external func publishRegistration(operation: int, description: string, callback: dynamic,

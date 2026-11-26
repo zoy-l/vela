@@ -64,6 +64,7 @@ struct Signature final {
   std::string name;
   std::vector<Parameter> parameters;
   std::optional<Type> result = std::nullopt;
+  std::optional<Type> narrowed_parameter = std::nullopt;
 };
 
 struct Class final {

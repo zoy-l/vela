@@ -210,6 +210,10 @@ Diagnostics BindReflectionDeclarations(Program& program) {
                (owner.base_class && owner.base_class->name == "MemberInfo")) {
       owner.reflection_role = Class::ReflectionRole::Metadata;
     }
+    if (owner.reflection_role != Class::ReflectionRole::None) {
+      // 元数据与身份对象由运行时生产，不声明不可执行的脚本构造链。
+      owner.constructor_kind = ConstructorKind::Unavailable;
+    }
     for (std::size_t index = 0; index < owner.methods.size(); ++index) {
       auto& method = owner.methods[index];
       std::optional<reflection::Operation> operation;

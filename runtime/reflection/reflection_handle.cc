@@ -79,6 +79,7 @@ void ReflectionHandle::CacheField(const NativeInstance& instance,
   cache.kind = constraint.kind;
   cache.nullable = constraint.nullable;
   cache.dynamic = constraint.dynamic;
+  cache.writable = (resolved.flags & reflection::kConstant) == 0;
   cache.layout_id = layout.id();
   BindEpoch(instance, cache);
 }

@@ -50,6 +50,7 @@ enum class Builtin : std::uint8_t {
   CollectionKeys,
   CollectionValues,
   ArraySlice,
+  ArrayIncludes,
   ArrayFill,
   ArrayReverse,
   SetUnion,
@@ -146,6 +147,7 @@ enum class Builtin : std::uint8_t {
   DynamicArrayOutput,
   DynamicArrayInvoke,
   DynamicArrayValidate,
+  DynamicArrayAppend,
   DynamicAsync,
   CheckFuturePayload,
   TestRegister,
@@ -232,6 +234,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::DynamicIndexRead:
     case Builtin::DynamicMemberGet:
     case Builtin::DynamicArrayValidate:
+    case Builtin::DynamicArrayAppend:
     case Builtin::DynamicResolveCall:
     case Builtin::BindRuntimeType:
     case Builtin::CheckFuturePayload:
@@ -301,6 +304,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::StringGraphemeSlice:
     case Builtin::MapSet:
     case Builtin::ArraySlice:
+    case Builtin::ArrayIncludes:
     case Builtin::MockInspect:
       return 3;
     case Builtin::ArrayFill:

@@ -133,7 +133,8 @@ func unused(): int { return 0; }
 class Counter {
   value: int = 1;
   add(amount: int): int { return this.value + amount; }
-  private secret(): int { return 7; }
+
+  #secret(): int { return 7; }
 }
 export func main(): int { return 1; }
 )",
@@ -151,7 +152,7 @@ export func main(): int { return 1; }
               },
               {
                   .kind = frontend::ReflectionMemberKind::Method,
-                  .name = "secret",
+                  .name = "#secret",
                   .type_arguments = {},
                   .location = {},
               },
@@ -182,7 +183,7 @@ export func main(): int { return 1; }
   const auto target = program.classes.at(owner).dispatch_targets.at(add->target);
   EXPECT_EQ(program.functions.at(target).name, "Counter.add");
   const auto secret =
-      std::ranges::find(program.reflection_members, "secret", &reflection::Member::name);
+      std::ranges::find(program.reflection_members, "#secret", &reflection::Member::name);
   ASSERT_NE(secret, program.reflection_members.end());
   EXPECT_NE(secret->flags & reflection::kRegistered, 0U);
   EXPECT_EQ(secret->target, kInvalidFunctionTarget);

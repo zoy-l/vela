@@ -145,9 +145,7 @@ class NativeImageBuilder final {
 
   runtime::NativeClassDescription Class(std::size_t index);
   runtime::NativeSignatureDescription Signature(const layout::Signature& source);
-  runtime::NativeTable<runtime::NativeCallParameter> CallParameters(
-      const CallSignature& source,
-      std::span<const std::uint32_t> defaults = {});
+  runtime::NativeTable<runtime::NativeCallParameter> CallParameters(const CallSignature& source);
   runtime::NativeFunctionDescription Function(const ir::Function& function);
   runtime::NativeAttributeValue AttributeField(const reflection::AttributeValue& field);
   const runtime::NativeFunctionDependencies* Dependencies(const ir::Function& function);
@@ -180,7 +178,9 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
         .declaration = field.declaration,
         .type = field.type,
         .flags =
-            field.visibility == frontend::Visibility::Private ? runtime::kNativePrivateField : 0,
+            (field.visibility == frontend::Visibility::Private ? runtime::kNativePrivateField
+                                                               : 0U) |
+            (field.binding == frontend::BindingKind::Constant ? runtime::kNativeConstantField : 0U),
         .initializer = field.initializer,
     });
   }
@@ -206,6 +206,9 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
 }
 
 runtime::NativeSignatureDescription NativeImageBuilder::Signature(const layout::Signature& source) {
+  const auto describe_optional = [](const auto& type) {
+    return type ? Describe(*type) : runtime::NativeTypeDescription{};
+  };
   std::vector<runtime::NativeSignatureParameter> parameters;
   parameters.reserve(source.parameters.size());
   for (const auto& parameter : source.parameters) {
@@ -214,11 +217,15 @@ runtime::NativeSignatureDescription NativeImageBuilder::Signature(const layout::
         .flags = ParameterFlags(parameter),
     });
   }
+  const auto& result = source.result;
+  const auto& narrowed = source.narrowed_parameter;
   return {
       .name = Text(source.name),
       .parameters = Copy(parameters),
-      .result = source.result ? Describe(*source.result) : runtime::NativeTypeDescription{},
-      .has_result = static_cast<std::uint32_t>(source.result.has_value()),
+      .result = describe_optional(result),
+      .has_result = static_cast<std::uint32_t>(result.has_value()),
+      .narrowed_parameter = describe_optional(narrowed),
+      .has_narrowed_parameter = static_cast<std::uint32_t>(narrowed.has_value()),
   };
 }
 
@@ -327,8 +334,7 @@ const runtime::NativeFunctionDependencies* NativeImageBuilder::Dependencies(
 }
 
 runtime::NativeTable<runtime::NativeCallParameter> NativeImageBuilder::CallParameters(
-    const CallSignature& source,
-    std::span<const std::uint32_t> defaults) {
+    const CallSignature& source) {
   std::vector<runtime::NativeCallParameter> parameters;
   parameters.reserve(source.parameters.size());
   for (const auto& parameter : source.parameters) {
@@ -338,9 +344,6 @@ runtime::NativeTable<runtime::NativeCallParameter> NativeImageBuilder::CallParam
         .flags = ParameterFlags(parameter) |
                  (parameter.has_default ? runtime::kNativeDefaultParameter : 0U),
     });
-  }
-  for (const auto index : defaults) {
-    parameters[index].flags |= runtime::kNativeDefaultParameter;
   }
   return Copy(parameters);
 }
@@ -446,6 +449,7 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build() {
         .type = member.type.value_or(runtime::kNoNativeIndex),
         .setter = member.setter.value_or(runtime::kNoNativeIndex),
         .kind = static_cast<std::uint32_t>(member.kind),
+        .read_only = member.is_read_only ? 1U : 0U,
     });
   }
   image.members = Copy(members);
@@ -576,7 +580,7 @@ void NativeImageBuilder::Reflection() {
         .target = member.target,
         .getter = member.getter,
         .setter = member.setter,
-        .parameters = CallParameters(member.signature, member.default_parameters),
+        .parameters = CallParameters(member.signature),
         .type_arguments = Copy(member.type_arguments),
     });
   }

@@ -47,7 +47,9 @@ void CaptureAnalysis::Walk(const Function& function) {
   scopes_.emplace_back();
   for (const auto& parameter : function.parameters) {
     Walk(parameter.initializer.get());
-    Declare(parameter.name, &parameter, BindingKind::Mutable);
+    if (parameter.binding == Parameter::Binding::Local) {
+      Declare(parameter.name, &parameter, BindingKind::Mutable);
+    }
   }
   Walk(function.body.get());
   scopes_.pop_back();
@@ -74,28 +76,20 @@ void CaptureAnalysis::Walk(const Expression* expression) {
     Walk(*expression->function);
     --lambda_depth_;
   }
-  for (const auto* child : ExpressionOperands(*expression)) {
-    Walk(child);
-  }
-  for (const auto& element : expression->elements) {
-    Walk(element.get());
-  }
-  for (const auto& entry : expression->entries) {
-    Walk(entry.key.get());
-    Walk(entry.value.get());
-  }
-  for (const auto& argument : expression->arguments) {
-    Walk(argument.value.get());
-  }
-  for (const auto& arm : expression->arms) {
-    Walk(arm.pattern.get());
-    scopes_.emplace_back();
-    if (arm.kind == MatchArm::Kind::Binding) {
-      Declare(arm.binding, &arm, BindingKind::Mutable);
+  if (expression->kind == Expression::Kind::Match) {
+    Walk(expression->operand.get());
+    for (const auto& arm : expression->arms) {
+      Walk(arm.pattern.get());
+      scopes_.emplace_back();
+      if (arm.kind == MatchArm::Kind::Binding) {
+        Declare(arm.binding, &arm, BindingKind::Mutable);
+      }
+      Walk(arm.value.get());
+      scopes_.pop_back();
     }
-    Walk(arm.value.get());
-    scopes_.pop_back();
+    return;
   }
+  VisitExpressionChildren(*expression, [this](const Expression* child) { Walk(child); });
 }
 
 void CaptureAnalysis::WalkScoped(const Statement* statement) {

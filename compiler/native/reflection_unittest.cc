@@ -105,16 +105,18 @@ class Derived extends Base {
 }
 
 TEST_F(ReflectionIndexTest, PropertyVisibilityUsesOnlyRegisteredAccessors) {
-  Load(R"(
+  Load(
+      R"(
 class Counter {
   value: int = 1;
   get amount(): int { return this.value; }
-  private set amount(value: int): void { this.value = value; }
+
+  set #amount(value: int): void { this.value = value; }
 }
 )",
-       {
-           test::SelectReflection("Counter", {test::SelectMember(SelectionKind::Setter, "amount")}),
-       });
+      {
+          test::SelectReflection("Counter", {test::SelectMember(SelectionKind::Setter, "#amount")}),
+      });
   ASSERT_FALSE(HasFatalFailure());
   const auto* description = Find("Counter");
   ASSERT_NE(description, nullptr);
@@ -123,7 +125,7 @@ class Counter {
   ASSERT_TRUE(visible);
   EXPECT_EQ(*visible, nullptr);
   const auto private_property =
-      index().FindMember(type, reflection::MemberKind::Property, "amount",
+      index().FindMember(type, reflection::MemberKind::Property, "#amount",
                          {.visibility = reflection::VisibilityFilter::Private});
   ASSERT_TRUE(private_property);
   ASSERT_NE(*private_property, nullptr);
@@ -132,7 +134,7 @@ class Counter {
   EXPECT_NE((*setter)->flags & reflection::kPrivate, 0U);
   const auto getter = index().ResolveMember((*private_property)->getter);
   ASSERT_FALSE(getter);
-  EXPECT_EQ(getter.error(), ExecutionStatus::ReflectionUnavailable);
+  EXPECT_EQ(getter.error(), ExecutionStatus::TargetDeleted);
 }
 
 TEST_F(ReflectionIndexTest, EnumeratesSelectedEnumValuesInDeclarationOrder) {

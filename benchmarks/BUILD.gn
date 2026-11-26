@@ -179,10 +179,13 @@ source_set("standard_api_workloads") {
 executable("vela_benchmarks") {
   testonly = true
   sources = [
+    "array_search_benchmark.cc",
     "async_benchmark.cc",
     "byte_data_benchmark.cc",
     "compilation_cache_benchmark.cc",
     "completion_benchmark.cc",
+    "contract_preparation_benchmark.cc",
+    "documentation_benchmark.cc",
     "execution_benchmark.cc",
     "file_capture_benchmark.cc",
     "gc_strategy_benchmark.cc",
