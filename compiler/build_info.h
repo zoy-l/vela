@@ -5,6 +5,6 @@
 namespace vela {
 
 inline constexpr std::string_view kProductName = "Vela";
-inline constexpr std::string_view kVersion = "0.0.3";
+inline constexpr std::string_view kVersion = "0.0.4";
 
 }  // namespace vela
