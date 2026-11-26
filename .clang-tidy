@@ -20,6 +20,8 @@ ExcludeHeaderFilterRegex: '(^|[/\\])third_party[/\\]'
 FormatStyle: file
 CheckOptions:
   cppcoreguidelines-macro-usage.AllowedRegexp: '^VELA_(DETAIL_ANNOTATE|CLASS|MODULE|NAME|GETTER|SETTER|IGNORE)$'
+  # 保留 SDK 公开入口：CoreServices 导出 FSEvents，POSIX 头导出 fdopen 和 sigset_t。
+  misc-include-cleaner.IgnoreHeaders: 'FSEvents[.]framework/(Versions/[^/]+/)?Headers/FSEvents[.]h;.sdk/usr/include/_stdio[.]h;.sdk/usr/include/sys/_types/_sigset_t[.]h'
   readability-function-cognitive-complexity.IgnoreMacros: true
   readability-trailing-comma.SingleLineCommaPolicy: Ignore
   readability-trailing-comma.MultiLineCommaPolicy: Append

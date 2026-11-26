@@ -43,7 +43,7 @@ class CompilerProcess final {
   CompilerProcess(CompilerProcess&&) = delete;
   CompilerProcess& operator=(CompilerProcess&&) = delete;
   ~CompilerProcess();
-  std::expected<std::vector<std::byte>, std::string> Receive() const;
+  [[nodiscard]] std::expected<std::vector<std::byte>, std::string> Receive() const;
   void StartReceiving();
   // 回调只唤醒消费者，不重入 Exchange；注销等待当前通知结束。
   void SetFileChanged(std::uint64_t resource_id, std::function<void()> changed);

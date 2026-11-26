@@ -570,10 +570,10 @@ std::size_t Heap::BlockCapacity(std::size_t class_index) noexcept {
 }
 
 void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
-  constexpr auto page_bytes = internal::kHeapBlockPageBytes;
   const auto block_size = kSizeClasses[class_index];
-  const auto page_storage = [page_bytes](BlockPage* page) {
-    return std::span(std::as_writable_bytes(std::span(page, 1)).data(), page_bytes);
+  const auto page_storage = [](BlockPage* page) {
+    return std::span(std::as_writable_bytes(std::span(page, 1)).data(),
+                     internal::kHeapBlockPageBytes);
   };
   auto& available = available_pages_[class_index];
   auto* page = available;

@@ -18,7 +18,7 @@ struct DirectoryWatchState final {
   DirectoryWatchState(DirectoryWatchState&&) = delete;
   DirectoryWatchState& operator=(DirectoryWatchState&&) = delete;
 
-  std::uintptr_t queue = 0;
+  void* queue = nullptr;
   absl::flat_hash_map<std::uint64_t, std::unique_ptr<MacDirectoryWatch>> watches;
 };
 

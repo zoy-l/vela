@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 
 from tools.config import (
-    BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform, llvm_tools, static_library_name,
+    BUILD_TOOLS_ROOT, ROOT, executable_name, host_platform, llvm_tools,
 )
 
 
@@ -203,7 +203,8 @@ def link_configuration() -> dict[str, str | list[str]]:
     loader_libraries, loader_system = select((
         "jitlink", "orctargetprocess", "orcshared", "executionengine", "core", "transformutils",
         "bitwriter"))
-    loader_archives = [directory / "lib" / static_library_name(name)
+    archive_pattern = "{}.lib" if sys.platform == "win32" else "lib{}.a"
+    loader_archives = [directory / "lib" / archive_pattern.format(name)
                        for name in ("LLVMOrcJIT", "LLVMOrcDebugging")]
     loader_libraries = checked_archives(loader_archives) + loader_libraries
     tooling_libraries, tooling_system = select((

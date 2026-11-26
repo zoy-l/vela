@@ -162,7 +162,7 @@ std::int64_t StringReplaceBytes(std::span<const std::int64_t> input) {
     result.reserve(kText.size() - (last - first) + inserted.size());
     result.append(kText, 0, first);
     result.append(inserted);
-    result.append(kText, last, std::string::npos);
+    result.append(std::string_view(kText).substr(last));
     checksum += static_cast<std::int64_t>(result.size() + Utf8Length(result));
   }
   return checksum;

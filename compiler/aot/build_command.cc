@@ -55,10 +55,10 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
       emit = argument.substr(kEmitOption.size());
     } else if (argument.starts_with(kExportOption)) {
       result.options.exports.emplace_back(argument.substr(kExportOption.size()));
-    } else if (auto path = ReadPathOption(argument, kTargetSupportOption)) {
-      result.support_path = std::move(*path);
-    } else if (auto path = ReadPathOption(argument, kConfigurationOption)) {
-      result.configuration = std::move(path);
+    } else if (auto support_path = ReadPathOption(argument, kTargetSupportOption)) {
+      result.support_path = std::move(*support_path);
+    } else if (auto configuration = ReadPathOption(argument, kConfigurationOption)) {
+      result.configuration = std::move(configuration);
     } else if (!argument.starts_with('-') && result.source.empty()) {
       result.source = argument;
     } else {

@@ -41,11 +41,18 @@ llvm::Error DefineRuntimeSymbols(CodeLinker& jit) {
   bind("memset", &std::memset);
   bind("memcpy", &std::memcpy);
   bind("memmove", &std::memmove);
-  bind("atan2", static_cast<double (*)(double, double)>(&std::atan2));
-  bind("cbrt", static_cast<double (*)(double)>(&std::cbrt));
-  bind("hypot", static_cast<double (*)(double, double)>(&std::hypot));
-  bind("remainder", static_cast<double (*)(double, double)>(&std::remainder));
-  bind("round", static_cast<double (*)(double)>(&std::round));
+  using UnaryMath = double (*)(double);
+  using BinaryMath = double (*)(double, double);
+  constexpr BinaryMath kAtan2 = std::atan2;
+  constexpr UnaryMath kCbrt = std::cbrt;
+  constexpr BinaryMath kHypot = std::hypot;
+  constexpr BinaryMath kRemainder = std::remainder;
+  constexpr UnaryMath kRound = std::round;
+  bind("atan2", kAtan2);
+  bind("cbrt", kCbrt);
+  bind("hypot", kHypot);
+  bind("remainder", kRemainder);
+  bind("round", kRound);
 #ifdef _WIN32
   bind("__chkstk", &VelaStackProbe);
 #endif

@@ -214,7 +214,12 @@ void ImportNativeDependencies(const Module& module,
     const auto alias = DependencyAlias("nativeDependency", index, identifiers);
     const auto relative =
         Utf8Path(dependency.source).lexically_relative(Utf8Path(output_directory));
-    imports.push_back({.path = PathText(relative), .location = {}, .alias = alias});
+    imports.push_back({
+        .path = PathText(relative),
+        .location = {},
+        .alias = alias,
+        .diagnostic_location = {},
+    });
     for (const auto& type : dependency.classes) {
       names.emplace(type.key, alias + "." + type.name);
     }
@@ -272,8 +277,12 @@ std::expected<void, std::string> ImportScriptDependencies(
   }
   for (const auto& [source, alias] : script_imports) {
     const auto relative = Utf8Path(source).lexically_relative(Utf8Path(output_directory));
-    imports.push_back(
-        {.path = relative.empty() ? source : PathText(relative), .location = {}, .alias = alias});
+    imports.push_back({
+        .path = relative.empty() ? source : PathText(relative),
+        .location = {},
+        .alias = alias,
+        .diagnostic_location = {},
+    });
   }
   return {};
 }

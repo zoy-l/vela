@@ -69,8 +69,8 @@ class LinkConfigurationTest(unittest.TestCase):
             library = directory / "lib/LLVMSupport.lib"
             library.parent.mkdir()
             library.touch()
-            loader_libraries = [library.parent / config.static_library_name(component)
-                                for component in ("LLVMOrcJIT", "LLVMOrcDebugging")]
+            loader_libraries = [library.parent / name
+                                for name in ("LLVMOrcJIT.lib", "LLVMOrcDebugging.lib")]
             for loader in loader_libraries:
                 loader.touch()
             system = ("psapi.lib shell32.lib ole32.lib uuid.lib advapi32.lib ws2_32.lib "
@@ -82,7 +82,8 @@ class LinkConfigurationTest(unittest.TestCase):
                           "--has-rtti": "NO", "--host-target": "x86_64-pc-windows-msvc"}[option]
                 return subprocess.CompletedProcess(command, 0, stdout=output)
 
-            with (mock.patch.object(llvm, "sdk_directory", return_value=directory),
+            with (mock.patch.object(llvm.sys, "platform", "win32"),
+                  mock.patch.object(llvm, "sdk_directory", return_value=directory),
                   mock.patch.object(llvm.subprocess, "run", side_effect=query)):
                 configuration = llvm.link_configuration()
                 for prefix in ("vela_llvm", "vela_llvm_jit", "vela_llvm_tooling"):

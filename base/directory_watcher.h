@@ -7,11 +7,14 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
+
+#ifndef __APPLE__
+#include <optional>
+#include <thread>
+#endif
 
 #include <absl/container/flat_hash_map.h>
 

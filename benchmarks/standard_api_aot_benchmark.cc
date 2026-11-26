@@ -41,10 +41,10 @@ void Native(benchmark::State& state, Workload workload, WorkloadProblem problem)
   }
   auto& heap = isolate.heap();
   CollectHeapBaseline(state, heap);
-  const auto metrics = std::ranges::find(kEntries, workload.name, &Entry::name);
-  state.counters["entry_shadow_slots"] = static_cast<double>(metrics->shadow_slots);
-  state.counters["entry_frame_bytes"] = static_cast<double>(metrics->frame_bytes);
-  state.counters["entry_static_root_stores"] = static_cast<double>(metrics->root_stores);
+  const auto& metrics = *std::ranges::find(kEntries, workload.name, &Entry::name);
+  state.counters["entry_shadow_slots"] = static_cast<double>(metrics.shadow_slots);
+  state.counters["entry_frame_bytes"] = static_cast<double>(metrics.frame_bytes);
+  state.counters["entry_static_root_stores"] = static_cast<double>(metrics.root_stores);
   state.counters["suspended_frames"] =
       static_cast<double>(isolate.scheduler().suspended_frame_count());
   state.counters["saved_state_bytes"] =

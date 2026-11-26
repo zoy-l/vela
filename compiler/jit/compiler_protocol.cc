@@ -31,7 +31,14 @@
 
 #ifndef _WIN32
 #include <pthread.h>
+
+// POSIX 信号集 API 由 <signal.h> 声明。
+extern "C" {
 #include <signal.h>
+}
+#ifdef __APPLE__
+#include <sys/signal.h>
+#endif
 #endif
 
 #include "base/binary.h"
@@ -528,14 +535,17 @@ std::expected<void, std::string> WriteCompilerFrame(std::FILE* output,
   header.Write(size);
 #ifndef _WIN32
   // 编译进程退出后返回 I/O 错误；不能让断开的管道终止宿主，也不改变全局信号策略。
-  sigset_t pipe, previous, pending;
+  sigset_t pipe{};
+  sigset_t previous{};
+  sigset_t pending{};
   sigemptyset(&pipe);
   sigaddset(&pipe, SIGPIPE);
   const auto block_error = pthread_sigmask(SIG_BLOCK, &pipe, &previous);
-  if (block_error != 0)
+  if (block_error != 0) {
     return std::unexpected("cannot block compiler pipe signal");
+  }
   sigpending(&pending);
-  const auto was_pending = sigismember(&pending, SIGPIPE);
+  const bool was_pending = sigismember(&pending, SIGPIPE) != 0;
 #endif
   const bool failed =
       std::fwrite(header.bytes().data(), header.bytes().size(), 1, output) != 1 ||
@@ -543,13 +553,14 @@ std::expected<void, std::string> WriteCompilerFrame(std::FILE* output,
       std::fflush(output) != 0;
 #ifndef _WIN32
   sigpending(&pending);
-  if (was_pending == 0 && sigismember(&pending, SIGPIPE) != 0) {
+  if (!was_pending && sigismember(&pending, SIGPIPE) != 0) {
     int consumed = 0;
     sigwait(&pipe, &consumed);
   }
   const auto restore_error = pthread_sigmask(SIG_SETMASK, &previous, nullptr);
-  if (restore_error != 0)
+  if (restore_error != 0) {
     return std::unexpected("cannot restore compiler pipe signal mask");
+  }
 #endif
   if (failed) {
     return std::unexpected("cannot write compiler pipe");

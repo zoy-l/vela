@@ -71,6 +71,9 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   include with `IWYU pragma: keep` when it initializes architecture macros and base types required
   by those headers. Also include each SDK symbol's declaring header directly. This exception is
   limited to the SDK prerequisite; it does not permit retaining other unused dependencies.
+- On macOS, use the public CoreServices header for FSEvents and the public POSIX headers for
+  `fdopen` and `sigset_t`. The include-cleaner exceptions in `.clang-tidy` cover the SDK headers
+  that the public interfaces already include.
 - Do not use Pimpl. Declare actual private state directly and keep platform state within its
   platform boundary.
 

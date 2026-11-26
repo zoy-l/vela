@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -10,6 +9,10 @@
 #include <memory>
 #include <mutex>
 #include <semaphore>
+
+#ifdef _WIN32
+#include <bit>
+#endif
 
 #include <absl/functional/any_invocable.h>
 

@@ -29,7 +29,6 @@
 
 #include "base/execution_status.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/jit/code_inputs.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/compiler.h"

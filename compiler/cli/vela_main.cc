@@ -230,7 +230,7 @@ int CheckCommand(std::span<char*> arguments) {
   if (arguments.size() == 2) {
     if (const auto path =
             vela::ReadPathOption(arguments[1], vela::compiler::kConfigurationOption)) {
-      return CheckFile(arguments.front(), *path);
+      return CheckFile(arguments.front(), path);
     }
   }
   if (arguments.size() != 1) {
