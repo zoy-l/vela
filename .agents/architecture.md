@@ -90,13 +90,16 @@ and complete field block before releasing the previous storage.
 Each Heap owns a segmented local-handle stack with stable slot addresses. Scopes own their segments,
 so storing into an outer scope and releasing scopes out of creation order remain valid. GC scans
 only active segments' published values; new references retain the ordinary root barrier, including
-synchronous tracing during sweep. Empty scopes also prevent stopping. External-root diagnostics
-report one stack resource per Heap, with a stable identity and a reference count equal to the active
-scope count. Overflow pages participate in native-memory accounting and retire when the last scope
-exits. Each scope can share ownership of its first localized immutable host root slot, from a
+synchronous tracing during sweep. External-root diagnostics report one stack resource per Heap,
+with a stable identity and a reference count equal to the number of scopes holding segments.
+Empty C++ scopes do not register roots; the Isolate must still outlive every scope. C-created scopes
+register their heap-allocated lifetime separately as `NativeHandle`, including when empty.
+Overflow pages participate in native-memory accounting and retire when the last scope holding
+segments exits. Each scope can share ownership of its first localized immutable host root slot, from a
 Persistent or error payload; further values use the segmented storage. This avoids another value
-copy while retaining the root
-after the source Persistent is reset. Shared slots remain read-only; output destinations use fresh
+copy while retaining the root after the source Persistent is reset. One scope holds a borrow flag;
+additional scopes each hold a counted reference, supporting independent destruction. These roots
+remain reported as `Persistent` resources. Shared slots remain read-only; output destinations use fresh
 mutable slots. `Local` borrows its Isolate directly and expires with its owning scope. Internal
 localization returns an execution status, with public `Error` construction at the API boundary.
 Roots for callbacks with one parameter and a matching scalar result place their bound descriptor

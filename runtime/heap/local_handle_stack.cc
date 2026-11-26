@@ -66,7 +66,7 @@ void LocalHandleStack::Trace() noexcept {
 
 void LocalHandleStack::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
   if (scopes_ != 0) {
-    // 同一个 Isolate 句柄栈只有一个资源身份，references 是活动作用域数，包含空作用域。
+    // 同一个 Isolate 句柄栈只有一个资源身份，references 只统计持有段的作用域。
     result.push_back(
         {.kind = ExternalResourceKind::RootRange, .identity = identity_, .references = scopes_});
   }

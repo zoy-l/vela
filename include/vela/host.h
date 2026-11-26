@@ -54,7 +54,8 @@ Result<HostValue<typename internal::FunctionType<U>::Return>> Persistent<T>::Cal
     Args&&... arguments) const {
   if constexpr (internal::kIsScalarCallback<T>) {
     if (!root_.IsEmpty()) {
-      if (const auto result = root_.callback().Try(arguments...)) [[likely]] {
+      if (const auto result = runtime::HostRoot::Callback(*root_.storage_).Try(arguments...))
+          [[likely]] {
         return *result;
       }
     }

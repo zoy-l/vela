@@ -153,6 +153,32 @@ TEST(HandleScopeTest, FirstLocalizationNeedsNoNewAllocationAndStillBlocksStoppin
   EXPECT_TRUE(isolate.TryStop());
 }
 
+TEST(HandleScopeTest, LocalizedRootCanBeBorrowedAgainAfterOriginalScopeExits) {
+  runtime::Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto baseline = heap.allocated_bytes();
+  Persistent<String> saved;
+  ASSERT_NO_FATAL_FAILURE(PersistString(isolate, "borrowed again", saved));
+  auto first = std::make_unique<HandleScope>(isolate);
+  auto second = std::make_unique<HandleScope>(isolate);
+  ASSERT_TRUE(saved.ToLocal(*first));
+  ASSERT_TRUE(saved.ToLocal(*second));
+  first.reset();
+  {
+    HandleScope third(isolate);
+    const auto local = saved.ToLocal(third);
+    ASSERT_TRUE(local);
+    saved.Reset();
+    second.reset();
+    heap.Collect();
+    EXPECT_EQ(HandleAccess::Read(*local).AsString()->value(), "borrowed again");
+    EXPECT_FALSE(isolate.TryStop());
+  }
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+  EXPECT_TRUE(isolate.TryStop());
+}
+
 TEST(HandleScopeTest, OuterScopeOwnsTransferredLocalAfterInnerScopeEnds) {
   runtime::Isolate isolate(1);
   HandleScope outer(isolate);
@@ -250,17 +276,23 @@ TEST(HandleScopeTest, OuterScopeCanGrowPastInnerSegmentsAndKeepTransferredLocals
   }
 }
 
-TEST(HandleScopeTest, EmptyScopesHaveOneStableResourceWithExactActivityCount) {
+TEST(HandleScopeTest, OnlyScopesWithSegmentsCountTowardsTheSharedStackResource) {
   runtime::Isolate isolate;
   std::uint64_t identity = 0;
   {
     HandleScope outer(isolate);
+    EXPECT_TRUE(isolate.ReloadBlockers().empty());
+    ASSERT_TRUE(HandleAccess::Root<Value>(outer, runtime::Value::Integer(1)));
     auto blockers = isolate.ReloadBlockers();
     ASSERT_EQ(blockers.size(), 1U);
     identity = blockers.front().identity;
     EXPECT_EQ(blockers.front().references, 1U);
     {
       HandleScope inner(isolate);
+      blockers = isolate.ReloadBlockers();
+      ASSERT_EQ(blockers.size(), 1U);
+      EXPECT_EQ(blockers.front().references, 1U);
+      ASSERT_TRUE(HandleAccess::Root<Value>(inner, runtime::Value::Integer(2)));
       blockers = isolate.ReloadBlockers();
       ASSERT_EQ(blockers.size(), 1U);
       EXPECT_EQ(blockers.front().identity, identity);

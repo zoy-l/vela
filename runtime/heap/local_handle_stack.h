@@ -30,18 +30,18 @@ class LocalHandleStack final {
 
   LocalHandleStack(Heap& heap, std::uint64_t identity) noexcept
       : heap_(&heap), identity_(identity) {}
-  void Enter() noexcept { ++scopes_; }
   [[clang::always_inline]] void Leave(Segment* segment) noexcept {
-    if (segment != nullptr) {
-      auto* page = current_;
-      for (; segment != nullptr; segment = segment->previous) {
-        segment->count = 0;
-      }
-      auto* begin = page->segments.data();
-      top_ = TrimEmptySegments(begin, top_);
-      if (page != &inline_page_ && top_ == begin) [[unlikely]] {
-        RewindPages();
-      }
+    if (segment == nullptr) {
+      return;
+    }
+    auto* page = current_;
+    for (; segment != nullptr; segment = segment->previous) {
+      segment->count = 0;
+    }
+    auto* begin = page->segments.data();
+    top_ = TrimEmptySegments(begin, top_);
+    if (page != &inline_page_ && top_ == begin) [[unlikely]] {
+      RewindPages();
     }
     if (--scopes_ == 0 && inline_page_.next != nullptr) [[unlikely]] {
       ReleasePages();
@@ -64,6 +64,9 @@ class LocalHandleStack final {
       // 未使用段及退栈后的段都没有活跃槽；首槽无需读取再递增旧 count。
       next->count = 1;
       next->values.front() = value;
+      if (segment == nullptr) {
+        ++scopes_;
+      }
       segment = next;
       return &next->values.front();
     }

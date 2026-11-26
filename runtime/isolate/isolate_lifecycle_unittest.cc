@@ -166,6 +166,22 @@ TEST(IsolateLifecycleTest, OpaqueNativeHandlesAppearInStopDiagnostics) {
   EXPECT_TRUE(isolate.TryStop());
 }
 
+TEST(IsolateLifecycleTest, EmptyNativeScopeBlocksStopAndReleasesItsAllocation) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto baseline = heap.allocated_bytes();
+  VelaAotScope* scope = nullptr;
+  ASSERT_EQ(vela_aot_v2_scope_create(&isolate, &scope), VELA_AOT_RETURNED);
+  EXPECT_GT(heap.allocated_bytes(), baseline);
+  const auto refused = isolate.TryStop();
+  ASSERT_FALSE(refused);
+  ASSERT_EQ(refused.error().size(), 1U);
+  EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::NativeHandle);
+  vela_aot_v2_scope_release(scope);
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+  EXPECT_TRUE(isolate.TryStop());
+}
+
 TEST(IsolateLifecycleTest, TimerHandleCanBeCancelledAfterItsIsolateHasStoppedAndDied) {
   Timer timer;
   auto marker = std::make_shared<int>(0);

@@ -18,6 +18,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/heap/host_root.h"
 #include "runtime/heap/native_buffer.h"
+#include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/handle_access.h"
 #include "runtime/native/host_async.h"
@@ -27,6 +28,7 @@
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
 struct VelaAotPersistent final {
@@ -202,17 +204,21 @@ extern "C" VelaAotStatus vela_aot_v2_scope_create(VelaAotIsolate* isolate, VelaA
     return ToNativeStatus(ExecutionStatus::InvalidEntry);
   }
   *scope = nullptr;
-  auto* memory = isolate->heap().AllocateNative(sizeof(HandleScope));
+  auto* memory = isolate->heap().AllocateNative(sizeof(HandleScope) + sizeof(ExternalResource));
   if (memory == nullptr) {
     return ToNativeStatus(ExecutionStatus::OutOfMemory);
   }
   *scope = std::construct_at(static_cast<HandleScope*>(memory), *isolate);
+  // C scope 自身使用 Heap 分配；即使尚无局部根，也必须阻止 Isolate 提前关闭。
+  std::construct_at(StorageAfter<ExternalResource>(**scope), isolate->external_resources(),
+                    ExternalResourceKind::NativeHandle);
   return VELA_AOT_RETURNED;
 }
 
 extern "C" void vela_aot_v2_scope_release(VelaAotScope* scope) {
   if (scope != nullptr) {
     auto& heap = scope->isolate().heap();
+    std::destroy_at(StorageAfter<ExternalResource>(*scope));
     scope->~HandleScope();
     heap.FreeNative(scope);
   }

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <utility>
 
@@ -60,7 +61,8 @@ class HostRoot final {
   void Reset() noexcept {
     assert(storage_ == nullptr || IsOwnerThread());
     auto* storage = std::exchange(storage_, nullptr);
-    if (storage != nullptr && --storage->references == 0) {
+    // 仍被作用域借用的存储由该作用域退出时销毁。
+    if (storage != nullptr && --storage->references == 0 && !storage->borrowed) {
       Destroy(*storage);
     }
   }
@@ -75,13 +77,29 @@ class HostRoot final {
     Value value;
     RootRange root;
     std::size_t references = 1;
+    // 至多一个 HandleScope 持有该标志；其他同时借用的作用域各持有一次引用。
+    bool borrowed = false;
   };
+  enum class BorrowKind : std::uint8_t { Primary, Shared };
   static void Destroy(Storage& storage) noexcept;
-  // 作用域共享根的所有权并借用稳定槽；只用于构造读句柄，不作为输出目标。
-  [[nodiscard]] Value& slot() const noexcept { return storage_->value; }
+  // 借用的稳定槽只用于构造读句柄，不作为输出目标。
+  [[nodiscard]] static Value& Slot(Storage& storage) noexcept { return storage.value; }
   // 仅同类型单标量参数及结果的根附带描述；调用方的 Function 类型已确立这一契约。
-  [[nodiscard]] const ::vela::internal::BoundScalarCallback& callback() const noexcept {
-    return *StorageAfter<const ::vela::internal::BoundScalarCallback>(*storage_);
+  [[nodiscard]] static const ::vela::internal::BoundScalarCallback& Callback(
+      Storage& storage) noexcept {
+    return *StorageAfter<const ::vela::internal::BoundScalarCallback>(storage);
+  }
+  static void EndBorrow(Storage& storage, BorrowKind kind) noexcept {
+    if (kind == BorrowKind::Shared) [[unlikely]] {
+      if (--storage.references == 0 && !storage.borrowed) {
+        Destroy(storage);
+      }
+      return;
+    }
+    storage.borrowed = false;
+    if (storage.references == 0) [[unlikely]] {
+      Destroy(storage);
+    }
   }
   [[nodiscard]] bool IsOwnerThread() const noexcept;
   explicit HostRoot(Storage& storage) noexcept : storage_(&storage) {}

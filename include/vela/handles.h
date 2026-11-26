@@ -48,11 +48,12 @@ class HandleScope final {
   [[clang::always_inline]] explicit HandleScope(runtime::Isolate& isolate) noexcept
       : isolate_(&isolate), storage_(&internal::HandleScopeHeap(isolate).local_handles()) {
     assert(internal::IsHandleScopeOwnerThread(isolate));
-    storage_->Enter();
   }
   [[clang::always_inline]] ~HandleScope() {
     assert(internal::IsHandleScopeOwnerThread(*isolate_));
-    retained_.Reset();
+    if (borrowed_ != nullptr) {
+      runtime::HostRoot::EndBorrow(*borrowed_, borrow_kind_);
+    }
     storage_->Leave(segment_);
   }
   HandleScope(const HandleScope&) = delete;
@@ -80,8 +81,9 @@ class HandleScope final {
   runtime::Isolate* isolate_;
   runtime::LocalHandleStack* storage_;
   runtime::LocalHandleStack::Segment* segment_ = nullptr;
-  // 已存在的不可变根可共享所有权；首个本地化值无需再复制成独立 GC 槽。
-  runtime::HostRoot retained_;
+  // 首个本地化的不可变根直接借用其稳定槽，无需复制成 GC 槽。
+  runtime::HostRoot::Storage* borrowed_ = nullptr;
+  runtime::HostRoot::BorrowKind borrow_kind_ = runtime::HostRoot::BorrowKind::Primary;
 };
 
 template <class T>
@@ -267,7 +269,7 @@ class Persistent final {
   [[nodiscard, clang::always_inline]] Result<Local<T>> ToLocal(HandleScope& scope) const noexcept {
     // 作用域独立保活根和回调描述，源 Persistent 随后可以立即释放。
     const auto localized = scope.Localize<T>(root_);
-    if (!localized) {
+    if (!localized) [[unlikely]] {
       return std::unexpected(Error::FromStatus(localized.error()));
     }
     return *localized;
@@ -296,18 +298,28 @@ Result<Persistent<T>> Local<T>::Persist() const noexcept {
 template <class T>
 [[clang::always_inline]] std::expected<Local<T>, ExecutionStatus> HandleScope::Localize(
     const runtime::HostRoot& root) noexcept {
-  if (root.IsEmpty()) {
+  auto* storage = root.storage_;
+  if (storage == nullptr) [[unlikely]] {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  if (&root.isolate() != isolate_) {
+  if (storage->isolate != isolate_) [[unlikely]] {
     return std::unexpected(ExecutionStatus::InvalidIsolate);
   }
-  if (retained_.IsEmpty()) {
-    retained_ = root;
-    if constexpr (internal::kIsScalarCallback<T>) {
-      return Local<T>(*isolate_, retained_.slot(), &retained_.callback());
+  if (borrowed_ == nullptr) {
+    // 首个本地化值总是借用稳定槽；其他作用域是否已借用只影响所有权记账。
+    borrowed_ = storage;
+    if (!storage->borrowed) [[likely]] {
+      storage->borrowed = true;
     } else {
-      return Local<T>(*isolate_, retained_.slot());
+      // 作用域可非 LIFO 释放，不能依赖原借用作用域活得更久，因此共享一次引用。
+      ++storage->references;
+      borrow_kind_ = runtime::HostRoot::BorrowKind::Shared;
+    }
+    auto& slot = runtime::HostRoot::Slot(*storage);
+    if constexpr (internal::kIsScalarCallback<T>) {
+      return Local<T>(*isolate_, slot, &runtime::HostRoot::Callback(*storage));
+    } else {
+      return Local<T>(*isolate_, slot);
     }
   }
   const auto stored = StoreRooted(root.value());

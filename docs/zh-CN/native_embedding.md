@@ -206,8 +206,10 @@ Future 返回值在尚未完成时也持续保留声明的载荷检查。
 Isolate 必须晚于所属作用域、持久句柄、错误载荷、实例和执行资源销毁。
 
 新局部值使用 Isolate 分段句柄存储中的稳定槽位；作用域支持向外层转存 Local 和独立销毁。
-`ReloadBlockers()` 将这些作用域报告为一个共享的 `RootRange` 资源，`references` 等于活动
-作用域数，包含空作用域。存储扩容遵循堆预算，失败时返回 `OutOfMemory`。
+`ReloadBlockers()` 将持有句柄段的作用域报告为一个共享的 `RootRange` 资源，`references`
+等于持有段的作用域数。仅借用不可变根槽时，该根仍报告为 `Persistent` 资源。
+空 C++ 作用域不登记根；C 接口创建的作用域另以 `NativeHandle` 登记其堆分配寿命，
+即使为空也会阻止关闭。存储扩容遵循堆预算，失败时返回 `OutOfMemory`。
 
 宿主调用公开脚本入口使用 `Entry<Signature>::Bind(instance, name)`，随后
 `entry.Call(scope, args...)` 返回 `Result`。开发会话中的命名入口每次调用当前版本；

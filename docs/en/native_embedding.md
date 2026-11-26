@@ -236,8 +236,11 @@ scopes, persistent handles, error payloads, instances and executions.
 
 New local values use stable slots in the Isolate's segmented handle storage. Scopes support
 transferring a local to an outer scope and independent scope destruction. `ReloadBlockers()` reports
-their shared `RootRange` resource once, with `references` equal to the number of active scopes, including empty
-scopes. Growing the storage respects the heap budget and can return `OutOfMemory`.
+their shared `RootRange` resource once, with `references` equal to the number of scopes holding
+segments. Borrowed immutable roots remain reported as `Persistent` resources. Empty C++ scopes
+do not register roots. C-created scopes separately register their heap-allocated lifetime as
+`NativeHandle` and block shutdown even when empty. Growing the storage respects the heap budget
+and can return `OutOfMemory`.
 The first localization of a Persistent or error payload shares its immutable root slot without
 allocating another slot. A localized scalar callback also borrows the root's bound descriptor;
 mutable captures keep their current values. Later values use the segmented storage. Resetting the
