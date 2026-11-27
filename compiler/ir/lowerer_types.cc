@@ -91,14 +91,15 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::LoadNull:
       RecordValueType(instruction.dst, {.kind = Kind::Null, .name = frontend::kNullTypeName});
       break;
-    case Opcode::NewInstance:
-      RecordValueType(
-          instruction.dst,
-          {
-              .kind = Kind::Class,
-              .name = frontend::InternTypeName(program_.classes.at(instruction.index).name),
-          });
+    case Opcode::NewInstance: {
+      const auto& owner = program_.classes.at(instruction.index);
+      RecordValueType(instruction.dst, {
+                                           .kind = Kind::Class,
+                                           .name = frontend::InternTypeName(owner.name),
+                                           .value_layout = owner.value_layout,
+                                       });
       break;
+    }
     case Opcode::NewArray:
     case Opcode::NewDynamicArray:
       RecordValueType(instruction.dst, program_.array_types.at(instruction.index));

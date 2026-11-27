@@ -67,13 +67,13 @@ InstanceResult CompileSource(std::string_view source,
 
 InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& isolate) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate,
-                       {
-                           .diagnostics = {},
-                           .compilation = {.debugging = native::NativeDebugging::Instructions},
-                           .reflection = {},
-                           .imports = {},
-                       });
+  return CompileModules(std::span(&input, 1), input.path, isolate,
+                        {
+                            .diagnostics = {},
+                            .compilation = {.debugging = native::NativeDebugging::Instructions},
+                            .reflection = {},
+                            .imports = {},
+                        });
 }
 
 InstanceResult CompileModules(std::span<const frontend::SourceInput> sources,
@@ -181,7 +181,8 @@ std::expected<std::int64_t, std::string> AwaitInteger(runtime::Future& future,
     return std::unexpected("test Future has no producer");
   }
   if (future.state() != runtime::FutureState::Succeeded) {
-    return std::unexpected(future.error_diagnostic().value_or(runtime::FutureDiagnostic{}).message);
+    const auto& diagnostic = future.result().diagnostic;
+    return std::unexpected(std::string(diagnostic.Message()));
   }
   const auto value = future.result().value;
   if (!value.IsInteger()) {

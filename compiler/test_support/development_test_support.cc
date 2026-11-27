@@ -45,12 +45,6 @@ void DevelopmentReplTest::SetUp() {
 void DevelopmentReplTest::SetUp(runtime::NativeBindings bindings) {
   vela::test::DirectoryTest::SetUp();
   ASSERT_FALSE(HasFatalFailure());
-  LoadSession(std::move(bindings));
-}
-
-void DevelopmentReplTest::LoadSession(runtime::NativeBindings bindings) {
-  repl_.reset();
-  session_.reset();
   ASSERT_NO_FATAL_FAILURE(Write("main.vela", "func main(): void {}\n"));
   files_ = DevelopmentFiles::Create(Path("main.vela"));
   auto update = files_->Capture(CompiledSourceSnapshot{});
@@ -92,10 +86,10 @@ std::expected<DevelopmentResult, frontend::Diagnostics> DevelopmentReplTest::Res
   });
 }
 
-void DevelopmentReplTest::ExpectReset(DevelopmentStatus status) {
+void DevelopmentReplTest::ExpectAcceptedReset() {
   const auto reset = Reset();
   ASSERT_TRUE(reset) << frontend::DiagnosticsText(reset.error());
-  ASSERT_EQ(reset->status, status);
+  ASSERT_EQ(reset->status, DevelopmentStatus::Accepted);
 }
 
 std::expected<DevelopmentResult, frontend::Diagnostics> DevelopmentReplTest::UpdateFiles(

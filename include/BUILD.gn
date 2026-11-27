@@ -1,3 +1,6 @@
 source_set("bindings") {
-  sources = [ "vela/bindings.h" ]
+  sources = [
+    "vela/bindings.h",
+    "vela/types.h",
+  ]
 }

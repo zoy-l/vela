@@ -72,11 +72,52 @@ bool PlainInvert(bool value) noexcept {
   return !value;
 }
 void PlainNoop() noexcept {}
+
+std::int64_t NullableDefault(std::optional<std::int64_t> value) noexcept {
+  return value.value_or(kHostAnswer / 2);
+}
+
+TEST(NativeBindingTest, NullableParametersSupplyNullWithoutChangingTheHostArity) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<NullableDefault>("nullable")));
+  test::ExpectRunAnswer(R"(
+external func read(value: int?): int = 'nullable';
+external func explicit(value: int? = null): int = 'nullable';
+func main(): int {
+  const short: () => int = read;
+  if (read() != 21 || read(null) != 21 || read(7) != 7) { return 0; }
+  return short() + explicit();
+}
+)",
+                        isolate);
+}
+
 std::expected<std::int64_t, vela::Error> PlainAnswer() noexcept {
   return kHostAnswer;
 }
 std::expected<void, vela::Error> PlainReject() noexcept {
   return std::unexpected(vela::Error{.message = "plain host rejected request", .stack_trace = {}});
+}
+
+std::expected<Never, vela::Error> NeverReturns() noexcept {
+  return std::unexpected(vela::Error{.message = "host never returned", .stack_trace = {}});
+}
+
+TEST(NativeBindingTest, NeverResultPropagatesHostErrorAndRunsCleanup) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<NeverReturns>("neverReturns")));
+  test::ExpectRunAnswer(R"(
+external func fail(): never = 'neverReturns';
+func main(): int {
+  let cleaned = 0;
+  try { try { fail(); } finally { cleaned = 42; } }
+  catch (error: Error) {
+    if (error.message == 'host never returned') return cleaned;
+    return 0;
+  }
+}
+)",
+                        isolate);
 }
 
 TEST(NativeBindingTest, ContextFreeFunctionsShareSignatureValidationCodecsAndFailures) {

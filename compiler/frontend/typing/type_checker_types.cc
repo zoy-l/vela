@@ -49,7 +49,8 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, VoidTypePo
     if (type_name.kind == TypeName::Kind::Array) {
       return ArrayType(element);
     }
-    if (element.nullable || element.kind == Type::Kind::Dynamic) {
+    if (element.nullable || element.kind == Type::Kind::Dynamic ||
+        element.kind == Type::Kind::Null) {
       AddDiagnostic(type_name.location, "type is already nullable");
       return InvalidType();
     }
@@ -58,7 +59,7 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, VoidTypePo
   if (type_name.kind == TypeName::Kind::Function) {
     return ResolveFunctionType(type_name);
   }
-  const auto result = ResolveNamedType(type_name);
+  auto result = ResolveNamedType(type_name);
   if (void_type == VoidTypePolicy::Forbidden && result.kind == Type::Kind::Void) {
     AddDiagnostic(type_name.location, "void is not a value type");
     return InvalidType();
@@ -111,7 +112,7 @@ TypeChecker::Type TypeChecker::NonNullable(Type type) {
 bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
   if ((target.kind == Type::Kind::Dynamic || value.kind == Type::Kind::Dynamic) &&
       IsValid(target) && IsValid(value) && target.kind != Type::Kind::Void &&
-      value.kind != Type::Kind::Void) {
+      value.kind != Type::Kind::Void && target.kind != Type::Kind::Never) {
     return true;
   }
   return IsSubtype(value, target);
@@ -121,30 +122,18 @@ bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
   if (!IsValid(subtype) || !IsValid(supertype)) {
     return false;
   }
+  if (subtype.kind == Type::Kind::Never) {
+    return true;
+  }
+  if (supertype.kind == Type::Kind::Never) {
+    return false;
+  }
   if (IsSameType(subtype, supertype)) {
     return true;
   }
   if (subtype.kind == Type::Kind::Function && supertype.kind == Type::Kind::Function &&
       (!subtype.nullable || supertype.nullable)) {
-    const auto source_name = NonNullableTypeName(subtype);
-    const auto target_name = NonNullableTypeName(supertype);
-    if (source_name == target_name) {
-      return true;
-    }
-    const auto& source = function_types_.at(source_name);
-    const auto& target = function_types_.at(target_name);
-    if (source.parameters.size() != target.parameters.size() ||
-        !IsSameType(source.return_type, target.return_type)) {
-      return false;
-    }
-    for (std::size_t index = 0; index < source.parameters.size(); ++index) {
-      if (!IsSameType(source.parameters[index].type, target.parameters[index].type)) {
-        return false;
-      }
-    }
-    return !target.narrowed_parameter ||
-           (source.narrowed_parameter &&
-            IsSubtype(*source.narrowed_parameter, *target.narrowed_parameter));
+    return IsFunctionSubtype(subtype, supertype);
   }
   if (subtype.kind != Type::Kind::Class && subtype.kind != Type::Kind::Parameter &&
       subtype.kind != Type::Kind::Future) {
@@ -154,6 +143,34 @@ bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
                      IsSameType(NonNullable(subtype), NonNullable(supertype));
   }
   return IsSubtypeThroughParents({subtype}, supertype);
+}
+
+bool TypeChecker::IsFunctionSubtype(const Type& subtype, const Type& supertype) const {
+  const auto source_name = NonNullableTypeName(subtype);
+  const auto target_name = NonNullableTypeName(supertype);
+  if (source_name == target_name) {
+    return true;
+  }
+  const auto& source = function_types_.at(source_name);
+  const auto& target = function_types_.at(target_name);
+  if (source.parameters.size() != target.parameters.size() ||
+      (source.return_type.kind != Type::Kind::Never &&
+       !IsSameType(source.return_type, target.return_type))) {
+    return false;
+  }
+  for (std::size_t index = 0; index < source.parameters.size(); ++index) {
+    if (!IsSameType(source.parameters[index].type, target.parameters[index].type)) {
+      return false;
+    }
+  }
+  const auto matched = !target.narrowed_parameter ||
+                       (source.narrowed_parameter &&
+                        IsSubtype(*source.narrowed_parameter, *target.narrowed_parameter));
+  const auto unmatched =
+      !target.false_narrowed_parameter ||
+      (source.false_narrowed_parameter &&
+       IsSubtype(*source.false_narrowed_parameter, *target.false_narrowed_parameter));
+  return matched && unmatched;
 }
 
 bool TypeChecker::IsSubtypeThroughParents(std::vector<Type> pending, const Type& supertype) const {

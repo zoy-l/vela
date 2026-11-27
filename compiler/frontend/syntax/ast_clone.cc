@@ -237,8 +237,12 @@ Function AstCloner::CloneFunction(const Function& source) {
         .binding = parameter.binding,
         .member_name = parameter.member_name,
     });
-    if (transform_ != nullptr && parameter.binding == Parameter::Binding::Local) {
-      transform_->Declare(parameter.name);
+    if (transform_ != nullptr) {
+      auto& copied = result.parameters.back();
+      InitializeNullableDefault(copied.type, copied.initializer);
+      if (parameter.binding == Parameter::Binding::Local) {
+        transform_->Declare(parameter.name);
+      }
     }
   }
   result.body = bodies_ == Bodies::Include ? CloneStatement(source.body.get()) : nullptr;
@@ -258,7 +262,6 @@ Function AstCloner::CloneFunction(const Function& source) {
   result.intrinsic = source.intrinsic;
   result.intrinsic_operation = source.intrinsic_operation;
   result.optional_parameters = source.optional_parameters;
-  result.role = source.role;
   result.is_async = source.is_async;
   result.is_override = source.is_override;
   result.is_getter = source.is_getter;
@@ -271,7 +274,7 @@ Function AstCloner::CloneFunction(const Function& source) {
 }
 
 Field AstCloner::CloneField(const Field& source) {
-  return {
+  Field result{
       .type = CloneType(source.type),
       .name = source.name,
       .location = Relocate(source.location),
@@ -281,6 +284,10 @@ Field AstCloner::CloneField(const Field& source) {
       .initializer = CloneExpression(source.initializer.get()),
       .attributes = CloneAttributes(source.attributes),
   };
+  if (transform_ != nullptr) {
+    InitializeNullableDefault(result.type, result.initializer);
+  }
+  return result;
 }
 
 std::vector<CallArgument> AstCloner::CloneCallArguments(const std::vector<CallArgument>& source) {
@@ -425,6 +432,7 @@ Interface AstCloner::CloneInterface(const Interface& source) {
 
 Class AstCloner::CloneClass(const Class& source) {
   Class result;
+  result.kind = source.kind;
   result.attributes = CloneAttributes(source.attributes);
   result.name = source.name;
   result.native_key = source.native_key;

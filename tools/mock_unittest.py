@@ -95,9 +95,7 @@ func main(): void {
         cached = [(path.read_bytes(), path.stat().st_mtime_ns) for path in caches]
         self.invoke("run", "repository_test.vela")
         self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in caches], cached)
-        self.write("vela.json", json.dumps({"test": {"paths": ["repository_test.vela"]}}))
-        result = self.invoke("test", "--reporter=json")
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events("repository_test.vela")
         self.assertTrue(events[-1]["success"])
         self.assertEqual(events[-1]["passed"], 1)
         api = self.directory / 'api.vela'
@@ -160,6 +158,7 @@ func main(): void { throw Error(message: 'generation must not execute'); }
         self.assertIn(".Public", source)
         self.assertIn(".Box<int>", source)
         self.assertNotIn(".Private", source)
+        self.assertIn("d: int? = null", source)
         self.write('types_test.vela', """import 'sdk:test';
 import 'sdk:mock' as mock;
 import './api.vela' as api;
@@ -379,9 +378,7 @@ func main(): void {
   }, timeout: Timeout(5));
 }
 """)
-        self.write('vela.json', '{"test":{"paths":["timeout_test.vela"]}}')
-        result = self.invoke('test', '--reporter=json', code=1)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events('timeout_test.vela', code=1)
         errors = [event for event in events if event['type'] == 'error']
         self.assertIn('TestTimeout', [error['category'] for error in errors])
         self.assertNotIn('AsyncIdle', [error['category'] for error in errors])
@@ -417,9 +414,7 @@ func main(): void {
   });
 }
 """)
-        self.write('vela.json', '{"test":{"paths":["scope_test.vela"]}}')
-        result = self.invoke('test', '--reporter=json')
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events('scope_test.vela')
         self.assertEqual(events[-1]['passed'], 2)
 
     def test_sessions_reject_registration_and_shared_group_setup(self):
@@ -428,9 +423,7 @@ func main(): void {
             with self.subTest(main=main):
                 self.write('scope_test.vela', "import 'sdk:test'; import 'sdk:mock' as mock; "
                            'func main(): void { ' + main + ' }')
-                self.write('vela.json', '{"test":{"paths":["scope_test.vela"]}}')
-                result = self.invoke('test', '--reporter=json', code=1)
-                events = [json.loads(line) for line in result.stdout.splitlines()]
+                events = self.report_events('scope_test.vela', code=1)
                 self.assertTrue(any(event.get('category') == 'MockUsageError' for event in events))
 
     def test_late_call_after_timeout_stays_with_original_test(self):
@@ -446,9 +439,7 @@ func main(): void {
   test('next', async (): Future<void> => { await sleep(20); });
 }
 """)
-        self.write('vela.json', '{"test":{"paths":["late_test.vela"]}}')
-        result = self.invoke('test', '--reporter=json', code=1)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events('late_test.vela', code=1)
         identities = {event['name']: event['testID'] for event in events if event['type'] == 'test'}
         errors = [event for event in events if event['type'] == 'error']
         self.assertTrue(any(event['category'] == 'MockUsageError' for event in errors))

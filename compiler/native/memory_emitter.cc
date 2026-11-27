@@ -1,6 +1,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/struct_values.h"
 #include "runtime/native/native_symbols.h"
 
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 #include "compiler/native/array_analysis.h"
 #include "compiler/native/field_access.h"
 #include "compiler/native/loop_hints.h"
@@ -48,17 +50,23 @@
 namespace vela::compiler::native {
 namespace {
 
-SourceType ElementValueType(const layout::Type& element) {
+SourceType ElementValueType(const ir::Program& program, const layout::Type& element) {
   SourceType type{.kind = Kind::Class, .name = {}, .nullable = element.nullable};
   using ElementKind = layout::Type::Kind;
   switch (element.kind) {
+    case ElementKind::Class: {
+      const auto& owner = program.classes.at(element.index);
+      type.name = owner.name;
+      type.value_layout = owner.value_layout;
+      break;
+    }
     case ElementKind::Dynamic:
       type.kind = Kind::Dynamic;
       break;
-    case ElementKind::Boolean:
+    case ElementKind::Bool:
       type.kind = Kind::Bool;
       break;
-    case ElementKind::Integer:
+    case ElementKind::Int:
       type.kind = Kind::Int;
       break;
     case ElementKind::Enum:
@@ -180,12 +188,13 @@ llvm::Value* FunctionEmitter::ReadHeapValue(llvm::Value* address, const SourceTy
 }
 
 llvm::Value* FunctionEmitter::ReadStoredValue(StoredValueAddress address, const SourceType& type) {
-  if (type.kind == Kind::Dynamic) {
+  if (type.kind == Kind::Dynamic || type.value_layout != nullptr) {
     llvm::Value* record = llvm::Constant::getNullValue(NativeRecordType(module_.getContext()));
     record = builder_.CreateInsertValue(
         record, LoadMemory(builder_.getInt64Ty(), address.payload, address.payload_region), 0);
     auto* kind_value = LoadMemory(builder_.getInt8Ty(), address.kind, address.kind_region);
-    return builder_.CreateInsertValue(record, kind_value, 1);
+    record = builder_.CreateInsertValue(record, kind_value, 1);
+    return type.value_layout != nullptr ? DecodeValue(builder_, record, type) : record;
   }
   if (type.kind == Kind::Null || type.kind == Kind::Void) {
     return builder_.getFalse();
@@ -214,7 +223,7 @@ FunctionEmitter::StoredValue FunctionEmitter::LoadStoredValue(ir::RegisterId reg
 
 llvm::Value* FunctionEmitter::EncodeStoredValue(StoredValue& value) {
   if (value.encoded == nullptr) {
-    value.encoded = EncodeValue(builder_, value.value, *value.type);
+    value.encoded = EncodeChecked(value.value, *value.type);
   }
   return value.encoded;
 }
@@ -227,7 +236,10 @@ void FunctionEmitter::WriteStoredValue(StoredValueAddress address,
   auto* encoded = EncodeStoredValue(stored);
   if (IsReferenceKind(type.kind)) {
     // 用指针类型保留别名信息；不能将托管指针经整数运算后再写入对象。
-    StoreMemory(value, address.payload, address.payload_region);
+    auto* reference = type.value_layout == nullptr
+                          ? value
+                          : DecodeValue(builder_, encoded, {.kind = Kind::Class, .name = {}});
+    StoreMemory(reference, address.payload, address.payload_region);
   } else {
     StoreMemory(builder_.CreateExtractValue(encoded, 0), address.payload, address.payload_region);
   }
@@ -239,6 +251,17 @@ void FunctionEmitter::WriteStoredValue(StoredValueAddress address,
 void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, StoredValue& stored) {
   using runtime::NativeMemoryLayout;
   const auto& type = *stored.type;
+  if (type.value_layout != nullptr && stored.encoded == nullptr) {
+    ForEachStructReference(builder_, stored.value, type, [&](const auto& slot, auto* encoded) {
+      StoredValue reference{
+          .type = &slot,
+          .value = DecodeValue(builder_, encoded, slot),
+          .encoded = encoded,
+      };
+      EmitWriteBarrier(object, reference);
+    });
+    return;
+  }
   const auto kind = type.kind;
   if (kind != Kind::Dynamic && !IsReferenceKind(kind)) {
     return;
@@ -246,7 +269,10 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, StoredValue& stored)
   auto* value = stored.value;
   auto* encoded = EncodeStoredValue(stored);
   llvm::Value* reference = nullptr;
-  if (kind == Kind::Dynamic) {
+  if (type.value_layout != nullptr) {
+    value = DecodeValue(builder_, encoded, {.kind = Kind::Class, .name = {}});
+    reference = builder_.CreateIsNotNull(value);
+  } else if (kind == Kind::Dynamic) {
     auto* tag = builder_.CreateExtractValue(encoded, 1);
     auto* reference_kind =
         builder_.CreateOr(builder_.CreateICmpEQ(tag, builder_.getInt8(NativeKind(Kind::Class))),
@@ -300,11 +326,45 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, StoredValue& stored)
   builder_.SetInsertPoint(written);
 }
 
+const ir::Class* FunctionEmitter::FindClass(const SourceType& type) {
+  const auto name = frontend::NonNullableTypeName(type);
+  const auto [cached, inserted] = classes_.try_emplace(name);
+  if (inserted) {
+    const auto owner = std::ranges::find(program_.classes, name, &ir::Class::name);
+    cached->second = owner == program_.classes.end() ? nullptr : &*owner;
+  }
+  return cached->second;
+}
+
+FunctionEmitter::FieldStorage FunctionEmitter::DescribeFieldStorage(
+    const ir::Instruction& instruction) {
+  const auto reading = instruction.opcode == Opcode::GetField;
+  const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
+  const auto* owner = FindClass(receiver);
+  const auto capture_cell = owner != nullptr && owner->kind == ir::Class::Kind::CaptureCell;
+  if (owner != nullptr && !capture_cell) {
+    return {.type = &owner->field_types.at(instruction.index), .capture_cell = false};
+  }
+  // 闭包单元和运行时 callable 保存擦除值，读取表示由目标寄存器决定。
+  return {
+      .type = &source_.value_types.at(reading ? instruction.dst : instruction.lhs),
+      .capture_cell = capture_cell,
+  };
+}
+
 void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
                                       llvm::Value* object,
                                       const StoredValueAddress& address) {
-  if (instruction.opcode == Opcode::GetField) {
-    const auto& type = source_.value_types.at(instruction.dst);
+  const auto reading = instruction.opcode == Opcode::GetField;
+  const auto reg = reading ? instruction.dst : instruction.lhs;
+  const auto& type = source_.value_types.at(reg);
+  const auto storage = DescribeFieldStorage(instruction);
+  const auto& storage_type = *storage.type;
+  if (storage_type.value_layout != nullptr && !storage.capture_cell) {
+    EmitStructFieldAccess(instruction, object, address, storage_type, type);
+    return;
+  }
+  if (reading) {
     Store(instruction.dst, ReadStoredValue(address, type), type);
   } else {
     auto value = LoadStoredValue(instruction.lhs);
@@ -313,24 +373,100 @@ void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
   }
 }
 
-std::optional<std::size_t> FunctionEmitter::InlineFieldOffset(const SourceType& type) {
-  if (type.kind == Kind::Function) {
-    return sizeof(runtime::HeapObject);
-  }
-  const auto name = frontend::NonNullableTypeName(type);
-  const auto [cached, inserted] = inline_field_offsets_.try_emplace(name);
-  if (inserted) {
-    const auto owner = std::ranges::find(program_.classes, name, &ir::Class::name);
-    if (owner != program_.classes.end()) {
-      cached->second = owner->callable ? sizeof(runtime::HeapObject)
-                                       : runtime::NativeMemoryLayout::kInlineObjectFields;
+void FunctionEmitter::EmitStructFieldAccess(const ir::Instruction& instruction,
+                                            llvm::Value* object,
+                                            const StoredValueAddress& address,
+                                            const SourceType& storage_type,
+                                            const SourceType& register_type) {
+  const auto reading = instruction.opcode == Opcode::GetField;
+  const auto reg = reading ? instruction.dst : instruction.lhs;
+  auto required = storage_type;
+  required.nullable = false;
+  llvm::Value* payload = llvm::Constant::getNullValue(ValueType(module_.getContext(), required));
+  // 可空字段的存在位和物理宽度属于声明布局，不能由本次写入的非空值推断。
+  auto* value = reading ? nullptr : ConvertValue(Load(reg), register_type, storage_type);
+  auto* present = reading ? builder_.getTrue() : IsPresent(builder_, value, storage_type);
+  const auto slot_address = [&](unsigned slot) {
+    auto leaf = address;
+    leaf.payload = ByteAddress(address.payload, slot * runtime::FieldStorage::kPayloadBytes);
+    leaf.kind = ByteAddress(address.kind, slot * sizeof(runtime::ValueKind));
+    return leaf;
+  };
+  unsigned offset = 0;
+  if (storage_type.nullable || storage_type.value_layout->slots.empty()) {
+    const SourceType flag{.kind = Kind::Bool, .name = {}};
+    if (reading) {
+      present = ReadStoredValue(slot_address(offset++), flag);
+    } else {
+      StoredValue stored{.type = &flag, .value = present, .encoded = nullptr};
+      WriteStoredValue(slot_address(offset++), stored, FieldKindWrite::Required);
     }
   }
-  return cached->second;
+  auto* source = reading ? nullptr : PayloadOf(builder_, value, storage_type);
+  if (!reading && storage_type.nullable) {
+    source =
+        builder_.CreateSelect(present, source, llvm::Constant::getNullValue(source->getType()));
+  }
+  const auto& slots = storage_type.value_layout->slots;
+  for (unsigned slot = 0; slot < slots.size(); ++slot) {
+    auto leaf_type = slots[slot];
+    // 可空父字段的引用叶子允许规范的空载荷。
+    if (IsReferenceKind(leaf_type.kind)) {
+      leaf_type.nullable = true;
+    }
+    const auto leaf_address = slot_address(offset + slot);
+    if (reading) {
+      auto* leaf = ReadStoredValue(leaf_address, leaf_type);
+      payload = builder_.CreateInsertValue(payload, leaf, slot);
+    } else {
+      auto* leaf = builder_.CreateExtractValue(source, slot);
+      StoredValue stored{
+          .type = &leaf_type,
+          .value = leaf,
+          .encoded = EncodeStructSlot(builder_, leaf, leaf_type),
+      };
+      WriteStoredValue(leaf_address, stored, FieldKindWrite::Required);
+    }
+  }
+  if (reading) {
+    auto* loaded =
+        storage_type.nullable ? MakeOptional(builder_, present, payload, storage_type) : payload;
+    Store(reg, ConvertValue(loaded, storage_type, register_type), register_type);
+  } else {
+    StoredValue stored{.type = &storage_type, .value = value, .encoded = nullptr};
+    EmitWriteBarrier(object, stored);
+  }
+}
+
+std::optional<std::size_t> FunctionEmitter::InlineFieldOffset(const SourceType& storage_type) {
+  if (storage_type.kind == Kind::Function) {
+    return sizeof(runtime::HeapObject);
+  }
+  const auto* owner = FindClass(storage_type);
+  if (owner == nullptr) {
+    return std::nullopt;
+  }
+  return owner->callable ? sizeof(runtime::HeapObject)
+                         : runtime::NativeMemoryLayout::kInlineObjectFields;
 }
 
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
+  if (instruction.inline_value) {
+    const auto reg = reading ? instruction.lhs : instruction.dst;
+    const auto& owner = source_.value_types.at(reg);
+    auto* value = Load(reg);
+    if (reading) {
+      Store(instruction.dst, ExtractStructField(builder_, value, owner, instruction.index),
+            owner.value_layout->fields.at(instruction.index));
+    } else {
+      const auto& field = owner.value_layout->fields.at(instruction.index);
+      auto* replacement =
+          ConvertValue(Load(instruction.lhs), source_.value_types.at(instruction.lhs), field);
+      Store(reg, InsertStructField(builder_, value, owner, instruction.index, replacement), owner);
+    }
+    return;
+  }
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
   CheckReference(object);
   if (instruction.field_declaration) {
@@ -339,6 +475,10 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   }
   // 字段编号由静态成员解析确定，实际对象布局在入口边界验证；无需逐次查找布局。
   using runtime::NativeMemoryLayout;
+  const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
+  const auto* owner = FindClass(receiver);
+  const auto slot =
+      owner == nullptr ? instruction.index : ir::PhysicalFieldOffset(*owner, instruction.index);
   auto* count =
       LoadMemory(builder_.getInt32Ty(), ByteAddress(object, NativeMemoryLayout::kObjectFieldCount),
                  MemoryRegion::HeapHeader);
@@ -346,15 +486,14 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   auto* kind_offset = builder_.CreateAdd(
       builder_.CreateMul(builder_.CreateZExt(count, builder_.getInt64Ty()),
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
-      builder_.getInt64(runtime::FieldStorage::KindOffset(0, instruction.index)));
-  const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
+      builder_.getInt64(runtime::FieldStorage::KindOffset(0, slot)));
   llvm::Value* fields = nullptr;
   if (const auto offset = InlineFieldOffset(receiver)) {
     fields = ByteAddress(object, *offset);
   } else {
     fields = LoadInlineObjectFields(builder_, object);
   }
-  const auto address = FieldAddress(fields, *builder_.getInt32(instruction.index), kind_offset);
+  const auto address = FieldAddress(fields, *builder_.getInt32(slot), kind_offset);
   EmitFieldAccess(instruction, object, address);
   if (!reading && instruction.index == 0 &&
       source_.value_types.at(instruction.dst).kind == Kind::Function) {
@@ -409,10 +548,13 @@ llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
             state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
         available, unavailable, llvm::MDBuilder(context).createLikelyBranchWeights());
     builder_.SetInsertPoint(available);
-    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready->getPointerOperand(),
-                MemoryRegion::InstanceHeader);
-    StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)), state_address,
-                MemoryRegion::FieldStates);
+    const auto width = ir::FieldSlotCount(*DescribeFieldStorage(instruction).type);
+    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(width)),
+                unready->getPointerOperand(), MemoryRegion::InstanceHeader);
+    for (std::uint32_t leaf = 0; leaf < width; ++leaf) {
+      StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)),
+                  ByteAddress(state_address, leaf), MemoryRegion::FieldStates);
+    }
     builder_.CreateBr(ready);
   }
   return ready;
@@ -566,21 +708,26 @@ const layout::Type& FunctionEmitter::ArrayElement(const ir::Instruction& instruc
   return program_.layouts.arrays.at(array).element;
 }
 
-llvm::Type* FunctionEmitter::ElementStorage(const layout::Type& element) {
-  using ElementKind = layout::Type::Kind;
-  if (element.kind == ElementKind::Dynamic ||
-      (element.nullable &&
-       (element.kind == ElementKind::Boolean || element.kind == ElementKind::Integer ||
-        element.kind == ElementKind::Enum || element.kind == ElementKind::Double))) {
+llvm::Type* FunctionEmitter::ElementStorage(const SourceType& type) {
+  if (type.value_layout != nullptr) {
+    auto* storage = ValueType(module_.getContext(), type);
+    if (type.value_layout->slots.empty() && !type.nullable) {
+      return builder_.getInt8Ty();
+    }
+    return storage;
+  }
+  if (type.kind == Kind::Dynamic ||
+      (type.nullable && (type.kind == Kind::Bool || type.kind == Kind::Int ||
+                         type.kind == Kind::Enum || type.kind == Kind::Double))) {
     return NativeRecordType(module_.getContext());
   }
-  switch (element.kind) {
-    case ElementKind::Boolean:
+  switch (type.kind) {
+    case Kind::Bool:
       return builder_.getInt8Ty();
-    case ElementKind::Integer:
-    case ElementKind::Enum:
+    case Kind::Int:
+    case Kind::Enum:
       return builder_.getInt64Ty();
-    case ElementKind::Double:
+    case Kind::Double:
       return builder_.getDoubleTy();
     default:
       return builder_.getPtrTy();
@@ -678,14 +825,15 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
   }
   auto* data = ReadArrayStorage(array, array_reg, ArrayStorageField::Data);
   const auto& element = ArrayElement(instruction);
-  auto* storage = ElementStorage(element);
+  const auto element_type = ElementValueType(program_, element);
+  auto* storage = ElementStorage(element_type);
   // 越界检查或上游范围证明已保证访问在实际分配内，地址运算不会回绕。
   auto* address = builder_.CreateInBoundsGEP(storage, data, index);
   if (reading) {
-    EmitIndexRead(instruction, address, element);
+    EmitIndexRead(instruction, address, element_type, storage);
   } else {
     auto value = LoadStoredValue(instruction.rhs);
-    WriteElement(address, element, value);
+    WriteElement(address, element_type, storage, value);
     InvalidateArrayIntegerRange(array, array_reg, element);
     EmitWriteBarrier(array, value);
   }
@@ -693,17 +841,24 @@ void FunctionEmitter::EmitIndex(const ir::Instruction& instruction) {
 
 void FunctionEmitter::EmitIndexRead(const ir::Instruction& instruction,
                                     llvm::Value* address,
-                                    const layout::Type& element) {
+                                    const SourceType& element_type,
+                                    llvm::Type* storage) {
   const auto array_reg = instruction.lhs;
-  auto* storage = ElementStorage(element);
   const auto tagged = storage == NativeRecordType(module_.getContext());
   const auto& type = source_.value_types.at(instruction.dst);
+  if (element_type.value_layout != nullptr && element_type.value_layout->slots.empty() &&
+      !element_type.nullable) {
+    Store(instruction.dst,
+          llvm::Constant::getNullValue(ValueType(module_.getContext(), element_type)),
+          element_type);
+    return;
+  }
   llvm::Value* value = nullptr;
   if (tagged) {
     value = ReadHeapValue(address, type);
   } else {
     auto* loaded = LoadMemory(storage, address, MemoryRegion::Elements);
-    if (storage->isPointerTy() && !element.nullable) {
+    if (storage->isPointerTy() && !element_type.nullable) {
       // 构建中的引用槽只供初始化和 GC 使用；已交给脚本的数组满足元素的非空契约。
       // 使用实际元素布局，不能根据可能已擦除为 dynamic 的目标寄存器猜测空值形状。
       loaded->setMetadata(llvm::LLVMContext::MD_nonnull,
@@ -724,7 +879,7 @@ void FunctionEmitter::EmitIndexRead(const ir::Instruction& instruction,
       value = builder_.CreateICmpNE(value, builder_.getInt8(0));
     }
   }
-  Store(instruction.dst, value, tagged ? type : ElementValueType(element));
+  Store(instruction.dst, value, tagged ? type : element_type);
 }
 
 void FunctionEmitter::EmitRecordField(const ir::Instruction& instruction) {
@@ -755,7 +910,7 @@ void FunctionEmitter::EmitRecordField(const ir::Instruction& instruction) {
 void FunctionEmitter::InvalidateArrayIntegerRange(llvm::Value* array,
                                                   ir::RegisterId reg,
                                                   const layout::Type& element) {
-  if (element.kind != layout::Type::Kind::Integer || element.nullable ||
+  if (element.kind != layout::Type::Kind::Int || element.nullable ||
       (reg < array_access_.element_bits.size() &&
        array_access_.element_bits[reg] <= runtime::internal::kNonnegative31Mask)) {
     return;
@@ -768,14 +923,18 @@ void FunctionEmitter::InvalidateArrayIntegerRange(llvm::Value* array,
 }
 
 void FunctionEmitter::WriteElement(llvm::Value* address,
-                                   const layout::Type& element,
+                                   const SourceType& element_type,
+                                   llvm::Type* storage,
                                    StoredValue& stored) {
-  auto* storage = ElementStorage(element);
+  if (element_type.value_layout != nullptr && element_type.value_layout->slots.empty() &&
+      !element_type.nullable) {
+    return;
+  }
   if (storage == NativeRecordType(module_.getContext())) {
     WriteStoredValue(RecordAddress(address, MemoryRegion::Values), stored);
     return;
   }
-  auto* value = Convert(builder_, stored.value, *stored.type, ElementValueType(element));
+  auto* value = ConvertValue(stored.value, *stored.type, element_type);
   if (storage == builder_.getInt8Ty()) {
     value = builder_.CreateZExt(value, storage);
   }
@@ -835,11 +994,12 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   auto* data = LoadMemory(builder_.getPtrTy(), ByteAddress(array, NativeMemoryLayout::kArrayData),
                           MemoryRegion::HeapHeader);
   const auto& element = ArrayElement(instruction);
-  auto* storage = ElementStorage(element);
+  const auto element_type = ElementValueType(program_, element);
+  auto* storage = ElementStorage(element_type);
   auto* address = builder_.CreateGEP(
       storage, data, builder_.CreateZExt(length, builder_.getInt64Ty()), "array.element");
   auto value = LoadStoredValue(reg);
-  WriteElement(address, element, value);
+  WriteElement(address, element_type, storage, value);
   InvalidateArrayIntegerRange(array, instruction.lhs, element);
   auto* next_length = builder_.CreateNUWAdd(length, builder_.getInt32(1));
   StoreMemory(next_length, length_address, MemoryRegion::HeapHeader);

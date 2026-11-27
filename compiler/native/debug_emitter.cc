@@ -3,7 +3,11 @@
 #include <cstddef>
 #include <vector>
 
+#include <llvm/IR/Constant.h>
+#include <llvm/IR/Module.h>
+
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/native/native_abi.h"
 
 namespace vela::compiler::native {
@@ -39,6 +43,9 @@ void FunctionEmitter::StoreDebugValues() {
                          ByteAddress(slot, offsetof(runtime::NativeDebugValue, available)));
     if (available) {
       builder_.CreateStore(Encode(reg),
+                           ByteAddress(slot, offsetof(runtime::NativeDebugValue, value)));
+    } else {
+      builder_.CreateStore(llvm::Constant::getNullValue(NativeRecordType(module_.getContext())),
                            ByteAddress(slot, offsetof(runtime::NativeDebugValue, value)));
     }
   }

@@ -23,6 +23,7 @@
 #include <llvm/Support/MemoryBuffer.h>
 
 #include "compiler/aot/native_compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/code_resources.h"
@@ -130,7 +131,7 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
   const frontend::SourceInput input{.path = "escape_benchmark.vela", .text = text};
   auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
   if (!prepared.Succeeded()) {
-    return std::unexpected(prepared.diagnostics.front().message);
+    return std::unexpected(frontend::DiagnosticsText(prepared.diagnostics));
   }
   const auto started = Clock::now();
   auto artifact = compiler::aot::Compile(
@@ -138,7 +139,7 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
       {.exports = {"run"}, .escape = mode, .placement = compiler::NativeCodePlacement::Dynamic});
   const auto compilation = Clock::now() - started;
   if (!artifact) {
-    return std::unexpected(artifact.error().front().message);
+    return std::unexpected(frontend::DiagnosticsText(artifact.error()));
   }
   auto engine = compiler::jit::CreateEngine();
   if (!engine) {

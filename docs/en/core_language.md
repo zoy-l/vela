@@ -17,6 +17,35 @@ keep their declared type arguments when erased to dynamic; `int[]` does not beco
 `dynamic[]`. See [JSON and dynamic values](json.md) for the complete contract and
 [`examples/json.vela`](../../examples/json.vela) for parsing and model serialization.
 
+## `never` and `null`
+
+`never` is the bottom type: evaluation cannot complete normally with a value.
+A function returning `never` must throw, loop forever, or reach another
+non-returning operation on every path; a normal return or fallthrough is an error.
+`void` instead permits normal completion without a value.
+
+```vela
+func fail(message: string): never { throw Error(message: message); }
+func require(value: int?): int {
+  if (value == null) fail('missing value');
+  return value;
+}
+```
+
+A `never` expression is assignable to any type, but no normally produced value,
+including dynamic, can be assigned to `never`. Branch result inference ignores
+branches that cannot complete normally: `value ?? fail('missing value')` has
+the non-null value type. Non-returning calls still propagate exceptions and run
+enclosing `catch` and `finally` clauses.
+
+The lowercase type `null` contains only the null value. `never?` normalizes to
+`null`, which is assignable to nullable types. `null?` is rejected as already
+nullable. The type can be named in annotations and generic arguments; a
+context-free null initializer infers `null`, including in collection literals.
+A variable inferred as `null` cannot later hold a non-null value; declare a
+nullable type when both are needed. A lambda with no normally completing path
+infers `never` when no return context is supplied.
+
 ## Integer literals
 
 Integer literals use decimal digits by default. The prefixes `0x` / `0X`,
@@ -38,7 +67,7 @@ ordinary integer string output remains decimal.
 Script functions, methods, lambdas, and explicit constructors can declare parameter defaults:
 
 ```vela
-func update(action: (() => void)? = null): void {
+func update(action: (() => void)?): void {
   if (action != null) { action(); }
 }
 func updateDemo(): void {
@@ -47,12 +76,19 @@ func updateDemo(): void {
 }
 ```
 
+Nullable parameters without an explicit default implicitly default to `null`:
+`value: T?` and `value: T? = null` are equivalent and may both be omitted.
+An explicit default expression takes precedence. Non-nullable parameters without defaults remain
+required. This applies to functions, methods, lambdas, explicit constructors, and nullable type aliases.
+
 Defaults run only for omitted arguments; passing `null` explicitly does not select a default.
 Supplied arguments run in source order first, followed by omitted defaults in parameter order.
 Defaults may reference earlier parameters and their lexical environment. Instance-method defaults
-may use `this`; constructor defaults cannot access the object being built. External declarations
-and accessors do not accept parameter defaults. Interface implementations and overrides preserve
-which parameters have defaults; virtual calls use the selected implementation's default expressions.
+may use `this`; constructor defaults cannot access the object being built. Omitted nullable external
+parameters also receive `null`, but external declarations cannot use other script default expressions.
+Property setters always receive the value supplied by the assignment. Interface implementations and
+overrides preserve which parameters may be omitted; virtual calls use the selected implementation's
+default expressions.
 
 ```typescript
 func add(left: int, right: int): int {
@@ -315,6 +351,69 @@ func requireRectangle(value: Measurable): Rectangle {
 performs a numeric conversion. Numeric conversions remain explicit
 `toInt()`/`toDouble()` operations.
 
+## Struct values and inline layout
+
+`struct` declares a composite type with value copying. It supports generics, fields, methods,
+properties and interfaces, with the same construction syntax and field defaults as classes:
+
+```vela
+struct Vec2 { x: double; y: double; }
+struct Body {
+  position: Vec2;
+  velocity: Vec2;
+  step(dt: double): void {
+    this.position.x += this.velocity.x * dt;
+    this.position.y += this.velocity.y * dt;
+  }
+}
+func update(bodies: Body[], dt: double): void {
+  for (let i = 0; i < bodies.length; i++) { bodies[i].step(dt); }
+}
+```
+
+Assignment, ordinary parameters and returns copy every struct field, including nested structs.
+Reference fields copy their references and can still share their referenced objects; copying does
+not clone an object graph. `let copy = bodies[0]` creates an independent value, so changing
+`copy.position.x` does not change the array element. Classes retain reference semantics.
+
+Struct fields embed inline in containing structs and classes. `Body[]` stores whole values
+contiguously at a fixed stride, without separate nested objects. `Body?` has an independent presence
+bit: null differs from a present Body whose fields contain default values. Structs containing
+strings, classes, arrays, interfaces or dynamic fields still require GC tracing of those references.
+Arrays of scalar-only structs require no element reference tracing. Value types do not promise
+stack allocation or allocation-free behavior in every context.
+
+Direct field writes and synchronous instance methods, getters and setters update a writable
+receiver location. Locations include mutable bindings, writable class fields and array elements,
+including writable struct fields nested within them. Receivers and indices evaluate exactly once.
+Each write is immediately visible to callbacks and remains visible if a later operation throws.
+Later writes preserve sibling fields changed by reentry. Array growth retains the original array
+and index; removing that element or clearing a nullable location makes subsequent access fail
+under the existing bounds or cast rules.
+
+Const struct bindings and const struct fields reject direct field writes. Calling a method or
+getter on them uses an independent copy, as do temporary values and ordinary property results.
+A const array or class binding fixes its reference and still allows writes to mutable elements or
+fields. Async struct methods receive a value copy and do not borrow the original location across
+suspension.
+
+Interface and dynamic conversions, extracted bound methods, and host or reflection boundaries use
+boxes holding value snapshots. Methods mutate the boxed value, leaving the original struct
+unchanged. Copying an interface or dynamic reference can share that box. Converting back to the
+concrete struct produces a value copy. A bound method retains its own boxed state between calls.
+
+Equality compares fields of the same struct type, recursively for nested structs; reference fields
+follow their own type's equality. Map and Set keys hash fields and use collection equality,
+including matching NaNs and equal signed zeros. Insertion and retrieval copy values, so mutating a
+retrieved value cannot change a stored key. Array iteration bindings also receive copies; use
+indices to update elements in place.
+
+Structs cannot inherit, be inherited, declare abstract or override members, or contain recursive
+fields requiring infinite inline storage. Recursion through class or array references is allowed.
+Hot reload can replace methods; changing a published struct's fields, type parameters or inline
+layout requires Reload. Host handles expose neither the compiler's internal aggregate ABI nor a
+promise of C++ binary layout compatibility.
+
 ## Class construction from fields
 
 Class members are public by default. Private names start with `#` in declarations and
@@ -352,13 +451,19 @@ func main(): void {
 }
 ```
 
-Generated constructor arguments are named: a public instance field without an
-initializer is required, and one with an initializer supplies the default when
-omitted. Nullable types allow null values but do not make arguments optional:
-`text: string?` is required, while `text: string? = null` may be omitted.
+Generated constructor arguments are named: a non-nullable public instance field without an
+initializer is required, and one with an initializer supplies the default when omitted.
+Nullable fields without initializers implicitly initialize to `null`: `text: string?;` and
+`text: string? = null;` are equivalent, and their generated constructor arguments may be omitted.
+This also applies to private, static, and `const` fields. Explicit initializers take precedence.
 Private and static fields do not create constructor parameters. Private fields
-need an initializer, a field-formal parameter, or constructor-body assignment; static fields need
-an initializer. Calls retain `ClassName(...)` syntax without `new`.
+of non-nullable types need an initializer, a field-formal parameter, or constructor-body assignment;
+non-nullable static fields need an initializer. Calls retain `ClassName(...)` syntax without `new`.
+
+Implicit `null` follows the same initialization order and readonly rules as an explicit initializer.
+A nullable `const` field without an initializer is already initialized to `null` and cannot be assigned
+again in the constructor body. Use a field-formal parameter such as `constructor(this.field)` to
+initialize it from a parameter.
 
 `constructor { ... }` is an optional body for the generated constructor, not
 a zero-argument parameter declaration. Fields corresponding to public parameters initialize before that
@@ -531,7 +636,8 @@ class Counts {
 }
 ```
 
-Static fields require initializers. Each field initializes lazily on first
+Non-nullable static fields require explicit initializers; nullable static fields default to null.
+Each field initializes lazily on first
 access and then persists across executions of the same compiled program.
 Program copies share this state; separate compilations do not. Initializer
 cycles report `CyclicInitialization`; failed initialization resets the active

@@ -16,13 +16,35 @@
 namespace vela::tooling {
 namespace {
 
+SemanticIndex IndexSource(std::string_view source) {
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  return {input.path, std::span(&input, 1)};
+}
+
+TEST(SemanticCompletionTest, StructDeclarationsExposeTheirKindDefinitionsAndSemanticTokens) {
+  const std::string source =
+      "struct Point<T> { x: T; y: T; } "
+      "func main(): int { return Point(x: 40, y: 2).x; }";
+  const auto index = IndexSource(source);
+  ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
+      << frontend::DiagnosticsText(index.diagnostics());
+  const auto reference = source.find("Point(x:");
+  const auto completions = index.Complete(reference + std::string_view("Point").size());
+  const auto point = std::ranges::find(completions, "Point", &Completion::label);
+  ASSERT_NE(point, completions.end());
+  EXPECT_EQ(point->kind, CompletionKind::Struct);
+  EXPECT_TRUE(point->detail.starts_with("struct Point<T>"));
+  EXPECT_TRUE(index.FindDefinition(reference, PositionEncoding::Utf8));
+  const auto tokens = index.SemanticTokens(PositionEncoding::Utf8);
+  EXPECT_EQ(std::ranges::count(tokens, SemanticTokenKind::Struct, &SemanticToken::kind), 2);
+}
+
 TEST(SemanticCompletionTest, DefaultsResolveEarlierParametersAndConstructorValuesKeepDefinitions) {
   const std::string source =
       "class Counter { value: int = 42; } "
       "interface Reader { read(first: int = 1, second: int = first): int; } "
       "func make(factory: () => Counter = Counter): Counter { return factory(); }";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto parameter = source.find("= first") + 2;
   const auto edits = index.RenameSymbol(parameter, "initial", PositionEncoding::Utf8);
   ASSERT_TRUE(edits) << edits.error();
@@ -40,8 +62,7 @@ class Child<U> extends Root<U> {}
 class Leaf extends Child<int> {}
 func main(): int { return Leaf(value: 40).value; }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
       << frontend::DiagnosticsText(index.diagnostics());
   const auto completions = index.Complete(source.find("Leaf(value") + 4);
@@ -67,8 +88,7 @@ class Child extends Base<int> { bonus: int = 2; constructor {} }
 class Explicit extends Base<int> { bonus: int; constructor(super.value, this.bonus); }
 func main(): int { return Child(value: 40).value + Explicit(1, 1).bonus; }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
       << frontend::DiagnosticsText(index.diagnostics());
   const auto completions = index.Complete(source.find("Child(value") + 5);
@@ -89,8 +109,7 @@ TEST(SemanticCompletionTest, DuplicateConstructorParametersKeepTheForwardingSour
 class Child { y: int = 2; constructor(x: int, x: int, this.y) {} }
 func main(): Child { return Child(1); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   EXPECT_TRUE(frontend::HasErrors(index.diagnostics()));
   const auto completions = index.Complete(source.find("Child(1") + 5);
   const auto child = std::ranges::find(completions, "Child", &Completion::label);
@@ -114,8 +133,7 @@ class Base {
 class Child extends Base { #value: int = 2; }
 func main(): int { const child = Child(value: 40); return child.read(child); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
       << frontend::DiagnosticsText(index.diagnostics());
   const auto text = SourceText::Create(source);
@@ -146,8 +164,7 @@ class Root {
 }
 func main(): int { return Leaf(initial: 40, bonus: 2).read(); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
       << frontend::DiagnosticsText(index.diagnostics());
   const auto text = SourceText::Create(source);
@@ -172,8 +189,7 @@ func main(): int { return Leaf(initial: 40, bonus: 2).read(); }
 
 TEST(SemanticCompletionTest, GlobalReflectionDeclarationsAreDiscoverableWithoutAnImport) {
   const std::string source = "func main(): void { Reflect.typeI; }";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto completions = index.Complete(source.find("typeI") + 5);
   const auto function = std::ranges::find(completions, "typeInfo", &Completion::label);
   ASSERT_NE(function, completions.end());
@@ -192,8 +208,7 @@ class Box extends Base {
 }
 func main(): Box { return Box(); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   ASSERT_FALSE(frontend::HasErrors(index.diagnostics()))
       << frontend::DiagnosticsText(index.diagnostics());
   const auto completions = index.Complete(source.rfind("Box()") + 3);
@@ -212,8 +227,7 @@ class Counter {
   run(): void {}
 }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto type = index.FindDefinition(source.find("[Button") + 1, PositionEncoding::Utf8);
   const auto field = index.FindDefinition(source.find("label: 'run'"), PositionEncoding::Utf8);
   if (!type || !field) {
@@ -265,8 +279,7 @@ TEST(SemanticAttributeTest, CompletesNamedDataUsingGeneratedConstructorSignature
       ADD_FAILURE() << "missing attribute argument query: " << source;
       continue;
     }
-    const frontend::SourceInput input{.path = "main.vela", .text = query->source};
-    const SemanticIndex index(input.path, std::span(&input, 1));
+    const auto index = IndexSource(query->source);
     const auto completions = index.CompleteArguments(*query);
     ASSERT_EQ(completions.size(), 1U) << query->source;
     EXPECT_EQ(completions.front().label, expected);
@@ -278,8 +291,7 @@ TEST(SemanticAttributeTest, CompletesNamedDataUsingGeneratedConstructorSignature
 
 TEST(SemanticCompletionTest, LocalShadowingAndBuiltinConstructorsKeepTheirDetails) {
   const std::string source = "func main(): void { const sleep = 42; sleep; ByteArray(1); }";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto local = index.Complete(source.rfind("sleep") + std::string_view("sleep").size());
   const auto shadow = std::ranges::find(local, "sleep", &Completion::label);
   ASSERT_NE(shadow, local.end());
@@ -300,8 +312,7 @@ TEST(GenericSemanticTest, UnusedDefinitionsExposeParameterIdentityBoundsAndMembe
 interface Reader<E> { read(): E; }
 func use<T extends Reader<int>>(value: T): int { return value.read(); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto text = SourceText::Create(source);
   ASSERT_TRUE(text);
   const auto reference = source.find("value: T") + 7;
@@ -349,8 +360,7 @@ class Box<T extends Reader<int>> {
   length<T extends Reader<string>>(value: T): int { return value.read().length; }
 }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto text = SourceText::Create(source);
   ASSERT_TRUE(text);
   const auto reference = source.find("value: T") + 7;
@@ -378,8 +388,7 @@ class Base { identity<T>(value: T): T { return value; } read(): int { return 42;
 class Child extends Base {}
 func use<T extends Child>(value: T): int { return value.read(); }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto member = source.find("value.read") + 6;
   const auto completions = index.Complete(member);
   EXPECT_NE(std::ranges::find(completions, "read", &Completion::label), completions.end());
@@ -394,8 +403,7 @@ func use<T extends U, U extends Reader<int>?>(value: T): int {
   return 0;
 }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto member = source.find("value.read") + 6;
   const auto completions = index.Complete(member);
   EXPECT_NE(std::ranges::find(completions, "read", &Completion::label), completions.end());
@@ -412,8 +420,7 @@ class Box<T> {
 }
 func identity<T>(value: T): T { return value; }
 )";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
   const auto text = SourceText::Create(source);
   if (!text) {
     ADD_FAILURE() << text.error();
@@ -440,37 +447,35 @@ func identity<T>(value: T): T { return value; }
 TEST(GenericSemanticTest, RenameRejectsDuplicateParametersAndReferenceCapture) {
   const auto sources = std::to_array<std::string_view>({
       "func use<T, U>(value: T): T { return value; }",
-      "class Box<T> { use<U>(value: T, other: U): T { return value; } }",
       "class U {} func use<T>(value: T, other: U): T { return value; }",
       "func use<T>(value: T, other: U): T { return value; }",
   });
   for (const auto source : sources) {
     SCOPED_TRACE(source);
-    const frontend::SourceInput input{.path = "main.vela", .text = source};
-    const SemanticIndex index(input.path, std::span(&input, 1));
+    const auto index = IndexSource(source);
     const auto renamed = index.RenameSymbol(source.find("<T") + 1, "U", PositionEncoding::Utf8);
     EXPECT_FALSE(renamed);
   }
 }
 
-TEST(GenericSemanticTest, RenameRejectsCapturingOwnerReferencesInMethodScope) {
+TEST(GenericSemanticTest, RenameRejectsCaptureBetweenOwnerAndMethodParameters) {
   const std::string source = "class Box<T> { use<U>(value: T, other: U): T { return value; } }";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
+  const auto index = IndexSource(source);
+  EXPECT_FALSE(index.RenameSymbol(source.find("<T") + 1, "U", PositionEncoding::Utf8));
   EXPECT_FALSE(index.RenameSymbol(source.find("<U") + 1, "T", PositionEncoding::Utf8));
 }
 
 TEST(GenericSemanticTest, RenamePreservesKnownFactsWithIncompleteTrailingInput) {
   const std::string source =
       "func identity<T>(value: T): T { return value; }\nfunc incomplete<T extends";
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  const SemanticIndex index(input.path, std::span(&input, 1));
-  const auto renamed = index.RenameSymbol(source.find("<T") + 1, "Result", PositionEncoding::Utf8);
+  const auto index = IndexSource(source);
+  const auto parameter = source.find("<T") + 1;
+  const auto renamed = index.RenameSymbol(parameter, "Result", PositionEncoding::Utf8);
   ASSERT_TRUE(renamed) << renamed.error();
   EXPECT_EQ(renamed->size(), 3U);
   EXPECT_TRUE(index.PrepareRename(source.find("value;"), PositionEncoding::Utf8));
   for (const std::string_view name : {"class", "T,U", "", " T", "T/*comment*/"}) {
-    EXPECT_FALSE(index.RenameSymbol(source.find("<T") + 1, name, PositionEncoding::Utf8));
+    EXPECT_FALSE(index.RenameSymbol(parameter, name, PositionEncoding::Utf8));
   }
 }
 
@@ -480,13 +485,13 @@ TEST(GenericSemanticTest, RenamePreservesEmbeddedStandardAndSdkSources) {
            "import 'sdk:test'; func main(): void { let value = 42; print(value); }",
        }) {
     SCOPED_TRACE(source);
-    const frontend::SourceInput input{.path = "main.vela", .text = source};
-    const SemanticIndex index(input.path, std::span(&input, 1));
-    const auto edits = index.RenameSymbol(source.find("value ="), "answer", PositionEncoding::Utf8);
+    const auto index = IndexSource(source);
+    const auto variable = source.find("value =");
+    const auto edits = index.RenameSymbol(variable, "answer", PositionEncoding::Utf8);
     ASSERT_TRUE(edits) << edits.error();
     ASSERT_EQ(edits->size(), 2U);
     EXPECT_EQ(edits->front().path, edits->back().path);
-    EXPECT_FALSE(index.RenameSymbol(source.find("value ="), "print", PositionEncoding::Utf8));
+    EXPECT_FALSE(index.RenameSymbol(variable, "print", PositionEncoding::Utf8));
   }
 }
 

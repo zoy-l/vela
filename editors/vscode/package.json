@@ -15,6 +15,7 @@
       "language": "vela",
       "scopes": {
         "class": ["entity.name.type.class.vela"],
+        "struct": ["entity.name.type.struct.vela"],
         "interface": ["entity.name.type.interface.vela"],
         "enum": ["entity.name.type.enum.vela"],
         "enumMember": ["variable.other.enummember.vela"],

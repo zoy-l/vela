@@ -40,7 +40,10 @@ export func run(): int {
   if (counter.add(2) != 3 || counter.Collect(4) != 7) { return -1; }
   counter.value = 40;
   if (counter.value != 40 || counter.Checked(false) != 40) { return -2; }
-  if (counter.Text('hello') != '40:hello' || counter.Equal(null)) { return -3; }
+  const equal: () => bool = counter.Equal;
+  if (counter.Text('hello') != '40:hello' || counter.Equal(null) || counter.Equal() || equal()) {
+    return -3;
+  }
   const shared = Counter.Shared(40);
   if (shared == null || !counter.Equal(shared) || Counter.Empty() != null) { return -4; }
   const dynamicCounter: dynamic = counter;

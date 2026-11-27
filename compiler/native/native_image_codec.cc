@@ -1,3 +1,6 @@
+#include "base/inline_layout.h"
+#include "base/json_decode.h"
+#include "base/native_program_mode.h"
 #include "compiler/native/native_image_data.h"
 
 #include <algorithm>
@@ -45,7 +48,7 @@ auto Fields(Record& value) {
                   value.interfaces, value.dispatch_targets, value.first_selector, value.field_count,
                   value.kind, value.callable_function, value.callable_mode, value.callable_type,
                   value.declaration, value.fields, value.base_class, value.constructor,
-                  value.enum_members);
+                  value.enum_members, value.value_slots);
 }
 
 template <class Record>
@@ -70,7 +73,8 @@ template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, NativeSignatureDescription>
 auto Fields(Record& value) {
   return std::tie(value.name, value.parameters, value.result, value.has_result,
-                  value.narrowed_parameter, value.has_narrowed_parameter);
+                  value.narrowed_parameter, value.has_narrowed_parameter,
+                  value.false_narrowed_parameter, value.has_false_narrowed_parameter);
 }
 
 template <class Record>
@@ -181,6 +185,15 @@ auto Fields(Record& value) {
 }
 
 struct ImageRecords final {
+  static constexpr bool IsValidEnum(JSONDecodeKind value) {
+    return std::to_underlying(value) <= std::to_underlying(JSONDecodeKind::Class);
+  }
+  static constexpr bool IsValidEnum(InlineSlotKind value) {
+    return std::to_underlying(value) <= std::to_underlying(InlineSlotKind::NullableDouble);
+  }
+  static constexpr bool IsValidEnum(NativeProgramMode value) {
+    return std::to_underlying(value) <= std::to_underlying(NativeProgramMode::Reloadable);
+  }
   template <class T>
   static auto Record(T& value) -> decltype(Fields(value)) {
     return Fields(value);
@@ -221,7 +234,7 @@ class NativeImageDecoder final : public BinaryDecoder<NativeImageDecoder, ImageR
   void ReadCustom(runtime::NativeText& value) {
     auto text = reader().Text();
     if (!text) {
-      error() = text.error().message;
+      Fail(std::move(text.error()));
       return;
     }
     const auto found = texts_.find(*text);
@@ -258,7 +271,7 @@ class NativeImageDecoder final : public BinaryDecoder<NativeImageDecoder, ImageR
   void ReadCustom(T& value) {
     const auto count = reader().Count(1);
     if (!count) {
-      error() = count.error().message;
+      Fail(count.error());
       return;
     }
     if (*count == 0) {

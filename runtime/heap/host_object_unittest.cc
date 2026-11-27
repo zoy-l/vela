@@ -218,28 +218,7 @@ TEST_F(HostObjectTest, ReusedNativeAddressCannotMatchACollectedWrapper) {
   EXPECT_EQ(destroyed_, 2U);
 }
 
-TEST_F(HostObjectTest, WeakIndexGrowthPreservesRootsAndDoesNotRetainCollectedObjects) {
-  constexpr std::size_t kObjectCount = 32;
-  std::array<Value, kObjectCount> values;
-  auto& heap = isolate_.heap();
-  const RootRange roots(heap, values.data(), values.size());
-  for (auto& value : values) {
-    auto owned = std::make_unique<TrackedHost>(destroyed_);
-    const auto wrapped = heap.WrapHostObject(*layout_, sizeof(TrackedHost),
-                                             HostObjectStorage(owned.release(), &DeleteHost));
-    ASSERT_TRUE(wrapped.has_value());
-    value = Value::Object(*wrapped);
-    heap.WriteRootBarrier(std::span(&value, 1));
-  }
-  heap.Collect();
-  EXPECT_EQ(destroyed_, 0U);
-  values.fill(Value::Null());
-  heap.Collect();
-  EXPECT_EQ(destroyed_, kObjectCount);
-  EXPECT_EQ(heap.allocated_bytes(), 0U);
-}
-
-TEST_F(HostObjectTest, WeakIndexCompactionKeepsLiveIdentityWhenAllocationFails) {
+TEST_F(HostObjectTest, WeakIndexPreservesRootsDuringGrowthAndIdentityAfterFailedCompaction) {
   constexpr std::size_t kObjectCount = 64;
   std::array<Value, kObjectCount> values;
   auto& heap = isolate_.heap();
@@ -261,7 +240,8 @@ TEST_F(HostObjectTest, WeakIndexCompactionKeepsLiveIdentityWhenAllocationFails) 
     value = Value::Object(*wrapped);
     heap.WriteRootBarrier(std::span(&value, 1));
   }
-  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(destroyed_, 0U);
   std::ranges::fill(std::span(values).subspan(1), Value::Null());
   heap.SetAllocationCountLimit(0);
   heap.Collect();

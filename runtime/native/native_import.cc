@@ -56,7 +56,9 @@ std::expected<Value, ExecutionStatus> internal::CompleteNativeResult(NativeExecu
     if (!error.payload.IsEmpty()) {
       const auto& payload = vela::internal::HandleAccess::ReadErrorPayload(error);
       if (&payload.isolate() != &execution.isolate()) {
-        return std::unexpected(execution.HandleFailure(ExecutionStatus::InvalidIsolate));
+        return std::unexpected(
+            execution.HandleFailure(ExecutionStatus::InvalidIsolate,
+                                    "host error belongs to another isolate: " + error.message));
       }
       return std::unexpected(execution.RestoreHostError(std::move(error)));
     }

@@ -1,4 +1,4 @@
-#include <expected>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,16 +14,13 @@ namespace vela {
 namespace {
 
 TEST(JsonDocumentTest, OwnsDecodedStringsAcrossInputDestructionAndMoves) {
-  auto parsed = [] -> std::expected<JsonDocument, JsonError> {
-    const std::string input = R"({"text":"Vela \u4e2d\u6587","value":42})";
+  auto parsed = [] {
+    const std::string input = R"({"text":"Vela \u4e2d\u6587"})";
     return JsonDocument::Parse(std::as_bytes(std::span(input)));
   }();
   ASSERT_TRUE(parsed.has_value());
-  auto moved = std::move(*parsed);
-  const auto* const text = yyjson_obj_get(moved.root(), "text");
-  ASSERT_TRUE(yyjson_is_str(text));
-  EXPECT_EQ(std::string(yyjson_get_str(text), yyjson_get_len(text)), "Vela 中文");
-  EXPECT_EQ(yyjson_get_sint(yyjson_obj_get(moved.root(), "value")), 42);
+  const auto moved = std::move(*parsed);
+  EXPECT_EQ(GetJsonString(moved.root(), "text"), "Vela 中文");
 }
 
 TEST(JsonDocumentTest, RejectsMalformedJsonAndReportsItsBytePosition) {
@@ -45,15 +42,17 @@ TEST(JsonDocumentTest, RawNumbersKeepOriginalOffsetsAfterDocumentMove) {
   EXPECT_EQ(document.RawOffset(*number), kSource.find("42"));
 }
 
-TEST(JsonOutputTest, CopiesEscapedUnicodeTextAndMovesItsOwnedArena) {
+TEST(JsonOutputTest, CopiesKeysAndEscapedUnicodeTextAcrossMoves) {
   JsonOutput output;
   constexpr std::string_view kOwnedKey = "owned key";
+  constexpr std::string_view kText = "你好😀\n\"quoted\"\\";
   {
-    const std::string text = "你好😀\n\"quoted\"\\";
-    ASSERT_TRUE(yyjson_mut_obj_add_strncpy(output.document(), output.root(), "text", text.data(),
-                                           text.size()));
+    const std::string text(kText);
     std::string key(kOwnedKey);
-    AddJsonField(output.document(), output.root(), key, yyjson_mut_true(output.document()));
+    auto* const document = output.document();
+    auto* const value = yyjson_mut_strncpy(document, text.data(), text.size());
+    ASSERT_NE(value, nullptr);
+    AddJsonField(document, output.root(), key, value);
     key.front() = 'X';
   }
   auto moved = std::move(output);
@@ -61,8 +60,17 @@ TEST(JsonOutputTest, CopiesEscapedUnicodeTextAndMovesItsOwnedArena) {
   ASSERT_TRUE(encoded);
   const auto decoded = JsonDocument::Parse(*encoded);
   ASSERT_TRUE(decoded);
-  EXPECT_TRUE(yyjson_is_true(GetJsonField(decoded->root(), kOwnedKey)));
-  EXPECT_STREQ(yyjson_get_str(yyjson_obj_get(decoded->root(), "text")), "你好😀\n\"quoted\"\\");
+  EXPECT_EQ(GetJsonString(decoded->root(), kOwnedKey), kText);
+}
+
+TEST(JsonOutputTest, ReportsInvalidNumbersWithoutMisclassifyingAllocationFailure) {
+  JsonOutput output;
+  ASSERT_TRUE(yyjson_mut_obj_add_real(output.document(), output.root(), "value",
+                                      std::numeric_limits<double>::infinity()));
+  const auto encoded = output.Serialize();
+  ASSERT_FALSE(encoded);
+  EXPECT_FALSE(encoded.error().out_of_memory);
+  EXPECT_FALSE(encoded.error().message.empty());
 }
 
 }  // namespace

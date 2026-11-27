@@ -9,6 +9,25 @@ compile-time inference; it does not introduce `any`, runtime type discovery, or
 numeric conversions. Named functions, methods, and external declarations retain
 explicit parameter and return annotations.
 
+## Flow narrowing
+
+Null checks and type tests refine local bindings on the branches they prove. A
+`never` call terminates its path, so a guard such as `if (value == null) fail();`
+leaves a non-null value on the continuing path. Conditional and short-circuit
+expressions merge only paths that can complete normally.
+
+Immutable boolean locals retain the proofs of their initializer, including
+composed conditions. Boolean functions can infer independent true and false
+proofs for their first parameter from every successful return. A true proof does
+not imply its complement on false: `value != null && value > 0` proves non-null
+only when true. Negative type tests narrow only when the remaining type can be
+represented.
+
+Assignment can refine a local to the assigned subtype. Reassignment invalidates
+dependent condition aliases; calls and `await` invalidate facts about mutable
+captures. Proofs do not cross closure bodies or acquire guarantees from virtual
+implementations that an override could change.
+
 ## Generic calls and shared constraints
 
 Generic declarations may specify one `extends` bound per parameter. Definitions
@@ -86,7 +105,7 @@ supply context: `apply({}, 42)` infers int for `T` in
 `apply<T>(values: Map<string, T>, value: T): T`.
 
 Without context, nonempty literals infer keys and values independently, without
-merging int/double or defaulting to dynamic. Null does not seed inference.
+merging int/double or defaulting to dynamic. A null entry can infer `null`.
 Both `const m = {}` and `const m: dynamic = {}` report
 `empty map requires an expected map type`. Heterogeneous entries require explicit
 dynamic key/value types. Container arguments remain invariant; literal contexts
@@ -142,8 +161,10 @@ provides context for returned callbacks and empty array literals.
 Without a result context, the checker synthesizes the result from expression or
 block returns. Equal types merge unchanged; `T` and null merge into `T?`, as do
 `T` and `T?`. Different primitive types, including int versus double, do not
-merge. Bare returns and value returns cannot mix. No returns means `void`.
-A null-only result requires an explicit nullable return annotation. Non-void
+merge. Bare returns and value returns cannot mix. No returns means `void` when
+the body can finish normally, and `never` when it cannot. Merging `never` with
+another result type keeps that other type.
+A null-only result infers `null`. Non-void
 blocks must return or throw on every path; inference does not bypass flow checks.
 Nested lambda results are collected independently, and closure capture rules
 remain unchanged.

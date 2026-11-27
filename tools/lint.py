@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import json
 import os
 import subprocess
 import sys
@@ -13,8 +12,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.clangd import generate as generate_compilation_database
-from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
+from tools.build import describe_targets, target_closure
+from tools.config import BUILD_VARIANTS, ROOT, configure, toolchain_tools
 
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
@@ -51,19 +50,7 @@ def is_project_file(path: Path) -> bool:
     )
 
 
-def collect_build_files(gn: Path, variant: str) -> list[Path]:
-    result = subprocess.run(
-        [str(gn), "desc", str(output_directory(variant)), "//*", "sources", "--format=json"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        targets = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("GN produced an invalid source listing") from error
+def collect_build_files(targets: dict[str, dict]) -> list[Path]:
     files: set[Path] = set()
     for target in targets.values():
         for source in target.get("sources", []):
@@ -73,39 +60,20 @@ def collect_build_files(gn: Path, variant: str) -> list[Path]:
     return sorted(files)
 
 
-def prepare_generated_headers(variant: str, tools: dict[str, Path],
-                              files: list[Path]) -> dict[str, dict]:
-    output = output_directory(variant)
-    described = subprocess.run(
-        [str(tools["gn"]), "desc", str(output), "//*", "--format=json"],
-        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
-    )
-    try:
-        targets = json.loads(described.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("GN produced an invalid target description") from error
+def prepare_generated_headers(output: Path, ninja: Path, targets: dict[str, dict],
+                              files: list[Path]) -> None:
     sources = {"//" + path.relative_to(ROOT).as_posix() for path in files}
-    pending = [label for label, target in targets.items()
-               if sources.intersection(target.get("sources", []))]
-    required: set[str] = set()
-    while pending:
-        label = pending.pop()
-        if label in required:
-            continue
-        required.add(label)
-        target = targets[label]
-        pending.extend(target.get("deps", []))
-        pending.extend(target.get("public_deps", []))
+    owners = [label for label, target in targets.items()
+              if sources.intersection(target.get("sources", []))]
     headers = {
         (ROOT / name.removeprefix("//")).relative_to(output).as_posix()
-        for label in required
-        for name in targets[label].get("outputs", [])
+        for target in target_closure(targets, *owners)
+        for name in target.get("outputs", [])
         if name.endswith(".h") and "/gen/" in name
     }
     if headers:
-        subprocess.run([str(tools["ninja"]), "-C", str(output), *sorted(headers)],
+        subprocess.run([str(ninja), "-C", str(output), *sorted(headers)],
                        cwd=ROOT, check=True)
-    return targets
 
 
 def header_contexts(targets: dict[str, dict], files: list[Path],
@@ -192,14 +160,14 @@ def report_failure(result: LintResult) -> None:
 def run(parsed: argparse.Namespace) -> int:
     if parsed.jobs < 1:
         raise RuntimeError("--jobs must be greater than zero")
-    generate_compilation_database(parsed.variant)
-    database = output_directory(parsed.variant)
+    database = configure(parsed.variant)
     tools = toolchain_tools()
-    build_files = collect_build_files(tools["gn"], parsed.variant)
+    targets = describe_targets(database)
+    build_files = collect_build_files(targets)
     files = path_files(parsed.paths, build_files) if parsed.paths else build_files
     if not files:
         raise RuntimeError("no C++ source files or headers were selected for lint")
-    targets = prepare_generated_headers(parsed.variant, tools, files)
+    prepare_generated_headers(database, tools["ninja"], targets, files)
     contexts = header_contexts(targets, files, tools["cxx"])
 
     if parsed.fix:

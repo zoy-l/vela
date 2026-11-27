@@ -14,8 +14,8 @@
 #include "base/declaration.h"
 #include "base/reflection.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/ir.h"
+#include "compiler/test_support/reflection_test_support.h"
 
 namespace vela::compiler {
 namespace {
@@ -42,22 +42,8 @@ DeclarationId Field(const CompiledSourceSnapshot& snapshot,
 
 TEST(SourceSessionTest, ReflectionReplacementIsTransactionalAndDoesNotRetireExistingDeclarations) {
   SourceSession session("main.vela");
-  const frontend::ReflectionSelection selection{
-      .module = "main.vela",
-      .type = *frontend::ParseTypeSource("Counter"),
-      .members =
-          {
-              {
-                  .kind = frontend::ReflectionMemberKind::Field,
-                  .name = "value",
-                  .type_arguments = {},
-                  .location = {},
-              },
-          },
-      .source_path = "<reflection>",
-      .location = {},
-      .source = frontend::ParseSourceSnapshot({}).source,
-  };
+  const auto selection = test::SelectReflection(
+      "Counter", {test::SelectMember(frontend::ReflectionMemberKind::Field, "value")});
   const auto first = session.Prepare({
       .changes = {{.path = "main.vela", .text = "class Counter { value: int = 1; }"}},
       .added_roots = {},

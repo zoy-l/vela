@@ -21,6 +21,74 @@ INSTANTIATE_TEST_SUITE_P(CallsAndValues,
                          DefaultParameterTest,
                          testing::Values(
                              R"(
+func read(value: int?): int { return value ?? 21; }
+func main(): int {
+  const short: () => int = read;
+  const closure: () => int = (value: int?): int => value ?? 21;
+  return read() == 21 && read(null) == 21 && read(7) == 7 ? short() + closure() : 0;
+}
+)",
+                             R"(
+class Drawing { value: int = 42; }
+class View {
+  overlayKey: string?;
+  surface: Drawing?;
+  #hidden: int?;
+  static shared: string?;
+  read(): int { return this.overlayKey == null && this.surface == null &&
+      this.#hidden == null && View.shared == null ? 42 : 0; }
+}
+func main(): int { return View().read(); }
+)",
+                             R"(
+type Maybe<T> = T?;
+class Box<T> { value: Maybe<T>; }
+func read<T>(value: T?): int { return value == null ? 21 : 0; }
+func main(): int { return Box<int>().value == null ? read<int>() + read<string>() : 0; }
+)",
+                             R"(
+type Maybe<T> = T?;
+func read<T>(value: Maybe<T>): int { return value == null ? 21 : 0; }
+func main(): int { return read<int>() + read<string>(); }
+)",
+                             R"(
+class Box<T> { value: T; }
+func read<T>(value: T): int { return value == null ? 21 : 0; }
+func main(): int { return Box<int?>().value == null ? read<int?>() + read<string?>() : 0; }
+)",
+                             R"(
+interface Reader { read(value: int?): int; }
+class Base implements Reader { read(value: int?): int { return value ?? 20; } }
+class Child extends Base { override read(value: int? = 21): int { return value ?? 1; } }
+func use(reader: Reader): int { return reader.read(); }
+func main(): int { const value = Child(); return use(value) + value.read(); }
+)",
+                             R"(
+class Base { value: int?; }
+class Child extends Base { text: string?; }
+class Bound { value: int?; constructor(this.value) {} }
+class Forward extends Base { constructor(super.value) {} }
+func main(): int {
+  return Child().value == null && Child().text == null && Bound().value == null &&
+      Forward().value == null && Bound(42).value == 42 ? 42 : 0;
+}
+)",
+                             R"(
+class Readonly {
+  const #value: int?;
+  constructor(this.#value) {}
+  read(): int? { return this.#value; }
+}
+func main(): int {
+  return Readonly().read() == null ? (Readonly(42).read() ?? 0) : 0;
+}
+)",
+                             R"(
+class Box { value: int?; constructor() {} }
+class Local { value: int?; constructor(value: int?) { this.value = value; } }
+func main(): int { return Box().value == null && Local().value == null ? 42 : 0; }
+)",
+                             R"(
 func read(value: int = 21): int { return value; }
 func main(): int {
   const named: () => int = read;
@@ -185,6 +253,7 @@ INSTANTIATE_TEST_SUITE_P(
     TypesAndVisibility,
     InvalidDefaultParameterTest,
     testing::Values("func read(value: int = null): int { return value; }",
+                    "class Box { const value: int?; constructor() { this.value = 1; } }",
                     "func read(first: int = second, second: int = 1): int { return first; }",
                     "external func read(value: int = 1): int;",
                     "class Base { read(value: int = 1): int { return value; } } "

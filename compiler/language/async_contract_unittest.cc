@@ -628,6 +628,13 @@ async func main(): Future<int> {
   return result.value == 42 && order == 12 ? 42 : 0;
 })",
                               42},
+                    AsyncCase{"InferredNullFuture", R"(
+async func main(): Future<int> {
+  const pending = Future.value(null);
+  const typed: Future<null> = pending;
+  return await typed == null ? 42 : 0;
+})",
+                              42},
                     AsyncCase{"ExplicitComputationFactories", R"(
 async func main(): Future<int> {
   const first = await Future.sync<int>(() => 10);

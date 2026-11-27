@@ -58,9 +58,13 @@ struct NativeLogicalType<void> final {
   [[nodiscard]] static constexpr NativeType Get() { return {.hosts = {}}; }
 };
 template <>
-struct NativeLogicalType<bool> final : NativeLeafType<layout::Type::Kind::Boolean> {};
+struct NativeLogicalType<Never> final : NativeLeafType<layout::Type::Kind::Never> {};
 template <>
-struct NativeLogicalType<std::int64_t> final : NativeLeafType<layout::Type::Kind::Integer> {};
+struct NativeLogicalType<Null> final : NativeLeafType<layout::Type::Kind::Null> {};
+template <>
+struct NativeLogicalType<bool> final : NativeLeafType<layout::Type::Kind::Bool> {};
+template <>
+struct NativeLogicalType<std::int64_t> final : NativeLeafType<layout::Type::Kind::Int> {};
 template <>
 struct NativeLogicalType<double> final : NativeLeafType<layout::Type::Kind::Double> {};
 template <>
@@ -90,7 +94,10 @@ struct NativeLogicalType<Nullable<T>> final {
     auto type = NativeTypeOf<T>();
     static_assert(!std::is_void_v<T>, "void cannot be nullable");
     type.type = type.type.transform([](layout::Type descriptor) {
-      if (descriptor.kind != layout::Type::Kind::Dynamic) {
+      if (descriptor.kind == layout::Type::Kind::Never) {
+        descriptor.kind = layout::Type::Kind::Null;
+      } else if (descriptor.kind != layout::Type::Kind::Dynamic &&
+                 descriptor.kind != layout::Type::Kind::Null) {
         descriptor.nullable = true;
       }
       return descriptor;
@@ -130,7 +137,7 @@ template <class R, class... Args>
 struct NativeLogicalType<Function<R(Args...)>> final {
   [[nodiscard]] static NativeType Get() {
     static const auto kDescription =
-        DescribeNativeSignature(layout::Type::Kind::Callable, NativeTypeOf<R>(),
+        DescribeNativeSignature(layout::Type::Kind::Function, NativeTypeOf<R>(),
                                 std::array<NativeType, sizeof...(Args)>{NativeTypeOf<Args>()...});
     return kDescription.View();
   }

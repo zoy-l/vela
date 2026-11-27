@@ -26,8 +26,7 @@ class DateTextTest : public testing::TestWithParam<DateTextSample> {};
 
 TEST_P(DateTextTest, ParsesExactPrecisionAndExplicitOffsets) {
   const auto& sample = GetParam();
-  Isolate isolate(1);
-  auto& heap = isolate.heap();
+  Heap heap;
   const std::array<Value, 1> source{Value::String(heap.AllocateString(sample.text))};
   const auto parsed = ExecuteDateBuiltin(Builtin::DateParse, source, heap, nullptr);
   ASSERT_TRUE(parsed);
@@ -81,8 +80,8 @@ TEST(DateTest, RejectsMalformedOrNormalizedCalendarInputs) {
       std::string_view("2026-01-01T00:00:00Z\0", 21),
       "２０２６-01-01T00:00:00Z",
   });
+  Heap heap;
   for (const auto text : inputs) {
-    Heap heap;
     const std::array<Value, 1> arguments{Value::String(heap.AllocateString(text))};
     const auto result = ExecuteDateBuiltin(Builtin::DateParse, arguments, heap, nullptr);
     ASSERT_FALSE(result) << text;

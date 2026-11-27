@@ -239,6 +239,7 @@ class FunctionEmitter final {
   llvm::Value* Poll();
   bool IsBoundaryPollRequired(std::size_t index) const;
   bool HasInlineRuntimePath(std::size_t index) const;
+  bool IsSynchronousTypedReturn(const ir::Instruction& instruction) const;
   void CacheRuntimeCalls();
   void PollAfterRuntimeCall();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
@@ -253,6 +254,8 @@ class FunctionEmitter final {
   void StoreCheckpoint();
   void InitializeDebugValues();
   void StoreDebugValues();
+  void InitializeErasedRoots();
+  bool HasErasedArguments(const ir::Instruction& instruction) const;
   std::vector<std::uint8_t> debug_live_;
   llvm::Constant* VirtualGraph(std::size_t instruction);
   void Recover();
@@ -280,6 +283,8 @@ class FunctionEmitter final {
   void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
+  llvm::Value* ComparePackedValues(llvm::Value* left, llvm::Value* right);
+  llvm::Value* CompareInlineValues(llvm::Value* left, llvm::Value* right, const SourceType& type);
   struct ReceiverLayout final {
     llvm::Value* object;
     llvm::Value* expected;
@@ -314,9 +319,20 @@ class FunctionEmitter final {
                         FieldKindWrite kind_write = FieldKindWrite::Required);
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
   void EmitWriteBarrier(llvm::Value* object, StoredValue& stored);
+  const ir::Class* FindClass(const SourceType& type);
+  struct FieldStorage final {
+    const SourceType* type;
+    bool capture_cell;
+  };
+  FieldStorage DescribeFieldStorage(const ir::Instruction& instruction);
   void EmitFieldAccess(const ir::Instruction& instruction,
                        llvm::Value* object,
                        const StoredValueAddress& address);
+  void EmitStructFieldAccess(const ir::Instruction& instruction,
+                             llvm::Value* object,
+                             const StoredValueAddress& address,
+                             const SourceType& storage_type,
+                             const SourceType& register_type);
   llvm::BasicBlock* EmitFieldReadiness(llvm::Value* storage,
                                        const ir::Instruction& instruction,
                                        llvm::Value* slot,
@@ -330,15 +346,19 @@ class FunctionEmitter final {
   void EmitReloadableGlobal(const ir::Instruction& instruction);
   void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
-  llvm::Type* ElementStorage(const layout::Type& element);
-  void WriteElement(llvm::Value* address, const layout::Type& element, StoredValue& stored);
+  llvm::Type* ElementStorage(const SourceType& type);
+  void WriteElement(llvm::Value* address,
+                    const SourceType& element_type,
+                    llvm::Type* storage,
+                    StoredValue& stored);
   void InvalidateArrayIntegerRange(llvm::Value* array,
                                    ir::RegisterId reg,
                                    const layout::Type& element);
   void EmitIndex(const ir::Instruction& instruction);
   void EmitIndexRead(const ir::Instruction& instruction,
                      llvm::Value* address,
-                     const layout::Type& element);
+                     const SourceType& element_type,
+                     llvm::Type* storage);
   void EmitRecordField(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   void EmitStringCodePointAt(const ir::Instruction& instruction);
@@ -349,6 +369,8 @@ class FunctionEmitter final {
   std::expected<void, std::string> EmitBuiltin(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
+  llvm::Value* EncodeChecked(llvm::Value* value, const SourceType& type);
+  llvm::Value* ConvertValue(llvm::Value* value, const SourceType& source, const SourceType& target);
   llvm::Value* Pack(llvm::Value* encoded, std::size_t index);
   enum class ArgumentPrefix : std::uint8_t { None, Implicit };
   void PackArguments(ir::RegisterId first,
@@ -384,6 +406,7 @@ class FunctionEmitter final {
   bool IsLeafCall(std::optional<CallableTarget> target, std::size_t instruction) const;
   void StoreCallResult(ir::RegisterId reg, const SourceType& type, llvm::Value* address);
   void EmitCall(const ir::Instruction& instruction, CallableTarget selected);
+  void EmitNamedBaselineCall(const ir::Instruction& instruction, CallableTarget selected);
   void EmitLeafCall(const ir::Instruction& instruction,
                     CallableTarget selected,
                     std::span<llvm::Value* const> arguments);
@@ -392,6 +415,10 @@ class FunctionEmitter final {
                                           CallableTarget selected,
                                           std::optional<std::size_t> borrowed);
   void BindArguments();
+  llvm::Value* StructCallReceiver(const ir::Instruction& instruction,
+                                  ir::RegisterId reg,
+                                  const SourceType& type);
+  llvm::Value* StructReceiverPlace(const ir::StructReceiver& place);
   void InitializeRecords();
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
@@ -443,6 +470,8 @@ class FunctionEmitter final {
   const FieldTargets& field_targets_;
   std::size_t temporary_count_;
   std::size_t suspension_capacity_;
+  std::size_t erased_root_count_ = 0;
+  bool erased_arguments_ = false;
   std::vector<std::uint8_t> runtime_calls_;
   const std::vector<std::optional<std::uint32_t>>& field_accesses_;
   const std::vector<FieldKindWrite>& field_kind_writes_;
@@ -458,6 +487,9 @@ class FunctionEmitter final {
   llvm::BasicBlock* cleanup_ = nullptr;
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
+  llvm::Value* struct_receiver_ = nullptr;
+  llvm::Value* struct_receiver_value_ = nullptr;
+  bool accessing_struct_receiver_ = false;
   llvm::Value* host_parent_ = nullptr;
   llvm::Value* host_trace_active_ = nullptr;
   llvm::Value* borrowed_caller_position_ = nullptr;
@@ -497,7 +529,7 @@ class FunctionEmitter final {
     std::uint32_t count;
   };
   absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
-  absl::flat_hash_map<std::string_view, std::optional<std::size_t>> inline_field_offsets_;
+  absl::flat_hash_map<std::string_view, const ir::Class*> classes_;
   bool leaf_entry_ = false;
   bool deferred_roots_ = false;
   bool delayed_root_registration_ = false;

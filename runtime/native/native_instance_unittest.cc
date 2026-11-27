@@ -23,15 +23,9 @@
 namespace vela::runtime {
 namespace {
 
+using test::EmptyImage;
 using test::Table;
 using test::Text;
-
-NativeImage Image() {
-  NativeImage image;
-  image.abi_identity = Text(NativeRuntimeAbiIdentity());
-  image.target = Text(NativeTargetIdentity());
-  return image;
-}
 
 std::int64_t IntegerHost(NativeContext& /*unused*/, std::int64_t value) noexcept {
   ADD_FAILURE() << "instantiation must not execute host code";
@@ -54,17 +48,17 @@ void SetIntegerImportSignature(NativeFunctionDescription& function,
 TEST(NativeInstanceTest, RejectsAbiAndTargetBeforeCreatingLayouts) {
   Isolate isolate;
   const auto initial = isolate.layout_counts();
-  auto image = Image();
+  auto image = EmptyImage();
   image.abi_identity = Text("different ABI");
   const auto abi = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(abi.has_value());
   EXPECT_EQ(abi.error().status, NativeInstantiationStatus::AbiMismatch);
-  image = Image();
+  image = EmptyImage();
   image.target = Text("different target");
   const auto target = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(target.has_value());
   EXPECT_EQ(target.error().status, NativeInstantiationStatus::TargetMismatch);
-  image = Image();
+  image = EmptyImage();
   --image.record_bytes;
   const auto size = NativeInstance::Instantiate(isolate, image);
   ASSERT_FALSE(size.has_value());
@@ -77,7 +71,7 @@ TEST(NativeInstanceTest, BindsImportsBeforePublishingAnyLayoutsOrConstants) {
   const auto initial = isolate.layout_counts();
   const std::array types{
       NativeTypeDescription{
-          .kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer),
+          .kind = static_cast<std::uint32_t>(layout::Type::Kind::Int),
       },
   };
   const std::array parameters{NativeCallParameter{.name = Text("value"), .type = 0}};
@@ -90,7 +84,7 @@ TEST(NativeInstanceTest, BindsImportsBeforePublishingAnyLayoutsOrConstants) {
   owned.name = Text("Owned");
   owned.field_count = 1;
   const std::array classes{owned};
-  auto image = Image();
+  auto image = EmptyImage();
   image.types = Table(types);
   image.classes = Table(classes);
   image.functions = Table(functions);
@@ -125,7 +119,7 @@ TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedSt
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   const std::array types{
-      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer)},
+      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Int)},
   };
   const std::array parameters{NativeCallParameter{.name = Text("value"), .type = 0}};
   std::array<NativeFunctionDescription, 4> functions;
@@ -137,7 +131,7 @@ TEST(NativeInstanceTest, ImportTablePreservesSparseIndicesAndReleasesAccountedSt
   functions[3] = functions[1];
   functions[3].name = Text("second");
   functions[3].native_symbol = Text("host.second");
-  auto image = Image();
+  auto image = EmptyImage();
   image.types = Table(types);
   image.functions = Table(functions);
   const std::array<std::uint32_t, 2> imported_functions{1, 3};
@@ -170,7 +164,7 @@ TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {
   type.field_count = 1;
   const std::array classes{type};
   const std::array strings{Text("rooted")};
-  auto image = Image();
+  auto image = EmptyImage();
   image.classes = Table(classes);
   image.strings = Table(strings);
   const auto first = NativeInstance::Instantiate(isolate, image);
@@ -203,7 +197,7 @@ TEST(NativeInstanceTest, DynamicImageOwnerIsRetainedByReachableCallableAndReleas
   callable.name = Text("Closure");
   callable.callable_function = 0;
   const std::array classes{callable};
-  auto image = std::make_shared<NativeImage>(Image());
+  auto image = std::make_shared<NativeImage>(EmptyImage());
   image->classes = Table(classes);
   image->functions = Table(functions);
   const std::weak_ptr<const NativeImage> lifetime = image;
@@ -232,7 +226,7 @@ TEST(NativeInstanceTest, DynamicImageOwnerIsRetainedByReachableCallableAndReleas
 
 TEST(NativeInstanceTest, ExternalInstanceMustBeReleasedBeforeStop) {
   Isolate isolate;
-  const auto image = Image();
+  const auto image = EmptyImage();
   auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance);
   const auto refused = isolate.TryStop();
@@ -245,7 +239,7 @@ TEST(NativeInstanceTest, ExternalInstanceMustBeReleasedBeforeStop) {
 
 TEST(NativeInstanceTest, BorrowedExecutionBlocksStopUntilItsNativeStackReturns) {
   Isolate isolate;
-  const auto image = Image();
+  const auto image = EmptyImage();
   auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance);
   {

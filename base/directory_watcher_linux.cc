@@ -27,10 +27,15 @@ constexpr std::size_t kNotificationBufferBytes = 64 * 1024;
 
 using internal::DirectoryWatchErrorMessage;
 
-std::expected<void, std::error_code> Subscribe(internal::DirectoryWatchState& state,
-                                               const std::filesystem::path& directory,
-                                               DirectoryWatchScope scope,
-                                               std::uint64_t subscription_id) {
+struct SubscriptionError {
+  std::error_code code;
+  std::string message;
+};
+
+std::expected<void, SubscriptionError> Subscribe(internal::DirectoryWatchState& state,
+                                                 const std::filesystem::path& directory,
+                                                 DirectoryWatchScope scope,
+                                                 std::uint64_t subscription_id) {
   int descriptor;
   internal::LinuxDirectoryWatch* subscribed = nullptr;
   const auto existing = state.paths.find(directory);
@@ -43,7 +48,11 @@ std::expected<void, std::error_code> Subscribe(internal::DirectoryWatchState& st
                                        IN_ONLYDIR | IN_DONT_FOLLOW;
     descriptor = inotify_add_watch(state.events, directory.c_str(), kChanges);
     if (descriptor < 0) {
-      return std::unexpected(std::error_code(errno, std::generic_category()));
+      const auto error = errno;
+      return std::unexpected(SubscriptionError{
+          .code = std::error_code(error, std::generic_category()),
+          .message = DirectoryWatchErrorMessage("inotify_add_watch", error),
+      });
     }
     const auto [watch, inserted] =
         state.watches.try_emplace(descriptor, internal::LinuxDirectoryWatch{
@@ -52,7 +61,11 @@ std::expected<void, std::error_code> Subscribe(internal::DirectoryWatchState& st
                                                   .recursive = {},
                                               });
     if (!inserted && watch->second.directory != directory) {
-      return std::unexpected(std::make_error_code(std::errc::file_exists));
+      return std::unexpected(SubscriptionError{
+          .code = std::make_error_code(std::errc::file_exists),
+          .message = "directory watch descriptor already belongs to " +
+                     watch->second.directory.string() + ": " + directory.string(),
+      });
     }
     state.paths.emplace(directory, descriptor);
     subscribed = &watch->second;
@@ -88,8 +101,7 @@ std::expected<void, std::string> DirectoryWatcher::AddNative(const std::filesyst
   }
   const auto subscribed = Subscribe(native_, directory, scope, subscription_id);
   if (!subscribed) {
-    return std::unexpected(
-        DirectoryWatchErrorMessage("inotify_add_watch", subscribed.error().value()));
+    return std::unexpected(subscribed.error().message);
   }
   return {};
 }
@@ -109,11 +121,10 @@ std::expected<void, std::string> DirectoryWatcher::AddNativeDescendants(
       const auto added =
           Subscribe(native_, entry.path(), DirectoryWatchScope::Descendants, subscription_id);
       if (!added) {
-        if (added.error() == std::errc::no_such_file_or_directory) {
+        if (added.error().code == std::errc::no_such_file_or_directory) {
           Invalidate();
         } else {
-          return std::unexpected(
-              DirectoryWatchErrorMessage("inotify_add_watch", added.error().value()));
+          return std::unexpected(added.error().message);
         }
       }
     }

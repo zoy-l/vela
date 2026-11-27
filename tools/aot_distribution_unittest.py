@@ -8,14 +8,13 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
-from tools.test_support import (NATIVE_PACKAGE_AVAILABLE, closed_output_command, compile_native_host,
-                                create_native_package, native_command, native_test_libraries,
-                                pending_command, vela_executable)
+from tools.config import ROOT, executable_name, static_library_name
+from tools.test_support import (NATIVE_PACKAGE_AVAILABLE, closed_output_command, compile_native_c_object,
+                                compile_native_host, create_native_package, native_command,
+                                native_test_libraries, pending_command, vela_executable)
 from tools.aot_c_fixture import host_source as c_host_source
 from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
                                     PROGRAM_CASES)
@@ -157,10 +156,7 @@ class NativeDistributionTest(unittest.TestCase):
                     self.assertEqual(jit.stdout, stdout)
                     app = work / executable_name(name + " 原生")
                     run([compiler, "build", source, "-o", app])
-                    native = run([app], expected)
-                    self.assertEqual(native.stdout, jit.stdout)
-                    self.assertEqual(native.stderr, jit.stderr)
-                    applications.append((app, expected, native.stdout, native.stderr))
+                    applications.append((app, expected, stdout, jit.stderr))
 
             pending_source = work / "pending.vela"
             pending_source.write_text(PENDING_SOURCE, encoding="utf-8", newline="\n")
@@ -206,7 +202,6 @@ class NativeDistributionTest(unittest.TestCase):
                     rejected = run([compiler, "build", "--verify-manifest=" + str(checked_manifest)], 65)
                     self.assertIn(diagnostic, rejected.stderr)
             checked_manifest.write_text(original_manifest, encoding="utf-8", newline="\n")
-            tools = toolchain_tools()
             host_source = work / "embedding.cc"
             namespaces = [manifest["image"].removesuffix("_image") for manifest in manifests]
             host_source.write_text(r'''
@@ -243,33 +238,18 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
             includes = [package / "include", ROOT / "third_party/googletest/googletest/include"]
             compile_native_host(self, [host_source], host, [*libraries, *test_libraries],
                                 includes, cwd=work)
-            self.assertIn("[  PASSED  ] 1 test.", run([host]).stdout)
-
-            c_source = work / "embedding.c"
+            c_source = work / "embedding_c.c"
             c_source.write_text(c_host_source(libraries[1].name + ".h", manifests[1]),
                                 encoding="utf-8", newline="\n")
-            c_object = work / ("embedding_c.obj" if sys.platform == "win32" else "embedding_c.o")
+            c_object = compile_native_c_object(self, c_source, package / "include")
             c_host = work / executable_name("embedding_c")
-            if sys.platform == "win32":
-                run([tools["cxx"], "/nologo", "/MT", "/TC", "/W4", "/WX", "/c", c_source,
-                     "/I" + str(package / "include"), "/Fo" + str(c_object)], env=None)
-            else:
-                c_flags = ["-std=c17", "-Werror", "-c"]
-                if sys.platform == "darwin":
-                    c_flags += ["-isysroot", str(tools["sysroot"])]
-                run([tools["cc"], *c_flags, "-I" + str(package / "include"), c_source,
-                     "-o", c_object], env=None)
             compile_native_host(self, [], c_host, [c_object, libraries[1], runtime], [], cwd=work)
-            self.assertEqual(run([c_host]).stdout, "C host passed\n")
 
             header = Path(str(libraries[0]) + ".h")
             original_header = header.read_bytes()
             header.write_bytes(original_header + b"// another generation\n")
             self.assertIn("different generation", run([compiler, "build", "--verify-manifest=" +
                           str(libraries[0]) + ".aot.json"], 65).stderr)
-            header.write_bytes(original_header)
-
-            previous_library = libraries[0].read_bytes()
             header.unlink()
             header.mkdir()
             replacement = work / "replacement.vela"
@@ -278,9 +258,6 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
             run([compiler, "build", replacement, "--emit=staticlib", "--export=calculate", "-o", libraries[0]], 74)
             self.assertIn("different generation", run([compiler, "build", "--verify-manifest=" +
                           str(libraries[0]) + ".aot.json"], 65).stderr)
-            header.rmdir()
-            header.write_bytes(original_header)
-            libraries[0].write_bytes(previous_library)
 
             old_app = applications[0][0].read_bytes()
             invalid = work / "invalid.vela"
@@ -300,8 +277,8 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
 
             # obj 与 staticlib 不需要最终平台 SDK；exe 缺失 SDK 必须在读取源码前诊断。
             target_roots = [entry["environment"] for entry in target["external_roots"]]
-            without_sdk = {key: value for key, value in environment.items() if key not in roots}
-            without_sdk = {key: value for key, value in without_sdk.items() if key not in target_roots}
+            without_sdk = {key: value for key, value in environment.items()
+                           if key not in roots and key not in target_roots}
             run([compiler, "build", sources[0], "--emit=obj", "-o", work / "sdkless.obj"], env=without_sdk)
             run([compiler, "build", sources[0], "--emit=staticlib", "-o", work / "sdkless.lib"], env=without_sdk)
             archive_only = {key: value for key, value in target.items()
@@ -328,9 +305,11 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
                 source.unlink()
             shutil.rmtree(package)
             for app, expected, stdout, stderr in applications:
-                result = run([app], expected)
-                self.assertEqual((result.stdout, result.stderr), (stdout, stderr))
+                with self.subTest(application=app.name):
+                    result = run([app], expected)
+                    self.assertEqual((result.stdout, result.stderr), (stdout, stderr))
             self.assertIn("[  PASSED  ] 1 test.", run([host]).stdout)
+            self.assertEqual(run([c_host]).stdout, "C host passed\n")
 
 
 if __name__ == "__main__":

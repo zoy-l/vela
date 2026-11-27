@@ -84,14 +84,12 @@ class MapLiteralTypeErrorTest
     : public testing::TestWithParam<std::tuple<std::string_view, std::string_view>> {};
 
 TEST_P(MapLiteralTypeErrorTest, ReportsTheEntryOrMissingContext) {
-  const auto& parameters = GetParam();
-  const std::string_view body = std::get<0>(parameters);
-  const std::string_view expected = std::get<1>(parameters);
+  const auto& [body, expected] = GetParam();
   const auto checked =
       CheckTestSource("func nothing(): void {} func main(): void { " + std::string(body) + " }");
-  EXPECT_FALSE(checked.Succeeded());
-  EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [&](const auto& diagnostic) {
-    return diagnostic.message.contains(expected);
+  EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [&](const Diagnostic& diagnostic) {
+    return diagnostic.severity == DiagnosticSeverity::Error &&
+           diagnostic.message.contains(expected);
   })) << DiagnosticsText(checked.diagnostics);
 }
 
@@ -101,8 +99,6 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         std::tuple{"const m = {};", "empty map requires an expected map type"},
         std::tuple{"const m: dynamic = {};", "empty map requires an expected map type"},
-        std::tuple{"const m = {null: 1};", "null map key requires an expected nullable type"},
-        std::tuple{"const m = {1: null};", "null map value requires an expected nullable type"},
         std::tuple{"const m = {1: 1, 2.0: 2};", "map key type does not match 'int'"},
         std::tuple{"const m = {1: 1, 2: 2.0};", "map value type does not match 'int'"},
         std::tuple{"const m: Map<int, int> = {'x': 1};", "map key type does not match 'int'"},
@@ -123,6 +119,12 @@ func apply<T>(_values: Map<string, T>, fallback: T): T { return fallback; }
 func make<K, V>(key: K, value: V): Map<K, V> { return {key: value}; }
 func callbacks<T>(_operations: Map<string, (T) => T>, value: T): T { return value; }
 func main(): void {
+  const null_key: Map<null, int> = {null: 1};
+  const null_value: Map<int, null> = {1: null};
+  const inferred_null_key = {null: 1};
+  const checked_null_key: Map<null, int> = inferred_null_key;
+  const inferred_null_value = {1: null};
+  const checked_null_value: Map<int, null> = inferred_null_value;
   const empty: Values<int>? = {};
   const nested: Map<string, int[][]> = {'items': [[], [1]]};
   const nullable: Map<string?, int?> = {null: null, 'key': 1};
@@ -133,7 +135,6 @@ func main(): void {
   const made = make('answer', result);
 }
 )");
-  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
   EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 

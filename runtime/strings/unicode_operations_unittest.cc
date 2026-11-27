@@ -1,5 +1,6 @@
 #include <array>
 #include <cstdint>
+#include <expected>
 #include <string>
 #include <tuple>
 
@@ -31,12 +32,14 @@ TEST_P(UnicodeDestinationTest, RejectsWrongLengthBeforeChangingAnyElement) {
   auto* array = heap.AllocateArray(*layout, length);
   ASSERT_NE(array, nullptr);
   arguments.back() = Value::Object(array);
-  EXPECT_EQ(ExecuteUnicodeBuiltin(builtin, arguments, heap).error(), ExecutionStatus::TypeError);
-  const auto first = Heap::GetElement(*array, 0).value();
+  EXPECT_EQ(ExecuteUnicodeBuiltin(builtin, arguments, heap),
+            std::unexpected(ExecutionStatus::TypeError));
+  const auto first = heap.GetElement(*array, 0);
+  ASSERT_TRUE(first);
   if (builtin == Builtin::StringCodePoints) {
-    EXPECT_EQ(first.AsInteger(), 0);
+    EXPECT_EQ(first->AsInteger(), 0);
   } else {
-    EXPECT_TRUE(first.IsNull());
+    EXPECT_TRUE(first->IsNull());
   }
 }
 

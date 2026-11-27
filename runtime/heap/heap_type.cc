@@ -65,8 +65,12 @@ std::optional<TypeConstraint> TypeSignature::FlattenedResult() const noexcept {
     return result;
   }
   auto payload = (*result).signature->result;
-  if (payload && (*result).nullable && !(*payload).dynamic) {
-    (*payload).nullable = true;
+  if (payload && (*result).nullable && !(*payload).IsDynamic()) {
+    if (payload->IsNever()) {
+      payload = TypeConstraint{.nullable = true};
+    } else {
+      payload->nullable = true;
+    }
   }
   return payload;
 }
@@ -75,11 +79,17 @@ bool TypeSignature::IsSubtypeOf(const TypeSignature& target) const noexcept {
   if (this == &target) {
     return true;
   }
-  if (parameters != target.parameters || result != target.result) {
+  if (parameters != target.parameters ||
+      (!(result && result->IsNever()) && result != target.result)) {
     return false;
   }
-  return !target.narrowed_parameter ||
-         (narrowed_parameter && narrowed_parameter->IsSubtypeOf(*target.narrowed_parameter));
+  const auto matched =
+      !target.narrowed_parameter ||
+      (narrowed_parameter && narrowed_parameter->IsSubtypeOf(*target.narrowed_parameter));
+  const auto unmatched = !target.false_narrowed_parameter ||
+                         (false_narrowed_parameter &&
+                          false_narrowed_parameter->IsSubtypeOf(*target.false_narrowed_parameter));
+  return matched && unmatched;
 }
 
 const ClassLayout* Heap::ClassOf(const HeapObject& object) noexcept {
@@ -125,37 +135,54 @@ bool IsNominalSubtype(const TypeConstraint& actual, const TypeConstraint& expect
   return expected.interface != nullptr && actual.nominal->IsImplementing(*expected.interface);
 }
 
+bool IsTypedFuture(const TypeConstraint& type) noexcept {
+  return type.kind == ValueKind::Object && type.object_kind == ObjectKind::Future &&
+         type.signature != nullptr;
+}
+
+// 无结果表示两侧都是 Future，需要继续比较载荷；其余类型在本层即可判定。
+std::optional<bool> CompareOuterTypes(TypeConstraint actual, TypeConstraint expected) noexcept {
+  if (actual.IsNever()) {
+    return true;
+  }
+  if (expected.IsNever()) {
+    return false;
+  }
+  if (expected.IsDynamic()) {
+    return true;
+  }
+  if (!actual.IsDynamic() && actual.kind == ValueKind::Null) {
+    return expected.nullable || expected.kind == ValueKind::Null;
+  }
+  if (actual.IsDynamic() || (actual.nullable && !expected.nullable)) {
+    return false;
+  }
+  actual.nullable = false;
+  expected.nullable = false;
+  if (actual == expected) {
+    return true;
+  }
+  if (actual.callable && expected.callable && actual.signature != nullptr &&
+      expected.signature != nullptr) {
+    return actual.signature->IsSubtypeOf(*expected.signature);
+  }
+  if (IsNominalSubtype(actual, expected)) {
+    return true;
+  }
+  if (!IsTypedFuture(actual) || !IsTypedFuture(expected)) {
+    return false;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
   auto actual = *this;
   auto expected = target;
   while (true) {
-    if (expected.dynamic) {
-      return true;
-    }
-    if (!actual.dynamic && actual.kind == ValueKind::Null) {
-      return expected.nullable || expected.kind == ValueKind::Null;
-    }
-    if (actual.dynamic || (actual.nullable && !expected.nullable)) {
-      return false;
-    }
-    actual.nullable = false;
-    expected.nullable = false;
-    if (actual == expected) {
-      return true;
-    }
-    if (actual.callable && expected.callable && actual.signature != nullptr &&
-        expected.signature != nullptr) {
-      return actual.signature->IsSubtypeOf(*expected.signature);
-    }
-    if (IsNominalSubtype(actual, expected)) {
-      return true;
-    }
-    if (actual.kind != ValueKind::Object || expected.kind != ValueKind::Object ||
-        actual.object_kind != ObjectKind::Future || expected.object_kind != ObjectKind::Future ||
-        actual.signature == nullptr || expected.signature == nullptr) {
-      return false;
+    if (const auto result = CompareOuterTypes(actual, expected)) {
+      return *result;
     }
     const auto& actual_result = actual.signature->result;
     const auto& expected_result = expected.signature->result;
@@ -173,7 +200,10 @@ bool Heap::IsThrowable(Value value) noexcept {
 }
 
 bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
-  if (type.dynamic) {
+  if (type.IsNever()) {
+    return false;
+  }
+  if (type.IsDynamic()) {
     return true;
   }
   if (value.IsNull()) {

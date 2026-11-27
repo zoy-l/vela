@@ -198,7 +198,7 @@ std::span<const std::uint64_t> IntegerBits(const ir::Function& function,
 bool IsIntegerArray(const ir::Instruction& instruction, const ir::Program& program) {
   const auto& arrays = program.layouts.arrays;
   const auto& element = arrays.at(program.layouts.array_types.at(instruction.index)).element;
-  return element.kind == layout::Type::Kind::Integer && !element.nullable;
+  return element.kind == layout::Type::Kind::Int && !element.nullable;
 }
 
 bool HasLocalArrayDefinition(const ir::Instruction& instruction, const ir::Program& program) {

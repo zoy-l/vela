@@ -131,10 +131,14 @@ class Initialization final {
                                         const Initialized& after,
                                         SourceLocation location);
   void Error(SourceLocation location, std::string message);
-  void Walk(const Expression* expression, Initialized& initialized);
-  void WalkSuper(const Expression& expression, Initialized& initialized);
+  bool Walk(const Expression* expression, Initialized& initialized);
+  bool WalkSuper(const Expression& expression, Initialized& initialized);
+  bool WalkNullSafeCall(const Expression& expression, Initialized& initialized);
+  bool WalkMatch(const Expression& expression, Initialized& initialized);
+  bool WalkConditional(const Expression& expression, Initialized& initialized);
+  bool WalkShortCircuit(const Expression& expression, Initialized& initialized);
   void MarkBaseComplete(Initialized& initialized) const;
-  bool WalkSpecial(const Expression& expression, Initialized& initialized);
+  std::optional<bool> WalkSpecial(const Expression& expression, Initialized& initialized);
   Path Walk(const Statement& statement, Initialized initialized);
   Path Loop(const Statement& statement, Initialized initialized);
   Path Switch(const Statement& statement, Initialized initialized);
@@ -215,9 +219,11 @@ void Initialization::CheckRepeatedConstInitialization(const Initialized& before,
   }
 }
 
-void Initialization::WalkSuper(const Expression& expression, Initialized& initialized) {
+bool Initialization::WalkSuper(const Expression& expression, Initialized& initialized) {
   for (const auto& argument : expression.arguments) {
-    Walk(argument.value.get(), initialized);
+    if (!Walk(argument.value.get(), initialized)) {
+      return false;
+    }
   }
   if (initialized.base != Initialized::Base::Pending) {
     Error(expression.location, "super(...) must be called exactly once on each constructor path");
@@ -227,6 +233,7 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
     scope.calls_base = true;
   }
   MarkBaseComplete(initialized);
+  return true;
 }
 
 void Initialization::MarkBaseComplete(Initialized& initialized) const {
@@ -240,11 +247,11 @@ void Initialization::MarkBaseComplete(Initialized& initialized) const {
   }
 }
 
-bool Initialization::WalkSpecial(const Expression& expression, Initialized& initialized) {
+std::optional<bool> Initialization::WalkSpecial(const Expression& expression,
+                                                Initialized& initialized) {
   if (expression.kind == Expression::Kind::Call &&
       expression.callee->kind == Expression::Kind::Name && expression.callee->text == kSuperName) {
-    WalkSuper(expression, initialized);
-    return true;
+    return WalkSuper(expression, initialized);
   }
   if (expression.kind == Expression::Kind::Lambda) {
     const auto& lambda = facts_.lambdas[facts_.lambda_indices->at(&expression)];
@@ -255,22 +262,20 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     }
     return true;
   }
+  if (expression.kind == Expression::Kind::Call && expression.callee->null_safe) {
+    return WalkNullSafeCall(expression, initialized);
+  }
   if (expression.kind == Expression::Kind::Match) {
-    Walk(expression.operand.get(), initialized);
-    Path merged;
-    for (const auto& arm : expression.arms) {
-      auto branch = initialized;
-      Walk(arm.value.get(), branch);
-      merged = Merge(std::move(merged), branch);
-    }
-    if (merged) {
-      initialized = std::move(*merged);
-    }
-    return true;
+    return WalkMatch(expression, initialized);
+  }
+  if (expression.kind == Expression::Kind::Conditional) {
+    return WalkConditional(expression, initialized);
   }
   if (expression.kind == Expression::Kind::Binary && expression.operation == TokenKind::Equal &&
       expression.left->kind == Expression::Kind::Member && IsThis(*expression.left->object)) {
-    Walk(expression.right.get(), initialized);
+    if (!Walk(expression.right.get(), initialized)) {
+      return false;
+    }
     WriteField(*expression.left, initialized);
     return true;
   }
@@ -285,28 +290,97 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     return true;
   }
   if (expression.kind == Expression::Kind::Binary &&
-      (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr)) {
-    Walk(expression.left.get(), initialized);
-    auto right = initialized;
-    Walk(expression.right.get(), right);
-    Intersect(initialized, right);
-    return true;
+      (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr ||
+       expression.operation == TokenKind::QuestionQuestion)) {
+    return WalkShortCircuit(expression, initialized);
   }
-  return false;
+  return std::nullopt;
 }
 
-void Initialization::Walk(const Expression* expression, Initialized& initialized) {
+bool Initialization::WalkNullSafeCall(const Expression& expression, Initialized& initialized) {
+  if (!Walk(expression.callee.get(), initialized)) {
+    return false;
+  }
+  auto called = initialized;
+  // 接收者可能为 null，因此实参写入不能成为调用后的确定初始化事实。
+  for (const auto& argument : expression.arguments) {
+    if (!Walk(argument.value.get(), called)) {
+      break;
+    }
+  }
+  return true;
+}
+
+bool Initialization::WalkMatch(const Expression& expression, Initialized& initialized) {
+  if (!Walk(expression.operand.get(), initialized)) {
+    return false;
+  }
+  Path merged;
+  for (const auto& arm : expression.arms) {
+    auto branch = initialized;
+    if (Walk(arm.value.get(), branch)) {
+      merged = Merge(std::move(merged), branch);
+    }
+  }
+  if (merged) {
+    initialized = std::move(*merged);
+  }
+  return merged.has_value();
+}
+
+bool Initialization::WalkConditional(const Expression& expression, Initialized& initialized) {
+  if (!Walk(expression.operand.get(), initialized)) {
+    return false;
+  }
+  auto left = initialized;
+  auto right = initialized;
+  Path merged;
+  if (Walk(expression.left.get(), left)) {
+    merged = std::move(left);
+  }
+  if (Walk(expression.right.get(), right)) {
+    merged = Merge(std::move(merged), right);
+  }
+  if (merged) {
+    initialized = std::move(*merged);
+  }
+  return merged.has_value();
+}
+
+bool Initialization::WalkShortCircuit(const Expression& expression, Initialized& initialized) {
+  if (!Walk(expression.left.get(), initialized)) {
+    return false;
+  }
+  auto right = initialized;
+  if (Walk(expression.right.get(), right)) {
+    if (expression.operation == TokenKind::QuestionQuestion &&
+        expression.left->kind == Expression::Kind::NullLiteral) {
+      initialized = std::move(right);
+    } else {
+      Intersect(initialized, right);
+    }
+  }
+  return true;
+}
+
+bool Initialization::Walk(const Expression* expression, Initialized& initialized) {
   if (expression == nullptr) {
-    return;
+    return true;
   }
   if (IsThis(*expression)) {
     RequireComplete(initialized, expression->location);
-    return;
+    return true;
   }
-  if (WalkSpecial(*expression, initialized)) {
-    return;
+  if (const auto special = WalkSpecial(*expression, initialized)) {
+    return *special && !facts_.non_completing_expressions->contains(expression);
   }
-  VisitExpressionChildren(*expression, [&](const Expression* child) { Walk(child, initialized); });
+  bool completes = true;
+  VisitExpressionChildren(*expression, [&](const Expression* child) {
+    if (completes) {
+      completes = Walk(child, initialized);
+    }
+  });
+  return completes && !facts_.non_completing_expressions->contains(expression);
 }
 
 Path Initialization::Loop(const Statement& statement, Initialized initialized) {
@@ -317,8 +391,10 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
     }
     initialized = std::move(*after);
   }
-  Walk(statement.condition.get(), initialized);
-  Walk(statement.iterable.get(), initialized);
+  if (!Walk(statement.condition.get(), initialized) ||
+      !Walk(statement.iterable.get(), initialized)) {
+    return std::nullopt;
+  }
   const auto control = controls_.size();
   controls_.push_back({
       .kind = Control::Kind::Loop,
@@ -329,8 +405,9 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
   auto body = Walk(*statement.then_branch, initialized);
   body = Merge(std::move(body), controls_.at(control).continues);
   if (body) {
-    Walk(statement.increment.get(), *body);
-    CheckRepeatedConstInitialization(initialized, *body, statement.location);
+    if (Walk(statement.increment.get(), *body)) {
+      CheckRepeatedConstInitialization(initialized, *body, statement.location);
+    }
   }
   auto exits = std::move(controls_.at(control).breaks);
   controls_.pop_back();
@@ -339,7 +416,9 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
 }
 
 Path Initialization::Switch(const Statement& statement, Initialized initialized) {
-  Walk(statement.condition.get(), initialized);
+  if (!Walk(statement.condition.get(), initialized)) {
+    return std::nullopt;
+  }
   const auto control = controls_.size();
   controls_.push_back({
       .kind = Control::Kind::Switch,
@@ -375,7 +454,9 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
       return current;
     }
     case Statement::Kind::If: {
-      Walk(statement.condition.get(), initialized);
+      if (!Walk(statement.condition.get(), initialized)) {
+        return std::nullopt;
+      }
       const auto condition = facts_.control_flow->at(&statement).condition;
       if (condition == ConditionTruth::AlwaysTrue) {
         return Walk(*statement.then_branch, std::move(initialized));
@@ -401,7 +482,9 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
       Walk(statement.expression.get(), initialized);
       return std::nullopt;
     case Statement::Kind::Return:
-      Walk(statement.expression.get(), initialized);
+      if (!Walk(statement.expression.get(), initialized)) {
+        return std::nullopt;
+      }
       if (const auto completed = ApplyFinalizers(std::move(initialized), 0)) {
         RequireComplete(*completed, statement.location);
       }
@@ -428,7 +511,8 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
     case Statement::Kind::VariableDeclaration:
     case Statement::Kind::Expression:
       Walk(statement.expression.get(), initialized);
-      return initialized;
+      return facts_.control_flow->at(&statement).can_fall_through ? Path(std::move(initialized))
+                                                                  : std::nullopt;
   }
   std::unreachable();
 }

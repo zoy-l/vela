@@ -10,6 +10,7 @@
 
 #include "base/opcode.h"
 #include "compiler/aot/native_compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/native_roots.h"
@@ -28,7 +29,7 @@ std::size_t FunctionIndex(const ir::Program& program, std::string_view name) {
 std::expected<EscapePlan, std::string> Analyze(std::string_view source) {
   const auto program = Prepare(source);
   if (!program.Succeeded()) {
-    return std::unexpected(program.diagnostics.front().message);
+    return std::unexpected(frontend::DiagnosticsText(program.diagnostics));
   }
   auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   // 测试辅助结果离开局部 Program，显式转移为拥有函数的计划。

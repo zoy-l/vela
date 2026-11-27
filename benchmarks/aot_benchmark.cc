@@ -81,11 +81,14 @@ std::expected<runtime::Value, ExecutionStatus> AwaitResult(runtime::Isolate& iso
     return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& scheduler = isolate.scheduler();
-  if (scheduler.PumpUntil(*future) == runtime::FuturePumpResult::Idle ||
-      future->state() != runtime::FutureState::Succeeded) {
+  if (scheduler.PumpUntil(*future) == runtime::FuturePumpResult::Idle) {
     return std::unexpected(ExecutionStatus::NativeFailure);
   }
-  return future->result().value;
+  const auto& result = future->result();
+  if (future->state() != runtime::FutureState::Succeeded) {
+    return std::unexpected(result.diagnostic.status);
+  }
+  return result.value;
 }
 
 template <AotCompletion Completion>
@@ -333,7 +336,11 @@ std::expected<std::int64_t, ExecutionStatus> CppAsync(runtime::Isolate& isolate,
     });
   };
   advance(0);
-  if (scheduler.PumpUntil(result) == runtime::FuturePumpResult::Idle || completion_error) {
+  const auto pumped = scheduler.PumpUntil(result);
+  if (completion_error) {
+    return std::unexpected(runtime::FutureCompletionStatus(*completion_error));
+  }
+  if (pumped == runtime::FuturePumpResult::Idle) {
     return std::unexpected(ExecutionStatus::NativeFailure);
   }
   const auto value = result.result().value;
@@ -410,6 +417,10 @@ std::int64_t CppRun(runtime::Isolate& isolate,
       std::unreachable();
     case AotKernel::SpectralNorm:
       return CppSpectralNorm();
+    case AotKernel::FlatStructFields:
+    case AotKernel::FlatStructMethods:
+    case AotKernel::ClassBodyMethods:
+      return CppFlatBodies(size);
   }
   return sum;
 }
@@ -464,9 +475,9 @@ void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {
         return;
       }
       runtime::NativeExecution execution(**instance);
-      if (!PrepareNative(execution, problem)) {
+      if (const auto prepared = PrepareNative(execution, problem); !prepared) {
         state.ResumeTiming();
-        state.SkipWithError("native input preparation failed");
+        state.SkipWithError(std::string(ExecutionStatusName(prepared.error())));
         return;
       }
       state.ResumeTiming();

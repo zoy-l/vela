@@ -35,6 +35,8 @@
 namespace vela::compiler {
 
 enum class DevelopmentOperation : std::uint8_t { Load, HotReload, Reload };
+
+enum class DevelopmentCancelError : std::uint8_t { NoPendingRequest, Stopping };
 enum class DevelopmentStatus : std::uint8_t {
   Prepared,
   WaitingForSafepoint,
@@ -152,7 +154,7 @@ class DevelopmentSession final {
   [[nodiscard]] runtime::NativeSafepointEndpoint safepoint_endpoint() const;
   void SetDebugger(runtime::NativeDebugger* debugger) noexcept;
   [[nodiscard]] DevelopmentResult Pump();
-  [[nodiscard]] std::expected<void, DevelopmentStatus> Cancel();
+  [[nodiscard]] std::expected<void, DevelopmentCancelError> Cancel();
   [[nodiscard]] std::expected<runtime::Value, ExecutionStatus> Invoke(
       std::string_view module,
       std::string_view name,

@@ -109,7 +109,7 @@ Decoders must invoke the target's public construction path. They must not write 
 
 A derived class uses its complete merged or explicitly declared signature. Base arguments and `super(...)` follow [unified construction rules](core_language.md#class-construction-from-fields). Private/static fields, getters, setters, and ordinary methods do not add JSON keys. An explicit parameter may initialize a private field through the constructor body, as in an ordinary call.
 
-Absence and null are distinct. `nickname: string?` is required; `nickname: string? = null` may be omitted. Explicit null does not select a default and fails for a non-nullable target. A supplied value with the wrong type must not fall back to a default. Omitted defaults execute exactly once in existing field declaration order. Each instance constructs its own mutable defaults.
+Absence and null are distinct. Nullable fields without explicit initializers default to null, so both `nickname: string?` and `nickname: string? = null` may be omitted. An explicit non-null default still runs only when the field is absent. Explicit null does not select a default and fails for a non-nullable target. A supplied value with the wrong type must not fall back to a default. Omitted defaults execute exactly once in existing field declaration order. Each instance constructs its own mutable defaults.
 
 Materialize explicit values in array index order, Map insertion order, or class constructor parameter declaration order. Children complete before their parent construction. Omitted defaults and constructor bodies then follow ordinary construction rules. The order of keys in JSON does not change class parameter materialization order.
 

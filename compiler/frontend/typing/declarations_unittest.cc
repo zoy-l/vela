@@ -12,6 +12,61 @@ namespace {
 
 class DeclarationErrorTest : public testing::TestWithParam<std::string_view> {};
 
+TEST(DeclarationTest, StructLayoutsFlattenNestedValuesAndRetainReferenceFields) {
+  auto parsed = ParseTestSource(R"(
+struct Position { x: double; y: double; }
+class Entity { id: int; }
+struct Component { position: Position; owner: Entity?; next: Position?; }
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto checked = TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded());
+  const auto& component = checked.model.classes.at("Component").type;
+  ASSERT_NE(component.value_layout, nullptr);
+  const auto& layout = *component.value_layout;
+  ASSERT_EQ(layout.fields.size(), 3U);
+  ASSERT_EQ(layout.slots.size(), 6U);
+  EXPECT_EQ(layout.offsets[0], 0U);
+  EXPECT_EQ(layout.offsets[1], 2U);
+  EXPECT_EQ(layout.offsets[2], 3U);
+  EXPECT_EQ(layout.slots[0].kind, TypeDescriptor::Kind::Double);
+  EXPECT_EQ(layout.slots[2].kind, TypeDescriptor::Kind::Class);
+  EXPECT_TRUE(layout.slots[2].nullable);
+  EXPECT_EQ(layout.slots[2].value_layout, nullptr);
+  EXPECT_EQ(layout.slots[3].kind, TypeDescriptor::Kind::Bool);
+}
+
+TEST(DeclarationTest, StructRejectsInheritanceRecursiveLayoutsAndWritesThroughConstValues) {
+  for (const std::string_view source : {
+           "struct S extends B {} class B {}",
+           "struct S {} class C extends S {}",
+           "struct S { value: S; }",
+           "struct S { value: S?; }",
+           "struct A { b: B; } struct B { a: A; }",
+           "struct S { x: int; } func main(): int { const s = S(x: 1); s.x = 2; return s.x; }",
+           R"(struct S { x: int; } struct T { s: S; }
+func main(): int { const t = T(s: S(x: 1)); t.s.x += 1; return t.s.x; })",
+       }) {
+    SCOPED_TRACE(source);
+    EXPECT_FALSE(CheckTestSource(source).Succeeded());
+  }
+}
+
+TEST(DeclarationTest, StructGenericApplicationsRetainValueLayout) {
+  auto parsed = ParseTestSource(R"(
+struct Pair<T> { first: T; second: T; }
+struct Position { x: double; y: double; }
+func count(value: Pair<Position>): double { return value.first.x; }
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto checked = TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.Succeeded());
+  const auto& type = checked.model.functions.at("count").parameters.front().type;
+  ASSERT_NE(type.value_layout, nullptr);
+  ASSERT_EQ(type.value_layout->fields.size(), 2U);
+  EXPECT_EQ(type.value_layout->slots.size(), 4U);
+}
+
 TEST(DeclarationTest, FieldLookupKeepsPublicNamesAndLexicalPrivateOwnersDistinct) {
   auto parsed = ParseTestSource(R"(
 class Base { publicFieldWithALongName: int = 42; #value: int = 1; }

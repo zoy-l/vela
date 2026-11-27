@@ -26,6 +26,8 @@ template <class Entry>
   return found != declarations.end() && found->identity == identity ? &*found : nullptr;
 }
 
+enum class Visibility : std::uint8_t { Public, Private };
+
 enum class DeclarationKind : std::uint8_t {
   Module,
   Function,

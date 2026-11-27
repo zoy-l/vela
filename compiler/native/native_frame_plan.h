@@ -17,6 +17,8 @@ enum class NativeEntryKind : std::uint8_t;
 struct NativeFrameRequirements final {
   bool recovery = false;
   bool leaf_calls = false;
+  std::size_t result_bytes = 0;
+  std::size_t erased_root_count = 0;
 };
 struct NativeFrameLayout final {
   llvm::StructType* type = nullptr;

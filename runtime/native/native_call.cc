@@ -61,7 +61,7 @@ std::expected<Value, ExecutionStatus> InvokeBoundTarget(NativeExecution& executi
                                                         std::uint32_t function,
                                                         const CallSignature& signature,
                                                         const BoundArguments& bound,
-                                                        const Arguments& input,
+                                                        Arguments& input,
                                                         std::optional<Value> receiver,
                                                         NativeArgumentPresence presence) {
   auto& heap = execution.isolate().heap();
@@ -255,10 +255,59 @@ std::expected<Value, ExecutionStatus> MakeOmittedCallbackArgument(
     }
     return Value::Object(empty);
   }
-  if ((parameter.flags & kNativeOptionalParameter) == 0) {
+  return Value::Null();
+}
+
+struct CallableArguments final {
+  std::size_t supplied;
+  std::size_t logical;
+  bool has_defaults;
+};
+
+std::expected<CallableArguments, ExecutionStatus> PlanCallableArguments(
+    const NativeFunctionDescription& function,
+    std::size_t explicit_count,
+    std::size_t hidden) {
+  const auto parameters = function.parameters.values();
+  const auto has_defaults = function.HasDefaults();
+  const auto logical = function.parameter_count - (has_defaults ? parameters.size() : 0);
+  const auto supplied = explicit_count + hidden;
+  if (supplied > logical ||
+      ((function.flags & kNativeTypedFunction) == 0 && supplied != function.parameter_count)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return Value::Null();
+  for (auto index = supplied; index < logical; ++index) {
+    const auto& parameter = parameters[index - function.hidden_parameters];
+    if (!parameter.IsOptional() && !parameter.IsRest()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+  }
+  return CallableArguments{.supplied = supplied, .logical = logical, .has_defaults = has_defaults};
+}
+
+std::expected<void, ExecutionStatus> CompleteCallableArguments(
+    Heap& heap,
+    const NativeInstance& instance,
+    const NativeFunctionDescription& function,
+    const CallableArguments& plan,
+    std::span<NativeValue> encoded,
+    std::span<Value> omitted_roots) {
+  const auto parameters = function.parameters.values();
+  for (auto index = plan.supplied; index < plan.logical; ++index) {
+    const auto omitted = MakeOmittedCallbackArgument(
+        heap, instance, parameters[index - function.hidden_parameters]);
+    if (!omitted) {
+      return std::unexpected(omitted.error());
+    }
+    auto& value = omitted_roots[index - plan.supplied];
+    value = *omitted;
+    encoded[index] = EncodeNativeValue(value);
+  }
+  if (plan.has_defaults) {
+    // 绑定接收者也可能是签名中的普通参数，必须计入已提供的参数。
+    EncodePresence(encoded.subspan(plan.logical), plan.supplied - function.hidden_parameters);
+  }
+  return {};
 }
 
 }  // namespace
@@ -271,15 +320,9 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
   const auto& instance = execution.instance();
-  const auto typed = (function.flags & kNativeTypedFunction) != 0;
-  const auto parameters = function.parameters.values();
-  const auto has_defaults = function.HasDefaults();
-  const auto logical_count = function.parameter_count - (has_defaults ? parameters.size() : 0);
-  if (arguments.size() + hidden > logical_count) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  if (!typed && function.parameter_count != arguments.size() + hidden) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto plan = PlanCallableArguments(function, arguments.size(), hidden);
+  if (!plan) {
+    return std::unexpected(plan.error());
   }
   if (function.parameter_count == 0) {
     // 数量检查已排除实参和隐式接收者；没有需要编码、补缺省或保根的输入。
@@ -334,17 +377,12 @@ std::expected<Value, ExecutionStatus> InvokeResolvedNativeCallable(
     }
     encoded[index + hidden] = *argument;
   }
-  for (std::size_t index = arguments.size() + hidden; index < logical_count; ++index) {
-    const auto parameter = parameters[index - function.hidden_parameters];
-    const auto omitted = MakeOmittedCallbackArgument(heap, instance, parameter);
-    if (!omitted) {
-      return std::unexpected(omitted.error());
-    }
-    auto& value = values[index - arguments.size()];
-    value = *omitted;
-    encoded[index] = EncodeNativeValue(value);
+  const auto omitted = values.subspan(hidden, plan->logical - plan->supplied);
+  if (const auto completed =
+          CompleteCallableArguments(heap, instance, function, *plan, encoded, omitted);
+      !completed) {
+    return std::unexpected(completed.error());
   }
-  EncodePresence(encoded.subspan(logical_count), arguments.size());
   return InvokeNativeTarget(execution, function, encoded);
 }
 
@@ -389,7 +427,7 @@ std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(NativeExecution& e
                                                               std::uint32_t function,
                                                               const CallSignature& signature,
                                                               const BoundArguments& bound,
-                                                              const HeapObject& arguments,
+                                                              HeapObject& arguments,
                                                               std::optional<Value> receiver) {
   return InvokeBoundTarget(execution, function, signature, bound, arguments, receiver,
                            NativeArgumentPresence::Absent);
@@ -712,22 +750,33 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
   }
   const auto& function = origin.image().function(target.function);
   const auto supplied = input.subspan(1 - hidden);
-  if (!function.HasDefaults()) {
+  const auto plan = PlanCallableArguments(function, count, hidden);
+  if (!plan) {
+    return ToNativeStatus(plan.error());
+  }
+  if (!plan->has_defaults && supplied.size() == plan->logical) {
     return function.entry(execution, supplied.data(), supplied.size(), result);
   }
   constexpr std::size_t kInlineArguments = 8;
-  NativeBuffer<NativeValue, kInlineArguments> completed(execution->isolate().heap(),
-                                                        function.parameter_count);
+  auto& heap = execution->isolate().heap();
+  NativeBuffer<Value, kInlineArguments> omitted(heap, plan->logical - plan->supplied);
+  if (!omitted.IsAllocated()) {
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
+  }
+  const auto omitted_values = omitted.values();
+  std::uninitialized_value_construct_n(omitted_values.data(), omitted_values.size());
+  const RootRange roots(heap, omitted_values.data(), omitted_values.size(), std::nullopt);
+  NativeBuffer<NativeValue, kInlineArguments> completed(heap, function.parameter_count);
   if (!completed.IsAllocated()) {
-    return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
   }
   const auto values = completed.values();
   std::ranges::copy(supplied, values.begin());
-  const auto logical =
-      static_cast<std::size_t>(function.parameter_count - function.parameters.size);
-  std::ranges::fill(values.subspan(supplied.size(), logical - supplied.size()),
-                    EncodeNativeValue(Value::Null()));
-  EncodePresence(values.subspan(logical), count);
+  if (const auto filled =
+          CompleteCallableArguments(heap, origin, function, *plan, values, omitted_values);
+      !filled) {
+    return ToNativeStatus(filled.error());
+  }
   return function.entry(execution, values.data(), values.size(), result);
 }
 

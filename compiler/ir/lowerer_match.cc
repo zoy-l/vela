@@ -41,7 +41,9 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
       DeclareLocal(arm.binding, bound, model_.match_bindings.at(&arm), arm.location, &arm);
     }
     const auto value = LowerExpression(*arm.value);
-    Emit({.opcode = Opcode::Move, .dst = result, .lhs = value.reg, .location = arm.location});
+    if (value.type.kind != frontend::TypeDescriptor::Kind::Never) {
+      Emit({.opcode = Opcode::Move, .dst = result, .lhs = value.reg, .location = arm.location});
+    }
     PopScope();
     if (&arm != &expression.arms.back()) {
       exits.push_back(current_function_->instructions.size());

@@ -10,8 +10,8 @@ import sys
 import unittest
 
 from tools.config import ROOT, executable_name, toolchain_tools
-from tools.test_support import (CommandTestCase, NATIVE_TEST_INCLUDES, compile_native_host, native_command,
-                                native_test_libraries)
+from tools.test_support import (CommandTestCase, NATIVE_TEST_INCLUDES, compile_native_c_object,
+                                compile_native_host, native_command, native_test_libraries)
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
@@ -72,22 +72,6 @@ HOST_TESTS = r'''
 using vela::ExecutionStatus;
 using namespace vela::runtime;
 using Entry = std::uint8_t (*)(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t INTEGER_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t FLOAT_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t BOOL_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t NULLABLE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t NULL_TEST_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t REFERENCE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t EXCEPTION_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t GLOBAL_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t NATIVE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t FUTURE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t LARGE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t CALENDAR_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t JSON_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t CALLABLE_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t ASYNC_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
-extern "C" std::uint8_t ASYNC_HOST_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
 extern "C" const NativeImage* INTEGER_IMAGE() noexcept;
 extern "C" const NativeImage* FLOAT_IMAGE() noexcept;
 extern "C" const NativeImage* BOOL_IMAGE() noexcept;
@@ -453,10 +437,18 @@ TEST(NativeHostTest, BooleanAndNullableResultsUseExplicitShapes) {
   ASSERT_EQ(Execute(BOOL_ENTRY, execution, boolean, result), ExecutionStatus::Returned);
   EXPECT_EQ(result.kind, NativeValueKind::Boolean);
   EXPECT_EQ(result.payload, 1U);
-  const std::array null{NativeValue{}};
+  // 可空参数有隐式默认值；直接调用原生入口必须提供实参存在位。
+  const NativeValue present{.payload = 1, .kind = NativeValueKind::Boolean};
+  const std::array null{NativeValue{}, present};
   ASSERT_EQ(Execute(NULLABLE_ENTRY, nullable_execution, null, result), ExecutionStatus::Returned);
   EXPECT_EQ(result.kind, NativeValueKind::Null);
-  const std::array integer{Integer(std::numeric_limits<std::int64_t>::min())};
+  const std::array omitted{Integer(42), NativeValue{.kind = NativeValueKind::Boolean}};
+  ASSERT_EQ(Execute(NULLABLE_ENTRY, nullable_execution, omitted, result), ExecutionStatus::Returned);
+  EXPECT_EQ(result.kind, NativeValueKind::Null);
+  const std::array missing_presence{NativeValue{}};
+  EXPECT_EQ(Execute(NULLABLE_ENTRY, nullable_execution, missing_presence, result),
+            ExecutionStatus::InvalidEntry);
+  const std::array integer{Integer(std::numeric_limits<std::int64_t>::min()), present};
   ASSERT_EQ(Execute(NULLABLE_ENTRY, nullable_execution, integer, result), ExecutionStatus::Returned);
   EXPECT_EQ(result.payload, integer.front().payload);
   ASSERT_EQ(Execute(NULL_TEST_ENTRY, null_execution, null, result), ExecutionStatus::Returned);
@@ -840,17 +832,16 @@ class NativeObjectTest(CommandTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.output = self.executable.parent
-        self.tools = toolchain_tools()
+        self.libraries = native_test_libraries(self.executable.parent)
+        self.nm = toolchain_tools()["cxx"].parent / executable_name("llvm-nm")
 
     def command(self, arguments: list[str | Path], expected: int = 0) -> subprocess.CompletedProcess:
         return native_command(self, arguments, expected, cwd=self.directory)
 
     def test_production_runtime_excludes_development_testing_symbols(self) -> None:
-        runtime = native_test_libraries(self.output)[0]
-        nm = self.tools["cxx"].parent / executable_name("llvm-nm")
+        runtime = self.libraries[0]
         for selection in ("--defined-only", "--undefined-only"):
-            symbols = self.command([nm, selection, "--extern-only", "--demangle", runtime]).stdout
+            symbols = self.command([self.nm, selection, "--extern-only", "--demangle", runtime]).stdout
             for name in ("vela::testing::", "TestBridge", "ExecuteNativeMock", "ExecuteNativeTest",
                          "InspectTestValue", "CaptureTestTrace", "ReadTestTrace",
                          "vela_development_v1_builtin"):
@@ -858,8 +849,7 @@ class NativeObjectTest(CommandTestCase):
                     self.assertNotIn(name, symbols)
 
     def emit(self, name: str, source: str) -> tuple[Path, dict]:
-        entry = self.directory / (name + ".vela")
-        entry.write_text(source, encoding="utf-8", newline="\n")
+        entry = self.write(name + ".vela", source)
         object_file = self.directory / (name + (".obj" if sys.platform == "win32" else ".o"))
         exports = ["calculate", *{
             "callable_entry": ["globalCounter", "readGlobal", "retainCycle"],
@@ -874,8 +864,7 @@ class NativeObjectTest(CommandTestCase):
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
                       *["--export=" + value for value in exports], "-o", object_file])
-        nm = self.tools["cxx"].parent / executable_name("llvm-nm")
-        symbols = self.command([nm, "--defined-only", "--extern-only", "-j", object_file]).stdout
+        symbols = self.command([self.nm, "--defined-only", "--extern-only", "-j", object_file]).stdout
         if sys.platform == "darwin":
             symbols = "\n".join(name.removeprefix("_") for name in symbols.splitlines())
         images = re.findall(r"\b(vela_aot_[a-f0-9]+_image)\b", symbols)
@@ -901,29 +890,74 @@ class NativeObjectTest(CommandTestCase):
     def test_bounded_host_entries_preserve_complete_invocation_contracts(self) -> None:
         object_file, manifest = self.emit("host_entry", HOST_ENTRY_SOURCE)
         host = HOST_ENTRY_TESTS.replace("HOST_IMAGE", manifest["image"])
-        source = self.directory / "host_entries.cc"
-        source.write_text('#include "' + object_file.name + '.h"\n' + host,
-                          encoding="utf-8", newline="\n")
-        executable = self.directory / executable_name("host_entries")
-        runtime, *gtest = native_test_libraries(self.output)
-        compile_native_host(self, [source], executable, [object_file, runtime, *gtest],
-                            NATIVE_TEST_INCLUDES, cwd=self.directory)
-        executed = self.command([executable]).stdout
-        self.assertIn("[==========] 15 tests from 1 test suite ran.", executed)
+        self.check_object_host(object_file, host, "[==========] 15 tests from 1 test suite ran.")
 
-    def check_collected_calculation(self, object_file: Path, manifest: dict, name: str) -> None:
-        source = self.directory / (name + "_host.cc")
-        source.write_text('#include "' + object_file.name + '.h"\n'
-                          + COLLECTED_CALCULATION_TESTS.replace("CALCULATION_IMAGE", manifest["image"]),
-                          encoding="utf-8", newline="\n")
+    def check_object_host(self, object_file: Path, host: str,
+                          expected_summary: str = "[  PASSED  ] 1 test.") -> None:
+        name = object_file.stem + "_host"
+        source = self.write(name + ".cc", f'#include "{object_file.name}.h"\n' + host)
         executable = self.directory / executable_name(name)
-        compile_native_host(self, [source], executable,
-                            [object_file, *native_test_libraries(self.output)],
+        compile_native_host(self, [source], executable, [object_file, *self.libraries],
                             NATIVE_TEST_INCLUDES, cwd=self.directory)
-        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+        self.assertIn(expected_summary, self.command([executable]).stdout)
+
+    def check_collected_calculation(self, name: str, source: str) -> None:
+        object_file, manifest = self.emit(name, source)
+        host = COLLECTED_CALCULATION_TESTS.replace("CALCULATION_IMAGE", manifest["image"])
+        self.check_object_host(object_file, host)
+
+    def test_flat_structs_copy_inline_values_and_mutate_locations_under_gc(self) -> None:
+        self.check_collected_calculation("flat_structs", """
+external func collect(): void;
+class Stop {}
+interface CounterApi { add(): int; read(): int; }
+struct Counter implements CounterApi {
+  value: int;
+  text: string;
+  add(): int { this.value++; collect(); return this.value; }
+  read(): int { return this.value; }
+  advance(observe: () => void): void {
+    this.text = 'kept'.toUpperCase();
+    this.value++;
+    observe();
+    this.value++;
+  }
+  fail(): void { this.value++; collect(); throw Stop(); }
+}
+struct Pair<T> { counter: T; other: int; }
+class Holder { pair: Pair<Counter>; }
+func copy(value: Pair<Counter>): Pair<Counter> { collect(); return value; }
+export func calculate(): int {
+  let local = Counter(value: 1, text: '');
+  local.advance(() => { collect(); });
+  if (local.value != 3 || local.text != 'KEPT') { return -1; }
+  const saved = local;
+  if (saved.add() != 4 || saved.value != 3) { return -2; }
+  const bound = local.add;
+  const boxed: CounterApi = local;
+  if (bound() != 4 || bound() != 5 || boxed.add() != 4 || boxed.read() != 4) { return -3; }
+  const holder = Holder(pair: Pair(counter: local, other: 0));
+  const items = [copy(holder.pair)];
+  items[0].counter.advance(() => {
+    items[0].other = items[0].counter.value;
+    for (let i = 0; i < 40; i++) { items.push(holder.pair); }
+    collect();
+  });
+  holder.pair.counter.add();
+  try { items[0].counter.fail(); } catch (error: dynamic) {}
+  const snapshot = copy(items[0]);
+  collect();
+  if (snapshot.counter.value != 6 || snapshot.other != 4 || holder.pair.counter.value != 4) { return -4; }
+  const erased: dynamic = snapshot;
+  erased.counter = Counter(value: 40, text: 'boxed');
+  collect();
+  const restored = erased as Pair<Counter>;
+  return restored.counter.value + local.value - 1;
+}
+""")
 
     def test_inherited_constructors_preserve_defaults_generics_and_factories(self) -> None:
-        object_file, manifest = self.emit("inherited_constructors", """
+        self.check_collected_calculation("inherited_constructors", """
 external func collect(): void;
 let calls = 0;
 func initial(): int { calls++; collect(); return 40; }
@@ -978,10 +1012,25 @@ export func calculate(): int {
       ? generated.value + generated.values[0] : 0;
 }
 """)
-        self.check_collected_calculation(object_file, manifest, "inherited_constructors")
+
+    def test_nullable_defaults_link_and_execute_without_compiler_state(self) -> None:
+        self.check_collected_calculation("nullable_defaults", r"""
+external func collect(): void;
+class Base { label: string?; }
+class View extends Base { surface: int?; }
+class Bound { const value: int?; constructor(this.value) {} }
+func optional(value: int?): int { return value ?? 21; }
+export func calculate(): int {
+  const view = View();
+  const bound = Bound();
+  collect();
+  return view.label == null && view.surface == null && bound.value == null
+      ? optional() + optional(21) : 0;
+}
+""")
 
     def test_math_and_utf8_byte_apis_link_and_execute_without_compiler_state(self) -> None:
-        object_file, manifest = self.emit("math_string_bytes", r"""
+        self.check_collected_calculation("math_string_bytes", r"""
 external func collect(): void;
 export func calculate(): int {
   const value = 'A中😀e\u0301\0';
@@ -1004,19 +1053,10 @@ export func calculate(): int {
   return 0;
 }
 """)
-        self.check_collected_calculation(object_file, manifest, "math_string_bytes")
 
     def test_private_record_arrays_execute_without_compiler_state(self) -> None:
         object_file, manifest = self.emit("record_arrays", RECORD_ARRAY_SOURCE)
-        source = self.directory / "record_arrays_host.cc"
-        source.write_text('#include "' + object_file.name + '.h"\n'
-                          + RECORD_ARRAY_TESTS.replace("RECORD_IMAGE", manifest["image"]),
-                          encoding="utf-8", newline="\n")
-        executable = self.directory / executable_name("record_arrays")
-        compile_native_host(self, [source], executable,
-                            [object_file, *native_test_libraries(self.output)],
-                            NATIVE_TEST_INCLUDES, cwd=self.directory)
-        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+        self.check_object_host(object_file, RECORD_ARRAY_TESTS.replace("RECORD_IMAGE", manifest["image"]))
 
     def test_array_predicates_preserve_refined_layouts_without_compiler_state(self) -> None:
         object_file, manifest = self.emit("array_search", """
@@ -1047,8 +1087,7 @@ export func calculate(): int {
   return checkOptional(null) + checkOptional([found.value]);
 }
 """)
-        source = self.directory / "array_search_host.cc"
-        source.write_text(r'''
+        host = r'''
 #include <gtest/gtest.h>
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -1069,12 +1108,8 @@ TEST(ArraySearchAotTest, RetainsPredicateTypesAcrossCollection) {
     EXPECT_EQ(result.value.AsInteger(), 42);
   }
 }
-'''.replace("SEARCH_IMAGE", manifest["image"]), encoding="utf-8", newline="\n")
-        executable = self.directory / executable_name("array_search")
-        compile_native_host(self, [source], executable,
-                            [object_file, *native_test_libraries(self.output)],
-                            NATIVE_TEST_INCLUDES, cwd=self.directory)
-        self.assertIn("[  PASSED  ] 1 test.", self.command([executable]).stdout)
+'''.replace("SEARCH_IMAGE", manifest["image"])
+        self.check_object_host(object_file, host)
 
     def test_statically_linked_optimized_native_contracts_without_vm(self) -> None:
         fixtures = {
@@ -1543,7 +1578,6 @@ export async func calculate(): Future<int> {
         trace_lines = [next(index for index, line in enumerate(trace_source, 1) if site in line)
                        for site in trace_sites]
         host = host.replace("EXPECTED_TRACE_LINES", ", ".join(map(str, trace_lines)))
-        host = re.sub(r'^extern "C" std::uint8_t \w+_ENTRY\([^\n]+\);\n', "", host, flags=re.MULTILINE)
         objects = []
         c_host = ""
         for name, source in fixtures.items():
@@ -1565,19 +1599,9 @@ export async func calculate(): Future<int> {
                             + "\n" + c_host,
                             encoding="utf-8", newline="\n")
         executable = self.directory / executable_name("host")
-        runtime, *gtest = native_test_libraries(self.output)
-        if sys.platform == "win32":
-            self.command([self.tools["cxx"], "/nologo", "/TC", "/W4", "/WX", "/c", c_source,
-                          f"/I{ROOT}", f"/Fo{self.directory / 'headers.obj'}"])
-            c_object = self.directory / "headers.obj"
-        else:
-            c_compile_flags = ["-std=c17", "-Werror", "-c"]
-            if sys.platform == "darwin":
-                c_compile_flags.extend(["-isysroot", str(self.tools["sysroot"])])
-            self.command([self.tools["cc"], *c_compile_flags, c_source,
-                          f"-I{ROOT}", "-o", self.directory / "headers.o"])
-            c_object = self.directory / "headers.o"
-        compile_native_host(self, [source_file], executable, [*objects, runtime, *gtest],
+        runtime = self.libraries[0]
+        c_object = compile_native_c_object(self, c_source, ROOT)
+        compile_native_host(self, [source_file], executable, [*objects, *self.libraries],
                             NATIVE_TEST_INCLUDES, cwd=self.directory)
         c_executable = self.directory / executable_name("c_host")
         compile_native_host(self, [], c_executable, [c_object, *objects, runtime], [],
@@ -1585,8 +1609,7 @@ export async func calculate(): Future<int> {
         executed = self.command([executable])
         self.assertIn("[  PASSED  ] 89 tests.", executed.stdout)
         self.assertEqual(self.command([c_executable]).stdout, "C host passed\n")
-        nm = self.tools["cxx"].parent / executable_name("llvm-nm")
-        symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
+        symbols = self.command([self.nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)
         self.assertNotIn("vela::compiler::", symbols)
         self.assertNotIn("llvm::", symbols)

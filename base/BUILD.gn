@@ -23,6 +23,8 @@ source_set("base") {
     "file_publication.h",
     "fingerprint.cc",
     "fingerprint.h",
+    "inline_layout.cc",
+    "inline_layout.h",
     "integer_arithmetic.h",
     "integer_parse.h",
     "json_decode.h",
@@ -43,6 +45,7 @@ source_set("base") {
     "source_lines.h",
     "source_location.h",
     "streams.h",
+    "type_kind.h",
     "utf8.cc",
     "utf8.h",
   ]

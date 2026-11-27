@@ -7,12 +7,648 @@
 
 #include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
+#include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
 namespace {
 
 class ClassDispatchTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(StructTest, StaticStructFieldsKeepWritableLocationsAndIndependentSnapshots) {
+  test::ExpectRunAnswer(R"(
+struct Counter { value: int; advance(): void { this.value++; } }
+class Holder { static current: Counter = Counter(value: 1); }
+func main(): int {
+  const snapshot = Holder.current;
+  Holder.current.value = 40;
+  Holder.current.value++;
+  Holder.current.advance();
+  return snapshot.value == 1 ? Holder.current.value : -1;
+}
+)");
+}
+
+TEST(StructTest, EmptyNestedValuesPreserveLogicalAndPhysicalFieldOffsets) {
+  test::ExpectRunAnswer(R"(
+struct Empty {}
+[Reflect]
+struct Pair { empty: Empty; maybe: Empty?; number: int; text: string; }
+[Reflect]
+class Holder { empty: Empty; pair: Pair; tail: int; }
+func main(): int {
+  const pair = Pair(empty: Empty(), maybe: null, number: 20, text: 'kept');
+  const holder = Holder(empty: Empty(), pair: pair, tail: 22);
+  const boxed: dynamic = pair;
+  const info = Reflect.typeOf(boxed);
+  const number = info.findField('number');
+  const text = info.findField('text');
+  if (number == null || text == null || number.getValue(boxed) != 20 ||
+      text.getValue(boxed) != 'kept') { return -1; }
+  holder.pair.maybe = Empty();
+  if (holder.pair.maybe == null || holder.pair.text != 'kept' || pair.maybe != null) { return -2; }
+  const erased: dynamic = holder;
+  const tail = Reflect.typeOf(erased).findField('tail');
+  if (tail == null || tail.getValue(erased) != 22) { return -3; }
+  return holder.pair.number + holder.tail;
+}
+)");
+}
+
+TEST(StructTest, NarrowedClassReceiversUseDerivedInlineFieldLayouts) {
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; }
+class Base { marker: int; }
+class Derived extends Base { position: Position; tail: int; }
+func update(value: Base): int {
+  if (!(value is Derived)) { return -1; }
+  const snapshot = value.position;
+  value.position = Position(x: 20, y: 21);
+  value.tail = 1;
+  value.position.y++;
+  return snapshot.x == 1 && snapshot.y == 2 && value.tail == 1
+      ? value.position.x + value.position.y : -2;
+}
+func main(): int {
+  return update(Derived(marker: 0, position: Position(x: 1, y: 2), tail: 0));
+}
+)");
+}
+
+TEST(StructTest, MutableMethodsUpdateLocalNestedAndArrayPlacesBeforeCallbacksAndThrow) {
+  test::ExpectRunAnswer(R"(
+class Stop {}
+struct Counter {
+  value: int;
+  advance(observe: () => void): void {
+    this.value += 1;
+    observe();
+    this.value += 1;
+  }
+  fail(): void { this.value += 3; throw Stop(); }
+}
+struct Pair { counter: Counter; other: int; }
+func main(): int {
+  let local = Counter(value: 1);
+  local.advance(() => {});
+  let pair = Pair(counter: Counter(value: 4), other: 0);
+  pair.counter.advance(() => { pair.other = pair.counter.value; });
+  const items = [Pair(counter: Counter(value: 10), other: 0)];
+  items[0].counter.advance(() => {
+    items[0].other = items[0].counter.value;
+    for (let i = 0; i < 100; i++) { items.push(Pair(counter: Counter(value: i), other: i)); }
+  });
+  try { items[0].counter.fail(); } catch (error: dynamic) {}
+  if (local.value != 3) { return -100 - local.value; }
+  if (pair.counter.value != 6) { return -200 - pair.counter.value; }
+  if (pair.other != 5) { return -300 - pair.other; }
+  if (items[0].counter.value != 15 || items[0].other != 11) { return -2; }
+  return 42;
+}
+)");
+}
+
+TEST(StructTest, MethodAndPropertyReceiversRespectReadonlyCopiesAndBoxIdentity) {
+  test::ExpectRunAnswer(R"(
+interface CounterApi { add(): int; read(): int; }
+struct Counter implements CounterApi {
+  value: int;
+  add(): int { this.value++; return this.value; }
+  read(): int { return this.value; }
+  get next(): int { this.value++; return this.value; }
+  get number(): int { return this.value; }
+  set number(value: int): void { this.value = value; }
+}
+
+struct Nested { value: Counter; }
+class Holder { const frozen: Counter; value: Counter; }
+func make(): Nested { return Nested(value: Counter(value: 10)); }
+func main(): int {
+  let local = Counter(value: 1);
+  local.number = 5;
+  if (local.next != 6 || local.value != 6) { return -1; }
+  local.number += 1;
+  if (local.value != 7) { return -2; }
+  const frozen = local;
+  if (frozen.add() != 8 || frozen.value != 7 || frozen.next != 8 || frozen.value != 7) { return -3; }
+  const holder = Holder(frozen: frozen, value: frozen);
+  holder.frozen.add();
+  holder.value.number = 20;
+  if (holder.frozen.value != 7 || holder.value.add() != 21) { return -4; }
+  const bound = local.add;
+  const boxed: CounterApi = local;
+  if (bound() != 8 || bound() != 9 || boxed.add() != 8 || boxed.read() != 8 || local.value != 7) { return -5; }
+  const erased: dynamic = local;
+  erased.add();
+  if (erased.value != 8 || local.value != 7 || make().value.add() != 11) { return -6; }
+  return 42;
+}
+)");
+}
+
+TEST(StructTest, AssignmentsUseSettersWithoutReadingAndKeepNestedLocations) {
+  test::ExpectRunAnswer(R"(
+let reads = 0;
+struct Counter {
+  value: int;
+  get number(): int { reads++; return this.value; }
+  set number(value: int): void { this.value = value; }
+}
+struct Pair { counter: Counter; other: int; }
+const pairs = [Pair(counter: Counter(value: 1), other: 2)];
+func change(): int { pairs[0].other = 20; return 21; }
+func main(): int {
+  pairs[0].counter.number = change();
+  if (reads != 0 || pairs[0].other != 20 || pairs[0].counter.value != 21) { return -1; }
+  pairs[0].counter.number += 1;
+  if (reads != 1 || pairs[0].counter.value != 22) { return -2; }
+  return pairs[0].other + pairs[0].counter.value;
+}
+)");
+}
+
+TEST(StructTest, FillCopiesNullableValuesAndKeepsReferencesAlive) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Entry { text: string; number: int?; }
+func main(): int {
+  const entries: Entry?[] = [Entry(text: 'keep'.toUpperCase(), number: null), null, null, null];
+  entries.fill(Entry(text: 'alive'.toUpperCase(), number: 42), 1, 3);
+  entries.fill(null, 2, 2);
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  if (entries[0]?.text != 'KEEP' || entries[1]?.text != 'ALIVE' ||
+      entries[1]?.number != 42 || entries[2]?.text != 'ALIVE' || entries[3] != null) {
+    return 0;
+  }
+  entries.fill(null, 2, 4);
+  return entries[1]?.number == 42 && entries[2] == null && entries[3] == null ? 42 : 0;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, IncludesInlineValuesPreservesNullableAndSameValueZeroSemantics) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Empty {}
+struct Key { number: double; text: string; optional: int?; }
+func main(): int {
+  const empty: Empty?[] = [null, Empty()];
+  if (!empty.includes(null) || empty.includes(null, 1) || !empty.includes(Empty(), 1) ||
+      empty.includes(Empty(), 2) || empty.includes(null, 2)) { return -1; }
+  const absent: Empty?[] = [null];
+  if (absent.includes(Empty()) || !absent.includes(null)) { return -2; }
+  const nan = double.parse('NaN');
+  const keys: Key?[] = [null, Key(number: nan, text: 'keep'.toUpperCase(), optional: null),
+                       Key(number: -0.0, text: 'zero'.toUpperCase(), optional: 42)];
+  if (!keys.includes(Key(number: nan, text: 'KEEP', optional: null)) ||
+      keys.includes(Key(number: nan, text: 'KEEP', optional: 42)) ||
+      !keys.includes(Key(number: 0.0, text: 'ZERO', optional: 42), -1) ||
+      keys.includes(null, 1) || keys.includes(Key(number: nan, text: 'KEEP', optional: null), 2)) {
+    return -3;
+  }
+  const none: Key[] = [];
+  return none.includes(Key(number: nan, text: 'KEEP', optional: null)) ? -4 : 42;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, NullDefaultsSkipOnlyFullyInitializedGeneratedConstructors) {
+  test::ExpectRunAnswer(R"(
+let initializations = 0;
+func next(): int { initializations++; return initializations; }
+struct Entry { value: int = next(); text: string? = null; }
+struct PrivateEntry {
+  value: int = next();
+  text: string? = null;
+  #stamp: int = next();
+  stamp(): int { return this.#stamp; }
+}
+func main(): int {
+  const direct = Entry(value: 40);
+  if (initializations != 0 || direct.text != null) { return -1; }
+  const defaults = Entry();
+  if (initializations != 1 || defaults.value != 1 || defaults.text != null) { return -2; }
+  const privateEntry = PrivateEntry(value: 42);
+  if (initializations != 2 || privateEntry.stamp() != 2 || privateEntry.text != null) { return -3; }
+  return direct.value + defaults.value + initializations - 1;
+}
+)");
+}
+
+TEST(StructTest, MutableMethodsTrackNullablePlacesAndRejectRemovedArrayElements) {
+  test::ExpectRunAnswer(R"(
+struct Counter {
+  value: int;
+  advance(observe: () => void): void { this.value++; observe(); this.value++; }
+}
+struct Pair { counter: Counter?; other: int; }
+class Holder { counter: Counter?; }
+let receiverCalls = 0;
+let indexCalls = 0;
+const items: Counter?[] = [Counter(value: 10)];
+func receiver(): Counter?[] { receiverCalls++; return items; }
+func index(): int { indexCalls++; return 0; }
+func main(): int {
+  let local: Counter? = Counter(value: 1);
+  local?.advance(() => {});
+  if (local == null || local.value != 3) { return -1; }
+  let pair = Pair(counter: Counter(value: 4), other: 0);
+  pair.counter?.advance(() => { pair.other = 9; });
+  if (pair.counter?.value != 6 || pair.other != 9) { return -2; }
+  const holder = Holder(counter: Counter(value: 7));
+  holder.counter?.advance(() => {});
+  if (holder.counter?.value != 9) { return -3; }
+  receiver()[index()]?.advance(() => { items.push(null); });
+  if (receiverCalls != 1 || indexCalls != 1 || items[0]?.value != 12) { return -4; }
+  let observed = 0;
+  let failed = false;
+  try {
+    items[0]?.advance(() => { observed = items[0]?.value ?? 0; items.clear(); });
+  } catch (error: dynamic) { failed = true; }
+  if (!failed || observed != 13 || items.length != 0) { return -5; }
+  return 42;
+}
+)");
+}
+
+TEST(StructTest, ErasedCopiesAndMultipleArgumentsSurviveGc) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct NamedValue { text: string; value: int; }
+func read(first: dynamic, second: dynamic): int {
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  if (first.text != 'FIRST' || second.text != 'SECOND') { return -1; }
+  first.value = 19;
+  return (first.value as int) + (second.value as int);
+}
+func erase(value: NamedValue): dynamic { return value; }
+func main(): int {
+  let first = NamedValue(text: 'first'.toUpperCase(), value: 20);
+  const second = NamedValue(text: 'second'.toUpperCase(), value: 23);
+  const result = read(first, second);
+  if (first.value != 20 || result != 42) { return -2; }
+  const boxed = erase(first);
+  return (boxed.value as int) + 22;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, NestedEqualityAndCollectionKeysFollowValueSemantics) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Label { text: string; }
+struct Data { label: Label?; number: double?; }
+struct Key { number: double; text: string?; }
+func main(): int {
+  let changed = Data(label: Label(text: 'temporary'.toUpperCase()), number: null);
+  changed.label = null;
+  const missing = Data(label: null, number: null);
+  if (changed != missing) { return -1; }
+  const erased: dynamic = changed;
+  const other: dynamic = missing;
+  if (erased != other) { return -2; }
+  const values: Data?[] = [missing, null];
+  if (!values.includes(changed) || !values.includes(null)) { return -3; }
+  const nan = double.parse('NaN');
+  const key = Key(number: nan, text: null);
+  if (key == key) { return -4; }
+  const boxed: dynamic = key;
+  if (boxed == boxed) { return -5; }
+  const keys = Set<Key>();
+  keys.add(key);
+  keys.add(Key(number: nan, text: null));
+  if (keys.size != 1 || !keys.has(Key(number: nan, text: null))) { return -6; }
+  const map = Map<Key, int>();
+  map.set(Key(number: -0.0, text: 'key'), 42);
+  return map.get(Key(number: 0.0, text: 'key')) ?? -7;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, TypedCollectionsCopyStructsAcrossErasedAccessAndIteration) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Key { id: int; }
+struct Data { number: int; label: string; }
+func main(): int {
+  const map = Map<Key, Data>();
+  const erased: dynamic = map;
+  const key: dynamic = Key(id: 1);
+  const value: dynamic = Data(number: 42, label: 'value'.toUpperCase());
+  erased.set(key, value);
+  key.id = 2;
+  value.number = 0;
+  if (key.id != 2 || value.number != 0) { return -4; }
+  if (!map.has(Key(id: 1))) { return -1; }
+  const loaded: dynamic = erased.get(Key(id: 1));
+  if (loaded.number != 42 || loaded.label != 'VALUE') { return -2; }
+  loaded.number = 99;
+  for (const item in map.values()) {
+    const boxed: dynamic = item;
+    boxed.number = 100;
+  }
+  const result = map.get(Key(id: 1));
+  return result == null ? -3 : result.number;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, TypedEqualityDoesNotRequireBoxAllocations) {
+  runtime::Isolate isolate(1);
+  const auto compiled = test::CompileCleanSource(R"(
+struct Position { x: double; y: double; z: double; }
+struct Body { position: Position?; active: bool; }
+func main(): int {
+  const first = Body(position: Position(x: 1.0, y: 2.0, z: 3.0), active: true);
+  const second = Body(position: Position(x: 1.0, y: 2.0, z: 3.0), active: true);
+  const missing = Body(position: null, active: false);
+  return first == second && first != missing && missing == missing ? 42 : 0;
+}
+)",
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  isolate.heap().SetAllocationCountLimit(0);
+  test::ExpectAnswer(**compiled);
+}
+
+TEST(StructTest, DynamicNestedFieldsUseLogicalIndicesAndCopyValues) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; name: string; }
+struct Body { position: Position?; active: bool; count: int; }
+func main(): int {
+  const original = Body(position: Position(x: 10, y: 20, name: 'original'), active: true, count: 1);
+  const boxed: dynamic = original;
+  const copy: dynamic = boxed.position;
+  copy.x = 99;
+  if (boxed.position.x != 10 || !(boxed.active as bool) || boxed.count != 1) { return -1; }
+  const replacement = Position(x: 40, y: 2, name: 'replaced'.toUpperCase());
+  boxed.position = replacement;
+  boxed.count = 2;
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  const restored = boxed as Body;
+  const restoredPosition = restored.position;
+  if (restoredPosition == null || restoredPosition.name != 'REPLACED' || restored.count != 2) {
+    return -2;
+  }
+  boxed.position = null;
+  boxed.active = false;
+  const empty = Body(position: null, active: false, count: 2);
+  const missing: dynamic = empty;
+  const originalPosition = original.position as Position;
+  if (boxed != missing || boxed.position != null || originalPosition.x != 10) { return -3; }
+  return restoredPosition.x + restoredPosition.y;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, ArrayStorageCopiesNestedValuesAndSurvivesGrowthAndRuntimeOperations) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; z: int; }
+struct Body { position: Position; active: bool; }
+func main(): int {
+  const bodies: Body[] = [];
+  let original = Body(position: Position(x: 10, y: 20, z: 30), active: true);
+  for (let i = 0; i < 40; i++) { bodies.push(original); }
+  original.active = false;
+  let copy = bodies[0];
+  copy.active = false;
+  if (!bodies[0].active) { return -1; }
+  bodies[1] = copy;
+  if (bodies[1].active) { return -2; }
+  const slice = bodies.slice(0, 3);
+  slice.reverse();
+  const last = bodies.pop();
+  if (last == null || !last.active) { return -3; }
+  return bodies[0].position.x + slice[0].position.y + last.position.z - 18;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, NestedFieldWritesKeepOriginalLocationsAndEvaluateReceiversOnce) {
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; }
+struct Body { position: Position; active: bool; }
+const items: Body[] = [Body(position: Position(x: 10, y: 20), active: true)];
+let receivers = 0;
+let indices = 0;
+func receiver(): Body[] { receivers++; return items; }
+func index(): int { indices++; return 0; }
+func change(): int {
+  for (let i = 0; i < 12; i++) {
+    items.push(Body(position: Position(x: 1, y: 2), active: false));
+  }
+  items[0].position.y = 32;
+  items[0].active = false;
+  return 1;
+}
+func main(): int {
+  receiver()[index()].position.x += change();
+  let local = items[0];
+  local.position.x++;
+  if (local.position.x != 12 || items[0].position.x != 11) { return -1; }
+  if (receivers != 1 || indices != 1 || items[0].active) { return -2; }
+  return items[0].position.x + items[0].position.y - 1;
+}
+)");
+}
+
+TEST(StructTest, CopiesLocalValuesAndPassesLargeNestedValuesThroughTypedCalls) {
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; z: int; }
+struct Body { position: Position; active: bool; }
+func make(): Body { return Body(position: Position(x: 10, y: 20, z: 30), active: true); }
+func change(value: Body): Body { value.active = false; return value; }
+func main(): int {
+  let first = make();
+  let second = first;
+  second.active = false;
+  const third = change(first);
+  if (!first.active) { return -1; }
+  if (second.active) { return -2; }
+  if (third.active) { return -3; }
+  return first.position.x + second.position.y + third.position.z - 18;
+}
+)");
+}
+
+TEST(StructTest, GenericFieldsInterfacesAndBoundMethodsKeepIndependentValues) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+interface Reader { read(): int; }
+struct Position { x: int; y: int; z: int; }
+struct Record<T> implements Reader {
+  value: T;
+  position: Position;
+  read(): int { return this.position.x + this.position.y + this.position.z; }
+}
+func invoke(read: () => int): int { return read(); }
+func use(reader: Reader): int { return reader.read(); }
+func main(): int {
+  let first = Record<string>(value: 'record'.toUpperCase(), position: Position(x: 10, y: 20, z: 12));
+  const bound = first.read;
+  const erased: Reader = first;
+  const fields = [first];
+  first.position.x = 99;
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  if (fields[0].value != 'RECORD' || use(erased) != 42 || bound() != 42) { return -1; }
+  return invoke(bound);
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, ClassFieldsEmbedNestedValuesAndDynamicReadsCopyThem) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; name: string; }
+struct Body { position: Position?; active: bool; }
+class Base { first: int; body: Body; }
+class Holder extends Base { optional: Body?; last: int; }
+func main(): int {
+  const body = Body(position: Position(x: 10, y: 20, name: 'kept'.toUpperCase()), active: true);
+  const holder = Holder(first: 1, body: body, optional: body, last: 2);
+  holder.body.position = Position(x: 20, y: 22, name: 'changed'.toUpperCase());
+  const erased: dynamic = holder;
+  const snapshot: dynamic = erased.body;
+  snapshot.active = false;
+  if (!holder.body.active || holder.first != 1 || holder.last != 2) { return -1; }
+  erased.optional = null;
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  const position = holder.body.position;
+  const original = body.position;
+  if (position == null || original == null || position.name != 'CHANGED' ||
+      original.name != 'KEPT' || holder.optional != null) { return -2; }
+  erased.body = body;
+  if ((holder.body.position as Position).x != 10) { return -3; }
+  return position.x + position.y;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, ClassFieldConstructionAndTypedAccessNeedNoBoxes) {
+  runtime::Isolate isolate(1);
+  const auto compiled = test::CompileCleanSource(R"(
+struct Position { x: int; y: int; z: int; }
+class Holder { before: int; position: Position; after: int; }
+func main(): int {
+  const holder = Holder(before: 1, position: Position(x: 10, y: 20, z: 30), after: 2);
+  holder.position.x += 2;
+  return holder.position.x + holder.position.y + holder.position.z - 20;
+}
+)",
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  isolate.heap().SetAllocationCountLimit(1);
+  test::ExpectAnswer(**compiled);
+}
+
+TEST(StructTest, NullableClassFieldsKeepDeclaredStorageAcrossConstructionAndCachedWrites) {
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; name: string; }
+class Body { position: Position?; count: int; }
+func create(index: int): Body {
+  return Body(position: Position(x: index, y: 2, name: 'original'), count: index);
+}
+func replace(body: Body, value: Position?): void { body.position = value; }
+func main(): int {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) {
+    const body = create(10 + i);
+    const original = body.position as Position;
+    if (original.x != 10 + i || original.y != 2 || original.name != 'original') { return -1; }
+    replace(body, Position(x: 40, y: 2, name: 'replacement'));
+    if (body.position?.x != 40 || body.position?.name != 'replacement') { return -2; }
+    replace(body, null);
+    if (body.position != null || body.count != 10 + i || original.x != 10 + i) { return -3; }
+    body.position = Position(x: 12, y: 2, name: 'direct');
+    sum += body.position?.x ?? 0;
+    sum += body.position?.y ?? 0;
+  }
+  return sum;
+}
+)");
+}
+
+TEST(StructTest, ClosuresCopyConstantCapturesAndShareMutableStructBindings) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; text: string; }
+func main(): int {
+  const fixed = Position(x: 10, y: 20, text: 'fixed'.toUpperCase());
+  const tail = 2;
+  let changed = Position(x: 1, y: 2, text: 'mutable'.toUpperCase());
+  const read = (): int => fixed.text == 'FIXED' ? fixed.x + fixed.y + tail : 0;
+  const increment = (): void => { changed.x += 10; };
+  increment();
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  return changed.text == 'MUTABLE' ? read() + changed.x - 1 : 0;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, EmbeddedEmptyAndOptionalScalarFieldsHaveDistinctStorage) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Empty {}
+struct Values { flag: bool; maybe: int?; number: double?; }
+class Holder { empty: Empty; optional: Empty?; values: Values?; tail: int; }
+func main(): int {
+  const holder = Holder(empty: Empty(), optional: null,
+                        values: Values(flag: true, maybe: 40, number: 2.0), tail: 42);
+  const values = holder.values;
+  if (values == null || !values.flag || values.maybe != 40 || values.number != 2.0) { return -1; }
+  const erased: dynamic = holder;
+  if (erased.empty == null || erased.optional != null) { return -2; }
+  erased.optional = Empty();
+  erased.values = null;
+  return holder.optional != null && holder.values == null ? holder.tail : 0;
+}
+)",
+                        isolate);
+}
+
+TEST(StructTest, ConstructorsReturnInitializedValuesAcrossDefaultsEarlyReturnAndFinally) {
+  runtime::Isolate isolate(1);
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; z: int; }
+struct Body {
+  position: Position = Position(x: 10, y: 20, z: 0);
+  text: string = 'created'.toUpperCase();
+  constructor(extra: int = 2) {
+    try {
+      this.position.z = extra;
+      if (extra == 2) { return; }
+      this.position.x = 0;
+    } finally {
+      this.position.y += 10;
+    }
+  }
+}
+struct Defaults { position: Position = Position(x: 10, y: 20, z: 12); }
+func main(): int {
+  const first = Body();
+  const make: () => Body = Body;
+  const second = make();
+  const explicit = Body(extra: 1);
+  const defaults = Defaults();
+  for (let i = 0; i < 40; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  return first.text == 'CREATED' && second.position.y == 30 && explicit.position.x == 0 &&
+         defaults.position.z == 12 ? first.position.x + first.position.y + first.position.z : 0;
+}
+)",
+                        isolate);
+}
 
 TEST_P(ClassDispatchTest, SelectsActualReceiverImplementationsUnderGcPressure) {
   test::ExpectRunAnswer(GetParam());
@@ -776,8 +1412,6 @@ INSTANTIATE_TEST_SUITE_P(
         ClassError{"class A {  #x: int; }", "requires an initializer"},
         ClassError{"class A {  #x: int = 0; } func main(): A { return A(x: 42); }",
                    "unknown named argument 'x'"},
-        ClassError{"class A { text: string?; } func main(): A { return A(); }",
-                   "missing argument 'text'"},
         ClassError{"class A { x: int; constructor() {} }", "must be initialized"},
         ClassError{"class A { x: int; constructor(flag: bool) { if (flag) this.x = 1; } }",
                    "must be initialized"},
@@ -792,9 +1426,8 @@ INSTANTIATE_TEST_SUITE_P(
         ClassError{"class A { x: int = this.x; }", "unknown name"},
         ClassError{"class A {  #x: int = 1; } func main(): int { return A().#x; }",
                    "private member"},
-        ClassError{
-            "class A {  #get(): int { return 1; } } func main(): int { return A().#get(); }",
-            "private member"},
+        ClassError{"class A {  #get(): int { return 1; } } func main(): int { return A().#get(); }",
+                   "private member"},
         ClassError{"class A {  #constructor() {} } func main(): A { return A(); }",
                    "private member"},
         ClassError{"class A { static x: int = 0; } func main(): A { return A(x: 1); }",

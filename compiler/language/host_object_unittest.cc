@@ -31,6 +31,7 @@ struct CounterTag;
 struct CounterViewTag;
 struct SecretTag;
 struct ChoiceTag;
+struct ValueCounterTag;
 }
 
 template <>
@@ -54,6 +55,14 @@ struct ScriptTypeTraits<SecretTag> final {
   static constexpr std::string_view kName = "Secret";
   using Arguments = std::tuple<>;
 };
+template <>
+struct ScriptTypeTraits<ValueCounterTag> final {
+  static constexpr auto kKind = ScriptTypeKind::Struct;
+  static constexpr std::string_view kModule = "main.vela";
+  static constexpr std::string_view kName = "Counter";
+  using Arguments = std::tuple<>;
+};
+
 template <>
 struct ScriptTypeTraits<ChoiceTag> final {
   static constexpr auto kKind = ScriptTypeKind::Enum;
@@ -283,6 +292,53 @@ export func empty(): Counter[] { return []; }
   isolate.heap().Collect();
   EXPECT_EQ(isolate.layout_counts(), before);
   EXPECT_EQ(isolate.heap().object_count(), 0U);
+}
+
+TEST(HostObjectTest, StructContractsBindEntriesAndFlatArraysWithIndependentValueCopies) {
+  runtime::Isolate isolate(1);
+  const auto compiled = test::CompileCleanSource(R"(
+export struct Counter { value: int; bonus: int; }
+export func increment(value: Counter): Counter { value.value++; return value; }
+export func total(values: Counter[]): int { return values[0].value + values[0].bonus; }
+)",
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  using Counter = Object<ValueCounterTag>;
+  const auto type = Type<Counter>::Bind(**compiled);
+  const auto array_type = Type<Array<Counter>>::Bind(**compiled);
+  const auto increment = Entry<Counter(Counter)>::Bind(**compiled, "increment");
+  const auto total = Entry<std::int64_t(Array<Counter>)>::Bind(**compiled, "total");
+  ASSERT_TRUE(type);
+  ASSERT_TRUE(array_type);
+  ASSERT_TRUE(increment);
+  ASSERT_TRUE(total);
+  EXPECT_FALSE(Type<Object<CounterTag>>::Bind(**compiled));
+  HandleScope scope(isolate);
+  const auto original =
+      type->Construct(scope, NamedArgument<std::int64_t>{.name = "value", .value = 40},
+                      NamedArgument<std::int64_t>{.name = "bonus", .value = 2});
+  ASSERT_TRUE(original);
+  const auto changed = increment->Call(scope, *original);
+  ASSERT_TRUE(changed);
+  const auto original_value = type->Get<std::int64_t>(scope, *original, "value");
+  const auto changed_value = type->Get<std::int64_t>(scope, *changed, "value");
+  ASSERT_TRUE(original_value);
+  ASSERT_TRUE(changed_value);
+  EXPECT_EQ(*original_value, 40);
+  EXPECT_EQ(*changed_value, 41);
+  const auto array = CreateArray(scope, *array_type);
+  ASSERT_TRUE(array);
+  const auto raw = vela::internal::HandleAccess::Read(*array);
+  EXPECT_EQ(runtime::Heap::TypeOf(raw).array->element_size(), 16U);
+  ASSERT_TRUE(array->Push(scope, *original));
+  ASSERT_TRUE(type->Set<std::int64_t>(scope, *original, "value", 99));
+  const auto snapshot = array->Get(scope, 0);
+  ASSERT_TRUE(snapshot);
+  ASSERT_TRUE(type->Set<std::int64_t>(scope, *snapshot, "value", 0));
+  isolate.heap().Collect();
+  const auto answer = total->Call(scope, *array);
+  ASSERT_TRUE(answer);
+  EXPECT_EQ(*answer, 42);
 }
 
 TEST(HostObjectTest, InterfaceAndDynamicViewsUseTheSameCheckedPublicMemberPath) {

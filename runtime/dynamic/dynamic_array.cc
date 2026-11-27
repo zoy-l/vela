@@ -12,7 +12,6 @@
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "base/execution_status.h"
-#include "runtime/collections/array_operations.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
@@ -69,7 +68,7 @@ OperationResult CheckCallback(const TypeSignature& callback,
     const auto& parameter = callback.parameters.at(index);
     const auto& actual = arguments.at(index);
     if (parameter.optional || parameter.rest ||
-        (!actual.dynamic && !actual.IsSubtypeOf(parameter.type))) {
+        (!actual.IsDynamic() && !actual.IsSubtypeOf(parameter.type))) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }
@@ -84,8 +83,8 @@ OperationResult CheckCallback(const TypeSignature& callback,
     return {};
   }
   if (algorithm == ArrayAlgorithm::Sort) {
-    if (!result.nullable &&
-        (result.kind == ValueKind::Integer || result.kind == ValueKind::Double)) {
+    if (result.IsNever() || (!result.nullable && (result.kind == ValueKind::Integer ||
+                                                  result.kind == ValueKind::Double))) {
       return {};
     }
     return std::unexpected(ExecutionStatus::TypeError);
@@ -93,7 +92,7 @@ OperationResult CheckCallback(const TypeSignature& callback,
   const auto expected = algorithm == ArrayAlgorithm::Reduce
                             ? accumulator
                             : TypeConstraint{.kind = ValueKind::Boolean};
-  return result.dynamic || result.IsSubtypeOf(expected)
+  return result.IsDynamic() || result.IsSubtypeOf(expected)
              ? OperationResult{}
              : std::unexpected(ExecutionStatus::TypeError);
 }
@@ -104,8 +103,8 @@ std::expected<HeapObject*, ExecutionStatus> AllocateOutput(Isolate& isolate,
   if (type.nominal != nullptr && type.nominal->IsEnum()) {
     type.kind = ValueKind::Integer;
   }
-  const auto* layout =
-      type.dynamic ? &isolate.dynamic_array_layout() : isolate.CreateArrayLayout({.element = type});
+  const auto* layout = type.IsDynamic() ? &isolate.dynamic_array_layout()
+                                        : isolate.CreateArrayLayout({.element = type});
   auto* output = isolate.heap().AllocateArray(*layout, length);
   return output == nullptr ? std::expected<HeapObject*, ExecutionStatus>{std::unexpected(
                                  ExecutionStatus::OutOfMemory)}
@@ -152,7 +151,7 @@ OperationResult InitializeOutput(Isolate& isolate,
     const auto* layout = Heap::ArrayTypeOf(*receiver.AsObject());
     auto selected = layout->value_type();
     const auto narrowed = signature.narrowed_parameter;
-    if (narrowed && (selected.dynamic || narrowed->IsSubtypeOf(selected))) {
+    if (narrowed && (selected.IsDynamic() || narrowed->IsSubtypeOf(selected))) {
       selected = *narrowed;
     }
     type = selected;
@@ -294,7 +293,7 @@ std::expected<Value, ExecutionStatus> AppendDynamicArrayValue(Heap& heap,
   auto& output = *slots[kOutput].AsObject();
   const auto* source = Heap::ArrayTypeOf(*slots[kReceiver].AsObject());
   auto value = input[1];
-  if (source->element.dynamic) {
+  if (source->element.IsDynamic()) {
     value = UnboxDynamicValue(value, Heap::ArrayTypeOf(output)->element);
   }
   const auto appended = heap.PushArray(output, value);

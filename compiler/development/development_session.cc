@@ -550,9 +550,12 @@ DevelopmentResult DevelopmentSession::Pump() {
   return result_;
 }
 
-std::expected<void, DevelopmentStatus> DevelopmentSession::Cancel() {
-  if (pending_ == nullptr || result_.status == DevelopmentStatus::Stopping) {
-    return std::unexpected(result_.status);
+std::expected<void, DevelopmentCancelError> DevelopmentSession::Cancel() {
+  if (pending_ == nullptr) {
+    return std::unexpected(DevelopmentCancelError::NoPendingRequest);
+  }
+  if (result_.status == DevelopmentStatus::Stopping) {
+    return std::unexpected(DevelopmentCancelError::Stopping);
   }
   isolate_->native_control().CancelSafepoint();
   pending_.reset();

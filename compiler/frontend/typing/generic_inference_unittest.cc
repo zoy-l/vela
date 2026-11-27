@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <string_view>
 #include <tuple>
 
@@ -36,11 +37,7 @@ func main(): void {
 
 TEST_P(BoundedInferenceTest, UsesTheSameRelationsForEvidenceBoundsAndFinalBindings) {
   const auto result = CheckTestSource(GetParam());
-  for (const auto& diagnostic : result.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
-                  << diagnostic.message;
-  }
-  EXPECT_TRUE(result.Succeeded());
+  EXPECT_TRUE(result.diagnostics.empty()) << DiagnosticsText(result.diagnostics);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -119,12 +116,10 @@ class BoundedInferenceErrorTest : public testing::TestWithParam<InvalidInference
 TEST_P(BoundedInferenceErrorTest, RejectsInsufficientOrContradictoryEvidence) {
   const auto& [source, expected] = GetParam();
   const auto result = CheckTestSource(source);
-  EXPECT_FALSE(result.Succeeded());
-  bool found = false;
-  for (const auto& diagnostic : result.diagnostics) {
-    found = found || diagnostic.message.contains(expected);
-  }
-  EXPECT_TRUE(found) << "missing diagnostic: " << expected;
+  EXPECT_TRUE(std::ranges::any_of(result.diagnostics, [&](const Diagnostic& diagnostic) {
+    return diagnostic.severity == DiagnosticSeverity::Error &&
+           diagnostic.message.contains(expected);
+  })) << DiagnosticsText(result.diagnostics);
 }
 
 INSTANTIATE_TEST_SUITE_P(

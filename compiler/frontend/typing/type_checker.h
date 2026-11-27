@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -74,11 +75,25 @@ class TypeChecker final : private InferenceTypeRelations {
     std::uint32_t id = 0;
     std::size_t scope = 0;
   };
-  using RefinementDelta = absl::flat_hash_map<std::uint32_t, std::optional<Type>>;
+  using TypeRefinements = absl::flat_hash_map<std::uint32_t, std::optional<Type>>;
+  struct ConditionRefinements final {
+    TypeRefinements when_true;
+    TypeRefinements when_false;
+  };
+  using ConditionFacts = std::shared_ptr<const ConditionRefinements>;
+  struct RefinementDelta final {
+    TypeRefinements types;
+    absl::flat_hash_map<std::uint32_t, ConditionFacts> conditions;
+  };
+  struct AlternativeCompletions final {
+    bool first;
+    bool second;
+  };
   class Refinements final {
    public:
     struct Checkpoint final {
       std::size_t offset;
+      std::size_t condition_offset;
     };
     Refinements() = default;
     ~Refinements() = default;
@@ -88,9 +103,12 @@ class TypeChecker final : private InferenceTypeRelations {
     Refinements& operator=(Refinements&& other) noexcept;
 
     [[nodiscard]] const Type* Find(std::uint32_t binding) const;
+    [[nodiscard]] ConditionFacts FindCondition(std::uint32_t binding) const;
+    void SetCondition(std::uint32_t binding, const ConditionFacts& facts);
+    void Invalidate(std::uint32_t binding);
     [[nodiscard]] bool IsEmpty() const;
     [[nodiscard]] Refinements Snapshot() const;
-    void Set(std::uint32_t binding, Type type);
+    void Set(std::uint32_t binding, const Type& type);
     void Erase(std::uint32_t binding);
     void Erase(const absl::flat_hash_set<std::uint32_t>& bindings);
     void Clear();
@@ -99,6 +117,9 @@ class TypeChecker final : private InferenceTypeRelations {
     [[nodiscard]] RefinementDelta Capture(Checkpoint checkpoint);
     void Apply(const RefinementDelta& changes);
     void Intersect(RefinementDelta& target, const RefinementDelta& other) const;
+    void MergeAlternatives(RefinementDelta& first,
+                           const RefinementDelta& second,
+                           AlternativeCompletions completes);
 
    private:
     struct Change final {
@@ -106,8 +127,12 @@ class TypeChecker final : private InferenceTypeRelations {
       std::optional<Type> previous;
     };
     void Save(std::uint32_t binding, const Type* previous);
+    void AssignCondition(std::uint32_t binding, const ConditionFacts& facts);
     absl::flat_hash_map<std::uint32_t, Type> facts_;
     std::vector<Change> undo_;
+    absl::flat_hash_map<std::uint32_t, ConditionFacts> conditions_;
+    absl::flat_hash_map<std::uint32_t, absl::flat_hash_set<std::uint32_t>> dependents_;
+    std::vector<std::pair<std::uint32_t, ConditionFacts>> condition_undo_;
     std::size_t branch_depth_ = 0;
   };
 
@@ -179,8 +204,7 @@ class TypeChecker final : private InferenceTypeRelations {
     FunctionInfo signature;
     std::vector<std::optional<Type>> arguments;
   };
-  static void SetInferenceParameters(std::span<const Parameter> parameters,
-                                     InferenceSignature& signature);
+  static void SetInferenceParameters(const Function& function, InferenceSignature& signature);
   FunctionInfo ResolveAppliedSignature(const InferenceSignature& source,
                                        std::span<const TypeName> arguments,
                                        const Expression& callee);
@@ -231,7 +255,7 @@ class TypeChecker final : private InferenceTypeRelations {
   void CheckInterfaceTemplateAttributes(const Interface& owner, const Type& type);
   void CheckTopLevelFunctionAttributes(const Function& function);
   void CheckAttributeTarget(std::span<const Attribute> attributes,
-                            Type type,
+                            const Type& type,
                             const void* target,
                             const std::optional<ReflectionMemberBinding>& member = std::nullopt);
   std::optional<AttributeBinding> BindAttribute(const Attribute& attribute);
@@ -325,6 +349,19 @@ class TypeChecker final : private InferenceTypeRelations {
                            const Type& type,
                            std::string_view message);
   void CollectTypes(const Program& program);
+  void CollectClassType(const Program& program, const Class& declaration);
+  void ResolveStructLayouts();
+  void ResolveStructLayout(const ClassInfo& owner,
+                           absl::flat_hash_set<std::string_view>& visiting,
+                           absl::flat_hash_set<std::string_view>& complete);
+  struct StructMemberField final {
+    const ClassInfo::Field* field;
+    const Type* receiver;
+  };
+  [[nodiscard]] std::optional<StructMemberField> FindStructMemberField(
+      const Expression& expression) const;
+  void CheckStructWriteTarget(const Expression& target);
+  [[nodiscard]] bool IsMutableStructPlace(const Expression& expression) const;
   void ResolveDeclarations(const Program& program);
   void ResolveGlobals(const Program& program);
   Type ResolveGlobal(const std::string& name);
@@ -379,6 +416,10 @@ class TypeChecker final : private InferenceTypeRelations {
   void CheckAccess(Visibility visibility, std::string_view owner, SourceLocation location);
   [[nodiscard]] const ClassInfo* StaticOwner(const Expression& member) const;
   StatementFlow CheckStatement(const Statement& statement, const Type& return_type);
+  [[nodiscard]] ConditionTruth EvaluateCondition(const Expression& expression) const;
+  [[nodiscard]] bool ExpressionCanComplete(const Expression& expression) const;
+  [[nodiscard]] bool BinaryExpressionCanComplete(const Expression& expression) const;
+  void RecordExpressionType(const Expression& expression, const Type& type);
   static StatementFlow MergeBranches(StatementFlow left, StatementFlow right);
   StatementFlow CheckBlock(const Statement& statement, const Type& return_type);
   StatementFlow CheckSequence(const Statement& statement, const Type& return_type);
@@ -407,6 +448,7 @@ class TypeChecker final : private InferenceTypeRelations {
     std::uint32_t binding;
     Type original;
     std::optional<Type> matched;
+    std::optional<Type> unmatched;
     bool assigned = false;
   };
   void BeginPredicate(const Function& function, const FunctionInfo& signature);
@@ -415,12 +457,16 @@ class TypeChecker final : private InferenceTypeRelations {
   void RecordPredicateReturn(const Expression& expression);
   [[nodiscard]] std::optional<Type> PredicateUpperBound(const Type& first,
                                                         const Type& second) const;
-  std::optional<Type> FinishPredicate();
-  std::optional<Type> ResolvePredicate(const FunctionInfo& signature);
+  struct PredicateResult final {
+    std::optional<Type> matched;
+    std::optional<Type> unmatched;
+  };
+  PredicateResult FinishPredicate();
+  std::optional<Type> ResolvePredicate(const FunctionInfo& signature, ConditionTruth outcome);
   std::optional<PredicateScope> predicate_scope_;
   absl::flat_hash_set<const Statement*> checking_function_bodies_;
   absl::flat_hash_map<const Statement*, const Function*> predicate_declarations_;
-  absl::flat_hash_map<const Statement*, Type> function_predicates_;
+  absl::flat_hash_map<const Statement*, PredicateResult> function_predicates_;
   Type CheckTypeOperation(const Expression& expression);
   enum class MatchPhase : std::uint8_t { Prepare, Complete };
   Type CheckMatch(const Expression& expression,
@@ -449,11 +495,13 @@ class TypeChecker final : private InferenceTypeRelations {
   Type FunctionType(const FunctionInfo& signature);
   Type FunctionType(std::span<const FunctionInfo::Parameter> parameters,
                     const Type& return_type,
-                    std::optional<Type> narrowed_parameter);
+                    const std::optional<Type>& narrowed_parameter,
+                    const std::optional<Type>& false_narrowed_parameter);
   Type FunctionValueType(const FunctionInfo& signature, const Type* expected);
   Type FunctionValueType(const FunctionInfo& signature,
                          const FunctionInfo& context,
-                         std::optional<Type> narrowed_parameter);
+                         const std::optional<Type>& narrowed_parameter,
+                         const std::optional<Type>& false_narrowed_parameter);
   static void ApplyIntrinsicDefaults(const Function& function, FunctionInfo& info);
   void CaptureLocal(const Expression& expression, const LocalBinding& binding);
   Type CheckCall(const Expression& expression, const Type* expected);
@@ -558,6 +606,7 @@ class TypeChecker final : private InferenceTypeRelations {
   // 静态可证明的类型关系：身份、可空提升、class 继承、显式 implements、参数上界与 Future 载荷契约。
   // 不含 dynamic 边界；约束证明只使用此关系，普通赋值另外接受受检查的 dynamic 转换。
   [[nodiscard]] bool IsSubtype(const Type& subtype, const Type& supertype) const;
+  [[nodiscard]] bool IsFunctionSubtype(const Type& subtype, const Type& supertype) const;
   [[nodiscard]] bool IsSubtypeThroughParents(std::vector<Type> pending,
                                              const Type& supertype) const;
   void AppendDirectSupertypes(const Type& type, std::vector<Type>& result) const;
@@ -568,10 +617,11 @@ class TypeChecker final : private InferenceTypeRelations {
                                  const Type& actual);
   [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
+  [[nodiscard]] ConditionFacts CaptureCondition(const Expression& expression);
   void RefineNullComparison(const Expression& condition, ConditionTruth outcome);
-  void RefinePredicateCall(const Expression& condition);
+  void RefinePredicateCall(const Expression& condition, ConditionTruth outcome);
   void RefineAlternatives(const Expression& condition, ConditionTruth outcome);
-  void RefineTypeTest(const Expression& condition);
+  void RefineTypeTest(const Expression& condition, ConditionTruth outcome);
   void RefineAssignedLocal(const LocalBinding& binding, const Type& value);
   void DiagnoseOperandMismatch(const Expression& operand,
                                const Type& type,
@@ -754,6 +804,12 @@ class TypeChecker final : private InferenceTypeRelations {
   absl::node_hash_map<const Function*, InferenceSignature> function_inference_signatures_;
   absl::node_hash_map<const Expression*, InferenceSignature> constructor_inference_signatures_;
   NodeFacts facts_;
+  // 只缓存已完成类型检查的节点；推断期间可能只记录节点类型而未检查整棵表达式。
+  struct ExpressionFlow final {
+    bool can_complete;
+    ConditionTruth condition;
+  };
+  absl::flat_hash_map<const Expression*, ExpressionFlow> expression_flows_;
   NodeFacts definitions_;
   absl::flat_hash_map<std::string, JSONDecodeRequest> json_decode_requests_;
   std::vector<ReflectionBinding> reflection_;

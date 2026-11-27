@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
-#include <string_view>
 
 #include "compiler/development/development_session.h"
 #include "compiler/repl/repl_source.h"
@@ -13,11 +12,9 @@
 
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
-#include "runtime/heap/host_root.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_function.h"
-#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {
@@ -27,7 +24,9 @@ std::int64_t PersistentHostAnswer() noexcept {
   return kAnswer;
 }
 
-class ReplLanguageTest : public test::DevelopmentReplTest {
+using ReplLanguageTest = test::DevelopmentReplTest;
+
+class ReplBindingTest : public test::DevelopmentReplTest {
  protected:
   void SetUp() override {
     runtime::Isolate bindings;
@@ -59,13 +58,16 @@ TEST_F(ReplLanguageTest, BoundedGenericMethodsAndInterfacesPersistAcrossSubmissi
   Execute("func read<T extends Reader<E>, E>(value: T): E { return value.read(); }");
   Execute("const mapper = Mapper();");
   Execute("const operation: (Number) => int = mapper.map;");
+  const auto history = std::string(repl().source());
   EXPECT_EQ(repl().Submit("func unfinished<T extends Reader<").status,
             SubmissionStatus::Incomplete);
   EXPECT_EQ(repl().Submit("const invalid = mapper.map(42);").status, SubmissionStatus::Rejected);
+  EXPECT_EQ(repl().source(), history);
   session().isolate().heap().Collect();
   Execute("operation(Number()) + 1");
+  Execute("mapper.map(Number()) + 1");
   Execute("read(Number()) + 1");
-  EXPECT_EQ(output().str(), "42\n42\n");
+  EXPECT_EQ(output().str(), "42\n42\n42\n");
 }
 
 TEST_F(ReplLanguageTest, MapDeclarationsWithoutSemicolonsPersistAcrossMultilineSubmissions) {
@@ -78,15 +80,6 @@ TEST_F(ReplLanguageTest, MapDeclarationsWithoutSemicolonsPersistAcrossMultilineS
   Execute("(values.get('a') ?? 0) + (values.get('b') ?? 0)");
   Execute("make().get('answer')");
   EXPECT_EQ(output().str(), "42\n42\n");
-}
-
-TEST_F(ReplLanguageTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory) {
-  Execute("func initial(): int { print(\"once\"); return 40; }");
-  Execute("let value = initial();");
-  Execute("value = value + 1;");
-  Execute("value + 1");
-  Execute("print(\"done\")");
-  EXPECT_EQ(output().str(), "once\n42\ndone\n");
 }
 
 TEST_F(ReplLanguageTest, LambdasInLoopIterablesKeepTheirTargetsAcrossSubmissions) {
@@ -288,18 +281,6 @@ TEST_F(ReplLanguageTest, MapsHistoricalFunctionsAndCurrentCallerToSubmissionLoca
   EXPECT_EQ(trace.back().line, 1U);
 }
 
-TEST_F(ReplLanguageTest, IncompleteInputAndResetHaveNoEffects) {
-  EXPECT_EQ(repl().Submit("func value(): int {").status, SubmissionStatus::Incomplete);
-  EXPECT_TRUE(repl().source().empty());
-  Execute("const value = 42;");
-  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
-  session().isolate().SetOutput(output());
-  EXPECT_EQ(repl().Submit("value").status, SubmissionStatus::Rejected);
-  Execute("const value = 3;");
-  Execute("value");
-  EXPECT_EQ(output().str(), "3\n");
-}
-
 TEST_F(ReplLanguageTest, SourceAttributesRegisterInteractiveDeclarationsWithoutChangingArrays) {
   Execute("class Button extends Reflect { label: string = 'run'; }");
   Execute(
@@ -308,27 +289,6 @@ TEST_F(ReplLanguageTest, SourceAttributesRegisterInteractiveDeclarationsWithoutC
   Execute("Reflect.typeInfo<Counter>().getFields().length");
   Execute("[40, 2][0] + 2");
   EXPECT_EQ(output().str(), "run\n1\n42\n");
-}
-
-TEST_F(ReplLanguageTest, ResetRejectsHostRootsAndKeepsTheCurrentSessionRunning) {
-  Execute("let value = 40;");
-  const auto source = std::string(repl().source());
-  {
-    const auto root_storage =
-        runtime::HostRoot::Create(session().isolate(), runtime::Value::Null());
-    ASSERT_TRUE(root_storage);
-    const auto reset = Reset();
-    ASSERT_TRUE(reset);
-    ASSERT_EQ(reset->status, DevelopmentStatus::WaitingForRelease);
-    ASSERT_EQ(reset->blockers.size(), 1U);
-    EXPECT_EQ(reset->blockers.front().kind, runtime::ExternalResourceKind::Persistent);
-    ASSERT_TRUE(session().Cancel());
-    EXPECT_EQ(repl().source(), source);
-    Execute("value + 2");
-  }
-  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
-  EXPECT_TRUE(repl().source().empty());
-  EXPECT_EQ(output().str(), "42\n");
 }
 
 TEST_F(ReplLanguageTest, ExternalNativeInstancesBlockResetEvenWithoutGlobals) {
@@ -341,28 +301,26 @@ TEST_F(ReplLanguageTest, ExternalNativeInstancesBlockResetEvenWithoutGlobals) {
   EXPECT_EQ(refused->blockers.front().kind, runtime::ExternalResourceKind::NativeInstance);
   ASSERT_TRUE(session().Cancel());
   compiled.instance.reset();
-  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
+  ASSERT_NO_FATAL_FAILURE(ExpectAcceptedReset());
 }
 
 TEST_F(ReplLanguageTest, ResetStopsSuspendedTimersWithoutTreatingInternalRootsAsHostHandles) {
   Execute("async func wait(): Future<void> { await sleep(10000); }");
   Execute("const pending = wait();");
   EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 1U);
-  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
+  ASSERT_NO_FATAL_FAILURE(ExpectAcceptedReset());
   EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 0U);
   EXPECT_TRUE(session().isolate().ReloadBlockers().empty());
 }
 
-TEST_F(ReplLanguageTest, ResetPreservesTheFixedNativeBindingSnapshot) {
-  ASSERT_NE(session().isolate().FindNative("host.answer"), nullptr);
+TEST_F(ReplBindingTest, ResetPreservesTheFixedNativeBindingSnapshot) {
   Execute("external func answer(): int = 'host.answer';");
   Execute("answer()");
   const auto refused = session().isolate().RegisterNative(
       runtime::NativeFunction::Bind<PersistentHostAnswer>("host.other"));
   ASSERT_FALSE(refused);
   EXPECT_EQ(refused.error(), runtime::NativeRegistrationError::BindingsFrozen);
-  ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
-  session().isolate().SetOutput(output());
+  ASSERT_NO_FATAL_FAILURE(ExpectAcceptedReset());
   Execute("external func answer(): int = 'host.answer';");
   Execute("answer()");
   EXPECT_EQ(output().str(), "42\n42\n");
@@ -400,20 +358,15 @@ TEST_F(ReplLanguageTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsChange
         "export func get(): int { return leaf.read(); } "
         "export func capture(): () => int { return leaf.read; }");
   Write("added.vela", "export func get(): int { return 2; }");
-  {
-    session().isolate().SetOutput(output());
-    Execute("import \"parent.vela\" as parent;");
-    Execute("const saved = parent.capture();");
-    Write("leaf.vela", "export func read(): int { return 100; }");
-    Execute("import \"added.vela\" as added;");
-    Execute("saved() + added.get()");
-    EXPECT_EQ(output().str(), "42\n");
-    ASSERT_NO_FATAL_FAILURE(ExpectReset(DevelopmentStatus::Accepted));
-    session().isolate().SetOutput(output());
-    Execute("import \"parent.vela\" as parent;");
-    Execute("parent.get()");
-    EXPECT_EQ(output().str(), "42\n100\n");
-  }
+  Execute("import \"parent.vela\" as parent;");
+  Execute("const saved = parent.capture();");
+  Write("leaf.vela", "export func read(): int { return 100; }");
+  Execute("import \"added.vela\" as added;");
+  Execute("saved() + added.get()");
+  ASSERT_NO_FATAL_FAILURE(ExpectAcceptedReset());
+  Execute("import \"parent.vela\" as parent;");
+  Execute("parent.get()");
+  EXPECT_EQ(output().str(), "42\n100\n");
 }
 
 TEST_F(ReplLanguageTest, FailedCompilationDoesNotPinNewModuleSources) {

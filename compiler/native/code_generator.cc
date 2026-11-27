@@ -110,7 +110,7 @@ bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index
   return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
     return instruction.opcode == Opcode::Return ||
            (instruction.opcode == Opcode::Call && instruction.index == function_index) ||
-           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+           !ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess();
   });
 }
 
@@ -131,7 +131,7 @@ bool CanUseRecursiveLeaf(const ir::Function& function, std::size_t function_inde
       }
       continue;
     }
-    const auto effects = ir::AnalyzeEffects(instruction);
+    const auto effects = ir::AnalyzeEffects(function, instruction);
     if (effects.MayCollectOnSuccess() || effects.reads_state || effects.writes_state ||
         effects.may_suspend || effects.changes_control) {
       return false;
@@ -337,7 +337,9 @@ std::expected<llvm::FunctionType*, std::string> BodySignature(llvm::Module& modu
   std::vector<llvm::Type*> parameters{llvm::PointerType::getUnqual(context)};
   std::uint64_t argument_bytes = 0;
   for (std::size_t parameter = 0; parameter < function.parameter_count; ++parameter) {
-    parameters.push_back(ValueType(context, function.value_types.at(parameter)));
+    parameters.push_back(parameter == 0 && function.struct_receiver
+                             ? llvm::PointerType::getUnqual(context)
+                             : ValueType(context, function.value_types.at(parameter)));
     argument_bytes += module.getDataLayout().getTypeAllocSize(parameters.back());
   }
   if (argument_bytes > kMaximumNativeStackBytes) {

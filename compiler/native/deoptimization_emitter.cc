@@ -129,6 +129,10 @@ void FunctionEmitter::StoreRecoveryDescription() {
               MemoryRegion::Execution);
   StoreMemory(checkpoint_layout_, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, layout)),
               MemoryRegion::Execution);
+  StoreMemory(struct_receiver_ == nullptr ? llvm::ConstantPointerNull::get(builder_.getPtrTy())
+                                          : struct_receiver_,
+              ByteAddress(checkpoint_, offsetof(NativeCheckpoint, struct_receiver)),
+              MemoryRegion::Execution);
   StoreMemory(construction_depth_ == nullptr ? llvm::ConstantPointerNull::get(builder_.getPtrTy())
                                              : construction_depth_,
               ByteAddress(checkpoint_, offsetof(NativeCheckpoint, construction_depth)),

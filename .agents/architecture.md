@@ -116,13 +116,41 @@ range. Reusing an empty page discards its obsolete free-slot chain and decommits
 live slots never move or lose their backing storage. Page growth reports allocation failure before
 publishing a slot, and incremental collection continues to budget complete page retirement.
 
+### Struct values and receiver locations
+
+The frontend distinguishes structs from reference classes and resolves each concrete struct to
+logical fields, flattened scalar/reference slots and field offsets. Recursive inline layouts are
+rejected. Typed IR retains those layouts for aggregate registers, nested fields and contiguous
+array elements. Ordinary copies, parameters and returns preserve value semantics; references
+inside a value remain shared. Nullable values have a separate presence bit. Runtime boxed
+snapshots preserve the same logical field contract for erased values, reflection and host handles.
+GC traces managed leaves in inline fields, arrays and boxes; writes publish the required barriers.
+
+Synchronous struct methods receive a borrowed native location descriptor with read/write callbacks
+and a context owned by the caller frame. Typed IR records the root location and nested field path.
+The root can be a local, captured mutable binding, global, class field or array element. Reads
+resolve current storage; projected writes reread parents to preserve sibling changes after reentry.
+Array descriptors retain the array and index, never a buffer pointer across calls. Reloadable
+field descriptors resolve stable declarations on every access. Nullable adapters check presence
+before accessing the nonnullable method receiver. Receiver register zero and addressed locals
+must not participate in copy propagation; writes through them are observable state effects.
+
+Concrete struct method calls bind directly because structs have no inheritance. Baseline calls
+resolve their stable declaration against the current publication. Interfaces, dynamic calls and
+bound methods operate on boxes. Internal synchronous declaration arguments may transport a
+StructPlace marker in a separate unscanned argument record; it never enters language Value,
+GC roots, async state or host arguments. Checkpoints retain the borrowed descriptor while the
+original caller frame is alive. Const receivers and rvalues use defensive copies; async receivers
+are value copies. Struct layout changes require Reload; method replacement uses ordinary code
+version and recovery lifetimes.
+
 ### Instance dispatch
 
 Frontend inheritance resolution supplies virtual implementation bindings for public script
 instance methods and each accessor. Generic method applications materialize every applicable
 override through the same worklist used for interface implementations. Class and interface
 calls share selector-indexed Typed IR, callable metadata, and runtime target tables; lexical
-`super`, private, static, constructor, intrinsic, and immutable host entries remain direct.
+`super`, struct, private, static, constructor, intrinsic, and immutable host entries remain direct.
 Reflection uses the same selector contract. Closed AOT traces reachable selector/receiver pairs
 and devirtualizes only proven targets. After pruning, it compacts image-local selector indices
 across dispatch tables, virtual calls, captured method layouts and reflection targets while retaining
@@ -526,9 +554,11 @@ categories.
 
 ## Array predicate contracts
 
-Boolean function bodies infer a first-parameter refinement from all successful return paths
-through the shared flow checker. Assignment or mutable capture of that parameter invalidates
-the proof. Function values retain this contract through layout descriptions, native images,
+Boolean function bodies infer independent true and false first-parameter refinements from all
+successful return paths through the shared flow checker. Assignment or mutable capture of that
+parameter invalidates the proof. Immutable condition aliases store branch facts by binding identity
+in the transactional refinement state; writes invalidate dependent aliases, and calls or suspension
+invalidate mutable capture facts. Function values retain both contracts through layout descriptions, native images,
 serialization, AOT reachability and runtime signature interning. Erasing a refinement to an
 ordinary boolean function type is allowed; it cannot manufacture a stronger predicate.
 Virtual dispatch cannot acquire a refinement solely from a base implementation's body.

@@ -8,6 +8,7 @@
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/inline_layout.h"
 #include "runtime/collections/array_operations.h"
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/element_storage.h"
@@ -32,6 +33,63 @@ using IntegerArrayRangeTest = IntegerArrayFixture<1>;
 using MutableIntegerArrayRangeTest = IntegerArrayFixture<kDefaultGcThreshold>;
 using ArraySortTest = IntegerArrayFixture<1>;
 using ArrayIncludesTest = IntegerArrayFixture<1>;
+
+class InlineArrayFillTest : public testing::TestWithParam<GcPhase> {};
+
+TEST_P(InlineArrayFillTest, CopiesReferenceLeavesAndRetainsThemAcrossIncrementalCollection) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const std::array<std::uint32_t, 1> reference_fields{0};
+  const auto* item = isolate.CreateClassLayout(
+      2, reference_fields,
+      {
+          .callable = {},
+          .interfaces = {},
+          .nominal = isolate.CreateNominalType({
+              .kind = NominalKind::Struct,
+              .interfaces = {},
+              .declaration = {},
+          }),
+          .field_declarations = {},
+          .value_slots = {InlineSlotKind::String, InlineSlotKind::Integer},
+      });
+  const auto* layout = isolate.CreateArrayLayout({
+      .element = {.kind = ValueKind::Object, .nominal = &item->nominal_type(), .nullable = true},
+      .value_layout = item,
+  });
+  auto* text = heap.AllocateString("retained");
+  const auto source = Value::Object(heap.AllocateInstance(*item));
+  ASSERT_TRUE(heap.SetField(*source.AsObject(), 0, Value::String(text)));
+  ASSERT_TRUE(heap.SetField(*source.AsObject(), 1, Value::Integer(42)));
+  const auto array = Value::Object(heap.AllocateArray(*layout, 4));
+  const RootRange roots(heap, &array, 1);
+  heap.StartCollection();
+  if (GetParam() == GcPhase::Sweep) {
+    heap.Step(2);
+  }
+  ASSERT_EQ(heap.phase(), GetParam());
+  ASSERT_TRUE(heap.FillArray(*array.AsObject(), source, 1, 3));
+  const auto bytes = heap.allocated_bytes();
+  heap.SetAllocationCountLimit(0);
+  const std::array arguments{array, source, Value::Integer(1)};
+  const auto included = ExecuteArrayBuiltin(Builtin::ArrayIncludes, arguments, heap);
+  ASSERT_TRUE(included);
+  EXPECT_TRUE(included->AsBoolean());
+  EXPECT_EQ(heap.allocated_bytes(), bytes);
+  heap.FinishCollection();
+  EXPECT_EQ(heap.object_count(), 2U);
+  heap.SetAllocationCountLimit(std::numeric_limits<std::uint64_t>::max());
+  const auto copied = heap.GetElement(*array.AsObject(), 2);
+  ASSERT_TRUE(copied);
+  EXPECT_EQ(Heap::LoadField(*copied->AsObject(), 0).AsString(), text);
+  EXPECT_EQ(Heap::LoadField(*copied->AsObject(), 1).AsInteger(), 42);
+  EXPECT_TRUE(heap.GetElement(*array.AsObject(), 0)->IsNull());
+  EXPECT_TRUE(heap.GetElement(*array.AsObject(), 3)->IsNull());
+}
+
+INSTANTIATE_TEST_SUITE_P(MarkingAndSweeping,
+                         InlineArrayFillTest,
+                         testing::Values(GcPhase::Mark, GcPhase::Sweep));
 
 TEST(ValueEqualityTest, SameValueZeroKeepsKindsAndChangesOnlyNaNEquality) {
   const auto nan = Value::Double(std::numeric_limits<double>::quiet_NaN());
@@ -61,10 +119,9 @@ TEST_F(ArrayIncludesTest, DoesNotAllocateMutateOrInvalidateIntegerRanges) {
   const auto array = Value::Object(heap.AllocateArray(*layout, 4));
   ASSERT_NE(array.AsObject(), nullptr);
   const RootRange roots(heap, &array, 1);
-  ASSERT_TRUE(heap.SetElement(*array.AsObject(), 0, Value::Integer(42)));
-  ASSERT_TRUE(heap.SetElement(*array.AsObject(), 3, Value::Integer(-1)));
-  const auto mutation = Heap::ArrayMutation(*array.AsObject());
-  const auto range = internal::ArrayBuffer(*array.AsObject()).integer_range;
+  auto& object = *array.AsObject();
+  ASSERT_TRUE(heap.SetElement(object, 0, Value::Integer(42)));
+  const auto mutation = Heap::ArrayMutation(object);
   const auto bytes = heap.allocated_bytes();
   heap.SetAllocationCountLimit(0);
   const std::array arguments{array, Value::Integer(42), Value::Integer(0)};
@@ -72,8 +129,9 @@ TEST_F(ArrayIncludesTest, DoesNotAllocateMutateOrInvalidateIntegerRanges) {
   ASSERT_TRUE(result);
   EXPECT_TRUE(result->AsBoolean());
   EXPECT_EQ(heap.allocated_bytes(), bytes);
-  EXPECT_EQ(Heap::ArrayMutation(*array.AsObject()), mutation);
-  EXPECT_EQ(internal::ArrayBuffer(*array.AsObject()).integer_range, range);
+  EXPECT_EQ(Heap::ArrayMutation(object), mutation);
+  EXPECT_EQ(internal::ArrayBuffer(object).integer_range,
+            internal::IntegerArrayRange::Nonnegative31);
   const std::array invalid{array, Value::Boolean(true), Value::Integer(0)};
   const auto failed = ExecuteArrayBuiltin(Builtin::ArrayIncludes, invalid, heap);
   ASSERT_FALSE(failed);
@@ -204,7 +262,7 @@ TEST_F(MutableIntegerArrayRangeTest, MutableViewsCannotBeRecertifiedByNarrowWrit
   ASSERT_TRUE(heap.SetElement(array, 0, Value::Integer(42)));
   EXPECT_EQ(internal::ArrayBuffer(array).integer_range, internal::IntegerArrayRange::Unknown);
   elements->back() = std::numeric_limits<std::int64_t>::max();
-  EXPECT_EQ(Heap::GetElement(array, 1)->AsInteger(), std::numeric_limits<std::int64_t>::max());
+  EXPECT_EQ(heap.GetElement(array, 1)->AsInteger(), std::numeric_limits<std::int64_t>::max());
   const auto* nullable =
       isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = true}});
   auto* tagged = heap.AllocateArray(*nullable, 1);
@@ -245,7 +303,7 @@ TEST_F(IntegerArrayRangeTest, SlicesAndSplicesPropagateOnlyExistingProofs) {
   ASSERT_TRUE(heap.ReplaceArrayRange(independent, 0, 0, *values[4].AsObject()));
   EXPECT_EQ(internal::ArrayBuffer(independent).integer_range,
             internal::IntegerArrayRange::Nonnegative31);
-  EXPECT_EQ(Heap::GetElement(independent, 0)->AsInteger(), 42);
+  EXPECT_EQ(heap.GetElement(independent, 0)->AsInteger(), 42);
 }
 
 TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
@@ -254,19 +312,19 @@ TEST(ArrayAccessTest, PreservesReceiverIndexAndValueErrorPrecedence) {
   auto* record = isolate.CreateClassLayout(0, {});
   auto* object = heap.AllocateInstance(*record);
   ASSERT_NE(object, nullptr);
-  EXPECT_EQ(Heap::GetElement(*object, 0).error(), ArrayAccessError::NotArray);
+  EXPECT_EQ(heap.GetElement(*object, 0).error(), ArrayAccessError::NotArray);
   EXPECT_EQ(heap.SetElement(*object, 0, Value::Null()).error(), ArrayAccessError::NotArray);
-  EXPECT_EQ(Heap::ShiftArray(*object).error(), ArrayAccessError::NotArray);
+  EXPECT_EQ(heap.ShiftArray(*object).error(), ArrayAccessError::NotArray);
   const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   auto* array = heap.AllocateArray(*layout, 1);
   ASSERT_NE(array, nullptr);
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Integer(42)));
-  EXPECT_EQ(Heap::GetElement(*array, 1).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_EQ(heap.GetElement(*array, 1).error(), ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.SetElement(*array, 1, Value::Null()).error(), ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.FillArray(*array, Value::Null(), 1, 2).error(),
             ArrayAccessError::ElementTypeMismatch);
   EXPECT_EQ(Heap::ArrayLength(*array), 1U);
-  EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 42);
+  EXPECT_EQ(heap.GetElement(*array, 0)->AsInteger(), 42);
 }
 
 TEST_F(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEveryValue) {
@@ -285,12 +343,12 @@ TEST_F(ArraySortTest, AllocationFailurePreservesInputAndPermutationCyclesWriteEv
   EXPECT_EQ(failed.error(), ExecutionStatus::OutOfMemory);
   EXPECT_EQ(heap.allocated_bytes(), bytes);
   for (std::uint32_t index = 0; index < original.size(); ++index) {
-    EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), original[index]);
+    EXPECT_EQ(heap.GetElement(array, index)->AsInteger(), original[index]);
   }
   heap.SetAllocationCountLimit(std::numeric_limits<std::uint64_t>::max());
   ASSERT_TRUE(ExecuteArrayBuiltin(Builtin::ArraySortDefault, std::span(&value, 1), heap));
   for (std::uint32_t index = 0; index < original.size(); ++index) {
-    EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), index + 1);
+    EXPECT_EQ(heap.GetElement(array, index)->AsInteger(), index + 1);
   }
 }
 
@@ -324,7 +382,7 @@ TEST_F(ArraySortTest, IntegerOrdersPreserveFullDomainDuplicatesAndReceiverIdenti
       const auto expected = builtin == Builtin::ArraySortIntAscending
                                 ? kSorted[index]
                                 : kSorted[kSorted.size() - index - 1];
-      EXPECT_EQ(Heap::GetElement(array, index)->AsInteger(), expected);
+      EXPECT_EQ(heap.GetElement(array, index)->AsInteger(), expected);
     }
   }
 }
@@ -348,7 +406,7 @@ TEST_F(ArraySortTest, PreservesCertifiedRangesWithoutRecertifyingEscapedViews) {
   exposed->front() = -1;
   ASSERT_TRUE(ExecuteArrayBuiltin(Builtin::ArraySortIntDescending, std::span(&value, 1), heap));
   EXPECT_EQ(range, internal::IntegerArrayRange::Unknown);
-  EXPECT_EQ(Heap::GetElement(array, 2)->AsInteger(), -1);
+  EXPECT_EQ(heap.GetElement(array, 2)->AsInteger(), -1);
 }
 
 TEST_F(ArraySortTest, IntegerOrdersAcceptEmptyArraysAndRejectTaggedStorage) {
@@ -382,13 +440,13 @@ TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {
   const auto header_bytes = heap.allocated_bytes() - (kLength * sizeof(Value));
   EXPECT_GE(header_bytes, sizeof(HeapObject));
   EXPECT_LT(header_bytes, kLength);
-  EXPECT_TRUE(Heap::GetElement(*array, 0)->IsNull());
+  EXPECT_TRUE(heap.GetElement(*array, 0)->IsNull());
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Integer(42)));
-  EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 42);
+  EXPECT_EQ(heap.GetElement(*array, 0)->AsInteger(), 42);
   EXPECT_EQ(heap.SetElement(*array, 0, Value::Double(42.0)).error(),
             ArrayAccessError::ElementTypeMismatch);
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Null()));
-  EXPECT_TRUE(Heap::GetElement(*array, 0)->IsNull());
+  EXPECT_TRUE(heap.GetElement(*array, 0)->IsNull());
   EXPECT_EQ(heap.SetElement(*array, kLength, Value::Null()).error(), ArrayAccessError::OutOfBounds);
   const auto* strict = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   auto* strict_array = heap.AllocateArray(*strict, 1);
@@ -423,28 +481,7 @@ TEST(NullableArrayTest, KeepsReferenceElementsCompactAndChecksTheirLayouts) {
   ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::Object(child)));
   heap.FinishCollection();
   EXPECT_EQ(heap.object_count(), 2U);
-  EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsObject(), child);
-  ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::Null()));
-  heap.Collect();
-  EXPECT_EQ(heap.object_count(), 1U);
-}
-
-TEST(NullableArrayTest, RetainsStringElementsDuringIncrementalSweep) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* strings =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::String, .nullable = true}});
-  EXPECT_EQ(strings->element_size(), sizeof(StringObject*));
-  auto* string = heap.AllocateString("retained");
-  Value root = Value::Object(heap.AllocateArray(*strings, 1));
-  RootRange roots(heap, &root, 1);
-  heap.StartCollection();
-  heap.Step(2);
-  ASSERT_EQ(heap.phase(), GcPhase::Sweep);
-  ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::String(string)));
-  heap.FinishCollection();
-  EXPECT_EQ(heap.object_count(), 2U);
-  EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsString(), string);
+  EXPECT_EQ(heap.GetElement(*root.AsObject(), 0)->AsObject(), child);
   ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::Null()));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 1U);
@@ -474,41 +511,32 @@ TEST(DynamicArrayTest, GrowsGeometricallyAndPreservesAliasedIdentity) {
   EXPECT_EQ(heap.object_count(), 1U);
 }
 
-TEST(DynamicArrayTest, NativeViewsObserveRelocatedCompactStorage) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
-  Value root = Value::Object(heap.AllocateArray(*layout, 0));
-  RootRange roots(heap, &root, 1);
-  auto* array = root.AsObject();
-  ASSERT_TRUE(heap.PushArray(*array, Value::Integer(42)));
-  ASSERT_TRUE(heap.ReserveArray(*array, 4096));
-  const auto elements = Heap::IntegerElements(*array);
-  ASSERT_TRUE(elements);
-  EXPECT_EQ(elements->size(), 1U);
-  EXPECT_EQ(elements->front(), 42);
-}
-
 TEST(DynamicArrayTest, ReserveAccountsStorageAndPreservesContentsAndMutationVersion) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   constexpr std::size_t kCount = 4096;
-  Value root = Value::Object(heap.AllocateArray(*layout, kCount));
+  Value root = Value::Object(heap.AllocateArray(*layout, kCount - 1));
   RootRange roots(heap, &root, 1);
-  auto* array = root.AsObject();
+  auto& array = *root.AsObject();
+  ASSERT_EQ(heap.PushArray(array, Value::Integer(42)), kCount);
+  const auto capacity = static_cast<std::size_t>(*Heap::ArrayCapacity(array));
   const auto before = heap.allocated_bytes();
-  const auto mutation = Heap::ArrayMutation(*array);
-  ASSERT_TRUE(heap.ReserveArray(*array, kCount * 2));
-  EXPECT_EQ(Heap::ArrayMutation(*array), mutation);
-  EXPECT_EQ(heap.allocated_bytes() - before, kCount * sizeof(std::int64_t));
-  EXPECT_EQ(Heap::GetElement(*array, kCount - 1)->AsInteger(), 0);
-  EXPECT_EQ(Heap::GetElement(*array, kCount).error(), ArrayAccessError::OutOfBounds);
+  const auto mutation = Heap::ArrayMutation(array);
+  ASSERT_TRUE(heap.ReserveArray(array, capacity * 2));
+  EXPECT_EQ(Heap::ArrayMutation(array), mutation);
+  EXPECT_EQ(heap.allocated_bytes() - before, capacity * sizeof(std::int64_t));
+  const auto elements = Heap::IntegerElements(array);
+  ASSERT_TRUE(elements);
+  ASSERT_EQ(elements->size(), kCount);
+  EXPECT_EQ(elements->back(), 42);
+  EXPECT_EQ(heap.GetElement(array, 0)->AsInteger(), 0);
+  EXPECT_EQ(heap.GetElement(array, kCount).error(), ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.ReserveArray(
-                    *array, static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1)
+                    array, static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1)
                 .error(),
             ArrayAccessError::OutOfMemory);
-  EXPECT_EQ(Heap::ArrayLength(*array), kCount);
+  EXPECT_EQ(Heap::ArrayLength(array), kCount);
 }
 
 TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
@@ -525,17 +553,17 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
   RootRange input_roots(heap, &input, 1);
   ASSERT_TRUE(heap.SetElement(*input.AsObject(), 0, Value::Integer(42)));
   ASSERT_TRUE(heap.ReplaceArrayRange(array, 1, 0, *input.AsObject()));
-  EXPECT_EQ(Heap::ShiftArray(array)->AsInteger(), 40);
-  EXPECT_EQ(Heap::GetElement(array, 0)->AsInteger(), 42);
-  EXPECT_TRUE(Heap::PopArray(array)->IsNull());
-  EXPECT_EQ(Heap::PopArray(array)->AsInteger(), 42);
-  EXPECT_TRUE(Heap::PopArray(array)->IsNull());
+  EXPECT_EQ(heap.ShiftArray(array)->AsInteger(), 40);
+  EXPECT_EQ(heap.GetElement(array, 0)->AsInteger(), 42);
+  EXPECT_TRUE(heap.PopArray(array)->IsNull());
+  EXPECT_EQ(heap.PopArray(array)->AsInteger(), 42);
+  EXPECT_TRUE(heap.PopArray(array)->IsNull());
   const auto mutation = Heap::ArrayMutation(array);
   EXPECT_EQ(heap.ReplaceArrayRange(array, 1, 0, *input.AsObject()).error(),
             ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.PushArray(array, Value::Double(1.0)).error(),
             ArrayAccessError::ElementTypeMismatch);
-  EXPECT_TRUE(Heap::ShiftArray(array)->IsNull());
+  EXPECT_TRUE(heap.ShiftArray(array)->IsNull());
   EXPECT_EQ(Heap::ArrayMutation(array), mutation);
   EXPECT_EQ(Heap::ArrayLength(array), 0U);
 }
@@ -568,8 +596,8 @@ TEST_F(DynamicStringArrayTest, RootsPendingReferencesDuringGrowthAndDropsRemoved
   heap.FinishCollection();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), kCount + 1);
-  ASSERT_TRUE(Heap::PopArray(array));
-  ASSERT_TRUE(Heap::ShiftArray(array));
+  ASSERT_TRUE(heap.PopArray(array));
+  ASSERT_TRUE(heap.ShiftArray(array));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), kCount - 1);
 }
@@ -613,7 +641,7 @@ TEST(DynamicArrayTest, ReplacesReferenceRangesDuringSweep) {
   ASSERT_TRUE(heap.ReplaceArrayRange(*root.AsObject(), 0, 0, *input.AsObject()));
   heap.FinishCollection();
   EXPECT_EQ(heap.object_count(), 3U);
-  EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsObject(), child);
+  EXPECT_EQ(heap.GetElement(*root.AsObject(), 0)->AsObject(), child);
 }
 
 class ArraySliceBarrierTest : public testing::TestWithParam<GcPhase> {};
@@ -648,7 +676,7 @@ TEST_P(ArraySliceBarrierTest, PublishesInitializedCopyDuringIncrementalCollectio
   heap.FinishCollection();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 2U);
-  EXPECT_EQ(Heap::GetElement(**copy, 0)->AsObject(), child);
+  EXPECT_EQ(heap.GetElement(**copy, 0)->AsObject(), child);
 }
 
 INSTANTIATE_TEST_SUITE_P(MarkingAndSweeping,

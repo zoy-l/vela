@@ -34,6 +34,14 @@ group("tests") {
   ]
 }
 
+group("tooling_tests") {
+  testonly = true
+  deps = [
+    ":default",
+    "//third_party:gtest_main",
+  ]
+}
+
 group("benchmarks") {
   testonly = true
   deps = [

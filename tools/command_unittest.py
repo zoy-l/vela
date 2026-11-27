@@ -19,33 +19,29 @@ class CommandTest(CommandTestCase):
         super().setUp()
         self.entry = self.directory / "main.vela"
 
-    def write(self, source: str) -> None:
+    def write_entry(self, source: str) -> None:
         self.entry.write_text(source, encoding="utf-8", newline="\n")
 
-    def command(self, *arguments: str | Path, commands: str = "", expected: int = 0) -> subprocess.CompletedProcess:
-        result = subprocess.run([str(self.executable), *map(str, arguments)], input=commands,
-                                capture_output=True, text=True, encoding="utf-8",
-                                cwd=self.directory, timeout=20, check=False)
-        self.assertEqual(result.returncode, expected, result.stderr)
-        return result
-
     def format_and_document(self, signature: str) -> None:
-        self.write(self.command("fmt", self.entry).stdout)
-        self.command("fmt", "--check", self.entry)
+        self.write_entry(self.invoke("fmt", self.entry).stdout)
+        self.invoke("fmt", "--check", self.entry)
         output = self.directory / "api.md"
-        self.command("doc", self.entry, output)
+        self.invoke("doc", self.entry, output)
         self.assertIn(signature, output.read_text(encoding="utf-8"))
 
-    def cached_run(self, expected: int = 0) -> subprocess.CompletedProcess:
-        first = self.command("run", self.entry, expected=expected)
+    def cached_run(self, code: int = 0) -> subprocess.CompletedProcess:
+        first = self.invoke("run", self.entry, code=code)
         cache = self.directory / ".cache" / "vela" / "native" / "run"
         files = list(cache.glob("*.vlobj"))
         self.assertEqual(len(files), 1)
-        before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in files]
-        cached = self.command("run", self.entry, expected=expected)
+        artifact = files[0]
+        contents = artifact.read_bytes()
+        modified = artifact.stat().st_mtime_ns
+        cached = self.invoke("run", self.entry, code=code)
         self.assertEqual(cached.stdout, first.stdout)
         self.assertEqual(cached.stderr, first.stderr)
-        self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in files], before)
+        self.assertEqual(artifact.read_bytes(), contents)
+        self.assertEqual(artifact.stat().st_mtime_ns, modified)
         return cached
 
     def test_all_example_templates_pass_check(self) -> None:
@@ -53,37 +49,37 @@ class CommandTest(CommandTestCase):
         self.assertTrue(examples, "no example templates found")
         for example in examples:
             with self.subTest(example=example.relative_to(ROOT).as_posix()):
-                self.command("check", example)
+                self.invoke("check", example)
 
     def test_jit_cache_prepares_imported_code_without_executing_it(self) -> None:
         library = self.directory / "page.vela"
         library.write_text("export func page(): int { return 42; }\n",
                            encoding="utf-8", newline="\n")
-        self.write("import 'page'; func main(): int { print('executed'); return page(); }")
+        self.write_entry("import 'page'; func main(): int { print('executed'); return page(); }")
         cache = self.directory / "code-cache"
-        first = self.command("jit-cache", self.entry, f"--code-cache={cache}")
+        first = self.invoke("jit-cache", self.entry, f"--code-cache={cache}")
         result = json.loads(first.stdout)
         self.assertIn(library.as_posix(), result["sources"])
         files = sorted(cache.glob("*.vlobj"))
         self.assertEqual(len(files), result["functions"])
         snapshot = lambda: [(path.read_bytes(), path.stat().st_mtime_ns) for path in files]
         previous = snapshot()
-        repeated = self.command("jit-cache", self.entry, f"--code-cache={cache}")
+        repeated = self.invoke("jit-cache", self.entry, f"--code-cache={cache}")
         self.assertEqual(json.loads(repeated.stdout), result)
         self.assertEqual(snapshot(), previous)
 
     def test_native_object_integrity_survives_source_deletion(self) -> None:
-        self.write("export func main(): int { return 42; }")
+        self.write_entry("export func main(): int { return 42; }")
         image = self.directory / "main.o"
-        self.command("build", self.entry, "--emit=obj", "--export=main", "-o", image)
+        self.invoke("build", self.entry, "--emit=obj", "--export=main", "-o", image)
         self.entry.unlink()
         manifest = str(image) + ".aot.json"
-        self.command("build", "--verify-manifest=" + manifest)
+        self.invoke("build", "--verify-manifest=" + manifest)
         data = bytearray(image.read_bytes())
         data[-1] ^= 1
         image.write_bytes(data)
         self.assertIn("different generation",
-                      self.command("build", "--verify-manifest=" + manifest, expected=65).stderr)
+                      self.invoke("build", "--verify-manifest=" + manifest, code=65).stderr)
 
     def test_check_reports_unused_parameters_in_imported_overrides_without_failing(self) -> None:
         library = self.directory / "widgets.vela"
@@ -94,8 +90,8 @@ class CommandTest(CommandTestCase):
             "export class Child extends Widget {\n"
             "  override buildChildren(element: int, changed: bool): int { return 1; }\n"
             "}\n", encoding="utf-8", newline="\n")
-        self.write("import 'widgets'; func main(): int { return Child().buildChildren(1, true); }")
-        result = self.command("check", self.entry)
+        self.write_entry("import 'widgets'; func main(): int { return Child().buildChildren(1, true); }")
+        result = self.invoke("check", self.entry)
         self.assertIn("checked ", result.stdout)
         self.assertEqual(result.stderr.count("warning: [unused_parameter]"), 2)
         self.assertIn(f"{library.as_posix()}:5:26: warning: [unused_parameter] parameter 'element' is never read",
@@ -103,7 +99,7 @@ class CommandTest(CommandTestCase):
         self.assertIn("parameter 'changed' is never read", result.stderr)
 
     def test_check_counts_parameter_reads_in_defaults_captures_and_generic_definitions(self) -> None:
-        self.write("interface Reader { read(value: int): int; }\n"
+        self.write_entry("interface Reader { read(value: int): int; }\n"
                    "external func host(value: int): void;\n"
                    "func captured(value: int): () => int { return () => value; }\n"
                    "func defaults(first: int, second: int = first): int { return second; }\n"
@@ -113,7 +109,7 @@ class CommandTest(CommandTestCase):
                    "func generic<T>(value: T): void {}\n"
                    "func named(value: int): void {}\n"
                    "func main(): void { named(value: 1); generic(1); generic('text'); }\n")
-        result = self.command("check", self.entry)
+        result = self.invoke("check", self.entry)
         self.assertEqual(result.stderr.count("warning: [unused_parameter]"), 4)
         self.assertNotIn("parameter 'first'", result.stderr)
         self.assertNotIn("parameter '_value'", result.stderr)
@@ -124,7 +120,7 @@ class CommandTest(CommandTestCase):
                 ("types", "export class Box<T> { value: T; }"),
                 ("spare", "export func execute(): void {}")):
             (self.directory / (name + ".vela")).write_text(source, encoding="utf-8", newline="\n")
-        self.write("import 'library' as used;\n"
+        self.write_entry("import 'library' as used;\n"
                    "import 'library' as unused;\n"
                    "import 'library';\n"
                    "import 'types';\n"
@@ -136,7 +132,7 @@ class CommandTest(CommandTestCase):
         for arguments in (("check", self.entry),
                           ("build", self.entry, "--emit=obj", "--export=main", "-o", image)):
             with self.subTest(command=arguments[0]):
-                result = self.command(*arguments)
+                result = self.invoke(*arguments)
                 self.assertEqual(result.stderr.count("warning: [unused_import]"), 3)
                 for line in (2, 3, 5):
                     self.assertIn(f"{self.entry.as_posix()}:{line}:1: warning: [unused_import]",
@@ -144,39 +140,39 @@ class CommandTest(CommandTestCase):
                 self.assertNotIn("unused import 'types'", result.stderr)
 
     def test_build_rejects_empty_target_support_and_manifest_paths(self) -> None:
-        self.write("export func main(): int { return 42; }")
+        self.write_entry("export func main(): int { return 42; }")
         output = self.directory / "app.exe"
-        invalid = self.command("build", self.entry, "--target-support=", "-o", output, expected=64)
+        invalid = self.invoke("build", self.entry, "--target-support=", "-o", output, code=64)
         self.assertIn("invalid build argument", invalid.stderr)
         self.assertFalse(output.exists())
-        self.command("build", "--verify-manifest=", expected=64)
+        self.invoke("build", "--verify-manifest=", code=64)
 
     def test_corrupt_native_cache_is_recompiled_from_checked_source(self) -> None:
-        self.write("func main(): int { return 42; }")
-        self.assertEqual(self.cached_run().stdout, "42\n")
+        self.write_entry("func main(): int { return 42; }")
+        self.assertEqual(self.invoke("run", self.entry).stdout, "42\n")
         cache = next((self.directory / ".cache" / "vela" / "native" / "run").glob("*.vlobj"))
         original = cache.read_bytes()
         cache.write_bytes(b"corrupt")
-        self.assertEqual(self.command("run", self.entry).stdout, "42\n")
+        self.assertEqual(self.invoke("run", self.entry).stdout, "42\n")
         self.assertEqual(cache.read_bytes(), original)
         self.entry.unlink()
-        self.command("run", self.entry, expected=65)
+        self.invoke("run", self.entry, code=65)
 
     def test_nonempty_switch_fallthrough_is_a_source_error(self) -> None:
-        self.write("func main(): int { let value = 0; switch (1) { "
-                   "case 1: value = 1; case 2: return 42; } return value; }")
+        self.write_entry("func main(): int { let value = 0; switch (1) { "
+                         "case 1: value = 1; case 2: return 42; } return value; }")
         for arguments in [("check", self.entry), ("run", self.entry),
                           ("build", self.entry, "--emit=obj", "-o", self.directory / "invalid.o")]:
             with self.subTest(command=arguments[0]):
-                result = self.command(*arguments, expected=65)
+                result = self.invoke(*arguments, code=65)
                 self.assertIn("error: non-empty switch branch must not fall through", result.stderr)
         self.assertFalse((self.directory / "invalid.o").exists())
 
     def test_dynamic_warnings_survive_cache_hits_and_project_errors_block_execution(self) -> None:
-        self.write("func main():int { const value:dynamic=42; return value; }")
+        self.write_entry("func main():int { const value:dynamic=42; return value; }")
         for arguments in [("check", self.entry), ("run", self.entry), ("run", self.entry),
                           ("doc", self.entry, self.directory / "api.md")]:
-            result = self.command(*arguments)
+            result = self.invoke(*arguments)
             self.assertIn("warning: [implicit_dynamic_conversion]", result.stderr)
             if arguments[0] == "run":
                 self.assertEqual(result.stdout, "42\n")
@@ -186,13 +182,13 @@ class CommandTest(CommandTestCase):
         for arguments in [("check", self.entry), ("run", self.entry),
                           ("build", self.entry, "--emit=obj", "-o", self.directory / "rejected.o"),
                           ("doc", self.entry, self.directory / "rejected.md")]:
-            result = self.command(*arguments, expected=65)
+            result = self.invoke(*arguments, code=65)
             self.assertIn("error: [implicit_dynamic_conversion]", result.stderr)
         self.assertFalse((self.directory / "rejected.o").exists())
         self.assertFalse((self.directory / "rejected.md").exists())
 
     def test_byte_views_survive_async_suspension_and_typed_containers(self) -> None:
-        self.write("async func main(): Future<int> { "
+        self.write_entry("async func main(): Future<int> { "
                    "const data = ByteData.view(ByteArray(8)); data.setInt64(0,42); await 0; "
                    "const saved: ByteData[] = [data]; "
                    "for (let i = 0; i < 1000; i++) { const temporary = ByteArray(1024); } "
@@ -206,8 +202,8 @@ class CommandTest(CommandTestCase):
                 self.directory = directory / name
                 self.directory.mkdir()
                 self.entry = self.directory / "main.vela"
-                self.write(source)
-                result = self.cached_run(expected=code)
+                self.write_entry(source)
+                result = self.cached_run(code=code)
                 self.assertEqual(result.stdout, output)
                 if code == 1:
                     self.assertIn("at $lambda" if name == "reported_background_error" else "at main",
@@ -227,112 +223,112 @@ class CommandTest(CommandTestCase):
                 expected = "".join(chr(int(point, 16)) for point in fields[index].split())
                 statements.append(f"if ('{source}'.{method}() != '{expected}') {{ return 1; }}")
         self.assertGreater(len(statements), 200)
-        self.write("func main(): int {\n" + "\n".join(statements) + "\nreturn 0; }")
+        self.write_entry("func main(): int {\n" + "\n".join(statements) + "\nreturn 0; }")
         self.assertEqual(self.cached_run().stdout, "0\n")
 
     def test_byte_api_source_tools_and_cached_native_execution(self) -> None:
-        self.write("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
+        self.write_entry("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
                    "func main(): int { const view = make(4); view.setInt32(0,42); return view.getInt32(0); }")
         self.format_and_document("func make(size: int): ByteData")
         self.assertEqual(self.cached_run().stdout, "42\n")
 
     def test_pending_root_without_work_does_not_exit_or_report_idle(self) -> None:
-        self.write(PENDING_SOURCE)
+        self.write_entry(PENDING_SOURCE)
         pending_command(self, [self.executable, "run", self.entry], PENDING_OUTPUT_PREFIX,
                         cwd=self.directory)
 
     def test_async_failure_keeps_throw_and_await_locations(self) -> None:
-        self.write("async func fail(): Future<int> { await 0; return 1 / 0; }\n"
+        self.write_entry("async func fail(): Future<int> { await 0; return 1 / 0; }\n"
                    "async func main(): Future<int> { return await fail(); }")
-        result = self.command("run", self.entry, expected=1)
+        result = self.invoke("run", self.entry, code=1)
         self.assertIn("division by zero", result.stderr)
         self.assertIn("at fail", result.stderr)
         self.assertIn("at main", result.stderr)
 
     def test_closed_output_pipe_is_an_execution_failure(self) -> None:
-        self.write(OUTPUT_FAILURE_SOURCE)
+        self.write_entry(OUTPUT_FAILURE_SOURCE)
         errors = closed_output_command(self, [self.executable, "run", self.entry], cwd=self.directory)
         self.assertIn("failed to write program output", errors)
 
     def test_documentation_preserves_async_and_function_value_types(self) -> None:
-        self.write("export async func load(): Future<int> { return 42; }\n"
+        self.write_entry("export async func load(): Future<int> { return 42; }\n"
                    "export func bind(value: int): () => string { return value.toString; }")
         output = self.directory / "api.md"
-        self.command("doc", self.entry, output)
+        self.invoke("doc", self.entry, output)
         text = output.read_text(encoding="utf-8")
         self.assertIn("async func load(): Future<int>", text)
         self.assertIn("func bind(value: int): () => string", text)
 
     def test_json_dynamic_survive_documentation_formatting_cache_and_repl(self) -> None:
-        self.write("export func encode(value: dynamic): string { return JSON.stringify(value); }\n"
+        self.write_entry("export func encode(value: dynamic): string { return JSON.stringify(value); }\n"
                    "func main(): int { const root: dynamic = JSON.parse('[40,true,null]'); "
                    "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
         self.format_and_document("func encode(value: dynamic): string")
         self.assertEqual(self.cached_run().stdout, "42\n")
-        result = self.command("repl", commands=(
+        result = self.invoke("repl", input=(
             "const root: dynamic = JSON.parse('[40,true,null]');\n"
             "root[0] += 2;\nJSON.stringify(root)\n.quit\n"))
         self.assertIn("[42,true,null]", result.stdout)
 
     def test_source_entries_require_files_and_import_schemes_are_explicit(self) -> None:
-        result = self.command("check", self.directory, expected=65)
-        self.assertIn("source path must name a file", result.stderr)
-        result = self.command("run", self.directory, expected=65)
-        self.assertIn("source path must name a file", result.stderr)
-        self.write('import "registry:math/value.vela";')
-        result = self.command("check", self.entry, expected=65)
+        for command in ("check", "run"):
+            with self.subTest(command=command):
+                result = self.invoke(command, self.directory, code=65)
+                self.assertIn("source path must name a file", result.stderr)
+        self.write_entry('import "registry:math/value.vela";')
+        result = self.invoke("check", self.entry, code=65)
         self.assertIn("unsupported module import scheme", result.stderr)
 
     def test_repl_persists_multiline_functions_values_and_recovers_from_errors(self) -> None:
         commands = ('let x = 40;\nfunc add(value: int): int {\nreturn value + 2;\n}\n'
                     'add(x)\nlet bad: int = true;\nx = x + 1;\nx\nprint(1 / 0);\nx\n.quit\n')
-        result = self.command("repl", commands=commands)
+        result = self.invoke("repl", input=commands)
         self.assertEqual(result.stdout, "42\n41\n41\n")
         self.assertIn("... ", result.stderr)
         self.assertIn("does not match", result.stderr)
         self.assertIn("division by zero", result.stderr)
 
     def test_repl_commands_reset_and_eof(self) -> None:
-        result = self.command("repl", commands="const x = 42;\n.source\n.reset\nx\n.help\n.quit\n")
+        result = self.invoke("repl", input="const x = 42;\n.source\n.reset\nx\n.help\n.quit\n")
         self.assertEqual(result.stdout, "const x = 42;\n\n")
         self.assertIn("<repl:1>", result.stderr)
         self.assertIn("unknown", result.stderr)
         self.assertIn("trailing semicolon", result.stderr)
-        self.command("repl", commands="func unfinished(): void {\n", expected=65)
-        self.command("repl", commands="")
+        self.invoke("repl", input="func unfinished(): void {\n", code=65)
+        self.invoke("repl", input="")
 
     def test_repl_imports_resolve_in_working_directory(self) -> None:
         (self.directory / "math.vela").write_text(
             "export func answer(): int { return 42; }", encoding="utf-8")
-        result = self.command("repl", commands='import "math.vela" as math;\nmath.answer()\n.quit\n')
+        result = self.invoke("repl", input='import "math.vela" as math;\nmath.answer()\n.quit\n')
         self.assertEqual(result.stdout, "42\n")
 
     def test_formatter_outputs_checks_and_writes_without_executing(self) -> None:
-        self.write('func main():void{print("must not execute");}')
-        formatted = self.command("fmt", self.entry).stdout
+        self.write_entry('func main():void{print("must not execute");}')
+        formatted = self.invoke("fmt", self.entry).stdout
         self.assertEqual(formatted, "func main(): void {\n  print('must not execute');\n}\n")
-        self.command("fmt", "--check", self.entry, expected=1)
-        self.command("fmt", "--write", self.entry)
+        self.invoke("fmt", "--check", self.entry, code=1)
+        self.invoke("fmt", "--write", self.entry)
         self.assertEqual(self.entry.read_text(encoding="utf-8"), formatted)
-        self.command("fmt", "--check", self.entry)
-        self.write("func broken(")
-        self.command("fmt", "--write", self.entry, expected=65)
+        self.invoke("fmt", "--check", self.entry)
+        self.write_entry("func broken(")
+        self.invoke("fmt", "--write", self.entry, code=65)
         self.assertEqual(self.entry.read_text(encoding="utf-8"), "func broken(")
 
     def test_single_quote_formatting_preserves_execution_and_nested_interpolation(self) -> None:
-        self.write(r'''class Item { text: string; }
+        self.write_entry(r'''class Item { text: string; }
 func main(): void {
   print("it's \"quoted\" \u{1F600}");
   print("${Item(text: "${"nested"}").text}");
 }''')
-        before = self.command("run", self.entry).stdout
+        before = self.invoke("run", self.entry).stdout
         self.assertEqual(before, 'it\'s "quoted" 😀\nnested\n')
-        self.command("fmt", "--write", self.entry)
+        self.invoke("fmt", "--write", self.entry)
         formatted = self.entry.read_text(encoding="utf-8")
         self.assertIn("print('it\\'s", formatted)
-        self.assertEqual(self.command("run", self.entry).stdout, before)
-        self.command("fmt", "--check", self.entry)
-        self.assertEqual(self.command("fmt", self.entry).stdout, formatted)
+        self.assertEqual(self.invoke("run", self.entry).stdout, before)
+        self.invoke("fmt", "--check", self.entry)
+        self.assertEqual(self.invoke("fmt", self.entry).stdout, formatted)
 
     def test_formatter_recurses_directories_and_reports_sorted_changes_without_writing(self) -> None:
         root = self.directory / "project 中😀"
@@ -343,16 +339,16 @@ func main(): void {
         for source in reversed(sources):
             source.write_text(original, encoding="utf-8", newline="\n")
         timestamps = [source.stat().st_mtime_ns for source in sources]
-        checked = self.command("fmt", "--check", root, expected=1)
+        checked = self.invoke("fmt", "--check", root, code=1)
         self.assertEqual(checked.stdout.splitlines(), [source.as_posix() for source in sources])
         self.assertEqual([source.read_text(encoding="utf-8") for source in sources], [original] * 2)
         self.assertEqual([source.stat().st_mtime_ns for source in sources], timestamps)
-        self.command("fmt", "--write", root)
+        self.invoke("fmt", "--write", root)
         for source in sources:
             self.assertEqual(source.read_text(encoding="utf-8"), "func main(): void {}\n")
-        self.assertEqual(self.command("fmt", "--check", root).stdout, "")
+        self.assertEqual(self.invoke("fmt", "--check", root).stdout, "")
         timestamps = [source.stat().st_mtime_ns for source in sources]
-        self.command("fmt", "--write", root)
+        self.invoke("fmt", "--write", root)
         self.assertEqual([source.stat().st_mtime_ns for source in sources], timestamps)
 
     def test_formatter_directory_scan_excludes_dependencies_generated_files_and_other_extensions(self) -> None:
@@ -369,21 +365,21 @@ func main(): void {
         notes.write_text("func broken(", encoding="utf-8", newline="\n")
         ignored.append(notes)
         original = [path.read_bytes() for path in ignored]
-        self.command("fmt", "--write", self.directory)
+        self.invoke("fmt", "--write", self.directory)
         self.assertEqual(source.read_text(encoding="utf-8"), "func main(): void {}\n")
         self.assertEqual([path.read_bytes() for path in ignored], original)
-        self.command("fmt", "--check", self.directory)
+        self.invoke("fmt", "--check", self.directory)
 
     def test_formatter_directory_reports_syntax_errors_and_continues_processing_other_sources(self) -> None:
         broken = self.directory / "a-broken.vela"
         valid = self.directory / "z-valid.vela"
         broken.write_text("func broken(", encoding="utf-8", newline="\n")
         valid.write_text("func main():void{}", encoding="utf-8", newline="\n")
-        checked = self.command("fmt", "--check", self.directory, expected=65)
+        checked = self.invoke("fmt", "--check", self.directory, code=65)
         self.assertEqual(checked.stdout.splitlines(), [valid.as_posix()])
         self.assertIn(broken.as_posix(), checked.stderr)
         self.assertEqual(valid.read_text(encoding="utf-8"), "func main():void{}")
-        written = self.command("fmt", "--write", self.directory, expected=65)
+        written = self.invoke("fmt", "--write", self.directory, code=65)
         self.assertEqual(written.stdout, "")
         self.assertIn(broken.as_posix(), written.stderr)
         self.assertEqual(broken.read_text(encoding="utf-8"), "func broken(")
@@ -392,15 +388,14 @@ func main(): void {
     def test_formatter_directory_modes_empty_inputs_and_missing_paths(self) -> None:
         empty = self.directory / "empty"
         empty.mkdir()
-        self.command("fmt", "--check", empty)
-        self.command("fmt", "--write", empty)
-        self.assertIn("--write or --check", self.command("fmt", empty, expected=64).stderr)
-        self.command("fmt", "--check", self.directory / "missing", expected=74)
-        self.command("fmt", "--unknown", expected=64)
-        self.command("fmt", "--write", expected=64)
-        self.command("fmt", "--check", "--write", expected=64)
-        self.command("fmt", "--write", "--check", expected=64)
-        self.command("fmt", "--write", empty, empty, expected=64)
+        self.invoke("fmt", "--check", empty)
+        self.invoke("fmt", "--write", empty)
+        self.assertIn("--write or --check", self.invoke("fmt", empty, code=64).stderr)
+        self.invoke("fmt", "--check", self.directory / "missing", code=74)
+        self.invoke("fmt", "--unknown", code=64)
+        self.invoke("fmt", "--write", code=64)
+        self.invoke("fmt", "--check", "--write", empty, code=64)
+        self.invoke("fmt", "--write", empty, empty, code=64)
 
     def test_formatter_directory_scan_does_not_follow_file_or_directory_symlinks(self) -> None:
         root = self.directory / "project"
@@ -414,34 +409,34 @@ func main(): void {
             directory_link.symlink_to(self.directory, target_is_directory=True)
         except (OSError, NotImplementedError) as error:
             self.skipTest(f"symlinks are unavailable: {error}")
-        self.command("fmt", "--write", root)
-        self.command("fmt", "--check", root)
+        self.invoke("fmt", "--write", root)
+        self.invoke("fmt", "--check", root)
         self.assertTrue(file_link.is_symlink())
         self.assertTrue(directory_link.is_symlink())
         self.assertEqual(outside.read_text(encoding="utf-8"), "func main():void{}")
 
     def test_documentation_checks_modules_without_evaluating_initializers(self) -> None:
-        self.write('/// A value.\nexport let value = fail();\n'
+        self.write_entry('/// A value.\nexport let value = fail();\n'
                    'func fail(): int { print("must not execute"); return 42; }\n')
         output = self.directory / "api.md"
-        result = self.command("doc", self.entry, output)
+        result = self.invoke("doc", self.entry, output)
         self.assertEqual(result.stdout, "")
         original = output.read_bytes()
         self.assertIn("A value.", original.decode("utf-8"))
         self.assertNotIn("## `fail`", original.decode("utf-8"))
-        self.write("export let value: int = true;")
-        self.command("doc", self.entry, output, expected=65)
+        self.write_entry("export let value: int = true;")
+        self.invoke("doc", self.entry, output, code=65)
         self.assertEqual(output.read_bytes(), original)
 
     def test_documentation_preserves_import_prefixes_and_unspecialized_generics(self) -> None:
         (self.directory / "library.vela").write_text(
             "/// Dependency export.\nexport class Box<T> { value: T; }\n", encoding="utf-8")
-        self.write("import 'library.vela' as api;\n"
+        self.write_entry("import 'library.vela' as api;\n"
                    "/// Root generic export.\n"
                    "export func wrap<T>(value: T): api.Box<T> { return api.Box<T>(value: value); }\n"
                    "export func answer(): api.Box<int> { return wrap<int>(42); }\n")
         output = self.directory / "api.md"
-        self.command("doc", self.entry, output)
+        self.invoke("doc", self.entry, output)
         text = output.read_text(encoding="utf-8")
         self.assertIn("Root generic export.", text)
         self.assertIn("func wrap<T>(value: T): api.Box<T>;", text)
@@ -451,29 +446,29 @@ func main(): void {
 
     def test_unicode_source_and_output_paths(self) -> None:
         self.entry = self.directory / "你好😀.vela"
-        self.write("export func main(): int { return 42; }")
+        self.write_entry("export func main(): int { return 42; }")
         output = self.directory / "原生😀.o"
-        self.command("check", self.entry)
+        self.invoke("check", self.entry)
         self.assertEqual(self.cached_run().stdout, "42\n")
-        self.command("build", self.entry, "--emit=obj", "--export=main", "-o", output)
-        self.command("build", "--verify-manifest=" + str(output) + ".aot.json")
+        self.invoke("build", self.entry, "--emit=obj", "--export=main", "-o", output)
+        self.invoke("build", "--verify-manifest=" + str(output) + ".aot.json")
 
     def test_native_debugger_resumes_and_stops_async_main(self) -> None:
-        self.write("async func main(): Future<int> {\n"
+        self.write_entry("async func main(): Future<int> {\n"
                    "  await sleep(1);\n  print('resumed');\n  return 42;\n}\n")
-        completed = self.command("debug", self.entry, commands="break 3\nc\nc\n")
+        completed = self.invoke("debug", self.entry, input="break 3\nc\nc\n")
         self.assertEqual(completed.stdout, "resumed\n42\n")
         self.assertRegex(completed.stderr, r"main pc=\d+ at [^\r\n]+:3:")
-        stopped = self.command("debug", self.entry, commands="break 3\nc\nquit\n")
+        stopped = self.invoke("debug", self.entry, input="break 3\nc\nquit\n")
         self.assertEqual(stopped.stdout, "")
         self.assertIn("debugger stopped", stopped.stderr)
         self.assertNotIn("idle/deadlock", stopped.stderr)
 
     def test_function_breakpoint_stack_registers_and_finish(self) -> None:
-        self.write("func child(value: int): int {\n  return value + 1;\n}\n"
+        self.write_entry("func child(value: int): int {\n  return value + 1;\n}\n"
                    "func main(): int {\n  let value = 40;\n  value = child(value);\n  return value + 1;\n}\n")
-        result = self.command("debug", self.entry,
-                              commands="break child\ncontinue\nstack\nregisters\nprint r0\nfinish\ncontinue\n")
+        result = self.invoke("debug", self.entry,
+                              input="break child\ncontinue\nstack\nregisters\nprint r0\nfinish\ncontinue\n")
         self.assertIn("#0 child pc=", result.stderr)
         self.assertIn("#1 main pc=", result.stderr)
         self.assertIn("r0 = 40", result.stderr)
@@ -481,27 +476,27 @@ func main(): void {
         self.assertEqual(result.stdout, "42\n")
 
     def test_source_breakpoint_stops_once_per_loop_iteration(self) -> None:
-        self.write("func work(): int {\n  let i = 0;\n  while (i < 3) {\n    i = i + 1;\n  }\n  return i;\n}\n"
+        self.write_entry("func work(): int {\n  let i = 0;\n  while (i < 3) {\n    i = i + 1;\n  }\n  return i;\n}\n"
                    "func main(): int { return work() + 39; }\n")
-        result = self.command("debug", self.entry, commands="break 4\nc\nc\nc\nc\n")
+        result = self.invoke("debug", self.entry, input="break 4\nc\nc\nc\nc\n")
         self.assertEqual(result.stdout, "42\n")
         self.assertEqual(len(re.findall(r"work pc=\d+ at [^\r\n]+:4:", result.stderr)), 3, result.stderr)
 
     def test_next_skips_a_call_but_step_enters_it(self) -> None:
-        self.write("func child(value: int): int {\n  return value + 1;\n}\n"
+        self.write_entry("func child(value: int): int {\n  return value + 1;\n}\n"
                    "func main(): int {\n  let value = 40;\n  value = child(value);\n  return value + 1;\n}\n")
-        skipped = self.command("debug", self.entry, commands="next\nquit\n")
+        skipped = self.invoke("debug", self.entry, input="next\nquit\n")
         self.assertNotIn("child pc=", skipped.stderr)
         self.assertIn("debugger stopped", skipped.stderr)
-        stepped = self.command("debug", self.entry, commands="step\nquit\n")
+        stepped = self.invoke("debug", self.entry, input="step\nquit\n")
         self.assertIn("child pc=", stepped.stderr)
 
     def test_inspects_object_fields_and_array_elements(self) -> None:
-        self.write("class Box { value: int; }\n"
+        self.write_entry("class Box { value: int; }\n"
                    "func inspect(box: Box, values: int[]): int { return box.value + values[0]; }\n"
                    "func main(): int { return inspect(Box(value: 40), [2]); }\n")
-        result = self.command("debug", self.entry,
-                              commands="break inspect\nc\nregisters\nfield r0 0\nelement r1 0\nc\n")
+        result = self.invoke("debug", self.entry,
+                              input="break inspect\nc\nregisters\nfield r0 0\nelement r1 0\nc\n")
         self.assertEqual(result.stdout, "42\n")
         self.assertIn("r0 = object(fields=1)", result.stderr)
         self.assertIn("r1 = array(length=1)", result.stderr)
@@ -509,9 +504,9 @@ func main(): void {
         self.assertIn("debug> 2", result.stderr)
 
     def test_bad_debugger_commands_and_eof_never_execute_past_the_pause(self) -> None:
-        self.write('func main(): void { print("must not execute"); }')
-        result = self.command("debug", self.entry,
-                              commands="print r999\nframe 99\ndelete 999\nbreak 999\nunknown\n")
+        self.write_entry('func main(): void { print("must not execute"); }')
+        result = self.invoke("debug", self.entry,
+                              input="print r999\nframe 99\ndelete 999\nbreak 999\nunknown\n")
         self.assertEqual(result.stdout, "")
         self.assertIn("register is out of range", result.stderr)
         self.assertIn("frame depth is out of range", result.stderr)

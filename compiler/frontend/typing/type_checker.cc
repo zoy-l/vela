@@ -104,6 +104,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
     }
   }
   CheckInheritedConstructorInitialization();
+  ResolveStructLayouts();
   specializer.Publish();
   ResolveNominalArguments(program);
   for (const auto& source : program.classes) {
@@ -213,10 +214,6 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
   info.parameter_indices.reserve(function.parameters.size());
   for (std::size_t index = 0; index < function.parameters.size(); ++index) {
     const auto& parameter = function.parameters.at(index);
-    if (parameter.initializer &&
-        (!function.native_symbol.empty() || function.is_getter || function.is_setter)) {
-      AddDiagnostic(parameter.location, "default parameters require an ordinary script function");
-    }
     Type type;
     if (parameter.type.kind != TypeName::Kind::Inferred) {
       type = ResolveType(parameter.type, VoidTypePolicy::Forbidden);
@@ -228,14 +225,20 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
       AddDiagnostic(parameter.location, "cannot infer lambda parameter '" + parameter.name +
                                             "'; add a type annotation or function type context");
     }
+    const auto* initializer = parameter.initializer.get();
+    const auto default_kind = function.DefaultFor(parameter);
+    const auto has_default = default_kind == Function::ParameterDefault::Expression;
+    if (initializer != nullptr && !has_default &&
+        (initializer->kind != Expression::Kind::NullLiteral || !type.nullable)) {
+      AddDiagnostic(parameter.location, "default parameters require an ordinary script function");
+    }
     if (!info.parameter_indices
              .emplace(parameter.name, static_cast<std::uint32_t>(info.parameters.size()))
              .second) {
       AddDiagnostic(parameter.location, "duplicate parameter '" + parameter.name + "'");
     } else {
-      info.parameters.push_back(
-          {.name = parameter.name, .type = type, .has_default = parameter.initializer != nullptr});
-      if (parameter.initializer) {
+      info.parameters.push_back({.name = parameter.name, .type = type, .has_default = has_default});
+      if (default_kind != Function::ParameterDefault::Required) {
         info.optional_parameters.insert(parameter.name);
       }
     }
@@ -308,9 +311,7 @@ void TypeChecker::CheckFunctionBody(const Function& function,
     if (!CanFallThrough(function, return_type) && flow.can_fall_through) {
       AddDiagnostic(function.location, "non-void function may fall through without returning");
     }
-    if (const auto predicate = FinishPredicate()) {
-      function_predicates_.insert_or_assign(body, *predicate);
-    }
+    function_predicates_.insert_or_assign(body, FinishPredicate());
     checking_function_bodies_.erase(body);
   }
   EndScope();
@@ -338,11 +339,28 @@ TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, con
     return result.type;
   }
   auto type = CheckExpressionType(expression, expected);
-  if (expression.kind == Expression::Kind::Call) {
+  if (expression.kind == Expression::Kind::Call || expression.kind == Expression::Kind::Await) {
     InvalidateCapturedRefinements();
   }
-  facts_.expression_types.insert_or_assign(&expression, type);
+  RecordExpressionType(expression, type);
+  const bool completes = ExpressionCanComplete(expression);
+  expression_flows_.insert_or_assign(
+      &expression,
+      ExpressionFlow{.can_complete = completes, .condition = EvaluateCondition(expression)});
+  if (!completes) {
+    facts_.non_completing_expressions.insert(&expression);
+  } else {
+    facts_.non_completing_expressions.erase(&expression);
+  }
+  if (type.value_layout != nullptr && IsMutableStructPlace(expression)) {
+    facts_.mutable_struct_places.insert(&expression);
+  }
   return type;
+}
+
+void TypeChecker::RecordExpressionType(const Expression& expression, const Type& type) {
+  expression_flows_.erase(&expression);
+  facts_.expression_types.insert_or_assign(&expression, type);
 }
 
 TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
@@ -583,7 +601,7 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
                     "generic methods require a statically known class or interface receiver");
       return InvalidType();
     }
-    facts_.expression_types.insert_or_assign(expression.callee.get(), object);
+    RecordExpressionType(*expression.callee, object);
     InvalidateCapturedRefinements();
     return CheckDynamicCall(expression);
   }
@@ -701,7 +719,7 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
       }
       if (method->second.is_getter) {
         const auto type = method->second.return_type;
-        facts_.expression_types.insert_or_assign(expression.callee.get(), type);
+        RecordExpressionType(*expression.callee, type);
         InvalidateCapturedRefinements();
         return CheckIndirectCall(expression, type);
       }
@@ -714,7 +732,7 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
     if (field != nullptr && (field->type.kind == Type::Kind::Dynamic ||
                              (field->type.kind == Type::Kind::Function && !field->type.nullable))) {
       CheckAccess(field->visibility, object.name, expression.location);
-      facts_.expression_types.insert_or_assign(expression.callee.get(), field->type);
+      RecordExpressionType(*expression.callee, field->type);
       return CheckIndirectCall(expression, field->type);
     }
   }
@@ -867,7 +885,7 @@ void TypeChecker::BeginScope() {
 
 void TypeChecker::EndScope() {
   for (const auto& [name, binding] : scopes_.back()) {
-    refinements_.Erase(binding.id);
+    refinements_.Invalidate(binding.id);
   }
   scopes_.pop_back();
 }
@@ -916,10 +934,6 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   }
   if (inferred) {
     type = initializer;
-    if (type.kind == Type::Kind::Null) {
-      AddDiagnostic(statement.location, "null initializer requires an explicit nullable type");
-      type = InvalidType();
-    }
   }
   if (type.kind == Type::Kind::Void) {
     AddDiagnostic(statement.location, "void is not a value type");
@@ -933,6 +947,10 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   const auto constant = statement.binding == BindingKind::Constant
                             ? EvaluateConstant(*statement.expression)
                             : std::nullopt;
+  const auto condition = assignable && type.kind == Type::Kind::Bool && !type.nullable &&
+                                 statement.binding == BindingKind::Constant
+                             ? CaptureCondition(*statement.expression)
+                             : nullptr;
   facts_.local_types.insert_or_assign(&statement, type);
   const auto* local =
       DeclareLocal(statement.name, type, statement.location, statement.binding, &statement);
@@ -941,6 +959,9 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   }
   if (assignable) {
     RefineAssignedLocal(*local, initializer);
+  }
+  if (condition) {
+    refinements_.SetCondition(local->id, condition);
   }
   if (constant) {
     constant_bindings_.insert_or_assign(local->id, *constant);
@@ -993,7 +1014,8 @@ void TypeChecker::CheckVoidReturn(const Statement& statement, const Type& return
   const auto value = CheckExpression(*statement.expression, &expected);
   const bool async_payload =
       in_async_function_ && (value.kind == Type::Kind::Dynamic || CanAssign(return_type, value));
-  if (IsValid(value) && value.kind != Type::Kind::Void && !async_payload) {
+  if (IsValid(value) && value.kind != Type::Kind::Void && value.kind != Type::Kind::Never &&
+      !async_payload) {
     AddDiagnostic(statement.location, "void function cannot return a value");
   }
 }
@@ -1058,6 +1080,7 @@ TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
     const auto array = NonNullable(*expected);
     element_type = array_elements_.at(array.name);
   }
+  const bool has_context = IsValid(element_type);
   for (const auto& element : expression.elements) {
     const Type actual = CheckExpression(*element, IsValid(element_type) ? &element_type : nullptr);
     if (IsValid(element_type)) {
@@ -1068,9 +1091,7 @@ TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
     }
     if (actual.kind == Type::Kind::Void) {
       AddDiagnostic(element->location, "array elements must be values");
-    } else if (actual.kind == Type::Kind::Null && !IsValid(element_type)) {
-      AddDiagnostic(element->location, "null array element requires an expected nullable type");
-    } else if (!IsValid(element_type)) {
+    } else if (!IsValid(element_type) || (!has_context && element_type.kind == Type::Kind::Never)) {
       element_type = actual;
     } else if (!CanAssign(element_type, actual)) {
       AddDiagnostic(element->location,
@@ -1145,8 +1166,19 @@ TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
   RefineCondition(*expression.operand, ConditionTruth::AlwaysFalse);
   auto when_false = CheckExpression(*expression.right, expected);
   const auto false_facts = refinements_.Capture(false_branch);
-  refinements_.Intersect(true_facts, false_facts);
-  refinements_.Apply(true_facts);
+  const bool true_completes = ExpressionCanComplete(*expression.left);
+  const bool false_completes = ExpressionCanComplete(*expression.right);
+  refinements_.MergeAlternatives(true_facts, false_facts,
+                                 {.first = true_completes, .second = false_completes});
+  if (!ExpressionCanComplete(*expression.operand) || (!true_completes && !false_completes)) {
+    return {.kind = Type::Kind::Never, .name = kNeverTypeName};
+  }
+  if (!true_completes) {
+    return when_false;
+  }
+  if (!false_completes) {
+    return when_true;
+  }
   if ((when_true.kind == Type::Kind::Dynamic || when_false.kind == Type::Kind::Dynamic) &&
       when_true.kind != Type::Kind::Void && when_false.kind != Type::Kind::Void) {
     return RecordDynamicOperands(expression, when_true, when_false);
@@ -1174,7 +1206,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
     RecordConversion(*expression.right, left, right);
     if (binding) {
-      refinements_.Erase(binding->id);
+      refinements_.Invalidate(binding->id);
     }
     return left.kind == Type::Kind::Dynamic ? left
                                             : CheckCompoundAssignmentTypes(expression, left, left);
@@ -1239,8 +1271,14 @@ TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression, const T
   const Type right = CheckExpression(*expression.right, coalesce ? expected : nullptr);
   if (logical) {
     auto changes = refinements_.Capture(*after_left);
-    refinements_.Intersect(changes, {});
-    refinements_.Apply(changes);
+    if (ExpressionCanComplete(*expression.right)) {
+      refinements_.Intersect(changes, {});
+      refinements_.Apply(changes);
+    } else {
+      RefineCondition(*expression.left, expression.operation == TokenKind::AndAnd
+                                            ? ConditionTruth::AlwaysFalse
+                                            : ConditionTruth::AlwaysTrue);
+    }
   }
   if (!IsValid(left) || !IsValid(right)) {
     return InvalidType();
@@ -1281,6 +1319,14 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
                                                 const Type& left,
                                                 const Type& right) {
+  if (left.kind == Type::Kind::Never) {
+    return left;
+  }
+  if (right.kind == Type::Kind::Never && expression.operation != TokenKind::AndAnd &&
+      expression.operation != TokenKind::OrOr &&
+      expression.operation != TokenKind::QuestionQuestion) {
+    return right;
+  }
   if (expression.operation == TokenKind::EqualEqual ||
       expression.operation == TokenKind::BangEqual) {
     return CheckEquality(expression, left, right);
@@ -1354,9 +1400,15 @@ TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
                           ? LookupLocal(expression.left->text)
                           : nullptr;
   // 非空事实只描述当前读取；?? 的可空契约仍由局部变量的声明类型决定。
-  const auto source = local != nullptr && local->type.nullable ? local->type : left;
+  auto source = local != nullptr && local->type.nullable ? local->type : left;
   if (!source.nullable && source.kind != Type::Kind::Null && source.kind != Type::Kind::Dynamic) {
     AddDiagnostic(expression.left->location, "left operand of coalesce must be nullable");
+  }
+  if (right.kind == Type::Kind::Never) {
+    return source.kind == Type::Kind::Null ? right : NonNullable(source);
+  }
+  if (source.kind == Type::Kind::Null) {
+    return right;
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
     return RecordDynamicOperands(expression, left, right);
@@ -1450,6 +1502,14 @@ std::optional<TypeChecker::LocalBinding> TypeChecker::CheckAssignedBinding(
 
 TypeChecker::CheckStatus TypeChecker::CheckReceiverNullability(const Expression& access,
                                                                Type& receiver) {
+  if (receiver.kind == Type::Kind::Null && access.null_safe &&
+      access.object->kind == Expression::Kind::Name) {
+    if (const auto* binding = LookupLocal(access.object->text);
+        binding != nullptr && binding->type.nullable) {
+      receiver = NonNullable(binding->type);
+      return CheckStatus::Succeeded;
+    }
+  }
   if (receiver.nullable) {
     if (!access.null_safe) {
       AddDiagnostic(access.object->location, "nullable receiver requires a non-null check");
@@ -1514,6 +1574,10 @@ void TypeChecker::CheckInstanceMemberAssignment(const Expression& member,
 }
 
 void TypeChecker::CheckMemberAssignment(const Expression& member, MemberWrite mode) {
+  const auto object = facts_.expression_types.find(member.object.get());
+  if (object != facts_.expression_types.end() && object->second.value_layout != nullptr) {
+    CheckStructWriteTarget(*member.object);
+  }
   bool read_only =
       facts_.interface_members.contains(&member) || facts_.builtin_method_values.contains(&member);
   if (const auto found = facts_.static_members.find(&member);
@@ -1529,7 +1593,6 @@ void TypeChecker::CheckMemberAssignment(const Expression& member, MemberWrite mo
                 (source_id < sources_.size() &&
                  sources_[source_id].path.starts_with(kStandardSourcePrefix));
   } else {
-    const auto object = facts_.expression_types.find(member.object.get());
     const auto private_owner = IsPrivateName(member.text) ? facts_.private_members.find(&member)
                                                           : facts_.private_members.end();
     const bool has_private_owner = private_owner != facts_.private_members.end();

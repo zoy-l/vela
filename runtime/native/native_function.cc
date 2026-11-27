@@ -79,8 +79,8 @@ bool NativeFunction::IsSignatureCompatible(const CallSignature& signature,
     }
     for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
       const auto& parameter = signature.parameters[index];
-      if (member_->parameter_names[index] != parameter.name || parameter.optional ||
-          parameter.rest) {
+      if (member_->parameter_names[index] != parameter.name ||
+          (parameter.optional && !types[parameter.type].nullable) || parameter.rest) {
         return false;
       }
     }

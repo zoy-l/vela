@@ -18,6 +18,9 @@ enum class AotKernel : std::uint8_t {
   TemporaryObjects,
   Async,
   SpectralNorm,
+  FlatStructFields,
+  FlatStructMethods,
+  ClassBodyMethods,
 };
 enum class AotCompletion : std::uint8_t { Immediate, Future };
 

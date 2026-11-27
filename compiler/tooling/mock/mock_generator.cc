@@ -512,6 +512,10 @@ void MockGenerator::DefaultNames(const frontend::Statement* statement, DefaultRe
 
 void MockGenerator::DefaultValue(const frontend::Parameter& parameter) {
   using frontend::TokenKind;
+  if (parameter.initializer->kind == frontend::Expression::Kind::NullLiteral) {
+    body_ << " = null";
+    return;
+  }
   const auto& source = *program_->sources.at(parameter.location.source_id).syntax;
   const auto& tokens = source.tokens;
   const std::string_view text(source.text);

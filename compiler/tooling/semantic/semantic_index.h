@@ -43,6 +43,7 @@ enum class CompletionKind : std::uint8_t {
   Keyword = 14,
   EnumMember = 20,
   Constant = 21,
+  Struct = 22,
   Type = 25,
 };
 
@@ -78,9 +79,10 @@ enum class SemanticTokenKind : std::uint8_t {
   Type,
   TypeParameter,
   EnumMember,
+  Struct,
 };
 inline constexpr auto kSemanticTokenTypes = std::to_array<std::string_view>(
-    {"class", "interface", "enum", "type", "typeParameter", "enumMember"});
+    {"class", "interface", "enum", "type", "typeParameter", "enumMember", "struct"});
 inline constexpr auto kSemanticTokenModifiers =
     std::to_array<std::string_view>({"declaration", "defaultLibrary"});
 inline constexpr std::uint32_t kSemanticDeclaration = 1U;
@@ -287,7 +289,8 @@ class SemanticIndex final {
   [[nodiscard]] std::string DisplayType(frontend::TypeDescriptor type) const;
   [[nodiscard]] std::string DisplaySignature(const frontend::FunctionDescriptor& signature) const;
   [[nodiscard]] frontend::TypeDescriptor Capability(frontend::TypeDescriptor type) const;
-  [[nodiscard]] std::vector<std::string_view> MemberOwners(frontend::TypeDescriptor type) const;
+  [[nodiscard]] std::vector<std::string_view> MemberOwners(
+      const frontend::TypeDescriptor& type) const;
   [[nodiscard]] Completion SpecializedCompletion(std::string_view owner,
                                                  const Symbol& symbol,
                                                  std::string_view name) const;

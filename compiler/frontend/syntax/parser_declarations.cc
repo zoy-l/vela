@@ -88,6 +88,7 @@ std::optional<Class> Parser::ParseClassHeader(ClassKind kind) {
     return std::nullopt;
   }
   Class declaration;
+  declaration.kind = kind == ClassKind::Value ? Class::Kind::Value : Class::Kind::Reference;
   declaration.name = name->lexeme;
   declaration.location = name->location;
   if (kind == ClassKind::Native) {
@@ -350,6 +351,7 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
       return std::nullopt;
     }
   }
+  InitializeNullableDefault(*type, initializer);
   if (Expect(TokenKind::Semicolon, "expected ';' after field declaration") == nullptr) {
     return std::nullopt;
   }
@@ -590,6 +592,7 @@ std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
       return std::nullopt;
     }
   }
+  InitializeNullableDefault(parameter.type, parameter.initializer);
   return parameter;
 }
 

@@ -13,6 +13,7 @@
 #include <optional>
 #include <semaphore>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -82,6 +83,10 @@ struct FutureDiagnostic final {
   std::vector<FutureTraceFrame> stack_trace;
   ExecutionStatus status = ExecutionStatus::Thrown;
   ErrorOrigin origin;
+
+  [[nodiscard]] std::string_view Message() const noexcept {
+    return message.empty() ? ExecutionStatusName(status) : std::string_view(message);
+  }
 };
 
 struct FutureResult final {
@@ -141,15 +146,17 @@ class Future final {
   // 可取消的宿主观察。其根由返回能力持有，Future 对象图只借用观察者控制状态。
   [[nodiscard]] std::expected<FutureObservation, ExecutionStatus> SubscribeResult(
       absl::AnyInvocable<void(const FutureResult&)> callback) const;
-  std::expected<void, FutureCompletionError> Adopt(const Future& source);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Adopt(const Future& source);
   // 所属线程同步检查 adoption；跨线程返回投递是否成功，adoption 失败发布为 Future 错误。
   // 跨线程传入的堆值必须属于该 Isolate，且在所属线程接收前持续保根。
-  std::expected<void, FutureCompletionError> Complete(::vela::runtime::Value value);
-  std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error);
-  std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error,
-                                                           FutureDiagnostic diagnostic);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Complete(::vela::runtime::Value value);
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(
+      ::vela::runtime::Value error);
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(
+      ::vela::runtime::Value error,
+      FutureDiagnostic diagnostic);
   // 输入为成功或失败的最终结果；Pending 不属于完成请求。
-  std::expected<void, FutureCompletionError> Settle(FutureResult result);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Settle(FutureResult result);
   [[nodiscard]] static Future Value(::vela::runtime::Value value,
                                     FutureScheduler* scheduler = nullptr);
   [[nodiscard]] static Future Error(::vela::runtime::Value error,
@@ -241,11 +248,13 @@ class Completer final {
   Completer(Future future, std::shared_ptr<HostEventSource> producer)
       : future_(std::move(future)), producer_(std::move(producer)) {}
   [[nodiscard]] const Future& future() const noexcept { return future_; }
-  std::expected<void, FutureCompletionError> Complete(::vela::runtime::Value value);
-  std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error);
-  std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error,
-                                                           FutureDiagnostic diagnostic);
-  std::expected<void, FutureCompletionError> Settle(FutureResult result);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Complete(::vela::runtime::Value value);
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(
+      ::vela::runtime::Value error);
+  [[nodiscard]] std::expected<void, FutureCompletionError> CompleteError(
+      ::vela::runtime::Value error,
+      FutureDiagnostic diagnostic);
+  [[nodiscard]] std::expected<void, FutureCompletionError> Settle(FutureResult result);
   // 先取出供脚本返回的 Future，再把完成能力转交给可跨运行停止边界存活的端点。
   [[nodiscard]] FutureCompletionEndpoint Detach() &&;
 

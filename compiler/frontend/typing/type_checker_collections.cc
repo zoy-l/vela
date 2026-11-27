@@ -102,7 +102,9 @@ TypeChecker::Type TypeChecker::CheckMapLiteral(const Expression& expression, con
     key_type = arguments.front();
     value_type = arguments.back();
   }
-  const auto check = [this](const Expression& item, Type& target, std::string_view role) {
+  const bool has_context = IsValid(key_type);
+  const auto check = [this, has_context](const Expression& item, Type& target,
+                                         std::string_view role) {
     const auto actual = CheckExpression(item, IsValid(target) ? &target : nullptr);
     if (!IsValid(actual)) {
       return;
@@ -110,9 +112,7 @@ TypeChecker::Type TypeChecker::CheckMapLiteral(const Expression& expression, con
     const auto prefix = "map " + std::string(role);
     if (actual.kind == Type::Kind::Void) {
       AddDiagnostic(item.location, prefix + " must be a value");
-    } else if (actual.kind == Type::Kind::Null && !IsValid(target)) {
-      AddDiagnostic(item.location, "null " + prefix + " requires an expected nullable type");
-    } else if (!IsValid(target)) {
+    } else if (!IsValid(target) || (!has_context && target.kind == Type::Kind::Never)) {
       target = actual;
     } else if (!CanAssign(target, actual)) {
       AddDiagnostic(item.location, prefix + " type does not match '" + TypeNameFor(target) + "'");

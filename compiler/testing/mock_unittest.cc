@@ -6,15 +6,12 @@
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/modules/source_loader.h"
-#include "compiler/jit/compiler.h"
-#include "compiler/jit/source_compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "runtime/native/native_instance.h"
 
 namespace vela::testing {
 namespace {
@@ -35,9 +32,7 @@ void ExpectReleasedSuite(runtime::Isolate& isolate) {
 TEST(ScriptMockLifetimeTest, CancellationClosesPendingObservationsAndReleasesAllRoots) {
   runtime::Isolate isolate(1);
   {
-    const frontend::SourceInput input{
-        .path = "cancel_test.vela",
-        .text = R"(
+    const auto compiled = compiler::test::CompileSource(R"(
 import 'sdk:test';
 import 'sdk:mock' as mock;
 func main(): void {
@@ -47,19 +42,13 @@ func main(): void {
     print('observing');
   });
 })",
-    };
-    auto compiler = compiler::jit::Compiler::Create();
-    ASSERT_TRUE(compiler);
-    const auto compiled =
-        compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
-    ASSERT_TRUE(compiled.Succeeded());
-    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-    ASSERT_TRUE(instance);
+                                                        isolate);
+    ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     std::ostringstream output;
     isolate.SetOutput(output);
     SuiteOptions options;
     options.is_cancelled = [&output] { return output.str().contains("observing\n"); };
-    Suite suite(**instance, std::move(options));
+    Suite suite(*compiled.instance, std::move(options));
     const auto result = suite.Run();
     ASSERT_EQ(result.tests.size(), 1U);
     EXPECT_EQ(result.tests.front().status, TestStatus::Cancelled);
@@ -75,15 +64,9 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
   std::ostringstream output;
   isolate.SetOutput(output);
   {
-    const frontend::SourceInput input{.path = "mock_test.vela", .text = GetParam()};
-    auto compiler = compiler::jit::Compiler::Create();
-    ASSERT_TRUE(compiler);
-    const auto compiled =
-        compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
+    const auto compiled = compiler::test::CompileSource(GetParam(), isolate);
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
-    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-    ASSERT_TRUE(instance);
-    Suite suite(**instance, {});
+    Suite suite(*compiled.instance, {});
     const auto result = suite.Run();
     EXPECT_EQ(result.exit_code, 0) << output.str();
     ASSERT_FALSE(result.tests.empty());

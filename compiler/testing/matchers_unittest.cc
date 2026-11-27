@@ -1,12 +1,8 @@
-#include <array>
 #include <string_view>
 
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/modules/source_loader.h"
-#include "compiler/test_support/program_test_support.h"
-#include "runtime/heap/heap.h"
-#include "runtime/isolate/isolate.h"
+#include "compiler/test_support/execution_expectations.h"
 
 namespace vela::testing {
 namespace {
@@ -14,15 +10,7 @@ namespace {
 class ScriptMatcherTest : public ::testing::TestWithParam<std::string_view> {};
 
 TEST_P(ScriptMatcherTest, MatchesAgainstIndependentExpectedResultsUnderGc) {
-  const auto inputs = std::to_array<frontend::SourceInput>({
-      {.path = "matcher.vela", .text = GetParam()},
-  });
-  runtime::Isolate isolate(1);
-  const auto compiled = compiler::test::CompileCleanModules(inputs, "matcher.vela", isolate);
-  ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = compiler::test::ExecuteInteger(**compiled);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
+  compiler::test::ExpectRunAnswer(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(DeepAndExtensible,

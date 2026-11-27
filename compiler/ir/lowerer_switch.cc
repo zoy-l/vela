@@ -54,6 +54,9 @@ std::size_t Lowerer::LowerLabelMismatch(const LoweredValue& selector,
 
 void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   const auto value = LowerExpression(*statement.condition);
+  if (model_.non_completing_expressions.contains(statement.condition.get())) {
+    return;
+  }
   std::vector<std::optional<std::size_t>> entries(statement.cases.size());
   std::optional<std::size_t> default_branch;
   for (std::size_t index = 0; index < statement.cases.size(); ++index) {

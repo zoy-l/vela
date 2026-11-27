@@ -10,7 +10,7 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import patch
 
-from tools.config import ROOT, executable_name
+from tools.config import executable_name
 from tools.package import (copy_file, create_package, load_support_specification, sdk_headers,
                            verify_package)
 from tools.test_support import CommandTestCase, NATIVE_PACKAGE_AVAILABLE, create_native_package
@@ -46,8 +46,7 @@ class SupportSpecificationTest(unittest.TestCase):
             source.chmod(mode & ~stat.S_IWUSR)
             try:
                 package = root / "package"
-                copy_file(source, package, "bin/tool", "bindgen", "LLVM", "license")
-                installed = package / "bin/tool"
+                installed = copy_file(source, package, "bin/tool")
                 self.assertEqual(installed.read_bytes(), b"tool")
                 self.assertTrue(installed.stat().st_mode & stat.S_IWUSR)
                 self.assertFalse(source.stat().st_mode & stat.S_IWUSR)
@@ -88,7 +87,7 @@ class SupportSpecificationTest(unittest.TestCase):
             for destination in ("../source", str(source), "."):
                 with self.subTest(destination=destination), self.assertRaisesRegex(
                         RuntimeError, "package-relative"):
-                    copy_file(source, package, destination, "link", "sysroot", "license")
+                    copy_file(source, package, destination)
             self.assertEqual(source.read_bytes(), b"original")
             self.assertEqual(list(package.iterdir()), [])
 
@@ -159,11 +158,10 @@ class NativePackageCreationTest(CommandTestCase):
     def test_failed_copy_removes_incomplete_package(self) -> None:
         destination = self.directory / "package"
 
-        def fail_runtime_copy(source: Path, package: Path, relative: str, role: str,
-                              owner: str, license_name: str) -> dict:
-            if role == "runtime":
+        def fail_runtime_copy(source: Path, package: Path, relative: str) -> Path:
+            if source.parent.name == "runtime":
                 raise OSError("runtime copy failed")
-            return copy_file(source, package, relative, role, owner, license_name)
+            return copy_file(source, package, relative)
 
         with patch("tools.package.copy_file", side_effect=fail_runtime_copy):
             with self.assertRaisesRegex(OSError, "runtime copy failed"):

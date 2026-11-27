@@ -38,10 +38,11 @@ void NameRoot(NativeTypeBlueprint& description) {
     case Kind::Array:
       description.layouts.arrays[type.index].name = name;
       break;
-    case Kind::Collection:
+    case Kind::Set:
+    case Kind::Map:
       description.layouts.collections[type.index].name = name;
       break;
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer:
       description.layouts.signatures[type.index].name = name;
@@ -72,7 +73,7 @@ NativeTypeBlueprint DescribeNativeCollection(NativeType key, std::optional<Nativ
     collection.value = Import(result, *value);
   }
   result.type = layout::Type{
-      .kind = layout::Type::Kind::Collection,
+      .kind = value ? layout::Type::Kind::Map : layout::Type::Kind::Set,
       .index = static_cast<std::uint32_t>(result.layouts.collections.size()),
   };
   result.layouts.collections.push_back(std::move(collection));
@@ -126,25 +127,32 @@ NativeTypeBlueprint DescribeNativeNominal(std::string_view module,
     return result;
   }
   const bool is_enum = kind == ScriptTypeKind::Enum;
+  auto class_kind = layout::Class::Kind::Instance;
+  if (is_enum) {
+    class_kind = layout::Class::Kind::Enum;
+  } else if (kind == ScriptTypeKind::Struct) {
+    class_kind = layout::Class::Kind::Struct;
+  }
   result.type = layout::Type{
-      .kind = is_enum ? Kind::Enum : Kind::Instance,
+      .kind = is_enum ? Kind::Enum : Kind::Class,
       .index = static_cast<std::uint32_t>(result.layouts.classes.size()),
   };
   result.layouts.classes.push_back({
       .name = key,
       .native_key = {},
       .native_contract = {},
-      .kind = is_enum ? layout::Class::Kind::Enum : layout::Class::Kind::Instance,
+      .kind = class_kind,
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
+      .value_slots = {},
   });
   return result;
 }
 
 NativeTypeBlueprint DescribeNativeHost(std::string_view key) {
   NativeTypeBlueprint result;
-  result.type = layout::Type{.kind = layout::Type::Kind::Instance};
+  result.type = layout::Type{.kind = layout::Type::Kind::Class};
   result.layouts.classes.push_back({
       .name = {},
       .native_key = std::string(key),
@@ -153,6 +161,7 @@ NativeTypeBlueprint DescribeNativeHost(std::string_view key) {
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
+      .value_slots = {},
   });
   return result;
 }

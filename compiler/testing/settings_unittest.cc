@@ -22,8 +22,9 @@ TEST(TestSettingsTest, NormalizesDurationFactorsAndNoneWithoutChangingInheritanc
   const auto none = ParseTimeout("none");
   ASSERT_TRUE(none);
   EXPECT_EQ(*none->Apply(kDefaultTimeout), std::nullopt);
-  ASSERT_TRUE(ParseTimeout("0ms"));
-  EXPECT_EQ(ParseTimeout("0ms")->duration.count(), 0);
+  const auto zero = ParseTimeout("0ms");
+  ASSERT_TRUE(zero);
+  EXPECT_EQ(zero->duration.count(), 0);
 }
 
 TEST(TestSettingsTest, RejectsMalformedOrUnrepresentableTimeouts) {

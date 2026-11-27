@@ -12,7 +12,7 @@
 namespace vela::tooling {
 namespace {
 
-TEST(JsonRpcTest, FramesUtf8ByBytesAndReadsConsecutiveMessages) {
+TEST(JsonRpcTest, FramesUtf8ByBytesAndReadsConsecutiveMessagesUntilEof) {
   std::ostringstream wire;
   constexpr std::string_view kFirst = R"({"text":"你好😀"})";
   ASSERT_TRUE(WriteRpcMessage(wire, kFirst));
@@ -25,16 +25,9 @@ TEST(JsonRpcTest, FramesUtf8ByBytesAndReadsConsecutiveMessages) {
   const auto& message = *first;
   if (!message.has_value()) {
     FAIL() << "unexpected EOF";
-    return;
   }
   const auto* value = yyjson_obj_get(message->root(), "text");
   EXPECT_STREQ(yyjson_get_str(value), "你好😀");
-}
-
-TEST(JsonRpcTest, ReadsConsecutiveFramesAndDistinguishesCleanEof) {
-  std::istringstream input("Content-Length: 2\r\n\r\n{}Content-Length: 2\r\n\r\n{}");
-  const auto first = ReadRpcMessage(input);
-  EXPECT_TRUE(first && first->has_value());
   const auto second = ReadRpcMessage(input);
   EXPECT_TRUE(second && second->has_value());
   const auto end = ReadRpcMessage(input);
@@ -50,7 +43,6 @@ TEST(JsonRpcTest, HandlesHeaderNamesCaseInsensitivelyAndSkipsUnknownHeaders) {
   const auto& message = *result;
   if (!message.has_value()) {
     FAIL() << "unexpected EOF";
-    return;
   }
   EXPECT_TRUE(yyjson_is_obj(message->root()));
 }

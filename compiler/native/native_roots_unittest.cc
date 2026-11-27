@@ -19,6 +19,8 @@
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
 #include "compiler/native/global_analysis.h"
+#include "compiler/native/native_values.h"
+#include "compiler/native/struct_values.h"
 #include "compiler/test_support/preparation_test_support.h"
 
 namespace vela::compiler::native {
@@ -53,8 +55,12 @@ void ExpectDistinctLiveRoots(const ir::Function& function,
       std::set<std::size_t> occupied;
       simultaneous.ForEach([&](ir::RegisterId reg) {
         if (const auto slot = plan.slots.find(reg); slot != plan.slots.end()) {
-          EXPECT_LT(slot->second, plan.count);
-          EXPECT_TRUE(occupied.insert(slot->second).second) << "register " << reg;
+          const auto width = ManagedSlotCount(function.value_types.at(reg));
+          for (std::size_t offset = 0; offset < width; ++offset) {
+            const auto physical = slot->second + offset;
+            EXPECT_LT(physical, plan.count);
+            EXPECT_TRUE(occupied.insert(physical).second) << "register " << reg;
+          }
         }
       });
     }
@@ -62,6 +68,63 @@ void ExpectDistinctLiveRoots(const ir::Function& function,
 }
 
 class NativeRootsTest : public testing::TestWithParam<NativeDebugging> {};
+
+TEST_P(NativeRootsTest, StructRootsCoverEveryReferenceLeafAndOmitScalarOnlyValues) {
+  const auto prepared = ir::test::Prepare(R"(
+struct Position { x: int; y: int; z: int; }
+struct Names { first: string; second: string; }
+struct Packet { names: Names?; data: dynamic; position: Position; }
+external func collect(): void;
+func run(packet: Packet, position: Position): int {
+  collect();
+  return packet.position.x + position.x;
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& functions = prepared.program.functions;
+  const auto run = std::ranges::find(functions, "run", &ir::Function::name);
+  ASSERT_NE(run, functions.end());
+  EXPECT_EQ(ManagedSlotCount(run->value_types[0]), 3U);
+  EXPECT_EQ(ManagedSlotCount(run->value_types[1]), 0U);
+  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+    const auto plan = PlanNativeRoots(*run, functions, mode, GetParam());
+    const auto slot = plan.slots.find(0);
+    ASSERT_NE(slot, plan.slots.end());
+    EXPECT_LE(slot->second + 3, plan.count);
+    EXPECT_FALSE(plan.slots.contains(1));
+    ExpectDistinctLiveRoots(*run, functions, plan);
+  }
+}
+
+TEST_P(NativeRootsTest, ErasureKeepsUnrelatedLiveValuesAndItsFailureEdge) {
+  const auto prepared = ir::test::Prepare(R"(
+struct Position { x: int; y: int; }
+func run(value: Position, retained: string): int {
+  try {
+    const erased: dynamic = value;
+    return (erased.x as int) + retained.length;
+  } catch (error: Error) { return retained.length; }
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& functions = prepared.program.functions;
+  const auto run = std::ranges::find(functions, "run", &ir::Function::name);
+  ASSERT_NE(run, functions.end());
+  const auto boxing = std::ranges::find_if(run->instructions, [&](const auto& instruction) {
+    return instruction.opcode == Opcode::Move &&
+           run->value_types[instruction.lhs].value_layout != nullptr &&
+           run->value_types[instruction.dst].kind == Kind::Dynamic;
+  });
+  ASSERT_NE(boxing, run->instructions.end());
+  ASSERT_TRUE(boxing->handler);
+  const auto index = static_cast<std::size_t>(boxing - run->instructions.begin());
+  for (const auto mode : {NativeProgramMode::Closed, NativeProgramMode::Reloadable}) {
+    const auto plan = PlanNativeRoots(*run, functions, mode, GetParam());
+    const auto& saved = plan.stores[index];
+    EXPECT_NE(std::ranges::find(saved, 1U), saved.end());
+    ExpectDistinctLiveRoots(*run, functions, plan);
+  }
+}
 
 TEST_P(NativeRootsTest, ReusesSlotsBetweenSequentialReferenceLifetimes) {
   const auto prepared = ir::test::Prepare(R"(

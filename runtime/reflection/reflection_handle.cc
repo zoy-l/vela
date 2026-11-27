@@ -60,7 +60,7 @@ void ReflectionHandle::CacheField(const NativeInstance& instance,
   }
   const auto& constraint = instance.layouts().types[resolved.type];
   // 名义对象和容器仍需完整契约检查；enum 还需要盒装，不能直接复制存储表示。
-  if (!constraint.dynamic && constraint.kind == ValueKind::Object) {
+  if (!constraint.IsDynamic() && constraint.kind == ValueKind::Object) {
     return;
   }
   const auto& layout = *Heap::ClassOf(*receiver.AsObject());
@@ -73,12 +73,13 @@ void ReflectionHandle::CacheField(const NativeInstance& instance,
     }
     cache.slot = *slot;
   } else {
-    cache.slot = resolved.target;
+    cache.slot =
+        layout.IsStruct() ? layout.value_fields()[resolved.target].offset : resolved.target;
   }
   cache.kind_offset = FieldStorage::KindOffset(layout.field_count(), cache.slot);
   cache.kind = constraint.kind;
   cache.nullable = constraint.nullable;
-  cache.dynamic = constraint.dynamic;
+  cache.dynamic = constraint.IsDynamic();
   cache.writable = (resolved.flags & reflection::kConstant) == 0;
   cache.layout_id = layout.id();
   BindEpoch(instance, cache);
@@ -106,7 +107,7 @@ void ReflectionHandle::CacheCall(const NativeInstance& instance,
   const auto& types = instance.layouts().types;
   for (const auto& parameter : parameters) {
     const auto& constraint = types[parameter.type];
-    if (!constraint.dynamic && constraint.kind == ValueKind::Object) {
+    if (!constraint.IsDynamic() && constraint.kind == ValueKind::Object) {
       return;
     }
   }

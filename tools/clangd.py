@@ -7,37 +7,23 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 from tools.config import BUILD_VARIANTS, ROOT, configure
 
 
-def compilation_database(output: Path) -> list[dict[str, object]]:
+def generate(variant: str) -> None:
+    output_database = configure(variant) / "compile_commands.json"
+    contents = output_database.read_bytes()
     try:
-        database = json.loads((output / "compile_commands.json").read_text(encoding="utf-8"))
+        database = json.loads(contents)
     except json.JSONDecodeError as error:
         raise RuntimeError("GN produced an invalid compilation database") from error
     if not isinstance(database, list) or any(
         not isinstance(entry, dict) for entry in database
     ):
         raise RuntimeError("GN produced an invalid compilation database root")
-    return database
-
-
-def write_database(path: Path, database: list[dict[str, object]]) -> None:
-    path.write_text(
-        json.dumps(database, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-
-
-def generate(variant: str) -> None:
-    output = configure(variant)
-    database = compilation_database(output)
-    output_database = output / "compile_commands.json"
     root_database = ROOT / "compile_commands.json"
-    write_database(root_database, database)
+    root_database.write_bytes(contents)
     print(f"clangd compilation database: {root_database.relative_to(ROOT)}")
     print(f"entries: {len(database)} ({output_database.relative_to(ROOT)})")
 

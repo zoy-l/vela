@@ -7,6 +7,7 @@
 
 #include "benchmark/benchmark.h"
 
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "benchmarks/jit_benchmark.h"
 #include "benchmarks/native_call/entries.h"
@@ -152,7 +153,11 @@ void Reloadable(benchmark::State& state, native_call::Case problem) {
   const auto expected = Expected<Case>(count, problem.text);
   const auto invoke = [&] { return InvokeJitWorkload(*setup, problem.native); };
   const auto warmup = invoke();
-  if (!warmup || !IsExpected<Case>(*warmup, expected)) {
+  if (!warmup) {
+    state.SkipWithError(std::string(ExecutionStatusName(warmup.error())));
+    return;
+  }
+  if (!IsExpected<Case>(*warmup, expected)) {
     state.SkipWithError("Reloadable native-call warm-up failed");
     return;
   }
@@ -161,8 +166,12 @@ void Reloadable(benchmark::State& state, native_call::Case problem) {
     benchmark::DoNotOptimize(iteration);
     auto result = invoke();
     benchmark::DoNotOptimize(result);
-    if (!result || !IsExpected<Case>(*result, expected)) {
-      state.SkipWithError("Reloadable native-call execution failed or checksum mismatched");
+    if (!result) {
+      state.SkipWithError(std::string(ExecutionStatusName(result.error())));
+      return;
+    }
+    if (!IsExpected<Case>(*result, expected)) {
+      state.SkipWithError("Reloadable native-call checksum mismatched");
       return;
     }
   }

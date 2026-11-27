@@ -24,6 +24,7 @@
 #include "base/reflection_operation.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/memory_regions.h"
@@ -214,7 +215,10 @@ void FunctionEmitter::EmitReflectedField(const ir::Instruction& instruction,
     // 封闭映像的描述符来源、非空接收者类型和字段槽均已证明；字段存储沿用
     // 普通静态访问的布局契约，写入仍保留动态值检查和 GC 写屏障。
     auto* receiver = Reference(instruction.lhs + 2);
-    const auto address = ObjectFieldAddress(receiver, member->target);
+    const auto& owner_class =
+        program_.classes[program_.layouts.types[member->declaring_type].index];
+    const auto slot = ir::PhysicalFieldOffset(owner_class, member->target);
+    const auto address = ObjectFieldAddress(receiver, slot);
     const auto& result_type = source_.value_types[instruction.dst];
     if (operation == reflection::Operation::GetValue) {
       Store(instruction.dst, ReadStoredValue(address, result_type), result_type);

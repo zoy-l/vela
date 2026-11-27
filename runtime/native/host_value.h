@@ -63,6 +63,9 @@ HostValue<T> DecodeHostScalar(runtime::Value value) {
       return std::nullopt;
     }
     return DecodeHostScalar<typename HostValueType<T>::Payload>(value);
+  } else if constexpr (std::is_same_v<T, Null> || std::is_same_v<T, Nullable<Never>> ||
+                       std::is_same_v<T, Nullable<Null>>) {
+    return nullptr;
   } else if constexpr (std::is_same_v<T, bool>) {
     return value.AsBoolean();
   } else if constexpr (std::is_same_v<T, std::int64_t>) {
@@ -90,6 +93,9 @@ runtime::Value EncodeHostScalar(const HostValue<T>& value) {
   if constexpr (requires { typename HostValueType<T>::Payload; }) {
     return value ? EncodeHostScalar<typename HostValueType<T>::Payload>(*value)
                  : runtime::Value::Null();
+  } else if constexpr (std::is_same_v<T, Null> || std::is_same_v<T, Nullable<Never>> ||
+                       std::is_same_v<T, Nullable<Null>>) {
+    return runtime::Value::Null();
   } else if constexpr (std::is_same_v<T, bool>) {
     return runtime::Value::Boolean(value);
   } else if constexpr (std::is_same_v<T, std::int64_t>) {

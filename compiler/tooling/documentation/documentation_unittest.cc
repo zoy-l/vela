@@ -1,11 +1,9 @@
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
-#include <fstream>
 #include <string>
 #include <string_view>
 
-#include "base/path.h"
 #include "base/testing/directory.h"
 #include "compiler/tooling/documentation/documentation.h"
 
@@ -15,14 +13,22 @@ namespace {
 class DocumentationTest : public test::DirectoryTest {
  protected:
   DocumentationResult Generate(std::string_view source) {
-    const auto path = directory() / "module.vela";
-    {
-      std::ofstream output(path);
-      output << source;
-    }
-    return GenerateDocumentation(PathText(path));
+    Write("module.vela", source);
+    return GenerateDocumentation(Path("module.vela"));
   }
 };
+
+TEST_F(DocumentationTest, StructDeclarationsKeepValueKindsAndGenericFieldSignatures) {
+  const auto result = Generate(R"(
+/// Coordinates stored together.
+export struct Position<T> { x: T; y: T; length(): T { return this.x; } }
+)");
+  ASSERT_TRUE(result.Succeeded()) << frontend::DiagnosticsText(result.diagnostics);
+  EXPECT_TRUE(result.markdown.contains("struct Position<T>"));
+  EXPECT_TRUE(result.markdown.contains("x: T;"));
+  EXPECT_TRUE(result.markdown.contains("length(): T;"));
+  EXPECT_FALSE(result.markdown.contains("class Position"));
+}
 
 TEST_F(DocumentationTest, PreservesMapKeyValueSourceWithoutEvaluatingInitializers) {
   const auto result = Generate(R"(
@@ -182,10 +188,7 @@ export type Nested = Map<string, ((int[]) => string?)?>;
 }
 
 TEST_F(DocumentationTest, ResolvesMultipleGenericConstructorParametersWithoutBindingSourceNames) {
-  {
-    std::ofstream dependency(directory() / "dependency.vela");
-    dependency << "export class Item<T> { value: T; }";
-  }
+  ASSERT_NO_FATAL_FAILURE(Write("dependency.vela", "export class Item<T> { value: T; }"));
   const auto result = Generate(R"(
 import 'dependency.vela' as dependency;
 export class Pair<T, U> {

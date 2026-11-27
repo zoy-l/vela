@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/execution_status.h"
+#include "base/inline_layout.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/isolate/isolate.h"
@@ -145,6 +146,23 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
   return InitializeGraph();
 }
 
+void NativeMaterialization::RestoreFieldState(HeapObject& object,
+                                              std::uint32_t slot,
+                                              FieldState state) {
+  const auto& layout = *Heap::ClassOf(object);
+  std::uint32_t width = 1;
+  if (!layout.value_fields().empty()) {
+    const auto& embedded = layout.value_fields()[slot];
+    if (embedded.layout != nullptr) {
+      width = InlineFieldSlotCount(embedded.layout->field_count(), embedded.nullable);
+    }
+  }
+  auto& storage = Heap::InstanceFields(object);
+  for (std::uint32_t leaf = 0; leaf < width; ++leaf) {
+    storage.SetFieldState(slot + leaf, state);
+  }
+}
+
 ExecutionStatus NativeMaterialization::InitializeGraph() noexcept {
   const auto& checkpoint = *checkpoint_;
   const auto& checkpoint_layout = *checkpoint.layout;
@@ -171,10 +189,8 @@ ExecutionStatus NativeMaterialization::InitializeGraph() noexcept {
                     ? DecodeNativeValue(values.subspan(field.value).front())
                     : objects_.subspan(field.object).front();
       }
-      if (const auto stored = heap_->SetField(object, *slot, value); !stored) {
-        return stored.error();
-      }
-      Heap::InstanceFields(object).SetFieldState(*slot, field.state);
+      heap_->WriteValueField(object, *slot, value);
+      RestoreFieldState(object, *slot, field.state);
     }
   }
   return ExecutionStatus::Returned;

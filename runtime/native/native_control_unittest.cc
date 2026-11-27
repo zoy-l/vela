@@ -20,15 +20,12 @@ TEST(NativeControlTest, SafepointRequestsPreserveIndependentSourcesUntilEachIsCo
   const auto endpoint = control.endpoint();
   ASSERT_TRUE(endpoint.Post([&] { ++calls; }));
   ASSERT_TRUE(endpoint.Post([&] { ++calls; }));
-  EXPECT_NE(requests.load(), 0);
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 1);
-  EXPECT_NE(requests.load(), 0);
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 2);
-  EXPECT_NE(requests.load(), 0);
-  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
-  EXPECT_EQ(calls, 3);
+  for (int expected = 1; expected <= 3; ++expected) {
+    SCOPED_TRACE(expected);
+    EXPECT_NE(requests.load(), 0);
+    EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+    EXPECT_EQ(calls, expected);
+  }
   EXPECT_EQ(requests.load(), 0);
 
   ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));

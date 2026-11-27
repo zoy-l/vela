@@ -55,8 +55,10 @@ def content_types() -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def package_extension(destination: Path) -> Path:
+def package_extension(destination: Path | None = None) -> Path:
     package = json.loads((EDITOR / "package.json").read_text(encoding="utf-8"))
+    if destination is None:
+        destination = ROOT / "out" / "editor" / f'{package["name"]}-{package["version"]}.vsix'
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix="vela-extension-", suffix=".tmp", dir=destination.parent)
     os.close(descriptor)
@@ -121,9 +123,7 @@ def main(arguments: list[str] | None = None) -> int:
         if parsed.code is None or not parsed.code.is_file():
             parser.error("editor test requires --code PATH to a VS Code launcher")
         return test_extension(parsed.code)
-    package = json.loads((EDITOR / "package.json").read_text(encoding="utf-8"))
-    destination = parsed.output or ROOT / "out" / "editor" / f'{package["name"]}-{package["version"]}.vsix'
-    print(package_extension(destination.resolve()))
+    print(package_extension(parsed.output.resolve() if parsed.output else None))
     return 0
 
 

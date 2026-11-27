@@ -14,6 +14,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "benchmarks/jit_benchmark.h"
 #include "compiler/development/development_session.h"
@@ -181,7 +182,7 @@ class RetainedValues final {
       gate_ = context.CreateCompleter();
       const auto future = context.FutureValue<std::int64_t>(gate_.future());
       if (!future) {
-        return std::unexpected("cannot create suspended-task gate");
+        return std::unexpected(future.error().message);
       }
       gate_value_ = internal::HandleAccess::Read(*future);
     }
@@ -190,7 +191,7 @@ class RetainedValues final {
                             ? session.Invoke(kModule, "start", std::array{gate_value_})
                             : session.Invoke(kModule, "make");
       if (!made) {
-        return std::unexpected("retained-state setup failed");
+        return std::unexpected(std::string(ExecutionStatusName(made.error())));
       }
       value = *made;
     }
@@ -201,26 +202,15 @@ class RetainedValues final {
   std::expected<void, std::string> Verify(std::int64_t version) {
     auto& session = *session_;
     if (kind_ == RetainedState::Continuations) {
-      if (!gate_.Complete(runtime::Value::Integer(0))) {
-        return std::unexpected("cannot release suspended tasks");
-      }
-      for (const auto value : values_) {
-        auto& future = *runtime::Heap::GetFuture(*value.AsObject());
-        if (session.isolate().scheduler().PumpUntil(future) == runtime::FuturePumpResult::Idle) {
-          return std::unexpected("suspended task did not complete");
-        }
-        const auto& result = future.result();
-        if (result.state != runtime::FutureState::Succeeded ||
-            result.value.AsInteger() != kSaved + version) {
-          return std::unexpected("old continuation checksum mismatch");
-        }
-      }
-      return {};
+      return VerifyContinuations(version);
     }
     const auto expected = kSaved + (kind_ == RetainedState::Instances ? kAdded : version);
     for (const auto value : values_) {
       const auto read = session.Invoke(kModule, "read", std::array{value});
-      if (!read || read->AsInteger() != expected) {
+      if (!read) {
+        return std::unexpected(std::string(ExecutionStatusName(read.error())));
+      }
+      if (read->AsInteger() != expected) {
         return std::unexpected("retained object or closure checksum mismatch");
       }
     }
@@ -237,6 +227,26 @@ class RetainedValues final {
   }
 
  private:
+  std::expected<void, std::string> VerifyContinuations(std::int64_t version) {
+    if (!gate_.Complete(runtime::Value::Integer(0))) {
+      return std::unexpected("cannot release suspended tasks");
+    }
+    for (const auto value : values_) {
+      auto& future = *runtime::Heap::GetFuture(*value.AsObject());
+      if (session_->isolate().scheduler().PumpUntil(future) == runtime::FuturePumpResult::Idle) {
+        return std::unexpected("suspended task did not complete");
+      }
+      const auto& result = future.result();
+      if (result.state != runtime::FutureState::Succeeded) {
+        return std::unexpected(std::string(result.diagnostic.Message()));
+      }
+      if (result.value.AsInteger() != kSaved + version) {
+        return std::unexpected("old continuation checksum mismatch");
+      }
+    }
+    return {};
+  }
+
   DevelopmentSession* session_;
   RetainedState kind_;
   std::vector<runtime::Value> values_;
@@ -313,7 +323,11 @@ void ActiveReload(benchmark::State& state, NativeCodeTier tier) {
       state.SkipWithError(candidate.error());
       return;
     }
-    (void)session.Submit(std::move(*candidate));
+    const auto submitted = session.Submit(std::move(*candidate));
+    if (submitted.status != DevelopmentStatus::WaitingForSafepoint) {
+      state.SkipWithError(submitted.message);
+      return;
+    }
     const auto value = session.RunEntry();
     state.SetIterationTime(std::chrono::duration<double>(Clock::now() - started).count());
     if (!value || value->AsInteger() != version ||

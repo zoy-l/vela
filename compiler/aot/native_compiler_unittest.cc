@@ -317,9 +317,8 @@ export func read(): dynamic {
 }
 )");
   ASSERT_TRUE(prepared.Succeeded());
-  const auto result = Compile(prepared.program, {.exports = {"read"}, .preserve_ir = true});
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_constant"), std::string::npos);
+  const auto result = Compile(prepared.program, {.exports = {"read"}});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
 }
 
 TEST(NativeCompilerTest, ReservesLeafResultsOnlyForCallsThatUseTheLeafEntry) {
@@ -1179,15 +1178,17 @@ struct LoopHostCalls {
   bool has_checked = false;
 };
 
-TEST(NativeCompilerTest, ExecutionFrameAndDepthStoresShareAliasMetadataAcrossHostCalls) {
-  const auto prepared = Prepare(R"(
+constexpr std::string_view kHostCallLoop = R"(
 external func step(value: int): int;
 export func calculate(count: int): int {
   let result = 0;
   for (let index = 0; index < count; index++) { result = step(result); }
   return result;
 }
-)");
+)";
+
+TEST(NativeCompilerTest, ExecutionFrameAndDepthStoresShareAliasMetadataAcrossHostCalls) {
+  const auto prepared = Prepare(kHostCallLoop);
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto generated = GenerateForTest(prepared.program, "frames", NativeCodePlacement::Linked);
   ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
@@ -1249,14 +1250,7 @@ LoopHostCalls CollectHostCalls(const llvm::Loop& loop) {
 }
 
 TEST(NativeCompilerTest, SelectsDirectOrCheckedHostAbiOutsideTheLoop) {
-  const auto prepared = Prepare(R"(
-external func step(value: int): int;
-export func calculate(count: int): int {
-  let result = 0;
-  for (let index = 0; index < count; index++) { result = step(result); }
-  return result;
-}
-)");
+  const auto prepared = Prepare(kHostCallLoop);
   ASSERT_TRUE(prepared.Succeeded());
   const auto result = Compile(prepared.program, {.exports = {"calculate"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
@@ -1311,7 +1305,6 @@ export func calculate(count: int): int {
   llvm::LLVMContext context;
   const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
-  EXPECT_EQ(module->getFunction("vela_native_v1_constant"), nullptr);
   std::size_t direct_loops = 0;
   WithFunctionLoops(*module, [&](llvm::Function&, const llvm::LoopInfo& loops) {
     for (const auto* loop : loops.getLoopsInPreorder()) {

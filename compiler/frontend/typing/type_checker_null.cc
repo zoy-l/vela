@@ -1,8 +1,14 @@
 #include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/type_names.h"
 
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
 
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -13,7 +19,13 @@ void TypeChecker::RefineAssignedLocal(const LocalBinding& binding, const Type& v
   if (predicate_scope_ && predicate_scope_->binding == binding.id) {
     predicate_scope_->assigned = true;
   }
-  refinements_.Erase(binding.id);
+  refinements_.Invalidate(binding.id);
+  if (value.kind != Type::Kind::Never && value.kind != Type::Kind::Null &&
+      IsSubtype(value, binding.type) &&
+      !IsSameType(value, binding.type)) {
+    refinements_.Set(binding.id, value);
+    return;
+  }
   if (binding.type.kind != Type::Kind::Dynamic && IsPotentiallyNullable(binding.type) &&
       IsValid(value) && !IsPotentiallyNullable(value)) {
     refinements_.Set(binding.id, NonNullable(binding.type));
@@ -53,17 +65,25 @@ void TypeChecker::DiagnoseBinaryOperandMismatch(const Expression& expression,
 void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;
   using Truth = ConditionTruth;
-  if (condition.kind == Kind::Call && outcome == Truth::AlwaysTrue) {
-    RefinePredicateCall(condition);
+  if (condition.kind == Kind::Name) {
+    const auto* binding = LookupLocal(condition.text);
+    const auto alias = binding == nullptr ? nullptr : refinements_.FindCondition(binding->id);
+    if (alias) {
+      const auto& types = outcome == Truth::AlwaysTrue ? alias->when_true : alias->when_false;
+      refinements_.Apply({.types = types, .conditions = {}});
+    }
+    return;
+  }
+  if (condition.kind == Kind::Call) {
+    RefinePredicateCall(condition, outcome);
     return;
   }
   if (condition.kind == Kind::Unary && condition.operation == TokenKind::Bang) {
     RefineCondition(*condition.operand, NegateConditionTruth(outcome));
     return;
   }
-  if (condition.kind == Kind::TypeTest && outcome == Truth::AlwaysTrue &&
-      condition.operand->kind == Kind::Name) {
-    RefineTypeTest(condition);
+  if (condition.kind == Kind::TypeTest && condition.operand->kind == Kind::Name) {
+    RefineTypeTest(condition, outcome);
     return;
   }
   if (condition.kind == Kind::Conditional) {
@@ -89,6 +109,22 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
   RefineNullComparison(condition, outcome);
 }
 
+TypeChecker::ConditionFacts TypeChecker::CaptureCondition(const Expression& expression) {
+  const auto capture = [&](ConditionTruth outcome) {
+    const auto checkpoint = refinements_.BeginBranch();
+    RefineCondition(expression, outcome);
+    auto changes = refinements_.Capture(checkpoint);
+    absl::erase_if(changes.types, [](const auto& entry) { return !entry.second; });
+    return std::move(changes.types);
+  };
+  auto when_true = capture(ConditionTruth::AlwaysTrue);
+  auto when_false = capture(ConditionTruth::AlwaysFalse);
+  if (when_true.empty() && when_false.empty()) {
+    return nullptr;
+  }
+  return std::make_shared<ConditionRefinements>(std::move(when_true), std::move(when_false));
+}
+
 void TypeChecker::RefineNullComparison(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;
   using Truth = ConditionTruth;
@@ -111,14 +147,23 @@ void TypeChecker::RefineNullComparison(const Expression& condition, ConditionTru
   if ((condition.operation == TokenKind::BangEqual) == (outcome == Truth::AlwaysTrue)) {
     refinements_.Set(binding->id, NonNullable(binding->type));
   } else {
-    refinements_.Erase(binding->id);
+    refinements_.Set(binding->id, {.kind = Type::Kind::Null, .name = kNullTypeName});
   }
 }
 
-void TypeChecker::RefineTypeTest(const Expression& condition) {
+void TypeChecker::RefineTypeTest(const Expression& condition, ConditionTruth outcome) {
   const auto* binding = LookupLocal(condition.operand->text);
   const auto target = facts_.type_operands.find(&condition);
   if (binding == nullptr || target == facts_.type_operands.end()) {
+    return;
+  }
+  if (outcome == ConditionTruth::AlwaysFalse) {
+    if (target->second.kind == Type::Kind::Null) {
+      refinements_.Set(binding->id, NonNullable(binding->type));
+    } else if (binding->type.nullable && !target->second.nullable &&
+               IsSubtype(NonNullable(binding->type), target->second)) {
+      refinements_.Set(binding->id, {.kind = Type::Kind::Null, .name = kNullTypeName});
+    }
     return;
   }
   const auto type =
@@ -129,7 +174,7 @@ void TypeChecker::RefineTypeTest(const Expression& condition) {
 }
 
 void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEffects& effects) {
-  if (expression.kind == Expression::Kind::Call) {
+  if (expression.kind == Expression::Kind::Call || expression.kind == Expression::Kind::Await) {
     effects.may_call = true;
   }
   if (expression.kind == Expression::Kind::Binary && expression.operation == TokenKind::Equal &&
@@ -214,7 +259,7 @@ void TypeChecker::InvalidateAssignments(const AssignmentEffects& effects) {
   }
   for (const auto name : effects.names) {
     if (const auto* binding = LookupLocal(name)) {
-      refinements_.Erase(binding->id);
+      refinements_.Invalidate(binding->id);
     }
   }
 }

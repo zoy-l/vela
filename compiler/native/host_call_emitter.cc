@@ -124,7 +124,7 @@ void FunctionEmitter::BorrowHostExecution() {
       }
       ++call_count;
       call_index = index;
-    } else if (ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
+    } else if (ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess()) {
       return;
     }
   }
@@ -621,6 +621,10 @@ void FunctionEmitter::EmitImport() {
   auto* called = builder_.CreateCall(signature, target, arguments);
   EmitHostBoundary(HostBorrow::Exit);
   CheckStatus(called);
+  if (return_type.kind == Kind::Never) {
+    Fail(Status(builder_, ExecutionStatus::InvalidEntry));
+    return;
+  }
   if (return_type.kind != Kind::Void) {
     llvm::Value* value = builder_.CreateLoad(result_type, host_output);
     if (packed_result) {

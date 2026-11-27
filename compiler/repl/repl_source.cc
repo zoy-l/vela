@@ -106,7 +106,8 @@ bool IsBlockDeclaration(std::span<const frontend::Token> tokens) {
     return tokens[1].kind == Kind::Class;
   }
   const auto kind = tokens.front().kind;
-  return kind == Kind::Func || kind == Kind::Class || kind == Kind::Interface || kind == Kind::Enum;
+  return kind == Kind::Func || kind == Kind::Class || kind == Kind::Struct ||
+         kind == Kind::Interface || kind == Kind::Enum;
 }
 
 InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexed) {
@@ -261,7 +262,6 @@ void ReplSource::BindEntries(frontend::Program& program,
     const auto line = function.location.line;
     if (line == current.header_line) {
       function.name = current.name();
-      function.role = frontend::Function::Role::InteractiveEntry;
       active = &function;
     }
   }

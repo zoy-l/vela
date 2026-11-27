@@ -64,7 +64,7 @@ void Lowerer::LowerReturn(const frontend::Statement& statement) {
           {.opcode = Opcode::Move, .dst = snapshot, .lhs = result, .location = statement.location});
       result = snapshot;
     }
-  } else {
+  } else if (!returns_constructed_value_) {
     result = AllocateRegister(statement.location);
     Emit({.opcode = Opcode::LoadNull, .dst = result, .location = statement.location});
   }

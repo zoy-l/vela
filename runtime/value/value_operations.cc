@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -24,10 +25,10 @@ std::expected<std::uint32_t, ExecutionStatus> ArrayIndex(std::int64_t index) {
   return static_cast<std::uint32_t>(index);
 }
 
-ExecutionStatus IndexError(ArrayAccessError error) {
-  return error == ArrayAccessError::OutOfBounds ? ExecutionStatus::IndexOutOfBounds
-                                                : ExecutionStatus::TypeError;
-}
+template <class DoubleEquality>
+bool IsEqualObjectWithDouble(const HeapObject& left,
+                             const HeapObject& right,
+                             const DoubleEquality& equal) noexcept;
 
 template <class DoubleEquality>
 bool IsEqualWithDouble(Value left, Value right, const DoubleEquality& equal) noexcept {
@@ -47,9 +48,41 @@ bool IsEqualWithDouble(Value left, Value right, const DoubleEquality& equal) noe
     case ValueKind::String:
       return IsEqualString(*left.AsString(), *right.AsString());
     case ValueKind::Object:
-      return IsEqualObject(*left.AsObject(), *right.AsObject());
+      return IsEqualObjectWithDouble(*left.AsObject(), *right.AsObject(), equal);
   }
   std::unreachable();
+}
+
+template <class DoubleEquality>
+bool IsEqualObjectWithDouble(const HeapObject& left,
+                             const HeapObject& right,
+                             const DoubleEquality& equal) noexcept {
+  const auto* layout = Heap::ClassOf(left);
+  if (layout != nullptr && layout->IsStruct()) {
+    const auto* right_layout = Heap::ClassOf(right);
+    if (right_layout == nullptr || &layout->nominal_type() != &right_layout->nominal_type()) {
+      return false;
+    }
+    for (std::uint32_t field = 0; field < layout->field_count(); ++field) {
+      if (!IsEqualWithDouble(Heap::LoadField(left, field), Heap::LoadField(right, field), equal)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (&left == &right) {
+    return true;
+  }
+  if (layout != nullptr && layout->HasReflectionIdentity()) {
+    return IsEqualReflectionIdentity(left, right);
+  }
+  if (layout != nullptr && layout->IsEnum()) {
+    const auto* right_layout = Heap::ClassOf(right);
+    return right_layout != nullptr && &layout->nominal_type() == &right_layout->nominal_type() &&
+           EnumOrdinal(left) == EnumOrdinal(right);
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -73,24 +106,11 @@ std::int64_t EnumOrdinal(const HeapObject& object) noexcept {
 }
 
 bool IsEqualValue(Value left, Value right) noexcept {
-  return IsEqualWithDouble(left, right,
-                           [](double first, double second) { return first == second; });
+  return IsEqualWithDouble(left, right, std::equal_to<double>{});
 }
 
 bool IsEqualObject(const HeapObject& left, const HeapObject& right) noexcept {
-  if (&left == &right) {
-    return true;
-  }
-  const auto* layout = Heap::ClassOf(left);
-  if (layout != nullptr && layout->HasReflectionIdentity()) {
-    return IsEqualReflectionIdentity(left, right);
-  }
-  if (layout != nullptr && layout->IsEnum()) {
-    const auto* right_layout = Heap::ClassOf(right);
-    return right_layout != nullptr && &layout->nominal_type() == &right_layout->nominal_type() &&
-           EnumOrdinal(left) == EnumOrdinal(right);
-  }
-  return false;
+  return IsEqualObjectWithDouble(left, right, std::equal_to<double>{});
 }
 
 bool IsSameValueZero(Value left, Value right) noexcept {
@@ -111,14 +131,16 @@ std::expected<Value, ExecutionStatus> ConcatenateValues(Heap& heap, Value left, 
   return Value::String(*string);
 }
 
-std::expected<Value, ExecutionStatus> ReadIndex(HeapObject& object, std::int64_t index) {
+std::expected<Value, ExecutionStatus> ReadIndex(Heap& heap,
+                                                HeapObject& object,
+                                                std::int64_t index) {
   const auto offset = ArrayIndex(index);
   if (!offset) {
     return std::unexpected(offset.error());
   }
-  const auto value = Heap::GetElement(object, *offset);
+  const auto value = heap.GetElement(object, *offset);
   if (!value) {
-    return std::unexpected(IndexError(value.error()));
+    return std::unexpected(ArrayExecutionStatus(value.error()));
   }
   return *value;
 }
@@ -133,7 +155,7 @@ std::expected<void, ExecutionStatus> WriteIndex(Heap& heap,
   }
   const auto written = heap.SetElement(object, *offset, value);
   if (!written) {
-    return std::unexpected(IndexError(written.error()));
+    return std::unexpected(ArrayExecutionStatus(written.error()));
   }
   return {};
 }

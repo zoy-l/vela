@@ -28,6 +28,7 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 
 namespace vela::ir {
 
@@ -278,6 +279,10 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
                           const frontend::ClassDescriptor& class_info) {
   Class output_class;
   output_class.name = source_class.name;
+  output_class.value_layout = class_info.type.value_layout;
+  if (output_class.value_layout != nullptr) {
+    output_class.kind = Class::Kind::Struct;
+  }
   output_class.native_key = source_class.native_key;
   const auto& source_path = source_.sources.at(source_class.location.source_id).path;
   switch (source_class.reflection_role) {
@@ -401,6 +406,7 @@ void Lowerer::BuildFunctionTable() {
 void Lowerer::BeginFunctionBody(Function& function, const frontend::Class* owner) {
   current_function_ = &function;
   current_owner_ = owner;
+  returns_constructed_value_ = false;
   binding_registers_.clear();
   next_register_ = 0;
   double_constant_ids_.clear();
@@ -454,8 +460,8 @@ void Lowerer::StoreFunction(Function function) {
 
 void Lowerer::LowerCaptures(const frontend::Function& source,
                             const frontend::LambdaDescriptor& lambda) {
-  for (std::size_t index = 0; index < lambda.captures.size(); ++index) {
-    const auto& capture = lambda.captures.at(index);
+  std::uint32_t offset = 0;
+  for (const auto& capture : lambda.captures) {
     const auto reg = AllocateRegister(source.location);
     RecordValueType(reg,
                     capture.kind == frontend::BindingKind::Mutable
@@ -466,9 +472,10 @@ void Lowerer::LowerCaptures(const frontend::Function& source,
         .opcode = Opcode::GetField,
         .dst = reg,
         .lhs = 0,
-        .index = static_cast<FieldId>(index),
+        .index = offset,
         .location = source.location,
     });
+    offset += capture.kind == frontend::BindingKind::Mutable ? 1U : FieldSlotCount(capture.type);
     scopes_.back().emplace(capture.name, Local{
                                              .reg = reg,
                                              .type = capture.type,
@@ -515,7 +522,7 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
     auto reg = static_cast<RegisterId>(index) + parameter_base;
     const auto& type =
         function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type;
-    if (parameter.initializer) {
+    if (parameter.initializer && function_info.parameters.at(index).has_default) {
       reg = LowerDefaultValue(
           *parameter.initializer, {.reg = reg, .type = current_function_->value_types.at(reg)},
           parameter_base + count + static_cast<RegisterId>(index), type, parameter.location);
@@ -541,6 +548,9 @@ CallSignature Lowerer::DescribeCallSignature(const frontend::FunctionDescriptor&
   if (source.narrowed_parameter) {
     signature.narrowed_parameter = RegisterRuntimeType(*source.narrowed_parameter);
   }
+  if (source.false_narrowed_parameter) {
+    signature.false_narrowed_parameter = RegisterRuntimeType(*source.false_narrowed_parameter);
+  }
   for (const auto& parameter : source.parameters) {
     signature.parameters.push_back(DescribeCallParameter(source, parameter));
   }
@@ -558,6 +568,25 @@ const frontend::ClassDescriptor* Lowerer::ScriptConstructorOwner(
              ? owner
              : nullptr;
 }
+
+namespace {
+
+frontend::TypeDescriptor FunctionReturnType(const frontend::Function& source,
+                                            const frontend::FunctionDescriptor& signature,
+                                            const frontend::ClassDescriptor* constructor) {
+  if (constructor != nullptr) {
+    if (constructor->type.value_layout != nullptr) {
+      return constructor->type;
+    }
+    return {.kind = frontend::TypeDescriptor::Kind::Void, .name = frontend::kVoidTypeName};
+  }
+  if (source.is_setter && signature.setter_return_type) {
+    return *signature.setter_return_type;
+  }
+  return signature.return_type;
+}
+
+}  // namespace
 
 Function Lowerer::PrepareFunction(const frontend::Function& source,
                                   const frontend::FunctionDescriptor& function_info,
@@ -585,23 +614,20 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
   } else {
     function.name = owner == nullptr ? source.name : MethodKey(owner->name, source);
   }
-  function.return_type = function_info.return_type;
-  if (source.is_setter && function_info.setter_return_type) {
-    function.return_type = *function_info.setter_return_type;
-  }
-  if (constructor != nullptr) {
-    function.return_type = {
-        .kind = frontend::TypeDescriptor::Kind::Void,
-        .name = frontend::kVoidTypeName,
-    };
-  }
+  function.return_type = FunctionReturnType(source, function_info, constructor);
   const bool has_receiver =
       owner_info != nullptr && source.storage == frontend::MemberStorage::Instance;
+  function.struct_receiver = has_receiver && owner_info->type.value_layout != nullptr &&
+                             constructor == nullptr && !function.is_async;
   const auto masks = constructor != nullptr ? ConstructorMaskCount(*constructor) : 0;
   auto& signature = function.signature.emplace();
   signature.hidden_parameters = static_cast<std::uint8_t>(has_receiver || lambda != nullptr);
   if (function_info.narrowed_parameter) {
     signature.narrowed_parameter = RegisterRuntimeType(*function_info.narrowed_parameter);
+  }
+  if (function_info.false_narrowed_parameter) {
+    signature.false_narrowed_parameter =
+        RegisterRuntimeType(*function_info.false_narrowed_parameter);
   }
   const auto parameters = function.is_generated_constructor || source.is_getter
                               ? std::span<const frontend::FunctionDescriptor::Parameter>{}
@@ -647,7 +673,12 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     StoreFunction(std::move(function));
     return;
   }
+  // struct 构造器的显式和隐式 return 都返回当前接收值。
+  const auto returns_constructed_value = owner != nullptr &&
+                                         source.name == frontend::kConstructorName &&
+                                         function.return_type.value_layout != nullptr;
   BeginFunctionBody(function, owner);
+  returns_constructed_value_ = returns_constructed_value;
   PushScope();
 
   LowerFunctionParameters(source, function_info, owner, lambda);
@@ -665,10 +696,12 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     returns_void = arguments != model_.generic_arguments.end() && arguments->second.size() == 1 &&
                    arguments->second.front().kind == frontend::TypeDescriptor::Kind::Void;
   }
-  if (returns_void &&
+  if ((returns_void || returns_constructed_value) &&
       (source.body == nullptr || model_.control_flow.at(source.body.get()).can_fall_through)) {
-    const RegisterId result = AllocateRegister(source.location);
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = source.location});
+    const RegisterId result = returns_constructed_value ? 0 : AllocateRegister(source.location);
+    if (!returns_constructed_value) {
+      Emit({.opcode = Opcode::LoadNull, .dst = result, .location = source.location});
+    }
     Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
   }
   function.register_count = next_register_;
@@ -738,6 +771,28 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
   const auto first_temporary = next_register_;
   auto value = LowerExpressionValue(expression);
   const auto record_definition = [&] {
+    const auto& types = current_function_->value_types;
+    // 部分 builtin 的结果类型由表达式首次声明，尚未进入稀疏类型表。
+    const auto recorded = value.reg < types.size() ? types[value.reg] : frontend::TypeDescriptor{};
+    const auto changes_class_layout = recorded.kind == frontend::TypeDescriptor::Kind::Class &&
+                                      value.type.kind == frontend::TypeDescriptor::Kind::Class &&
+                                      recorded.name != value.type.name;
+    const auto changes_value_layout =
+        value.reg >= first_temporary && recorded.kind != frontend::TypeDescriptor::Kind::Invalid &&
+        (recorded.value_layout != nullptr || value.type.value_layout != nullptr) &&
+        !frontend::IsSameType(recorded, value.type);
+    if (changes_class_layout || changes_value_layout) {
+      // 收窄后的类布局和聚合表示必须落入独立寄存器，不能覆盖原绑定的声明类型。
+      const auto converted = AllocateRegister(expression.location);
+      RecordValueType(converted, value.type, ValueTypeRecording::Declare);
+      Emit({
+          .opcode = Opcode::Move,
+          .dst = converted,
+          .lhs = value.reg,
+          .location = expression.location,
+      });
+      value.reg = converted;
+    }
     if (value.reg >= first_temporary) {
       RecordValueType(value.reg, value.type, ValueTypeRecording::Declare);
     }
@@ -771,6 +826,12 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
     return value;
   }
   if (target.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    if (value.type.value_layout != nullptr) {
+      const auto boxed = AllocateRegister(location);
+      RecordValueType(boxed, target);
+      Emit({.opcode = Opcode::Move, .dst = boxed, .lhs = value.reg, .location = location});
+      return {.reg = boxed, .type = target};
+    }
     if (value.type.kind != frontend::TypeDescriptor::Kind::Enum) {
       return {.reg = value.reg, .type = target};
     }
@@ -1027,6 +1088,15 @@ Lowerer::LoweredValue Lowerer::LowerMemberAssignment(const frontend::Expression&
     });
     return value;
   }
+  const auto* receiver_type = model_.super_members.contains(&left)
+                                  ? nullptr
+                                  : &model_.expression_types.at(left.object.get());
+  if (receiver_type != nullptr && receiver_type->value_layout != nullptr) {
+    const auto destination = LowerMemberMutationTarget(left, MutationAccess::Write);
+    const auto value = LowerExpression(right);
+    StoreMutationTarget(destination, value.reg, left.location);
+    return value;
+  }
   const LoweredValue object = SnapshotBefore(LowerMemberReceiver(left), right);
   const auto& class_info = MemberClass(left, object.type);
   const auto method = class_info.methods.find(left.text);
@@ -1132,11 +1202,12 @@ Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expressio
 }
 
 Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& expression) {
-  const LoweredValue object = LowerMemberReceiver(expression);
+  std::optional<StructReceiver> place;
+  const auto object = LowerMutableMemberReceiver(expression, place);
   const auto& class_info = MemberClass(expression, object.type);
   const auto field = class_info.fields.find(class_info.FieldKey(expression.text));
   if (field == class_info.fields.end()) {
-    return LowerGetter(expression, object);
+    return LowerGetter(expression, object, place ? &*place : nullptr);
   }
   const RegisterId result = AllocateRegister(expression.location);
   std::optional<std::size_t> null_jump;
@@ -1158,7 +1229,8 @@ Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& exp
 }
 
 Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expression,
-                                           const LoweredValue& object) {
+                                           const LoweredValue& object,
+                                           const StructReceiver* place) {
   const auto location = expression.location;
   const auto& signature = MemberClass(expression, object.type).methods.at(expression.text);
   const auto& method_owner = signature.member_owner;
@@ -1187,6 +1259,8 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
       .location = location,
       .binding_receiver =
           target.opcode == Opcode::Call ? ReceiverDeclaration(object.type) : std::nullopt,
+      .struct_receiver =
+          place == nullptr ? nullptr : std::make_shared<const StructReceiver>(*place),
   });
   FinishNullSafe(null_jump, result, location);
   return {.reg = result, .type = result_type};
@@ -1285,7 +1359,10 @@ Lowerer::MethodCallTarget Lowerer::ResolveMethodCall(const frontend::Expression&
                                                      const std::string& key) const {
   const auto selector = method_selectors_.find(key);
   if (selector != method_selectors_.end() && !model_.super_members.contains(&member)) {
-    return {.opcode = Opcode::CallVirtual, .index = selector->second};
+    const auto& receiver = model_.expression_types.at(member.object.get());
+    if (receiver.value_layout == nullptr) {
+      return {.opcode = Opcode::CallVirtual, .index = selector->second};
+    }
   }
   return {.opcode = Opcode::Call, .index = function_ids_.at(key)};
 }
@@ -1323,21 +1400,35 @@ const frontend::ClassDescriptor& Lowerer::MemberClass(
   return model_.classes.at(*parent);
 }
 
+Lowerer::LoweredValue Lowerer::LowerMutableMemberReceiver(const frontend::Expression& member,
+                                                          std::optional<StructReceiver>& place) {
+  if (!model_.super_members.contains(&member) &&
+      model_.mutable_struct_places.contains(member.object.get())) {
+    const auto target = LowerMutationTarget(*member.object);
+    place = DescribeStructReceiver(target);
+    return target.value;
+  }
+  return LowerMemberReceiver(member);
+}
+
 Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expression) {
   const auto& callee = *expression.callee;
   const auto super = model_.super_members.find(&callee);
   const auto& target =
       super == model_.super_members.end() ? model_.instance_members.at(&expression) : super->second;
-  const auto receiver = LowerMemberReceiver(callee);
+  std::optional<StructReceiver> place;
+  const auto receiver = LowerMutableMemberReceiver(callee, place);
   const auto& method = model_.classes.at(target.owner).methods.at(target.member);
   const auto kind = MethodDeclarationKind(method);
   const auto method_key = MethodKey(target.owner, kind, target.member);
   const auto selected = ResolveMethodCall(callee, method_key);
   if (!callee.null_safe) {
-    return LowerInvocation(expression, method, selected.index, &receiver, selected.opcode);
+    return LowerInvocation(expression, method, selected.index, &receiver, selected.opcode,
+                           place ? &*place : nullptr);
   }
   const auto null_jump = BeginNullSafe(receiver.reg, expression.location);
-  auto result = LowerInvocation(expression, method, selected.index, &receiver, selected.opcode);
+  auto result = LowerInvocation(expression, method, selected.index, &receiver, selected.opcode,
+                                place ? &*place : nullptr);
   FinishNullSafe(null_jump, result.reg, expression.location);
   result.type = model_.expression_types.at(&expression);
   return result;
@@ -1427,7 +1518,8 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
                                                const frontend::FunctionDescriptor& function,
                                                std::uint32_t function_id,
                                                const LoweredValue* receiver,
-                                               Opcode opcode) {
+                                               Opcode opcode,
+                                               const StructReceiver* place) {
   if (opcode == Opcode::Call && receiver != nullptr && function.intrinsic == Builtin::Reflection) {
     if (const auto snapshot = LowerReflectedInvocation(expression, function, *receiver)) {
       return *snapshot;
@@ -1484,6 +1576,9 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
       .index = function_id,
       .location = expression.location,
       .binding_receiver = binding_receiver,
+      .no_normal_return = function.return_type.kind == frontend::TypeDescriptor::Kind::Never,
+      .struct_receiver =
+          place == nullptr ? nullptr : std::make_shared<const StructReceiver>(*place),
   });
   return {.reg = result, .type = function.return_type};
 }
@@ -1587,6 +1682,12 @@ void Lowerer::Emit(Instruction instruction) {
     instruction.array_type = RegisterArrayType(type);
   }
   RecordInstructionValueType(instruction);
+  if (instruction.opcode == Opcode::NewInstance || instruction.opcode == Opcode::GetField ||
+      instruction.opcode == Opcode::SetField) {
+    const auto receiver =
+        instruction.opcode == Opcode::GetField ? instruction.lhs : instruction.dst;
+    instruction.inline_value = current_function_->value_types.at(receiver).value_layout != nullptr;
+  }
   instruction.handler = current_handler_;
   current_function_->instructions.push_back(std::move(instruction));
 }
@@ -1640,7 +1741,7 @@ void Lowerer::PopScope() {
 
 void Lowerer::DeclareLocal(std::string_view name,
                            RegisterId reg,
-                           frontend::TypeDescriptor type,
+                           const frontend::TypeDescriptor& type,
                            frontend::SourceLocation location,
                            const void* declaration) {
   RecordValueType(reg, type, ValueTypeRecording::Declare);
@@ -1763,6 +1864,41 @@ Lowerer::LoweredValue Lowerer::LowerIncrement(const frontend::Expression& expres
   return {.reg = returned, .type = operand.type};
 }
 
+StructReceiver Lowerer::DescribeStructReceiver(const MutationTarget& target) {
+  if (target.parent != nullptr) {
+    auto place = DescribeStructReceiver(*target.parent);
+    place.fields.push_back(target.slot);
+    return place;
+  }
+  StructReceiver place{
+      .receiver = target.receiver.reg,
+      .index = target.index,
+      .slot = target.slot,
+      .declaration = std::nullopt,
+      .type = target.value.type,
+      .fields = {},
+  };
+  switch (target.kind) {
+    case MutationTarget::Kind::Local:
+      place.kind = StructReceiver::Kind::Local;
+      break;
+    case MutationTarget::Kind::Global:
+      place.kind = StructReceiver::Kind::Global;
+      break;
+    case MutationTarget::Kind::Field:
+      place.kind = StructReceiver::Kind::Field;
+      place.declaration = FieldDeclaration(target.receiver.type, target.slot);
+      break;
+    case MutationTarget::Kind::Index:
+      place.kind = StructReceiver::Kind::Index;
+      break;
+    case MutationTarget::Kind::Member:
+    case MutationTarget::Kind::Setter:
+      std::unreachable();
+  }
+  return place;
+}
+
 Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression& target) {
   MutationTarget destination;
   if (target.kind == frontend::Expression::Kind::Name) {
@@ -1794,45 +1930,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Member) {
-    auto receiver = LowerMemberReceiver(target);
-    receiver.reg =
-        EmitTemporary({.opcode = Opcode::Move, .lhs = receiver.reg, .location = target.location});
-    if (receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
-      const auto text = EmitStringConstant(target.text, target.location);
-      const auto value = AllocateRegister(target.location);
-      const std::array values{receiver.reg, text.reg};
-      EmitBuiltinCall(Builtin::DynamicMemberGet, value, values, target.location);
-      destination.kind = MutationTarget::Kind::Member;
-      destination.receiver = receiver;
-      destination.index = text.reg;
-      destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
-      return destination;
-    }
-    const auto& owner = MemberClass(target, receiver.type);
-    const auto field = owner.fields.find(owner.FieldKey(target.text));
-    destination.receiver = receiver;
-    if (field == owner.fields.end()) {
-      const auto& method = owner.methods.at(target.text);
-      destination.kind = MutationTarget::Kind::Setter;
-      destination.method = ResolveMethodCall(
-          target, MethodKey(method.setter_owner, DeclarationKind::Setter, target.text));
-      destination.value = LowerGetter(target, receiver);
-      return destination;
-    }
-    destination.kind = MutationTarget::Kind::Field;
-    destination.slot = field->second.index;
-    destination.value = {
-        .reg = EmitTemporary({
-            .opcode = Opcode::GetField,
-            .lhs = receiver.reg,
-            .index = destination.slot,
-            .location = target.location,
-            .field_declaration = FieldDeclaration(receiver.type, destination.slot),
-        }),
-        .type = model_.expression_types.at(&target),
-    };
-    RecordValueType(destination.value.reg, destination.value.type);
-    return destination;
+    return LowerMemberMutationTarget(target, MutationAccess::Read);
   }
   if (target.kind == frontend::Expression::Kind::Index) {
     auto receiver = SnapshotBefore(LowerExpression(*target.object), *target.index);
@@ -1853,10 +1951,67 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
   std::unreachable();
 }
 
+Lowerer::MutationTarget Lowerer::LowerMemberMutationTarget(const frontend::Expression& target,
+                                                           MutationAccess access) {
+  MutationTarget destination;
+  LoweredValue receiver;
+  if (!model_.super_members.contains(&target) &&
+      model_.expression_types.at(target.object.get()).value_layout != nullptr) {
+    destination.parent = std::make_unique<MutationTarget>(LowerMutationTarget(*target.object));
+    receiver = destination.parent->value;
+  } else {
+    receiver = LowerMemberReceiver(target);
+    receiver.reg =
+        EmitTemporary({.opcode = Opcode::Move, .lhs = receiver.reg, .location = target.location});
+  }
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    const auto text = EmitStringConstant(target.text, target.location);
+    const auto value = AllocateRegister(target.location);
+    const std::array values{receiver.reg, text.reg};
+    EmitBuiltinCall(Builtin::DynamicMemberGet, value, values, target.location);
+    destination.kind = MutationTarget::Kind::Member;
+    destination.receiver = std::move(receiver);
+    destination.index = text.reg;
+    destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
+    return destination;
+  }
+  const auto& owner = MemberClass(target, receiver.type);
+  const auto field = owner.fields.find(owner.FieldKey(target.text));
+  destination.receiver = receiver;
+  if (field == owner.fields.end()) {
+    const auto& method = owner.methods.at(target.text);
+    destination.kind = MutationTarget::Kind::Setter;
+    destination.method = ResolveMethodCall(
+        target, MethodKey(method.setter_owner, DeclarationKind::Setter, target.text));
+    if (access == MutationAccess::Read) {
+      const auto place = destination.parent != nullptr
+                             ? std::optional(DescribeStructReceiver(*destination.parent))
+                             : std::nullopt;
+      destination.value = LowerGetter(target, receiver, place ? &*place : nullptr);
+    }
+    return destination;
+  }
+  destination.kind = MutationTarget::Kind::Field;
+  destination.slot = field->second.index;
+  destination.value.type = model_.expression_types.at(&target);
+  if (access == MutationAccess::Read) {
+    destination.value.reg = EmitTemporary({
+        .opcode = Opcode::GetField,
+        .lhs = receiver.reg,
+        .index = destination.slot,
+        .location = target.location,
+        .field_declaration = FieldDeclaration(receiver.type, destination.slot),
+    });
+    RecordValueType(destination.value.reg, destination.value.type);
+  }
+  return destination;
+}
+
 void Lowerer::EmitSetterCall(MethodCallTarget target,
                              const LoweredValue& receiver,
                              RegisterId value,
-                             frontend::SourceLocation location) {
+                             frontend::SourceLocation location,
+                             const StructReceiver* place) {
   const std::array arguments{receiver.reg, value};
   const auto base = AllocateRegisterWindow(arguments.size(), location);
   for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -1879,12 +2034,35 @@ void Lowerer::EmitSetterCall(MethodCallTarget target,
       .location = location,
       .binding_receiver =
           target.opcode == Opcode::Call ? ReceiverDeclaration(receiver.type) : std::nullopt,
+      .struct_receiver =
+          place == nullptr ? nullptr : std::make_shared<const StructReceiver>(*place),
   });
 }
 
 void Lowerer::StoreMutationTarget(const MutationTarget& destination,
                                   RegisterId value,
                                   frontend::SourceLocation location) {
+  if (destination.parent != nullptr) {
+    if (destination.kind == MutationTarget::Kind::Setter) {
+      const auto place = DescribeStructReceiver(*destination.parent);
+      EmitSetterCall(destination.method, destination.receiver, value, location, &place);
+      return;
+    }
+    // 右侧可能重入并改写相邻字段；提交时重新读取原位置，只替换当前字段。
+    auto current = ReadMutationTarget(*destination.parent, location);
+    current.reg = EmitTemporary({.opcode = Opcode::Move, .lhs = current.reg, .location = location});
+    RecordValueType(current.reg, current.type);
+    Emit({
+        .opcode = Opcode::SetField,
+        .dst = current.reg,
+        .lhs = value,
+        .index = destination.slot,
+        .location = location,
+        .field_declaration = FieldDeclaration(current.type, destination.slot),
+    });
+    StoreMutationTarget(*destination.parent, current.reg, location);
+    return;
+  }
   const auto& receiver = destination.receiver;
   switch (destination.kind) {
     case MutationTarget::Kind::Global:
@@ -1926,6 +2104,43 @@ void Lowerer::StoreMutationTarget(const MutationTarget& destination,
       EmitIndexWrite(receiver, destination.index, value, location);
       return;
   }
+}
+
+Lowerer::LoweredValue Lowerer::ReadMutationTarget(const MutationTarget& target,
+                                                  frontend::SourceLocation location) {
+  auto receiver = target.receiver;
+  if (target.parent != nullptr) {
+    receiver = ReadMutationTarget(*target.parent, location);
+  }
+  if (target.kind == MutationTarget::Kind::Local) {
+    return receiver;
+  }
+  const auto value = AllocateRegister(location);
+  switch (target.kind) {
+    case MutationTarget::Kind::Local:
+      std::unreachable();
+    case MutationTarget::Kind::Global:
+      Emit({.opcode = Opcode::GetGlobal, .dst = value, .index = target.slot, .location = location});
+      break;
+    case MutationTarget::Kind::Field:
+      Emit({
+          .opcode = Opcode::GetField,
+          .dst = value,
+          .lhs = receiver.reg,
+          .index = target.slot,
+          .location = location,
+          .field_declaration = FieldDeclaration(receiver.type, target.slot),
+      });
+      break;
+    case MutationTarget::Kind::Index:
+      EmitIndexRead(value, receiver, target.index, location);
+      break;
+    case MutationTarget::Kind::Member:
+    case MutationTarget::Kind::Setter:
+      std::unreachable();
+  }
+  RecordValueType(value, target.value.type);
+  return {.reg = value, .type = target.value.type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression) {
@@ -2039,9 +2254,9 @@ Lowerer::LoweredValue Lowerer::LowerBinary(const frontend::Expression& expressio
     return LowerAssignment(expression);
   }
   if (expression.operation == TokenKind::QuestionQuestion) {
-    const auto left = LowerExpression(*expression.left);
+    auto left = LowerExpression(*expression.left);
     return LowerBranchValue(
-        expression, Opcode::JumpIfNull, left.reg, [&] { return left; },
+        expression, Opcode::JumpIfNull, left.reg, [&] { return std::move(left); },
         [&] { return LowerExpression(*expression.right); });
   }
   if (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr) {

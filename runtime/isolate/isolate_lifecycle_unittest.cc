@@ -230,17 +230,18 @@ TEST(IsolateLifecycleTest, ConcurrentFinalHostReleaseNeverOutlivesSuccessfulStop
 
 TEST(IsolateLifecycleTest, TimerCancellationRacingStopReleasesCallbacksOnTheOwner) {
   constexpr std::uint32_t kRuns = 64;
+  const auto owner = std::this_thread::get_id();
   for (std::uint32_t run = 0; run < kRuns; ++run) {
+    std::thread::id released_on;
     Isolate isolate;
-    auto marker = std::make_shared<int>(0);
-    const std::weak_ptr<int> lifetime = marker;
-    auto timer = isolate.scheduler().Periodic(std::chrono::hours(1), [marker] { ++*marker; });
-    marker.reset();
+    auto timer = isolate.scheduler().Periodic(
+        std::chrono::hours(1),
+        [resource = std::make_shared<test::DestructionThread>(released_on)] {});
     std::thread host{[timer] mutable { timer.Cancel(); }};
     const auto stopped = isolate.TryStop();
     host.join();
     ASSERT_TRUE(stopped);
-    EXPECT_TRUE(lifetime.expired());
+    EXPECT_EQ(released_on, owner);
   }
 }
 

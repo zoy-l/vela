@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -53,6 +54,7 @@ void TypeChecker::CollectTypes(const Program& program) {
     types_.emplace(name, Type{.kind = kind, .name = name});
   };
   register_builtin(Type::Kind::Void, kVoidTypeName);
+  register_builtin(Type::Kind::Never, kNeverTypeName);
   register_builtin(Type::Kind::Dynamic, kDynamicTypeName);
   register_builtin(Type::Kind::Bool, kBoolTypeName);
   register_builtin(Type::Kind::Int, kIntTypeName);
@@ -108,26 +110,7 @@ void TypeChecker::CollectTypes(const Program& program) {
   }
 
   for (const Class& class_declaration : program.classes) {
-    const auto& name = class_declaration.name;
-    if (IsStandardTypeNamespace(program, class_declaration)) {
-      ClassInfo info;
-      info.type = types_.at(name);
-      classes_.emplace(name, std::move(info));
-      continue;
-    }
-    if (IsBuiltinName(class_declaration.name)) {
-      AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
-      continue;
-    }
-    const Type type{.kind = Type::Kind::Class, .name = InternTypeName(class_declaration.name)};
-    if (!types_.emplace(class_declaration.name, type).second) {
-      AddDiagnostic(class_declaration.location, "duplicate type '" + class_declaration.name + "'");
-      continue;
-    }
-    ClassInfo info;
-    info.type = type;
-    info.declaration = &class_declaration;
-    classes_.emplace(class_declaration.name, std::move(info));
+    CollectClassType(program, class_declaration);
   }
   for (const auto& alias : program.aliases) {
     if (types_.contains(alias.name) || IsBuiltinName(alias.name) ||
@@ -135,6 +118,34 @@ void TypeChecker::CollectTypes(const Program& program) {
       AddDiagnostic(alias.location, "duplicate or reserved type alias '" + alias.name + "'");
     }
   }
+}
+
+void TypeChecker::CollectClassType(const Program& program, const Class& class_declaration) {
+  const auto& name = class_declaration.name;
+  if (IsStandardTypeNamespace(program, class_declaration)) {
+    ClassInfo info;
+    info.type = types_.at(name);
+    classes_.emplace(name, std::move(info));
+    return;
+  }
+  if (IsBuiltinName(class_declaration.name)) {
+    AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
+    return;
+  }
+  const Type type{
+      .kind = Type::Kind::Class,
+      .name = InternTypeName(class_declaration.name),
+      .value_layout =
+          class_declaration.kind == Class::Kind::Value ? std::make_shared<StructLayout>() : nullptr,
+  };
+  if (!types_.emplace(class_declaration.name, type).second) {
+    AddDiagnostic(class_declaration.location, "duplicate type '" + class_declaration.name + "'");
+    return;
+  }
+  ClassInfo info;
+  info.type = type;
+  info.declaration = &class_declaration;
+  classes_.emplace(class_declaration.name, std::move(info));
 }
 
 void TypeChecker::ResolveDeclarations(const Program& program) {
@@ -177,7 +188,11 @@ void TypeChecker::ResolveClass(const Class& class_declaration, ClassInfo& info) 
 void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInfo& info) {
   if (class_declaration.base_class) {
     const auto base = ResolveType(*class_declaration.base_class, VoidTypePolicy::Forbidden);
-    if (base.kind != Type::Kind::Class || base.nullable) {
+    if (class_declaration.kind == Class::Kind::Value) {
+      AddDiagnostic(class_declaration.base_class->location, "struct cannot extend another type");
+    } else if (base.value_layout != nullptr) {
+      AddDiagnostic(class_declaration.base_class->location, "cannot extend a struct");
+    } else if (base.kind != Type::Kind::Class || base.nullable) {
       AddDiagnostic(class_declaration.base_class->location, "extends requires a class type");
     } else if (const auto& base_info = classes_.at(base.name);
                base_info.declaration != nullptr && !base_info.declaration->native_key.empty()) {
@@ -775,6 +790,7 @@ Diagnostics TypeChecker::ConstructorDiagnostics(const ClassInfo& receiver,
                   .lambdas = facts.lambdas,
                   .lambda_indices = &facts.lambda_indices,
                   .control_flow = &facts.control_flow,
+                  .non_completing_expressions = &facts.non_completing_expressions,
                   .has_explicit_super_call = source.HasExplicitSuperCall(),
                   .base_observation = &observation,
               });

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,7 +27,9 @@ class BinaryEncoder final {
   explicit BinaryEncoder(BinaryWriter& writer) : writer_(&writer) {}
   template <class T>
   void Write(const T& value) {
-    if constexpr (std::is_same_v<T, std::monostate>) {
+    if constexpr (requires { records_.WriteCustom(*this, value); }) {
+      records_.WriteCustom(*this, value);
+    } else if constexpr (std::is_same_v<T, std::monostate>) {
     } else if constexpr (std::is_same_v<T, bool>) {
       writer_->Write(static_cast<std::uint8_t>(value));
     } else if constexpr (std::is_enum_v<T>) {
@@ -84,6 +87,7 @@ class BinaryEncoder final {
     }
   }
   BinaryWriter* writer_;
+  Records records_;
 };
 
 // 编解码共用 Records 字段策略；Derived 只提供领域存储（如 arena、驻留字符串）。
@@ -95,7 +99,7 @@ class BinaryDecoder {
  public:
   template <class T>
   void Read(T& value) {
-    if (!error_.empty()) {
+    if (error_) {
       return;
     }
     auto& derived = static_cast<Derived&>(*this);
@@ -103,20 +107,19 @@ class BinaryDecoder {
       derived.ReadCustom(value);
     } else if constexpr (std::is_same_v<T, std::monostate>) {
     } else if constexpr (std::is_same_v<T, bool>) {
+      const auto offset = reader_.offset();
       std::uint8_t raw{};
       Read(raw);
       if (raw > 1) {
-        error_ = "invalid binary boolean";
+        Fail({.offset = offset, .message = "invalid binary boolean"});
       }
       value = raw != 0;
     } else if constexpr (std::is_enum_v<T>) {
-      std::underlying_type_t<T> raw{};
-      Read(raw);
-      value = static_cast<T>(raw);
+      ReadEnum(value);
     } else if constexpr (std::is_integral_v<T>) {
       const auto raw = reader_.Read<std::make_unsigned_t<T>>();
       if (!raw) {
-        error_ = raw.error().message;
+        Fail(raw.error());
       } else {
         value = std::bit_cast<T>(*raw);
       }
@@ -127,7 +130,7 @@ class BinaryDecoder {
     } else if constexpr (std::is_same_v<T, std::string>) {
       auto text = reader_.Text();
       if (!text) {
-        error_ = text.error().message;
+        Fail(std::move(text.error()));
       } else {
         value = std::move(*text);
       }
@@ -149,11 +152,27 @@ class BinaryDecoder {
 
  private:
   template <class T>
+  void ReadEnum(T& value) {
+    const auto offset = reader_.offset();
+    std::underlying_type_t<T> raw{};
+    Read(raw);
+    if (error_) {
+      return;
+    }
+    const auto decoded = static_cast<T>(raw);
+    if (!Records::IsValidEnum(decoded)) {
+      Fail({.offset = offset, .message = "invalid binary enum"});
+      return;
+    }
+    value = decoded;
+  }
+
+  template <class T>
   void ReadVariant(T& value) {
     std::uint8_t index{};
     Read(index);
     if (index >= std::variant_size_v<T>) {
-      error_ = "invalid binary variant";
+      Fail(reader_.Error("invalid binary variant"));
       return;
     }
     [&]<std::size_t... Indices>(std::index_sequence<Indices...>) {
@@ -167,7 +186,7 @@ class BinaryDecoder {
   void ReadContainer(T& value) {
     const auto count = reader_.Count(1);
     if (!count) {
-      error_ = count.error().message;
+      Fail(count.error());
       return;
     }
     const auto size = *count;
@@ -177,12 +196,12 @@ class BinaryDecoder {
     if constexpr (std::is_same_v<T, std::vector<std::byte>>) {
       const auto bytes = reader_.Take(size);
       if (!bytes) {
-        error_ = bytes.error().message;
+        Fail(bytes.error());
       } else {
         value.assign(bytes->begin(), bytes->end());
       }
     } else if constexpr (requires { typename T::mapped_type; }) {
-      for (std::size_t index = 0; index < size && error_.empty(); ++index) {
+      for (std::size_t index = 0; index < size && !error_; ++index) {
         typename T::key_type key{};
         typename T::mapped_type mapped{};
         Read(key);
@@ -199,28 +218,34 @@ class BinaryDecoder {
 
  protected:
   [[nodiscard]] BinaryReader& reader() noexcept { return reader_; }
-  [[nodiscard]] std::string& error() noexcept { return error_; }
+  [[nodiscard]] bool HasError() const noexcept { return error_.has_value(); }
+  void Fail(BinaryError error) {
+    if (!error_) {
+      error_ = std::move(error);
+    }
+  }
   bool CanAllocate(std::size_t count, std::size_t element_bytes) {
     if (count > (kMaximumBinaryPayloadBytes - allocated_) / element_bytes) {
-      error_ = "binary payload exceeds allocation limit";
+      Fail(reader_.Error("binary payload exceeds allocation limit"));
       return false;
     }
     allocated_ += count * element_bytes;
     return true;
   }
   std::expected<void, std::string> Finish() {
-    if (!error_.empty()) {
-      return std::unexpected(std::move(error_));
+    if (error_) {
+      return std::unexpected("byte " + std::to_string(error_->offset) + ": " + error_->message);
     }
     if (reader_.remaining() != 0) {
-      return std::unexpected("trailing binary payload");
+      return std::unexpected("byte " + std::to_string(reader_.offset()) +
+                             ": trailing binary payload");
     }
     return {};
   }
 
  private:
   BinaryReader reader_;
-  std::string error_;
+  std::optional<BinaryError> error_;
   std::size_t allocated_ = 0;
   friend Derived;
 };

@@ -39,15 +39,17 @@ must be complete; there are no raw types, partial lists, or default arguments.
 A bound may use existing primitive, enum, class, interface, array, function, or
 parameterized value types, their nullable forms, and parameters in scope.
 Qualified names and transparent aliases use normal module/type resolution.
-`void`, the null-literal type, and dynamic are invalid explicit bounds. Omitting
-a bound leaves a distinct abstract parameter; it does not make it dynamic.
+`void` and dynamic are invalid explicit bounds. `null` and `never` may be used
+as bounds. Omitting a bound leaves a distinct abstract parameter; it does not
+make it dynamic.
 
 An unbounded parameter may receive nullable types or explicitly supplied dynamic.
 Existing return-only uses of void remain valid, while fields, parameters, array
 elements, and bounded value positions still reject void. Non-null bounds reject
 nullable arguments. Nullable bounds allow appropriate non-null and nullable
 arguments, but member access still requires the usual non-null proof. Applying
-`T?` to an already nullable argument does not add another nullable wrapper.
+`T?` to an already nullable argument does not add another nullable wrapper;
+when `T` is `never`, it resolves to `null`.
 
 Recursive bounds such as `T extends Comparable<T>` are valid. Parameter dependencies
 may also be mutually recursive through real type constructors. Forwarding cycles

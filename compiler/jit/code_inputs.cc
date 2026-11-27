@@ -31,22 +31,7 @@ void Put(BinaryWriter& writer, T value) {
   writer.Write(static_cast<std::uint64_t>(value));
 }
 
-void Put(BinaryWriter& writer, const frontend::TypeDescriptor& type) {
-  Put(writer, type.kind);
-  Put(writer, type.nullable);
-  writer.Write(type.name);
-}
-
-void Put(BinaryWriter& writer, const layout::Type& type) {
-  Put(writer, type.kind);
-  Put(writer, type.nullable);
-  Put(writer, type.index);
-}
-
-void Put(BinaryWriter& writer, Fingerprint fingerprint) {
-  writer.Write(fingerprint.low);
-  writer.Write(fingerprint.high);
-}
+void Put(BinaryWriter& writer, const frontend::TypeDescriptor& type);
 
 template <class T, class Write>
 void Sequence(BinaryWriter& writer, const std::vector<T>& values, Write write) {
@@ -59,6 +44,31 @@ void Sequence(BinaryWriter& writer, const std::vector<T>& values, Write write) {
 template <class T>
 void Numbers(BinaryWriter& writer, const std::vector<T>& values) {
   Sequence(writer, values, [](BinaryWriter& output, T value) { Put(output, value); });
+}
+
+void Put(BinaryWriter& writer, const frontend::TypeDescriptor& type) {
+  Put(writer, type.kind);
+  Put(writer, type.nullable);
+  writer.Write(type.name);
+  Put(writer, type.value_layout != nullptr);
+  if (type.value_layout != nullptr) {
+    const auto& shape = *type.value_layout;
+    const auto write_type = [](BinaryWriter& output, const auto& field) { Put(output, field); };
+    Sequence(writer, shape.fields, write_type);
+    Numbers(writer, shape.offsets);
+    Sequence(writer, shape.slots, write_type);
+  }
+}
+
+void Put(BinaryWriter& writer, const layout::Type& type) {
+  Put(writer, type.kind);
+  Put(writer, type.nullable);
+  Put(writer, type.index);
+}
+
+void Put(BinaryWriter& writer, Fingerprint fingerprint) {
+  writer.Write(fingerprint.low);
+  writer.Write(fingerprint.high);
 }
 
 void Signature(BinaryWriter& writer, const ir::Function& function, const ir::Program& program) {
@@ -132,10 +142,11 @@ std::vector<Fingerprint> ClassInputs(const ir::Program& program) {
     Put(output, layout.kind);
     Put(output, layout.field_count);
     Numbers(output, layout.reference_fields);
+    Numbers(output, layout.value_slots);
     Put(output, layout.callable_type.value_or(kInvalidFunctionTarget));
     if (layout.callable_type) {
       output.Write(layout::TypeKey(
-          program.layouts, {.kind = layout::Type::Kind::Callable, .index = *layout.callable_type}));
+          program.layouts, {.kind = layout::Type::Kind::Function, .index = *layout.callable_type}));
     }
     fingerprints.push_back(ContentFingerprint(output.bytes()));
   }
@@ -148,6 +159,7 @@ std::vector<Fingerprint> SignatureInputs(const ir::Program& program) {
   for (const auto& function : program.functions) {
     BinaryWriter writer;
     Signature(writer, function, program);
+    Put(writer, function.struct_receiver);
     signatures.push_back(ContentFingerprint(writer.bytes()));
   }
   return signatures;
@@ -217,6 +229,19 @@ void Instruction(BinaryWriter& writer, const ir::Instruction& instruction) {
              [](BinaryWriter& output, const auto declaration) { Put(output, declaration.value); });
   }
   Put(writer, instruction.completes_construction);
+  Put(writer, instruction.no_normal_return);
+  Put(writer, instruction.inline_value);
+  Put(writer, instruction.struct_receiver != nullptr);
+  if (instruction.struct_receiver) {
+    const auto& place = *instruction.struct_receiver;
+    Put(writer, place.kind);
+    Put(writer, place.receiver);
+    Put(writer, place.index);
+    Put(writer, place.slot);
+    Put(writer, place.declaration.value_or(DeclarationId{}).value);
+    Put(writer, place.type);
+    Sequence(writer, place.fields, [](BinaryWriter& output, auto field) { Put(output, field); });
+  }
 }
 
 void InstructionInputs(BinaryWriter& writer,

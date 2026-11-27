@@ -140,7 +140,12 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::CompleteTex
           status = ExecutionStatus::OutOfMemory;
         }
         std::ignore = completer.CompleteError(
-            Value::Null(), {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
+            Value::Null(), {
+                               .message = std::string(ExecutionStatusName(status)),
+                               .stack_trace = {},
+                               .status = status,
+                               .origin = {},
+                           });
         state->Retire();
       },
       state->run);

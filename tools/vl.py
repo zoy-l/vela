@@ -7,20 +7,20 @@ import subprocess
 import sys
 
 
-COMMAND_MODULES = {
-    "build": "tools.build",
-    "bench": "tools.bench",
-    "bindgen": "tools.bindgen",
-    "clangd": "tools.clangd",
-    "config": "tools.config",
-    "doctor": "tools.doctor",
-    "editor": "tools.editor",
-    "embed": "tools.embed",
-    "format": "tools.format",
-    "lint": "tools.lint",
-    "llvm": "tools.llvm",
-    "package": "tools.package",
-    "test": "tools.test",
+COMMANDS = {
+    "build": "Configure and build a target",
+    "bench": "Run Release benchmarks, comparisons and --gc-report",
+    "bindgen": "Generate or verify native class bindings from C++ headers",
+    "clangd": "Generate compile_commands.json",
+    "config": "Generate a GN output directory",
+    "doctor": "Check the project toolchain",
+    "editor": "Package the VS Code extension",
+    "embed": "Export a relocatable embedding SDK",
+    "format": "Format C++ and GN sources",
+    "lint": "Run project clang-tidy checks",
+    "llvm": "Acquire the pinned LLVM toolchain and development SDK with llvm sync",
+    "package": "Build a distribution with audited native target support",
+    "test": "Run GoogleTest suites and tooling tests",
 }
 
 
@@ -28,32 +28,21 @@ def print_help() -> None:
     print("Usage: vl <command> [arguments]")
     print()
     print("Commands:")
-    print("  build       Configure and build a target")
-    print("  bench       Run Release benchmarks, comparisons and --gc-report")
-    print("  bindgen     Generate or verify native class bindings from C++ headers")
-    print("  clangd      Generate compile_commands.json")
-    print("  config      Generate a GN output directory")
-    print("  doctor      Check the project toolchain")
-    print("  editor      Package the VS Code extension")
-    print("  embed       Export a relocatable embedding SDK")
-    print("  format      Format C++ and GN sources")
-    print("  lint        Run project clang-tidy checks")
-    print("  llvm sync   Acquire the pinned LLVM toolchain and development SDK")
-    print("  package     Build a distribution with audited native target support")
-    print("  test        Run GoogleTest suites")
+    for name, description in COMMANDS.items():
+        print(f"  {name:<12}{description}")
 
 
 def main() -> int:
     if len(sys.argv) == 1 or sys.argv[1] in {"help", "--help", "-h"}:
         print_help()
         return 0 if len(sys.argv) > 1 else 2
-    module = COMMAND_MODULES.get(sys.argv[1])
-    if module is None:
-        print(f"Unknown vl command: {sys.argv[1]}", file=sys.stderr)
+    command = sys.argv[1]
+    if command not in COMMANDS:
+        print(f"Unknown vl command: {command}", file=sys.stderr)
         print_help()
         return 2
     return subprocess.run(
-        [sys.executable, "-m", module, *sys.argv[2:]], check=False
+        [sys.executable, "-m", f"tools.{command}", *sys.argv[2:]], check=False
     ).returncode
 
 

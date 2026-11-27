@@ -1,6 +1,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <cstddef>
 #include <span>
 #include "compiler/frontend/diagnostic.h"
@@ -17,6 +18,7 @@ struct ConstructorInitializationFacts final {
   std::span<const LambdaDescriptor> lambdas;
   const absl::flat_hash_map<const Expression*, std::size_t>* lambda_indices{};
   const absl::flat_hash_map<const Statement*, StatementFlow>* control_flow{};
+  const absl::flat_hash_set<const Expression*>* non_completing_expressions{};
   bool has_explicit_super_call = false;
   const ConstructorObservation* base_observation = nullptr;
 };

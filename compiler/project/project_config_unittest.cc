@@ -103,7 +103,6 @@ TEST(ProjectConfigurationTest, RejectsInvalidJsonTypesUnknownFieldsAndMalformedS
            R"({"test":{"paths":["*.vela"]}})",
            R"({"test":{"paths":["tests\\unit"]}})",
            R"({"test":{"filename":""}})",
-           R"({"test":{"concurrency":0}})",
            R"({"test":{"concurrency":1.5}})",
            R"({"test":{"concurrency":"2"}})",
            R"({"test":{"concurrency":4294967296}})",
@@ -132,6 +131,7 @@ TEST(ProjectConfigurationTest, LocatesEscapedDuplicateKeysAndNestedFieldErrors) 
   const auto typed =
       ParseProjectConfiguration("vela.json", "{\n  \"test\": {\"concurrency\": 0}\n}");
   ASSERT_FALSE(typed);
+  EXPECT_EQ(typed.error().exit_code, kUsageExitCode);
   EXPECT_EQ(typed.error().field, "test.concurrency");
   EXPECT_EQ(typed.error().location.line, 2U);
   EXPECT_EQ(typed.error().location.column, 27U);

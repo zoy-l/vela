@@ -52,8 +52,11 @@ std::expected<std::string, BinaryError> BinaryReader::Text() {
   }
   const void* storage = data->data();
   const std::string_view text(static_cast<const char*>(storage), data->size());
-  if (InvalidUtf8Offset(text)) {
-    return std::unexpected(Error("binary text is not valid UTF-8"));
+  if (const auto invalid = InvalidUtf8Offset(text)) {
+    return std::unexpected(BinaryError{
+        .offset = offset_ - text.size() + *invalid,
+        .message = "binary text is not valid UTF-8",
+    });
   }
   return std::string(text);
 }

@@ -49,11 +49,12 @@ template <NativeHostClass T>
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
+        .value_slots = {},
     });
     return program;
   }();
   return {
-      .type = layout::Type{.kind = layout::Type::Kind::Instance},
+      .type = layout::Type{.kind = layout::Type::Kind::Class},
       .description = &kDescription,
       .hosts = internal::kNativeHostIdentities<T>,
   };
@@ -62,7 +63,7 @@ template <NativeHostClass T>
 template <NativeHostClass T>
 [[nodiscard]] NativeType NativeNullableHostType() {
   auto type = NativeHostType<T>();
-  type.type = layout::Type{.kind = layout::Type::Kind::Instance, .nullable = true};
+  type.type = layout::Type{.kind = layout::Type::Kind::Class, .nullable = true};
   return type;
 }
 

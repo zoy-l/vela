@@ -139,6 +139,20 @@ extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
   std::destroy_at(range);
 }
 
+extern "C" void vela_native_v1_roots_attach(NativeExecution* execution,
+                                            const void* values,
+                                            std::uint64_t count,
+                                            std::uint64_t stride,
+                                            RootRange* range) noexcept {
+  std::construct_at(range, std::nullopt);
+  range->AttachStridedValues(execution->isolate().heap(),
+                             {
+                                 .data = values,
+                                 .count = static_cast<std::size_t>(count),
+                                 .stride = static_cast<std::size_t>(stride),
+                             });
+}
+
 ExecutionStatus NativeExecution::HandleLeafFailure(TracePosition position,
                                                    ExecutionStatus status,
                                                    std::span<const Value> roots) {

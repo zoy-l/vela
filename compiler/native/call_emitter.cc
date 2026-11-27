@@ -15,7 +15,9 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
@@ -23,12 +25,82 @@
 #include "compiler/native/invariant_call_optimizer.h"
 #include "compiler/native/memory_regions.h"
 #include "compiler/native/native_values.h"
+#include "compiler/native/struct_values.h"
+#include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
 #include "runtime/value/object.h"
 namespace vela::compiler::native {
+llvm::Value* FunctionEmitter::StructReceiverPlace(const ir::StructReceiver& place) {
+  switch (place.kind) {
+    case ir::StructReceiver::Kind::Local: {
+      if (place.receiver == 0 && struct_receiver_ != nullptr) {
+        return struct_receiver_;
+      }
+      if (IsRecovering()) {
+        return BoxSlotStructPlace(builder_, slots_.at(place.receiver), place.type);
+      }
+      const auto root = roots_.slots.find(place.receiver);
+      auto* address =
+          root == roots_.slots.end()
+              ? static_cast<llvm::Value*>(llvm::ConstantPointerNull::get(builder_.getPtrTy()))
+              : RootAddress(root->second);
+      return LocalStructPlace(builder_, slots_.at(place.receiver), address, place.type);
+    }
+    case ir::StructReceiver::Kind::Index:
+      return ArrayStructPlace(builder_, Reference(place.receiver), Payload(place.index),
+                              place.type);
+    case ir::StructReceiver::Kind::Global:
+      return program_.native_mode == NativeProgramMode::Closed
+                 ? BoxSlotStructPlace(builder_, GlobalValueAddress(place.slot), place.type)
+                 : GlobalStructPlace(builder_, ProgramData(), place.slot, place.type);
+    case ir::StructReceiver::Kind::Field: {
+      const auto& receiver_type = source_.value_types.at(place.receiver);
+      const auto* owner = FindClass(receiver_type);
+      const auto slot = owner == nullptr ? place.slot : ir::PhysicalFieldOffset(*owner, place.slot);
+      return owner != nullptr && owner->kind == ir::Class::Kind::CaptureCell
+                 ? CapturedStructPlace(builder_, Reference(place.receiver), place.type)
+                 : ObjectFieldStructPlace(builder_, Reference(place.receiver), place.type, slot,
+                                          place.declaration);
+    }
+  }
+  std::unreachable();
+}
+
+llvm::Value* FunctionEmitter::StructCallReceiver(const ir::Instruction& instruction,
+                                                 ir::RegisterId reg,
+                                                 const SourceType& type) {
+  if (instruction.struct_receiver) {
+    const auto& place = *instruction.struct_receiver;
+    auto* descriptor = StructReceiverPlace(place);
+    auto owner = place.type;
+    for (const auto field : place.fields) {
+      if (owner.nullable) {
+        descriptor = RequiredStructPlace(builder_, descriptor, owner);
+        owner.nullable = false;
+      }
+      descriptor = ProjectStructPlace(builder_, descriptor, owner, field);
+      owner = owner.value_layout->fields.at(field);
+    }
+    if (owner.nullable) {
+      descriptor = RequiredStructPlace(builder_, descriptor, owner);
+    }
+    return descriptor;
+  }
+  const auto& source_type = source_.value_types.at(reg);
+  if (source_type.value_layout == nullptr) {
+    return BoxedStructPlace(builder_, Reference(reg), type);
+  }
+  auto* value = ConvertValue(Load(reg), source_type, type);
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  auto* storage = allocation.CreateAlloca(ValueType(module_.getContext(), type));
+  builder_.CreateStore(value, storage);
+  return LocalStructPlace(builder_, storage, llvm::ConstantPointerNull::get(builder_.getPtrTy()),
+                          type);
+}
+
 FunctionEmitter::CallSelection FunctionEmitter::SelectCallEntry(CallableTarget target,
                                                                 std::size_t instruction) const {
   const auto borrowed = escape_.borrowed_calls.empty() ? std::optional<std::size_t>{}
@@ -159,22 +231,40 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
     }
     if (bound && index == 0) {
       // 目标来自当前函数中单次定义的 callable；第一个字段是已保根的固定 receiver。
-      arguments.push_back(LoadMemory(
+      auto* receiver = LoadMemory(
           builder_.getPtrTy(), ByteAddress(Reference(instruction.rhs), sizeof(runtime::HeapObject)),
-          MemoryRegion::FieldPayloads));
+          MemoryRegion::FieldPayloads);
+      arguments.push_back(callee.struct_receiver
+                              ? BoxedStructPlace(builder_, receiver, callee.value_types.front())
+                              : receiver);
       continue;
     }
     const auto reg =
         closure && index == 0
             ? instruction.rhs
             : static_cast<ir::RegisterId>(instruction.lhs + index - ((closure || bound) ? 1 : 0));
-    arguments.push_back(
-        Convert(builder_, Load(reg), source_.value_types.at(reg), callee.value_types.at(index)));
+    const auto& source_type = source_.value_types.at(reg);
+    const auto& target_type = callee.value_types.at(index);
+    if (index == 0 && callee.struct_receiver) {
+      arguments.push_back(StructCallReceiver(instruction, reg, target_type));
+      continue;
+    }
+    auto* value = Load(reg);
+    llvm::Value* argument = nullptr;
+    if (source_type.value_layout != nullptr && target_type.value_layout == nullptr) {
+      // 后续实参装箱可能收集；擦除后的实参在进入被调帧前由暂存区保根。
+      auto* encoded = EncodeChecked(value, source_type);
+      Pack(encoded, index);
+      argument = DecodeValue(builder_, encoded, target_type);
+    } else {
+      argument = ConvertValue(value, source_type, target_type);
+    }
+    arguments.push_back(argument);
   }
   if (!callee.native_symbol.empty()) {
     arguments.push_back(imports_.at(selected.function));
   }
-  // 各类结果都可放入对齐的单个 ABI 暂存槽；循环和多调用不增加帧大小。
+  // 帧计划按所有调用的最大返回形状预留暂存区，包含超过 Value ABI 的结构体。
   arguments.push_back(result_);
   return arguments;
 }
@@ -182,6 +272,9 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
 void FunctionEmitter::StoreCallResult(ir::RegisterId reg,
                                       const SourceType& type,
                                       llvm::Value* address) {
+  if (type.kind == Kind::Never) {
+    return;
+  }
   if (type.kind == Kind::Void) {
     Store(reg, builder_.getFalse(), type);
   } else {
@@ -260,6 +353,54 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   builder_.SetInsertPoint(merge);
 }
 
+void FunctionEmitter::EmitNamedBaselineCall(const ir::Instruction& instruction,
+                                            CallableTarget selected) {
+  const auto& callee = program_.functions.at(selected.function);
+  llvm::Value* receiver_place = nullptr;
+  for (std::size_t index = 0; index < callee.parameter_count; ++index) {
+    const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
+    const auto& type = callee.value_types.at(index);
+    if (index == 0 && callee.struct_receiver) {
+      receiver_place = StructCallReceiver(instruction, reg, type);
+      Pack(llvm::Constant::getNullValue(NativeRecordType(module_.getContext())), index);
+      continue;
+    }
+    auto* value = ConvertValue(Load(reg), source_.value_types.at(reg), type);
+    Pack(EncodeChecked(value, type), index);
+  }
+  llvm::Value* arguments = arguments_;
+  if (receiver_place != nullptr) {
+    // 根区保持普通值；内部位置描述符只进入不被 GC 扫描的同步实参副本。
+    Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+    auto* records = NativeRecordType(module_.getContext());
+    arguments = allocation.CreateAlloca(llvm::ArrayType::get(records, callee.parameter_count));
+    for (std::size_t index = 1; index < callee.parameter_count; ++index) {
+      builder_.CreateStore(
+          builder_.CreateLoad(records, builder_.CreateConstGEP1_64(records, arguments_, index)),
+          builder_.CreateConstGEP1_64(records, arguments, index));
+    }
+    auto* encoded = llvm::Constant::getNullValue(records);
+    llvm::Value* receiver = builder_.CreateInsertValue(
+        encoded, builder_.CreatePtrToInt(receiver_place, builder_.getInt64Ty()), 0);
+    receiver = builder_.CreateInsertValue(
+        receiver,
+        builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeValueKind::StructPlace)), 1);
+    builder_.CreateStore(receiver, arguments);
+  }
+  auto helper = module_.getOrInsertFunction(
+      runtime::kNativeCallDeclarationSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+      builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
+  CompleteCall(builder_.CreateCall(helper,
+                                   {
+                                       body_->getArg(0),
+                                       builder_.getInt64(callee.identity.declaration.value),
+                                       arguments,
+                                       builder_.getInt64(callee.parameter_count),
+                                       result_,
+                                   }),
+               instruction.dst);
+}
+
 void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarget selected) {
   if (kind_ == NativeEntryKind::HostLeaf) {
     EmitHostLeafCall(instruction, selected);
@@ -283,24 +424,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   PrepareTraceFrame();
   auto* intrinsic_done = EmitIntrinsicCall(instruction, selected.function);
   if (tier_ == NativeCodeTier::Baseline && IsNamedBaselineCall(callee, program_.native_mode)) {
-    for (std::size_t index = 0; index < callee.parameter_count; ++index) {
-      const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
-      const auto& type = callee.value_types.at(index);
-      auto* value = Convert(builder_, Load(reg), source_.value_types.at(reg), type);
-      Pack(EncodeValue(builder_, value, type), index);
-    }
-    auto helper = module_.getOrInsertFunction(
-        runtime::kNativeCallDeclarationSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
-    CompleteCall(builder_.CreateCall(helper,
-                                     {
-                                         body_->getArg(0),
-                                         builder_.getInt64(callee.identity.declaration.value),
-                                         arguments_,
-                                         builder_.getInt64(callee.parameter_count),
-                                         result_,
-                                     }),
-                 instruction.dst);
+    EmitNamedBaselineCall(instruction, selected);
     return;
   }
   const auto selection = SelectCallEntry(selected, instruction_index_);

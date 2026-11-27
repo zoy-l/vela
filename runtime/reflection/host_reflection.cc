@@ -624,7 +624,8 @@ Result<Local<Value>> EnumMemberInfo::GetValue(HandleScope& scope) const {
 }
 
 Result<Reflection> Reflection::Bind(runtime::NativeInstance& instance) {
-  auto binding = runtime::HostType::Bind(instance, runtime::TypeConstraint{.dynamic = true});
+  auto binding = runtime::HostType::Bind(
+      instance, runtime::TypeConstraint{.category = runtime::TypeConstraint::Category::Dynamic});
   if (!binding) {
     return std::unexpected(Error::FromStatus(binding.error()));
   }

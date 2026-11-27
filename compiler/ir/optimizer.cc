@@ -37,48 +37,82 @@ void InvalidateRepresentative(RegisterId destination,
   }
 }
 
+struct CopyValues final {
+  absl::flat_hash_map<RegisterId, std::size_t> values;
+  absl::flat_hash_map<std::size_t, RegisterId> representatives;
+  std::size_t next = 0;
+
+  std::size_t ValueOf(RegisterId reg) {
+    const auto [entry, inserted] = values.try_emplace(reg, next);
+    if (inserted) {
+      ++next;
+    }
+    return entry->second;
+  }
+
+  void RewriteUses(Instruction& instruction,
+                   const RegisterAccess& access,
+                   std::span<const std::uint8_t> addressed) {
+    for (const auto operand : std::span(access.uses).first(access.use_count)) {
+      // 原地更新同时读取并重新定义同一寄存器；等值副本不能替换其写入目的地。
+      if (operand == Operand::Destination && access.defines_value) {
+        continue;
+      }
+      const auto reg = ReadOperand(instruction, operand);
+      if (addressed[reg] != 0) {
+        continue;
+      }
+      const auto [representative, inserted] = representatives.try_emplace(ValueOf(reg), reg);
+      static_cast<void>(inserted);
+      WriteOperand(instruction, operand, representative->second);
+    }
+  }
+};
+
 void PropagateCopies(Function& function,
                      std::span<const Function> functions,
                      const FlowGraph& graph,
                      std::span<std::uint8_t> keep) {
-  absl::flat_hash_map<RegisterId, std::size_t> values;
-  absl::flat_hash_map<std::size_t, RegisterId> representatives;
+  CopyValues copies;
+  auto& values = copies.values;
+  auto& representatives = copies.representatives;
+  std::vector<std::uint8_t> addressed(function.register_count);
+  if (function.struct_receiver) {
+    addressed[0] = 1;
+  }
+  for (const auto& instruction : function.instructions) {
+    if (instruction.struct_receiver &&
+        instruction.struct_receiver->kind == StructReceiver::Kind::Local) {
+      addressed[instruction.struct_receiver->receiver] = 1;
+    }
+  }
   for (const auto& block : graph.blocks) {
     // Abseil clear() 可释放较大表的容量；整段 erase 保留桶数组供后续块复用。
     values.erase(values.begin(), values.end());
     representatives.erase(representatives.begin(), representatives.end());
-    std::size_t next_value = 0;
-    const auto value_of = [&](RegisterId reg) -> std::size_t {
-      const auto [entry, inserted] = values.try_emplace(reg, next_value);
-      if (inserted) {
-        ++next_value;
-      }
-      return entry->second;
-    };
+    copies.next = 0;
     for (auto index = block.begin; index < block.end; ++index) {
       auto& instruction = function.instructions.at(index);
       const auto access = AnalyzeRegisters(instruction, functions);
-      for (const auto operand : std::span(access.uses).first(access.use_count)) {
-        const auto reg = ReadOperand(instruction, operand);
-        const auto value = value_of(reg);
-        const auto [representative, inserted] = representatives.try_emplace(value, reg);
-        static_cast<void>(inserted);
-        WriteOperand(instruction, operand, representative->second);
-      }
+      copies.RewriteUses(instruction, access, addressed);
       if (!access.defines_value) {
         continue;
       }
       const auto destination = instruction.dst;
-      const auto source_value = instruction.opcode == Opcode::Move
-                                    ? std::optional(value_of(instruction.lhs))
-                                    : std::nullopt;
+      const auto copies_value = instruction.opcode == Opcode::Move &&
+                                addressed[instruction.lhs] == 0 && addressed[destination] == 0 &&
+                                (function.value_types.empty() ||
+                                 frontend::IsSameType(function.value_types.at(instruction.lhs),
+                                                      function.value_types.at(instruction.dst)));
+      const auto source_value =
+          copies_value ? std::optional(copies.ValueOf(instruction.lhs)) : std::nullopt;
       const auto previous = values.find(destination);
       if (source_value && previous != values.end() && previous->second == *source_value) {
         keep[index] = 0;
         continue;
       }
       InvalidateRepresentative(destination, values, representatives);
-      const auto value = source_value ? *source_value : next_value++;
+      const auto value = source_value ? *source_value : copies.next++;
       values.insert_or_assign(destination, value);
       representatives.try_emplace(value, destination);
     }
@@ -315,7 +349,7 @@ void RemoveUnusedHandlers(Function& function) {
     if (!previous) {
       continue;
     }
-    if (!AnalyzeEffects(instruction).may_fail) {
+    if (!AnalyzeEffects(function, instruction).may_fail) {
       instruction.handler.reset();
       continue;
     }

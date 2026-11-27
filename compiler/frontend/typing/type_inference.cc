@@ -37,6 +37,10 @@ TypeName TypeInference::Nullable(TypeName type) {
   if (IsNullableTypeName(type)) {
     return type;
   }
+  if (type.kind == TypeName::Kind::Named && type.name == kNeverTypeName) {
+    type.name = kNullTypeName;
+    return type;
+  }
   TypeName result{
       .name = {},
       .location = type.location,
@@ -80,6 +84,12 @@ const TypeParameter* TypeInference::FindParameter(const TypeName& pattern) const
 }
 
 std::optional<TypeName> TypeInference::CommonType(const TypeName& left, const TypeName& right) {
+  if (left.name == kNeverTypeName) {
+    return right;
+  }
+  if (right.name == kNeverTypeName) {
+    return left;
+  }
   if (IsSame(left, right)) {
     return left;
   }

@@ -81,7 +81,7 @@ std::expected<void, std::string> CppDeclaration(std::ostringstream& output,
           ? native::HostLogicalType(layouts, layouts.types.at(*signature.result), name_space)
           : std::expected<std::string, std::string>("void");
   if (!result) {
-    return std::unexpected(result.error());
+    return std::unexpected(source.name + ": " + result.error());
   }
   std::vector<std::string> parameters;
   for (const auto& parameter : signature.parameters) {

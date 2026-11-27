@@ -42,9 +42,7 @@ export interface View<T> { read(): T; }
     const auto function = std::ranges::find(program.functions, "echo", &ir::Function::name);
     ASSERT_NE(function, program.functions.end());
     const auto& signature = function->signature;
-    if (!signature) {
-      FAIL() << "expected the exported echo signature";
-    }
+    ASSERT_TRUE(signature) << "expected the exported echo signature";
     const auto parameter = program.layouts.types.at(signature->parameters.front().type);
     const auto key = layout::TypeKey(program.layouts, parameter);
     if (previous) {
@@ -57,6 +55,21 @@ export interface View<T> { read(): T; }
     EXPECT_NE(header->find("using Arguments = std::tuple<std::int64_t>"), std::string::npos);
     EXPECT_EQ(header->find("Get_hidden"), std::string::npos);
   }
+}
+
+TEST(HostHeaderTest, ExportedStructsKeepTheirKindInNominalHostContracts) {
+  const auto prepared = ir::test::Prepare(R"(
+export struct Point<T> { x: T; y: T; }
+export func echo(value: Point<int>): Point<int> { return value; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto header = EmitHostDeclarations(prepared.program, "application");
+  ASSERT_TRUE(header) << header.error();
+  EXPECT_TRUE(header->contains("ScriptTypeKind::Struct"));
+  EXPECT_TRUE(header->contains("using Arguments = std::tuple<std::int64_t>"));
+  EXPECT_TRUE(header->contains("Entry_echo"));
+  EXPECT_TRUE(header->contains("Get_x"));
+  EXPECT_TRUE(header->contains("Set_y"));
 }
 
 TEST(HostHeaderTest, ReportsPrivateNominalsAtThePublicGenerationBoundary) {
@@ -95,7 +108,9 @@ TEST(HostHeaderTest, RejectsPrivateGenericDependenciesAndInvalidCppNamespaces) {
   const auto header = EmitHostDeclarations(prepared.program, "application");
   ASSERT_FALSE(header);
   EXPECT_NE(header.error().find("argument[0]"), std::string::npos);
-  EXPECT_FALSE(EmitHostDeclarations(prepared.program, "namespace"));
+  const auto invalid_namespace = EmitHostDeclarations(prepared.program, "namespace");
+  ASSERT_FALSE(invalid_namespace);
+  EXPECT_TRUE(invalid_namespace.error().contains("non-reserved C++ identifiers"));
 }
 
 }  // namespace

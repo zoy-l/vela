@@ -11,6 +11,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "benchmarks/algorithms/workloads.h"
 #include "benchmarks/algorithms_native/entries.h"
@@ -85,15 +86,23 @@ void Jit(benchmark::State& state, Case problem, const std::shared_ptr<JitWorkloa
       std::to_array({runtime::Value::Integer(static_cast<std::int64_t>(problem.workload))});
   {
     const auto prepare = isolate.native_dispatch().FindEntry(setup->program->entry, "prepare");
-    if (!prepare || !prepare->Invoke(input)) {
-      state.SkipWithError("JIT input preparation failed");
+    if (!prepare) {
+      state.SkipWithError("JIT preparation entry not found");
+      return;
+    }
+    if (const auto prepared = prepare->Invoke(input); !prepared) {
+      state.SkipWithError(std::string(ExecutionStatusName(prepared.error())));
       return;
     }
   }
   const auto first_started = std::chrono::steady_clock::now();
   const auto warm = InvokeJitWorkload(*setup, problem.name);
   ReportJitFirstExecution(state, first_started);
-  if (!warm || !IsExpected(Number(*warm), problem.expected)) {
+  if (!warm) {
+    state.SkipWithError(std::string(ExecutionStatusName(warm.error())));
+    return;
+  }
+  if (!IsExpected(Number(*warm), problem.expected)) {
     state.SkipWithError("JIT warm-up checksum mismatch");
     return;
   }
@@ -105,7 +114,7 @@ void Jit(benchmark::State& state, Case problem, const std::shared_ptr<JitWorkloa
     benchmark::DoNotOptimize(iteration);
     const auto result = InvokeJitWorkload(*setup, problem.name);
     if (!result) {
-      state.SkipWithError("JIT execution failed");
+      state.SkipWithError(std::string(ExecutionStatusName(result.error())));
       return;
     }
     auto value = Number(*result);

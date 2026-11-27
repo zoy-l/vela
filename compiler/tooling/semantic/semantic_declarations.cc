@@ -73,6 +73,18 @@ CompletionKind MethodKind(const frontend::Function& method) {
   return method.is_getter || method.is_setter ? CompletionKind::Property : CompletionKind::Method;
 }
 
+CompletionKind ClassKind(const frontend::Class& declaration) {
+  return declaration.kind == frontend::Class::Kind::Value ? CompletionKind::Struct
+                                                          : CompletionKind::Class;
+}
+
+std::string_view ClassPrefix(const frontend::Class& declaration) {
+  if (declaration.kind == frontend::Class::Kind::Value) {
+    return "struct ";
+  }
+  return declaration.native_key.empty() ? "class " : "external class ";
+}
+
 Completion StandardClassCompletion(const frontend::Class& declaration) {
   const auto& name = declaration.name;
   return {
@@ -265,7 +277,7 @@ void SemanticIndex::CollectConstructorParameters(const frontend::ClassDescriptor
 void SemanticIndex::CollectClass(const frontend::Class& declaration) {
   const auto kind = frontend::IsStandardTypeNamespace(program_, declaration)
                         ? CompletionKind::Type
-                        : CompletionKind::Class;
+                        : ClassKind(declaration);
   const auto* checked = model_.FindClassDescriptor(declaration);
   std::optional<std::string> detail;
   const auto class_detail = [&] -> std::string& {
@@ -412,9 +424,9 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration,
   }
   Completion result{
       .label = declaration.name,
-      .detail = std::string(declaration.native_key.empty() ? "class " : "external class ") +
+      .detail = std::string(ClassPrefix(declaration)) +
                 GenericName(declaration.name, declaration.type_parameters),
-      .kind = CompletionKind::Class,
+      .kind = ClassKind(declaration),
       .documentation = {},
   };
   auto& text = result.detail;

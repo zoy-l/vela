@@ -61,5 +61,14 @@ TEST(MapLiteralSemanticTest, RenamesGlobalKeysAcrossModulesAndKeepsIncompleteEnt
   EXPECT_TRUE(partial.FindDefinition(incomplete.text.find("{key") + 1, PositionEncoding::Utf8));
 }
 
+TEST(MapLiteralSemanticTest, MissingKeysPreserveKnownValueReferences) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text = "func main(value: int): void { const m = {: value}; }",
+  };
+  const SemanticIndex index(input.path, std::span(&input, 1));
+  EXPECT_TRUE(index.FindDefinition(input.text.find(": value") + 2, PositionEncoding::Utf8));
+}
+
 }  // namespace
 }  // namespace vela::tooling

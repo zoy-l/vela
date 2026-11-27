@@ -28,6 +28,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_control.h"
+#include "runtime/native/native_deoptimization.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
 
@@ -95,7 +96,7 @@ bool FunctionEmitter::CanUseLeafEntry() const {
       // 惰性初始化器可能 GC；仅在没有活动引用时沿用延迟逻辑帧入口。
       return roots_.count == 0;
     }
-    const auto effects = ir::AnalyzeEffects(instruction);
+    const auto effects = ir::AnalyzeEffects(source_, instruction);
     return !effects.MayCollectOnSuccess();
   });
 }
@@ -148,9 +149,12 @@ bool FunctionEmitter::CanExecuteWithoutCollection(std::size_t index) const {
       return IsGlobalInitialized(index);
     case Opcode::GetField:
     case Opcode::SetField:
-      return !instruction.field_declaration.has_value();
+      return !instruction.field_declaration.has_value() &&
+             !ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess();
     case Opcode::SetGlobal:
+      return !ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess();
     case Opcode::Return:
+      return IsSynchronousTypedReturn(instruction);
     case Opcode::Jump:
     case Opcode::JumpIfFalse:
     case Opcode::JumpIfNull:
@@ -167,7 +171,7 @@ bool FunctionEmitter::CanExecuteWithoutCollection(std::size_t index) const {
     case Opcode::NotEqualString:
       return false;
     default: {
-      const auto effects = ir::AnalyzeEffects(instruction);
+      const auto effects = ir::AnalyzeEffects(source_, instruction);
       return !effects.MayCollectOnSuccess() && !effects.reads_state && !effects.writes_state &&
              !effects.changes_control;
     }
@@ -346,6 +350,109 @@ void FunctionEmitter::EmitTraceFrame(llvm::Value* frame, Builder& cleanup, llvm:
   }
   cleanup.CreateBr(restored);
   cleanup.SetInsertPoint(restored);
+}
+
+bool FunctionEmitter::HasErasedArguments(const ir::Instruction& instruction) const {
+  if (instruction.inline_value) {
+    return false;
+  }
+  const auto is_struct = [&](ir::RegisterId reg) {
+    return source_.value_types.at(reg).value_layout != nullptr;
+  };
+  switch (instruction.opcode) {
+    case Opcode::Call: {
+      const auto& callee = program_.functions.at(instruction.index);
+      for (ir::RegisterId index = 0; index < callee.parameter_count; ++index) {
+        if (is_struct(instruction.lhs + index) &&
+            (program_.native_mode == NativeProgramMode::Reloadable ||
+             callee.value_types.at(index).value_layout == nullptr)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case Opcode::CallIndirect:
+    case Opcode::CallVirtual:
+    case Opcode::BuiltinCall:
+    case Opcode::AsyncCall:
+    case Opcode::StringInterpolate:
+      for (ir::RegisterId index = 0; index < ir::CallArgumentCount(instruction); ++index) {
+        if (is_struct(instruction.lhs + index)) {
+          return true;
+        }
+      }
+      return false;
+    case Opcode::Await:
+      return std::ranges::any_of(roots_.suspended, [&](const auto& saved) {
+        return std::ranges::any_of(saved, is_struct);
+      });
+    case Opcode::EqualValue:
+    case Opcode::NotEqualValue:
+      return ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess();
+    case Opcode::SetField:
+    case Opcode::SetGlobal:
+    case Opcode::Print:
+    case Opcode::NewFuture:
+    case Opcode::IsType:
+    case Opcode::CheckedCast:
+    case Opcode::ExceptionValue:
+    case Opcode::Throw:
+    case Opcode::Rethrow:
+      return is_struct(instruction.lhs);
+    default:
+      return false;
+  }
+}
+
+void FunctionEmitter::InitializeErasedRoots() {
+  if (erased_root_count_ == 0) {
+    return;
+  }
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  auto* ranges = allocation.CreateAlloca(
+      llvm::ArrayType::get(builder_.getInt8Ty(), erased_root_count_ * sizeof(runtime::RootRange)));
+  ranges->setAlignment(llvm::Align(alignof(runtime::RootRange)));
+  auto attach = module_.getOrInsertFunction(
+      runtime::kNativeRootsAttachSymbol, builder_.getVoidTy(), builder_.getPtrTy(),
+      builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
+  auto leave = module_.getOrInsertFunction(runtime::kNativeRootsExitSymbol, builder_.getVoidTy(),
+                                           builder_.getPtrTy());
+  Builder release(&*cleanup_->getFirstNonPHIIt());
+  std::size_t range_index = 0;
+  const auto retain = [&](llvm::Value* values, std::size_t count, std::size_t stride) {
+    auto* range = ByteAddress(ranges, range_index++ * sizeof(runtime::RootRange));
+    builder_.CreateCall(attach, {
+                                    body_->getArg(0),
+                                    values,
+                                    builder_.getInt64(count),
+                                    builder_.getInt64(stride),
+                                    range,
+                                });
+    release.CreateCall(leave, {range});
+  };
+  const auto clear = [&](llvm::Value* values, std::size_t bytes) {
+    builder_.CreateMemSet(values, builder_.getInt8(0), bytes,
+                          llvm::Align(alignof(runtime::NativeValue)));
+  };
+  // 普通根保存内联叶字段；这些区间单独持有擦除后产生的对象身份。
+  // 参数逐个装箱、调试快照及恢复快照均可能在填充途中再次分配。
+  if (erased_arguments_) {
+    clear(arguments_, temporary_count_ * sizeof(runtime::NativeValue));
+    retain(arguments_, temporary_count_, sizeof(runtime::NativeValue));
+  }
+  if (debug_values_ != nullptr) {
+    clear(debug_values_, source_.register_count * sizeof(runtime::NativeDebugValue));
+    retain(debug_values_, source_.register_count, sizeof(runtime::NativeDebugValue));
+  }
+  if (IsRecovering()) {
+    auto* values = builder_.CreateLoad(
+        builder_.getPtrTy(),
+        ByteAddress(body_->getArg(1), offsetof(runtime::NativeCheckpoint, values)));
+    retain(values, source_.register_count, sizeof(runtime::NativeValue));
+  } else if (checkpoint_values_ != nullptr) {
+    clear(checkpoint_values_, source_.register_count * sizeof(runtime::NativeValue));
+    retain(checkpoint_values_, source_.register_count, sizeof(runtime::NativeValue));
+  }
 }
 
 llvm::Value* FunctionEmitter::LinkStackRoots() {

@@ -1,6 +1,7 @@
 #include "compiler/native/native_values.h"
 #include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
+#include "compiler/native/struct_values.h"
 #include "runtime/native/native_symbols.h"
 
 #include <cstddef>
@@ -63,7 +64,7 @@ void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Funct
                                                                     llvm::CaptureInfo::none()));
     for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
       const auto& type = source.value_types[parameter];
-      if (IsReferenceKind(type.kind) && !type.nullable) {
+      if (type.value_layout == nullptr && IsReferenceKind(type.kind) && !type.nullable) {
         entry->addParamAttr(static_cast<unsigned>(parameter + 1), llvm::Attribute::NonNull);
       }
     }
@@ -126,7 +127,7 @@ std::optional<llvm::CmpInst::Predicate> IntegerComparison(Opcode opcode) {
 }
 
 void AssumeNonNull(Builder& builder, llvm::Value* value, const SourceType& type) {
-  if (IsReferenceKind(type.kind) && !type.nullable) {
+  if (type.value_layout == nullptr && IsReferenceKind(type.kind) && !type.nullable) {
     // 装箱入口、运行时成功结果与已初始化全局都满足同一个类型非空契约。
     builder.CreateAssumption(builder.CreateIsNotNull(value));
   }
@@ -264,7 +265,8 @@ llvm::Constant* EmitConstantTable(llvm::Module& module,
 
 bool IsScalar(const SourceType& type) {
   return type.kind == Kind::Int || type.kind == Kind::Enum || type.kind == Kind::Double ||
-         type.kind == Kind::Bool || type.kind == Kind::Null || type.kind == Kind::Void;
+         type.kind == Kind::Bool || type.kind == Kind::Null || type.kind == Kind::Void ||
+         type.kind == Kind::Never;
 }
 
 bool IsReferenceKind(Kind kind) {
@@ -272,7 +274,8 @@ bool IsReferenceKind(Kind kind) {
 }
 
 bool HasValidity(const SourceType& type) {
-  return type.nullable && IsScalar(type) && type.kind != Kind::Null && type.kind != Kind::Void;
+  return type.nullable && (IsScalar(type) || type.value_layout != nullptr) &&
+         type.kind != Kind::Null && type.kind != Kind::Void;
 }
 
 llvm::StructType* NativeRecordType(llvm::LLVMContext& context) {
@@ -337,6 +340,14 @@ llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind) {
 
 llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type) {
   auto* payload = PayloadType(context, type.kind);
+  if (type.value_layout != nullptr) {
+    std::vector<llvm::Type*> slots;
+    slots.reserve(type.value_layout->slots.size());
+    for (const auto& slot : type.value_layout->slots) {
+      slots.push_back(ValueType(context, slot));
+    }
+    payload = llvm::StructType::get(context, slots);
+  }
   return HasValidity(type) ? llvm::StructType::get(llvm::Type::getInt1Ty(context), payload)
                            : payload;
 }
@@ -437,6 +448,9 @@ llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType&
 }
 
 llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType& type) {
+  if (type.value_layout != nullptr) {
+    return UnboxStructValue(builder, record, type);
+  }
   if (type.kind == Kind::Dynamic) {
     return record;
   }
@@ -639,6 +653,10 @@ std::vector<llvm::Value*> UnpackReflectionArguments(Builder& builder,
   for (std::size_t index = 0; index < count; ++index) {
     const auto& type = source.value_types[index];
     if (index < hidden) {
+      if (index == 0 && source.struct_receiver) {
+        arguments.push_back(BoxedStructPlace(builder, inputs.receiver, type));
+        continue;
+      }
       auto* receiver = EncodeValue(builder, inputs.receiver, {.kind = Kind::Class, .name = {}});
       arguments.push_back(DecodeValue(builder, receiver, type));
       continue;
@@ -712,13 +730,27 @@ std::vector<llvm::Value*> ExternalArguments(Builder& builder,
                                          builder.CreateICmpULE(bits, builder.getInt64(1)));
       matches = builder.CreateAnd(matches, canonical);
     }
+    llvm::Value* is_place = nullptr;
+    if (index == 0 && source.struct_receiver) {
+      is_place = builder.CreateICmpEQ(
+          kind, builder.getInt8(static_cast<std::uint8_t>(runtime::NativeValueKind::StructPlace)));
+      matches = builder.CreateOr(
+          matches, builder.CreateAnd(is_place, builder.CreateICmpNE(bits, builder.getInt64(0))));
+    }
     auto* next = llvm::BasicBlock::Create(context, "argument", &entry);
     auto* wrong_type = llvm::BasicBlock::Create(context, "type.error", &entry);
     builder.CreateCondBr(matches, next, wrong_type);
     Builder wrong(wrong_type);
     wrong.CreateRet(Status(wrong, ExecutionStatus::TypeError));
     builder.SetInsertPoint(next);
-    arguments.push_back(DecodeValue(builder, record, type));
+    if (is_place != nullptr) {
+      auto* object = DecodeValue(builder, record, {.kind = Kind::Class, .name = {}});
+      auto* boxed_place = BoxedStructPlace(builder, object, type);
+      arguments.push_back(builder.CreateSelect(
+          is_place, builder.CreateIntToPtr(bits, builder.getPtrTy()), boxed_place));
+    } else {
+      arguments.push_back(DecodeValue(builder, record, type));
+    }
   }
   return arguments;
 }
@@ -731,6 +763,7 @@ struct WrapperResult final {
 
 void ReturnWrapperResult(Builder& builder,
                          llvm::Function& entry,
+                         const ir::Program& program,
                          const SourceType& type,
                          WrapperResult output) {
   const auto [result, status, destination] = output;
@@ -739,17 +772,29 @@ void ReturnWrapperResult(Builder& builder,
   if (type.kind != Kind::Void) {
     value = builder.CreateLoad(ValueType(builder.getContext(), type), result);
   }
-  builder.CreateStore(EncodeValue(builder, value, type), destination);
+  if (type.value_layout != nullptr) {
+    auto* boxed = BoxStructValue(builder, program, entry.getArg(0), value, type, destination);
+    ReturnOnFailure(builder, entry, boxed);
+  } else {
+    builder.CreateStore(EncodeValue(builder, value, type), destination);
+  }
   builder.CreateRet(status);
 }
 
 llvm::Function* ExternalAdapter(llvm::Module& module,
+                                const ir::Program& program,
                                 const ir::Function& source,
                                 const GeneratedFunction& function) {
   auto name = std::string("vela.external.adapter");
+  if (source.struct_receiver) {
+    name += "_struct_receiver";
+  }
   const auto append_type = [&](const SourceType& type) {
     name += '_' + std::to_string(std::to_underlying(type.kind));
     name += type.nullable ? 'n' : 'v';
+    if (type.value_layout != nullptr) {
+      name += '_' + std::string(type.name);
+    }
   };
   for (std::size_t index = 0; index < source.parameter_count; ++index) {
     append_type(source.value_types[index]);
@@ -778,7 +823,7 @@ llvm::Function* ExternalAdapter(llvm::Module& module,
   arguments.push_back(result);
   auto* status =
       builder.CreateCall(function.body->getFunctionType(), adapter->getArg(4), arguments);
-  ReturnWrapperResult(builder, *adapter, source.return_type,
+  ReturnWrapperResult(builder, *adapter, program, source.return_type,
                       {.result = result, .status = status, .destination = adapter->getArg(3)});
   return adapter;
 }
@@ -796,7 +841,7 @@ void EmitWrapper(llvm::Module& module,
   const auto external = contract == NativeEntryContract::External;
   if (external && IsClosedLinkedProgram(program.native_mode, placement) &&
       source.native_symbol.empty()) {
-    auto* adapter = ExternalAdapter(module, source, function);
+    auto* adapter = ExternalAdapter(module, program, source, function);
     auto* entry = function.entry;
     Builder builder(llvm::BasicBlock::Create(module.getContext(), "entry", entry));
     std::vector<llvm::Value*> arguments;
@@ -866,7 +911,7 @@ void EmitWrapper(llvm::Module& module,
     status = builder.CreateCall(body, arguments);
   }
   ReturnWrapperResult(
-      builder, *entry, source.return_type,
+      builder, *entry, program, source.return_type,
       {.result = result, .status = status, .destination = entry->getArg(external ? 3 : 4)});
 }
 

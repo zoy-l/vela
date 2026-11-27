@@ -18,6 +18,27 @@
 namespace vela::frontend {
 namespace {
 
+TEST(ParserTest, StructDeclarationsAndClonesKeepValueSemanticsAndMembers) {
+  const auto parsed = ParseSource(R"(
+export struct Pair<T> {
+  first: T;
+  second: T;
+  constructor(this.first, this.second);
+  read(): T { return this.first; }
+}
+)");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  ASSERT_EQ(parsed.program.classes.size(), 1U);
+  const auto& declaration = parsed.program.classes.front();
+  EXPECT_EQ(declaration.kind, Class::Kind::Value);
+  EXPECT_EQ(declaration.export_kind, ExportKind::Exported);
+  EXPECT_EQ(declaration.fields.size(), 2U);
+  const auto copy = CloneProgramDeclaration(parsed.program);
+  ASSERT_EQ(copy.classes.size(), 1U);
+  EXPECT_EQ(copy.classes.front().kind, Class::Kind::Value);
+  EXPECT_EQ(copy.classes.front().constructor_kind, ConstructorKind::Explicit);
+}
+
 TEST(ParserTest, DeclarationClonesKeepDefaultsAndSourceBodiesRemainOwnedByTheOriginal) {
   const auto parsed = ParseSource(R"(
 export class Box<T> {

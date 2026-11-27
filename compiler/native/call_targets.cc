@@ -29,6 +29,8 @@
 namespace vela::compiler::native {
 namespace {
 
+bool HasScalarFieldBody(const ir::Function& function, NativeProgramMode mode);
+
 void SortUnique(std::vector<std::size_t>& values) {
   std::ranges::sort(values);
   const auto duplicates = std::ranges::unique(values);
@@ -248,6 +250,14 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
   const auto components = CallComponents(edges);
   llvm::SmallVector<std::optional<LeafKind>> leaves(count);
   llvm::SmallVector<std::optional<bool>> scalar_fields(count);
+  llvm::SmallVector<std::optional<bool>> small_functions(count);
+  const auto can_inline_small_function = [&](std::size_t callee) {
+    auto& eligible = small_functions[callee];
+    if (!eligible) {
+      eligible = CanInlineSmallFunction(functions[callee]);
+    }
+    return *eligible;
+  };
   const auto leaf_kind = [&](std::size_t callee) {
     auto& leaf = leaves[callee];
     if (!leaf) {
@@ -273,14 +283,17 @@ void PlanReloadableEntrySlots(NativeCallPlan& plan,
     }
     auto repeated = RepeatedCallees(functions[index], plan.direct_calls[index]);
     std::erase_if(repeated, [&](std::size_t callee) {
-      return leaf_kind(callee) == LeafKind::None && !can_use_scalar_fields(callee);
+      const auto& target = functions[callee];
+      return leaf_kind(callee) == LeafKind::None && !can_use_scalar_fields(callee) &&
+             (debugging != NativeDebugging::Safepoints || !target.struct_receiver ||
+              !can_inline_small_function(callee));
     });
     for (const auto callee : callees) {
       const auto external = is_external(callee);
       const auto& target = functions[callee];
       const auto constructor_leaf =
           external && target.is_generated_constructor && leaf_kind(callee) != LeafKind::None;
-      // 循环内的小型纯计算和接收者标量字段方法需要内联；完整函数体保留布局守卫、
+      // 循环内的小型纯计算、标量字段和 struct 方法需要内联；完整函数体保留布局守卫、
       // 安全点和错误前缀，其函数体依赖使调用者随编辑失效并重新编译。
       // 空生成构造仍保留栈预算和可观察入口；其他冷调用使用槽，限制重载扇出。
       if (external && !constructor_leaf && !std::ranges::binary_search(repeated, callee)) {
@@ -412,18 +425,24 @@ bool CanInlineSmallFunction(const ir::Function& function) {
       function.instructions.size() > kMaximumInlineInstructions) {
     return false;
   }
-  return std::ranges::all_of(function.instructions, [](const ir::Instruction& instruction) {
+  return std::ranges::all_of(function.instructions, [&](const ir::Instruction& instruction) {
     return instruction.opcode == Opcode::Return || instruction.opcode == Opcode::GetField ||
            instruction.opcode == Opcode::SetField ||
-           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+           !ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess();
   });
 }
 
 bool CanUseScalarFieldBody(const ir::Function& function,
                            NativeProgramMode mode,
                            NativeDebugging debugging) {
-  if (debugging != NativeDebugging::Safepoints || !CanInlineSmallFunction(function) ||
-      !function.signature || function.signature->hidden_parameters != 1 ||
+  return debugging == NativeDebugging::Safepoints && CanInlineSmallFunction(function) &&
+         HasScalarFieldBody(function, mode);
+}
+
+namespace {
+
+bool HasScalarFieldBody(const ir::Function& function, NativeProgramMode mode) {
+  if (!function.signature || function.signature->hidden_parameters != 1 ||
       !function.signature->receiver || function.value_types[0].kind != Kind::Class ||
       !IsScalar(function.return_type)) {
     return false;
@@ -456,7 +475,7 @@ bool CanUseScalarFieldBody(const ir::Function& function,
       fields = true;
       continue;
     }
-    const auto effects = ir::AnalyzeEffects(instruction);
+    const auto effects = ir::AnalyzeEffects(function, instruction);
     if (effects.MayCollectOnSuccess() || effects.reads_state || effects.writes_state ||
         effects.may_suspend) {
       return false;
@@ -465,6 +484,8 @@ bool CanUseScalarFieldBody(const ir::Function& function,
   // 仅接收者的标量字段允许副作用；封闭布局与可重载布局各自由对应入口建立访问契约。
   return fields;
 }
+
+}  // namespace
 
 LeafKind PlanNonrecursiveLeaf(const ir::Function& function, NativeDebugging debugging) {
   constexpr std::size_t kMaximumKernelInstructions = 128;
@@ -482,7 +503,7 @@ LeafKind PlanNonrecursiveLeaf(const ir::Function& function, NativeDebugging debu
     if (instruction.opcode == Opcode::Return) {
       continue;
     }
-    const auto effects = ir::AnalyzeEffects(instruction);
+    const auto effects = ir::AnalyzeEffects(function, instruction);
     const auto array_length = ir::IsBuiltinCall(instruction, Builtin::ArrayLength);
     if (effects.MayCollectOnSuccess() || effects.writes_state ||
         (effects.reads_state && instruction.opcode != Opcode::GetIndex && !array_length)) {

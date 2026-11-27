@@ -30,17 +30,6 @@ void ExpectInterruptibleTraversals(std::string_view source) {
   EXPECT_EQ(result->llvm_ir.find(" fast "), std::string::npos);
 }
 
-TEST(RepeatedFieldTest, KeepsParameterTraversalPrefixesInterruptible) {
-  ExpectInterruptibleTraversals(R"(
-export class Point { x: double; dx: double; }
-export func update(points: Point[]): void {
-  for (let round = 0; round < 10; round++) {
-    for (const point in points) { point.x += point.dx; }
-  }
-}
-)");
-}
-
 TEST(RepeatedFieldTest, KeepsGlobalTraversalPrefixesInterruptible) {
   ExpectInterruptibleTraversals(R"(
 class Point { x: double; y: double; z: double; dx: double; dy: double; dz: double; }
@@ -72,9 +61,9 @@ export func update(): void {
 )");
 }
 
-class RepeatedFieldBoundaryTest : public testing::TestWithParam<unsigned> {};
+class RepeatedFieldTripCountTest : public testing::TestWithParam<unsigned> {};
 
-TEST_P(RepeatedFieldBoundaryTest, KeepsRepeatedTripCountsInterruptible) {
+TEST_P(RepeatedFieldTripCountTest, KeepsParameterTraversalPrefixesInterruptible) {
   const auto count = GetParam();
   const auto source =
       "export class Point { x: double; dx: double; } "
@@ -84,7 +73,7 @@ TEST_P(RepeatedFieldBoundaryTest, KeepsRepeatedTripCountsInterruptible) {
   ExpectInterruptibleTraversals(source);
 }
 
-INSTANTIATE_TEST_SUITE_P(Boundaries, RepeatedFieldBoundaryTest, testing::Values(2U, 32U));
+INSTANTIATE_TEST_SUITE_P(TripCounts, RepeatedFieldTripCountTest, testing::Values(2U, 10U, 32U));
 
 }  // namespace
 }  // namespace vela::compiler::aot

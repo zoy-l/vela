@@ -187,11 +187,11 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
   builder_.SetInsertPoint(resolve);
   if (reading) {
     PrepareInlineRuntimeCall();
-    auto helper = module_.getOrInsertFunction(runtime::kNativeLoadGlobalSymbol,
-                                              builder_.getInt8Ty(), builder_.getPtrTy(),
-                                              builder_.getInt32Ty(), builder_.getPtrTy());
+    auto helper = module_.getOrInsertFunction(
+        runtime::kNativeLoadGlobalSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy());
     auto* status = builder_.CreateCall(
-        helper, {body_->getArg(0), builder_.getInt32(instruction.index), result_});
+        helper, {body_->getArg(0), ProgramData(), builder_.getInt32(instruction.index), result_});
     MarkGuardFailure(*status);
     CompleteCall(status, instruction.dst);
     PollAfterRuntimeCall();

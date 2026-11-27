@@ -156,8 +156,11 @@ std::expected<void, std::string> PrepareSources(BinaryReader& reader,
                                                 std::uint64_t resource_id) {
   const auto payload = reader.Take(reader.remaining());
   auto request = DecodeSourceRequest(*payload);
+  if (!request) {
+    return std::unexpected(std::move(request.error()));
+  }
   const auto found = state.sources.find(resource_id);
-  if (!request || found == state.sources.end()) {
+  if (found == state.sources.end()) {
     return std::unexpected("invalid source preparation");
   }
   auto& source = *found->second;
@@ -326,7 +329,10 @@ std::expected<void, std::string> TrackFileSources(BinaryReader& reader,
                                                   std::uint64_t resource_id) {
   const auto payload = reader.Take(reader.remaining());
   auto decoded = DecodeSourceUpdate(*payload);
-  auto update = decoded ? std::move(*decoded) : std::nullopt;
+  if (!decoded) {
+    return std::unexpected(std::move(decoded.error()));
+  }
+  auto update = std::move(*decoded);
   const auto found = state.files.find(resource_id);
   if (!update || found == state.files.end()) {
     return std::unexpected("invalid watched sources");
@@ -408,7 +414,8 @@ int RunCompilerService() {
   hello.Write(runtime::NativeRuntimeAbiIdentity());
   hello.Write(runtime::NativeTargetIdentity());
   hello.Write(*layout);
-  if (!WriteCompilerFrame(stdout, hello.bytes())) {
+  if (const auto written = WriteCompilerFrame(stdout, hello.bytes()); !written) {
+    std::println(stderr, "{}", written.error());
     return 1;
   }
   ServiceOutput messages;
@@ -422,7 +429,11 @@ int RunCompilerService() {
   while (true) {
     auto request = ReadCompilerFrame(stdin);
     if (!request) {
-      return std::feof(stdin) != 0 ? 0 : 1;
+      const bool at_end = std::feof(stdin) != 0;
+      if (!at_end) {
+        std::println(stderr, "{}", request.error());
+      }
+      return at_end ? 0 : 1;
     }
     BinaryWriter output;
     const auto response = HandleRequest(*request, state, output);
@@ -433,7 +444,8 @@ int RunCompilerService() {
     // 帧尾状态允许接收端直接 pop_back 后转移整个负载。
     output.Write(static_cast<std::uint8_t>(response.has_value()));
     output.Write(static_cast<std::uint8_t>(CompilerMessage::Response));
-    if (!messages.Send(output.bytes())) {
+    if (const auto sent = messages.Send(output.bytes()); !sent) {
+      std::println(stderr, "{}", sent.error());
       return 1;
     }
   }

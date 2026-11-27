@@ -20,6 +20,7 @@
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/test_support/preparation_test_support.h"
@@ -43,6 +44,174 @@ void WithPreparedModes(std::string_view source, const Verify& verify) {
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     ASSERT_NO_FATAL_FAILURE(verify(prepared.program, mode));
   }
+}
+
+TEST(PreparationTest, BuiltinExpressionsDeclarePreviouslyUnrecordedResultTypes) {
+  WithPreparedModes(
+      R"(
+export func convert(value: int): double { return value.toDouble(); }
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto& functions = program.functions;
+        const auto convert = std::ranges::find(functions, "convert", &Function::name);
+        ASSERT_NE(convert, functions.end());
+        const auto conversion =
+            std::ranges::find_if(convert->instructions, [](const Instruction& instruction) {
+              return instruction.opcode == Opcode::BuiltinCall &&
+                     instruction.index == static_cast<std::uint32_t>(Builtin::NumericToDouble);
+            });
+        ASSERT_NE(conversion, convert->instructions.end());
+        EXPECT_EQ(convert->value_types.at(conversion->dst).kind,
+                  frontend::TypeDescriptor::Kind::Double);
+      });
+}
+
+TEST(PreparationTest, StructValuesRetainLayoutsAndFieldWritesDefineUpdatedRegisters) {
+  WithPreparedModes(R"(
+struct Position { x: double; y: double; }
+struct Body { position: Position; active: bool; }
+func copy(value: Body): Body { return value; }
+export func run(): double {
+  let body = Body(position: Position(x: 1.0, y: 2.0), active: true);
+  body.active = false;
+  const snapshot = copy(body);
+  return snapshot.position.x;
+}
+)",
+                    [](const Program& program, NativeProgramMode) {
+                      const auto body = std::ranges::find(program.classes, "Body", &Class::name);
+                      ASSERT_NE(body, program.classes.end());
+                      EXPECT_EQ(body->kind, Class::Kind::Struct);
+                      ASSERT_NE(body->value_layout, nullptr);
+                      EXPECT_EQ(body->value_layout->slots.size(), 3U);
+                      const auto index = static_cast<std::size_t>(body - program.classes.begin());
+                      EXPECT_EQ(program.layouts.classes[index].kind, layout::Class::Kind::Struct);
+                      const auto copy =
+                          std::ranges::find(program.functions, "copy", &Function::name);
+                      ASSERT_NE(copy, program.functions.end());
+                      ASSERT_NE(copy->return_type.value_layout, nullptr);
+                      EXPECT_EQ(copy->value_types.front().value_layout, body->value_layout);
+                      const auto run = std::ranges::find(program.functions, "run", &Function::name);
+                      ASSERT_NE(run, program.functions.end());
+                      std::size_t writes = 0;
+                      for (const auto& instruction : run->instructions) {
+                        if (instruction.opcode == Opcode::NewInstance) {
+                          EXPECT_NE(run->value_types[instruction.dst].value_layout, nullptr);
+                          EXPECT_TRUE(instruction.inline_value);
+                          EXPECT_FALSE(AnalyzeEffects(*run, instruction).MayCollect());
+                        }
+                        if (instruction.opcode != Opcode::SetField) {
+                          continue;
+                        }
+                        ++writes;
+                        EXPECT_TRUE(instruction.inline_value);
+                        EXPECT_TRUE(AnalyzeRegisters(instruction, program.functions).defines_value);
+                      }
+                      EXPECT_GT(writes, 0U);
+                    });
+}
+
+TEST(PreparationTest, StructMethodsKeepWritableReceiversSeparateFromReadonlyCopies) {
+  WithPreparedModes(
+      R"(
+struct Counter { value: int; add(): void { this.value++; } }
+export func run(): int {
+  let value = Counter(value: 1);
+  const frozen = value;
+  value.add();
+  frozen.add();
+  return value.value;
+}
+
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto run = std::ranges::find(program.functions, "run", &Function::name);
+        ASSERT_NE(run, program.functions.end());
+        std::size_t borrowed = 0;
+        for (const auto& instruction : run->instructions) {
+          borrowed += instruction.struct_receiver != nullptr ? 1U : 0U;
+          if (instruction.struct_receiver) {
+            EXPECT_EQ(instruction.opcode, Opcode::Call);
+          }
+        }
+        EXPECT_EQ(borrowed, 1U);
+        const auto method = std::ranges::find_if(
+            program.functions, [](const auto& function) { return function.struct_receiver; });
+        ASSERT_NE(method, program.functions.end());
+        EXPECT_TRUE(std::ranges::any_of(method->instructions, [&](const auto& instruction) {
+          return AnalyzeRegisters(instruction, program.functions).defines_value &&
+                 instruction.dst == 0 && AnalyzeEffects(*method, instruction).writes_state;
+        })) << method->name;
+      });
+}
+
+TEST(PreparationTest, StructAssignmentsReadOnlyTheFieldsNeededForWriteback) {
+  WithPreparedModes(
+      R"(
+struct Point { x: int; y: int; }
+struct Body { point: Point; other: int; }
+export func direct(point: Point, value: int): Point { point.x = value; return point; }
+export func nested(body: Body, value: int): Body { body.point.x = value; return body; }
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto& functions = program.functions;
+        for (const auto& [name, reads] : {std::pair{"direct", 0}, std::pair{"nested", 1}}) {
+          SCOPED_TRACE(name);
+          const auto update = std::ranges::find(functions, name, &Function::name);
+          ASSERT_NE(update, functions.end());
+          const auto& instructions = update->instructions;
+          EXPECT_EQ(std::ranges::count(instructions, Opcode::GetField, &Instruction::opcode),
+                    reads);
+          EXPECT_EQ(std::ranges::count(instructions, Opcode::SetField, &Instruction::opcode),
+                    reads + 1);
+        }
+      });
+}
+
+TEST(PreparationTest, CallerInitializedNullDefaultsDoNotNeedStructConstructorCalls) {
+  WithPreparedModes(
+      R"(
+func initial(): int { return 1; }
+struct Entry { value: int = initial(); text: string? = null; }
+export func update(value: int): Entry { return Entry(value: value); }
+)",
+      [](const Program& program, NativeProgramMode) {
+        const auto update = std::ranges::find(program.functions, "update", &Function::name);
+        ASSERT_NE(update, program.functions.end());
+        EXPECT_EQ(std::ranges::count(update->instructions, Opcode::Call, &Instruction::opcode), 0);
+        EXPECT_EQ(std::ranges::count(update->instructions, Opcode::SetField, &Instruction::opcode),
+                  2);
+      });
+}
+
+TEST(PreparationTest, StructAndClassCanonicalTypesCannotShareAnAbiKey) {
+  const layout::Type type{.kind = layout::Type::Kind::Class};
+  layout::Program reference;
+  layout::Class nominal;
+  nominal.name = "Position";
+  reference.classes.push_back(nominal);
+  auto value = reference;
+  value.classes.front().kind = layout::Class::Kind::Struct;
+  EXPECT_NE(layout::TypeKey(reference, type), layout::TypeKey(value, type));
+  EXPECT_FALSE(layout::IsSameType(reference, type, value, type));
+}
+
+TEST(PreparationTest, PredicateOutcomesParticipateInCanonicalTypeIdentity) {
+  const layout::Type type{.kind = layout::Type::Kind::Function};
+  layout::Program original;
+  layout::Signature signature;
+  signature.result = layout::Type{.kind = layout::Type::Kind::Bool};
+  signature.narrowed_parameter = layout::Type{.kind = layout::Type::Kind::Null};
+  signature.false_narrowed_parameter = layout::Type{.kind = layout::Type::Kind::Int};
+  original.signatures.push_back(signature);
+  auto erased = original;
+  erased.signatures.front().false_narrowed_parameter.reset();
+  EXPECT_NE(layout::TypeKey(original, type), layout::TypeKey(erased, type));
+  EXPECT_FALSE(layout::IsSameType(original, type, erased, type));
+  layout::Program imported;
+  const auto copied = layout::ImportType(imported, original, type);
+  EXPECT_TRUE(layout::IsSameType(original, type, imported, copied));
+  EXPECT_EQ(layout::TypeKey(original, type), layout::TypeKey(imported, copied));
 }
 
 TEST(PreparationTest, IntrinsicOperationWindowsPreserveSdkParameters) {
@@ -394,7 +563,7 @@ func main(): int { return Operations().read(Value()); }
   const layout::Nominal nominal{
       .module = "main.vela",
       .name = "Reader",
-      .arguments = {{.kind = layout::Type::Kind::Integer}},
+      .arguments = {{.kind = layout::Type::Kind::Int}},
   };
   EXPECT_EQ(interfaces.front(), layout::NominalKey(arguments, nominal));
 }

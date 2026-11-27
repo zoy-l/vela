@@ -18,6 +18,7 @@ executable("vela_bindgen") {
   ]
   deps = [
     "//compiler:frontend",
+    "//compiler:host_type_contract",
     "//compiler:tooling",
     "//include:bindings",
     "//third_party:clang_tooling",

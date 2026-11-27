@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
@@ -48,7 +49,8 @@ frontend::TypeDescriptor SemanticIndex::Capability(frontend::TypeDescriptor type
   return type;
 }
 
-std::vector<std::string_view> SemanticIndex::MemberOwners(frontend::TypeDescriptor type) const {
+std::vector<std::string_view> SemanticIndex::MemberOwners(
+    const frontend::TypeDescriptor& type) const {
   std::vector<std::string_view> owners;
   absl::flat_hash_set<std::string_view> visited;
   auto name = type.name;
@@ -68,7 +70,7 @@ std::vector<std::string_view> SemanticIndex::MemberOwners(frontend::TypeDescript
 }
 
 std::string SemanticIndex::DisplayType(frontend::TypeDescriptor type) const {
-  return tooling::DisplayType(model_, type);
+  return tooling::DisplayType(model_, std::move(type));
 }
 
 std::string DisplayType(const frontend::SemanticModel& model, frontend::TypeDescriptor type) {

@@ -6,10 +6,10 @@
 #include <benchmark/benchmark.h>
 
 #include "base/native_program_mode.h"
+#include "benchmarks/jit_benchmark.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "benchmarks/jit_benchmark.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -77,7 +77,11 @@ void ReloadModules(benchmark::State& state, NativeCodeTier tier, ModuleGraph gra
     state.SkipWithError(frontend::DiagnosticsText(loaded.error().diagnostics));
     return;
   }
-  static_cast<void>(session.Submit(std::move(*loaded)));
+  const auto submitted = session.Submit(std::move(*loaded));
+  if (submitted.status != DevelopmentStatus::WaitingForSafepoint) {
+    state.SkipWithError(submitted.message);
+    return;
+  }
   if (session.Pump().status != DevelopmentStatus::Accepted) {
     state.SkipWithError("cannot load scaling project");
     return;

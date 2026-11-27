@@ -18,16 +18,15 @@
 #include "base/layout_description.h"
 #include "base/opcode.h"
 #include "base/reflection.h"
-#include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/parser.h"
-
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/native/native_image_data.h"
 #include "compiler/test_support/preparation_test_support.h"
+#include "compiler/test_support/reflection_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/program_layouts.h"
 #include "runtime/native/native_image.h"
@@ -139,34 +138,13 @@ class Counter {
 export func main(): int { return 1; }
 )",
   };
-  const frontend::ReflectionSelection selection{
-      .module = "main.vela",
-      .type = *frontend::ParseTypeSource("Counter"),
-      .members =
-          {
-              {
-                  .kind = frontend::ReflectionMemberKind::Method,
-                  .name = "add",
-                  .type_arguments = {},
-                  .location = {},
-              },
-              {
-                  .kind = frontend::ReflectionMemberKind::Method,
-                  .name = "#secret",
-                  .type_arguments = {},
-                  .location = {},
-              },
-              {
-                  .kind = frontend::ReflectionMemberKind::Constructor,
-                  .name = {},
-                  .type_arguments = {},
-                  .location = {},
-              },
-          },
-      .source_path = "<reflection>",
-      .location = {},
-      .source = frontend::ParseSourceSnapshot({}).source,
-  };
+  using SelectionKind = frontend::ReflectionMemberKind;
+  const auto selection =
+      test::SelectReflection("Counter", {
+                                            test::SelectMember(SelectionKind::Method, "add"),
+                                            test::SelectMember(SelectionKind::Method, "#secret"),
+                                            test::SelectMember(SelectionKind::Constructor),
+                                        });
   auto prepared = ir::PrepareParsed(
       frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1)));
   ASSERT_TRUE(prepared.Succeeded());

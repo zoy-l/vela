@@ -186,8 +186,11 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
 
 class ConsoleDebugger final : public runtime::NativeDebugger {
  public:
-  ConsoleDebugger(const runtime::NativeImage& image, std::istream& input, std::ostream& output)
-      : input_(&input), output_(&output) {
+  ConsoleDebugger(const runtime::NativeImage& image,
+                  runtime::Heap& heap,
+                  std::istream& input,
+                  std::ostream& output)
+      : heap_(&heap), input_(&input), output_(&output) {
     const auto paths = image.source_paths.values();
     for (const auto& function : image.functions.values()) {
       functions_.emplace(function.name.text());
@@ -228,6 +231,7 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
                const runtime::NativeDebugFrame& frame) const;
   void Help() const;
 
+  runtime::Heap* heap_;
   std::istream* input_;
   std::ostream* output_;
   Mode mode_ = Mode::Instruction;
@@ -575,7 +579,7 @@ void ConsoleDebugger::Inspect(Command command,
     *output_ << "expected an object register and a nonnegative index\n";
     return;
   }
-  const auto& object = *value->AsObject();
+  auto& object = *value->AsObject();
   if (command == Command::Field) {
     const auto field = runtime::Heap::GetField(object, *element);
     if (!field) {
@@ -584,7 +588,7 @@ void ConsoleDebugger::Inspect(Command command,
     }
     WriteDebugValue(*output_, *field);
   } else {
-    const auto item = runtime::Heap::GetElement(object, *element);
+    const auto item = heap_->GetElement(object, *element);
     if (!item) {
       *output_ << "object is not an array or its index is out of range\n";
       return;
@@ -600,7 +604,7 @@ int RunDebugConsole(runtime::NativeInstance& instance,
                     std::uint32_t function,
                     std::istream& input,
                     std::ostream& output) {
-  ConsoleDebugger debugger(instance.image(), input, output);
+  ConsoleDebugger debugger(instance.image(), instance.isolate().heap(), input, output);
   auto& control = instance.isolate().native_control();
   control.SetDebugger(&debugger);
   int code = runtime::RunProcessEntry(instance, function, output,

@@ -144,7 +144,7 @@ enum class BindingKind : std::uint8_t {
   Constant,
 };
 
-enum class Visibility : std::uint8_t { Public, Private };
+using ::vela::Visibility;
 enum class MemberStorage : std::uint8_t { Instance, Static };
 enum class ConstructorKind : std::uint8_t { Generated, Explicit, Unavailable };
 enum class ExportKind : std::uint8_t { Local, Exported };
@@ -250,6 +250,9 @@ struct Field final {
   std::vector<Attribute> attributes;
 };
 
+// 类型已知可空时，缺省初始化统一归一化为 null；显式表达式保持原样。
+void InitializeNullableDefault(const TypeName& type, std::unique_ptr<Expression>& initializer);
+
 struct Statement final {
   enum class Kind : std::uint8_t {
     VariableDeclaration,
@@ -304,7 +307,6 @@ struct Statement final {
 };
 
 struct Function final {
-  enum class Role : std::uint8_t { Ordinary, InteractiveEntry };
   struct Application final {
     std::string name;
     std::vector<TypeName> arguments;
@@ -327,7 +329,6 @@ struct Function final {
   std::optional<std::uint32_t> intrinsic_operation;
   // SDK 声明生产者登记可省略的参数；省略值沿现有调用契约以 null 传递。
   std::vector<std::string> optional_parameters;
-  Role role = Role::Ordinary;
   bool is_async = false;
   bool is_override = false;
   bool is_getter = false;
@@ -335,6 +336,9 @@ struct Function final {
   // 构造签名在检查函数体之前解析；保留源码是否接管父类调用。
   bool has_super_call = false;
   std::vector<Attribute> attributes;
+
+  enum class ParameterDefault : std::uint8_t { Required, Null, Expression };
+  [[nodiscard]] ParameterDefault DefaultFor(const Parameter& parameter) const;
 
   [[nodiscard]] bool IsVirtualMethod() const {
     return storage == MemberStorage::Instance && visibility == Visibility::Public &&
@@ -367,7 +371,9 @@ struct Enum final {
 };
 
 struct Class final {
+  enum class Kind : std::uint8_t { Reference, Value };
   enum class ReflectionRole : std::uint8_t { None, Metadata, Identity };
+  Kind kind = Kind::Reference;
   std::string name;
   std::string native_key;
   std::vector<Field> fields;

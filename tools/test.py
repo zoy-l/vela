@@ -10,7 +10,7 @@ import sys
 
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
-from tools.config import BUILD_VARIANTS, executable_name, output_directory
+from tools.config import BUILD_VARIANTS, ROOT, executable_name
 
 
 TEST_EXECUTABLES = {
@@ -30,7 +30,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("test_arguments", nargs="*", metavar="VARIANT_OR_SELECTION")
     options, gtest_arguments = split_forwarded_arguments(arguments)
     parsed = parser.parse_args(options)
-    values = list(parsed.test_arguments)
+    values = parsed.test_arguments
     variant = "debug"
     if values and values[0] in BUILD_VARIANTS:
         variant = values.pop(0)
@@ -43,10 +43,11 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
 
 
 def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
-    build(variant, "default")
+    run_tooling = selection in {"all", "tooling"}
+    targets = ["tooling_tests" if run_tooling else "default"]
     if selection != "tooling":
-        build(variant, "tests")
-    output = output_directory(variant)
+        targets.append("tests")
+    output = build(variant, *targets)
 
     failed: list[str] = []
     for name, executable in TEST_EXECUTABLES.items():
@@ -62,11 +63,12 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
     if failed:
         raise RuntimeError(f"GoogleTest suites failed: {', '.join(failed)}")
 
-    if selection in {"all", "tooling"}:
+    if run_tooling:
         environment = os.environ.copy()
         environment["VELA_TEST_EXECUTABLE"] = str(output / executable_name("vela"))
-        subprocess.run([sys.executable, "-m", "unittest", "tools.llms_unittest", "tools.tooling_unittest", "tools.testing_unittest", "tools.mock_unittest", "tools.editor_unittest", "tools.command_unittest", "tools.development_unittest", "tools.bench_unittest", "tools.bindgen_unittest", "tools.toolchain_unittest", "tools.llvm_unittest", "tools.unicode_case_unittest", "tools.aot_unittest", "tools.reflection_unittest", "tools.aot_distribution_unittest", "tools.package_unittest", "tools.embed_unittest"],
-                       cwd=output.parent.parent, env=environment, check=True)
+        subprocess.run([sys.executable, "-m", "unittest", "discover",
+                        "-s", "tools", "-t", ".", "-p", "*_unittest.py"],
+                       cwd=ROOT, env=environment, check=True)
 
     subprocess.run(
         [str(output / executable_name("vela")), "--version"],

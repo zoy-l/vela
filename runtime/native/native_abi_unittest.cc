@@ -1,5 +1,4 @@
 #include "runtime/native/native_abi.h"
-#include <optional>
 
 #include <array>
 #include <bit>
@@ -8,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <thread>
 
@@ -20,6 +20,7 @@
 #include "runtime/native/native_api.h"
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_image.h"
+#include "runtime/native/native_image_test_support.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_stack.h"
 #include "runtime/strings/string.h"
@@ -29,16 +30,8 @@
 namespace vela::runtime {
 namespace {
 
-NativeImage EmptyImage() {
-  NativeImage image;
-  const auto abi = NativeRuntimeAbiIdentity();
-  const auto target = NativeTargetIdentity();
-  image.abi_identity = {.data = abi.data(), .size = abi.size()};
-  image.target = {.data = target.data(), .size = target.size()};
-  return image;
-}
-
-}  // namespace
+using test::EmptyImage;
+using test::Table;
 
 TEST(NativeAbiTest, StackBoundsAreStableWithinEachThreadAndContainItsCurrentFrame) {
   const auto main_bounds = CurrentNativeStackBounds();
@@ -106,30 +99,6 @@ TEST(NativeAbiTest, ValueCodecsPreservePayloadBitsAndClearReservedFields) {
   }
 }
 
-TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto image = EmptyImage();
-  const auto instance = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  NativeTraceFrame trace;
-  execution.MaterializeFrame(trace, 0);
-  NativeFrame frame(isolate, {.root_count = 1, .storage_bytes = sizeof(std::max_align_t)});
-  ASSERT_TRUE(frame.IsAllocated());
-  ASSERT_NE(frame.storage(), nullptr);
-  EXPECT_EQ(std::bit_cast<std::uintptr_t>(frame.storage()) % alignof(std::max_align_t), 0);
-  auto* string = heap.AllocateString("rooted");
-  ASSERT_NE(string, nullptr);
-  frame.roots().front() = Value::String(string);
-  constexpr unsigned char kStoragePattern = 0xff;
-  std::memset(frame.storage(), kStoragePattern, sizeof(std::max_align_t));
-  heap.Collect();
-  EXPECT_EQ(string->value(), "rooted");
-  execution.Exit();
-  EXPECT_EQ(execution.current_frame(), nullptr);
-}
-
 TEST(NativeAbiTest, StackRootEntryInitializesReusedStorageAndReleasesRegistration) {
   Isolate isolate(1);
   const auto image = EmptyImage();
@@ -169,6 +138,40 @@ TEST(NativeAbiTest, StackRootEntryInitializesReusedStorageAndReleasesRegistratio
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);
   EXPECT_EQ(execution.current_frame(), nullptr);
+}
+
+TEST(NativeAbiTest, AttachedStridedValuesSurviveIncrementalGcAndReleaseRegistration) {
+  Isolate isolate(1);
+  const auto image = EmptyImage();
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  NativeExecution execution(**instance);
+  auto& heap = isolate.heap();
+  const auto baseline = heap.object_count();
+  std::array<NativeDebugValue, 2> snapshots{};
+  alignas(RootRange) std::array<std::byte, sizeof(RootRange)> storage{};
+  void* range_storage = storage.data();
+  auto* range = static_cast<RootRange*>(range_storage);
+  {
+    vela_native_v1_roots_attach(&execution, snapshots.data(), snapshots.size(),
+                                sizeof(NativeDebugValue), range);
+    const std::unique_ptr<RootRange, decltype(&vela_native_v1_roots_exit)> registration(
+        range, &vela_native_v1_roots_exit);
+    for (auto& snapshot : snapshots) {
+      auto* text = heap.AllocateString("boxed snapshot");
+      ASSERT_NE(text, nullptr);
+      snapshot.value = EncodeNativeValue(Value::String(text));
+      heap.StartCollection();
+      heap.Step(1);
+      heap.FinishCollection();
+    }
+    for (const auto& snapshot : snapshots) {
+      EXPECT_EQ(DecodeNativeValue(snapshot.value).AsString()->value(), "boxed snapshot");
+    }
+    EXPECT_EQ(heap.object_count(), baseline + snapshots.size());
+  }
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
 }
 
 TEST(NativeAbiTest, NativeStackRootsKeepNestedFramesAndReleasePoppedValues) {
@@ -260,11 +263,11 @@ TEST(NativeAbiTest, ArrayEntryArgumentsPublishNestedReferencesDuringMarkAndSweep
           current_heap.FinishCollection();
           current_heap.Collect();
           const auto outer = DecodeNativeValue(*arguments);
-          const auto inner = Heap::GetElement(*outer.AsObject(), 0);
+          const auto inner = current_heap.GetElement(*outer.AsObject(), 0);
           if (!inner) {
             return ToNativeStatus(ExecutionStatus::NativeFailure);
           }
-          const auto value = Heap::GetElement(*inner->AsObject(), 0);
+          const auto value = current_heap.GetElement(*inner->AsObject(), 0);
           if (!value) {
             return ToNativeStatus(ExecutionStatus::NativeFailure);
           }
@@ -285,12 +288,8 @@ TEST(NativeAbiTest, ArrayEntryArgumentsPublishNestedReferencesDuringMarkAndSweep
   }
 }
 
-TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
+TEST(NativeAbiTest, FrameAllocationRejectsOversizedRootsAndStorage) {
   Isolate isolate;
-  const auto image = EmptyImage();
-  const auto instance = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
   NativeFrame roots(isolate, {.root_count = std::numeric_limits<std::size_t>::max()});
   NativeFrame storage(isolate, {.storage_bytes = std::numeric_limits<std::size_t>::max()});
   NativeFrame combined(isolate, {
@@ -300,7 +299,6 @@ TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
   EXPECT_FALSE(roots.IsAllocated());
   EXPECT_FALSE(storage.IsAllocated());
   EXPECT_FALSE(combined.IsAllocated());
-  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
@@ -338,6 +336,7 @@ TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
   EXPECT_EQ(execution.current_instruction(), outer_position);
   EXPECT_EQ(*outer_position, kOuterInstruction);
   execution.Exit();
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, ResourceEntryOwnsRootsAndReleasesStorage) {
@@ -350,15 +349,30 @@ TEST(NativeAbiTest, ResourceEntryOwnsRootsAndReleasesStorage) {
   alignas(NativeFrame) std::array<std::byte, sizeof(NativeFrame)> storage{};
   void* frame_storage = storage.data();
   auto* frame = static_cast<NativeFrame*>(frame_storage);
-  NativeFrameAccess outer;
-  ASSERT_EQ(vela_native_v1_frame_storage(&execution, 1, kStorageBytes, frame, &outer),
+  NativeFrameAccess access;
+  ASSERT_EQ(vela_native_v1_frame_storage(&execution, 1, kStorageBytes, frame, &access),
             static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  ASSERT_NE(outer.roots, nullptr);
-  EXPECT_TRUE(outer.roots->IsNull());
-  ASSERT_NE(outer.storage, nullptr);
-  EXPECT_EQ(outer.storage, frame->storage());
-  vela_native_v1_frame_release(frame);
-  EXPECT_EQ(execution.current_frame(), nullptr);
+  std::unique_ptr<NativeFrame, decltype(&vela_native_v1_frame_release)> registration(
+      frame, &vela_native_v1_frame_release);
+  ASSERT_NE(access.roots, nullptr);
+  EXPECT_TRUE(access.roots->IsNull());
+  ASSERT_NE(access.storage, nullptr);
+  EXPECT_EQ(access.storage, frame->storage());
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(access.storage) % alignof(std::max_align_t), 0);
+  auto& heap = isolate.heap();
+  heap.Collect();
+  const auto baseline = heap.object_count();
+  auto* text = heap.AllocateString("rooted");
+  ASSERT_NE(text, nullptr);
+  *access.roots = Value::String(text);
+  constexpr unsigned char kStoragePattern = 0xff;
+  std::memset(access.storage, kStoragePattern, kStorageBytes);
+  heap.Collect();
+  ASSERT_EQ(heap.object_count(), baseline + 1);
+  EXPECT_EQ(access.roots->AsString()->value(), "rooted");
+  registration.reset();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
 }
 
 TEST(NativeAbiTest, StoppedExecutionHasPublicNativeDiagnostic) {
@@ -372,10 +386,10 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   auto image = EmptyImage();
   std::array<NativeFunctionDescription, 2> functions;
   const std::array<SourceLocation, 8> locations;
-  functions.back().locations = {.data = locations.data(), .size = locations.size()};
+  functions.back().locations = Table(locations);
   const std::array<NativeText, 1> paths;
-  image.source_paths = {.data = paths.data(), .size = paths.size()};
-  image.functions = {.data = functions.data(), .size = functions.size()};
+  image.source_paths = Table(paths);
+  image.functions = Table(functions);
   const auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
@@ -481,4 +495,5 @@ TEST(NativeAbiTest, ExceptionRootsFollowPublicationTransferAndRethrow) {
   EXPECT_EQ(heap.object_count(), baseline);
 }
 
+}  // namespace
 }  // namespace vela::runtime

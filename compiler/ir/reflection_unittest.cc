@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <span>
-#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -14,14 +13,18 @@
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/test_support/reflection_test_support.h"
 
 namespace vela::ir {
 namespace {
+
+using compiler::test::SelectMember;
+using compiler::test::SelectReflection;
+using SelectionKind = frontend::ReflectionMemberKind;
 
 TEST(ReflectionPreparationTest, ImmediateArgumentRecordsBecomeRootedValueWindows) {
   const frontend::SourceInput source{
@@ -76,34 +79,13 @@ class Counter extends Base {
 }
 )",
   };
-  const frontend::ReflectionSelection selection{
-      .module = "counter.vela",
-      .type = *frontend::ParseTypeSource("Counter"),
-      .members =
-          {
-              {
-                  .kind = frontend::ReflectionMemberKind::Getter,
-                  .name = "amount",
-                  .type_arguments = {},
-                  .location = {},
-              },
-              {
-                  .kind = frontend::ReflectionMemberKind::Constructor,
-                  .name = {},
-                  .type_arguments = {},
-                  .location = {},
-              },
-              {
-                  .kind = frontend::ReflectionMemberKind::Field,
-                  .name = "total",
-                  .type_arguments = {},
-                  .location = {},
-              },
-          },
-      .source_path = "<reflection>",
-      .location = {},
-      .source = frontend::ParseSourceSnapshot({}).source,
-  };
+  const auto selection = SelectReflection("Counter",
+                                          {
+                                              SelectMember(SelectionKind::Getter, "amount"),
+                                              SelectMember(SelectionKind::Constructor),
+                                              SelectMember(SelectionKind::Field, "total"),
+                                          },
+                                          source.path);
   auto parsed = frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1));
   ASSERT_TRUE(parsed.diagnostics.empty());
   const auto checked = frontend::TypeChecker().Check(parsed.program);
@@ -173,22 +155,8 @@ TEST(ReflectionPreparationTest, EnumSelectionKeepsOriginalOrdinalsAndUnregistere
       .path = "colors.vela",
       .text = "enum Color { red, green, blue }",
   };
-  const frontend::ReflectionSelection selection{
-      .module = "colors.vela",
-      .type = *frontend::ParseTypeSource("Color"),
-      .members =
-          {
-              {
-                  .kind = frontend::ReflectionMemberKind::EnumMember,
-                  .name = "blue",
-                  .type_arguments = {},
-                  .location = {},
-              },
-          },
-      .source_path = "<reflection>",
-      .location = {},
-      .source = frontend::ParseSourceSnapshot({}).source,
-  };
+  const auto selection =
+      SelectReflection("Color", {SelectMember(SelectionKind::EnumMember, "blue")}, source.path);
   const auto prepared = PrepareParsed(
       frontend::LoadSources(std::span(&source, 1), source.path, std::span(&selection, 1)));
   ASSERT_TRUE(prepared.Succeeded());

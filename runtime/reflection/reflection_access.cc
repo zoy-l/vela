@@ -210,12 +210,14 @@ std::expected<Value, ExecutionStatus> InvokeScriptReflectedMember(
     NativeExecution& execution,
     const NativeReflectionMember& member,
     Value receiver,
-    const HeapObject& arguments,
+    HeapObject& arguments,
     const ReflectionHandle& handle) {
   return InvokeArgumentSnapshot(
       execution, member, receiver, *Heap::ArrayLength(arguments), handle, [&](std::size_t index) {
-        const auto& argument =
-            *Heap::GetElement(arguments, static_cast<std::uint32_t>(index))->AsObject();
+        const auto& argument = *execution.isolate()
+                                    .heap()
+                                    .GetElement(arguments, static_cast<std::uint32_t>(index))
+                                    ->AsObject();
         return std::pair{Heap::LoadField(argument, 0), Heap::LoadField(argument, 1)};
       });
 }

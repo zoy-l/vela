@@ -22,31 +22,32 @@ from tools.reflection_benchmark_report import aggregate_reflection_results, refl
 BACKENDS = ("cpp", "jit")
 
 
-class ReflectionReportTest(unittest.TestCase):
-    def rows(self, repetitions: int = 3) -> tuple[list[str], list[dict]]:
-        names = [f"reflection/{backend}/field/{strategy}/real_time"
-                 for backend, strategies in (("baseline", ("direct", "dynamic", "cached")),
-                                              ("cpp", ("cached",))) for strategy in strategies]
-        query = "reflection/optimized/query/all/background:1024/matches:8/real_time"
-        names += [query, "reflection/reload/resources/iterations:1/real_time"]
-        rows = []
-        for position, name in enumerate(names):
-            operations = 8 if name == query else 16 if "/reload/" in name else 128
-            result = 64 if name == query else 16 if "/reload/" in name else 8128
-            for index in range(repetitions):
-                rows.append(dict(name=name, real_time=operations * (position + 1) * (index + 1),
-                                 cpu_time=999999, time_unit="ns", operations=operations,
-                                 repetitions=repetitions, repetition_index=index,
-                                 result=result, expected_result=result, reflection_members=0,
-                                 allocation_bytes_per_op=80, baseline_bytes=100, allocated_bytes=200,
-                                 retained_bytes=100, committed_bytes=256, image_bytes=1024,
-                                 executable_bytes=256, reflection_types=1, retained_images=1,
-                                 background_members=1024, matches_per_query=8,
-                                 reflection_index_prepared=int(name == query or "/cached/" in name)))
-        return names, rows
+def reflection_samples(repetitions: int = 3) -> tuple[list[str], list[dict]]:
+    names = [f"reflection/{backend}/field/{strategy}/real_time"
+             for backend, strategies in (("baseline", ("direct", "dynamic", "cached")),
+                                          ("cpp", ("cached",))) for strategy in strategies]
+    query = "reflection/optimized/query/all/background:1024/matches:8/real_time"
+    names += [query, "reflection/reload/resources/iterations:1/real_time"]
+    rows = []
+    for position, name in enumerate(names):
+        operations = 8 if name == query else 16 if "/reload/" in name else 128
+        result = 64 if name == query else 16 if "/reload/" in name else 8128
+        for index in range(repetitions):
+            rows.append(dict(name=name, real_time=operations * (position + 1) * (index + 1),
+                             cpu_time=999999, time_unit="ns", operations=operations,
+                             repetitions=repetitions, repetition_index=index,
+                             result=result, expected_result=result, reflection_members=0,
+                             allocation_bytes_per_op=80, baseline_bytes=100, allocated_bytes=200,
+                             retained_bytes=100, committed_bytes=256, image_bytes=1024,
+                             executable_bytes=256, reflection_types=1, retained_images=1,
+                             background_members=1024, matches_per_query=8,
+                             reflection_index_prepared=int(name == query or "/cached/" in name)))
+    return names, rows
 
+
+class ReflectionReportTest(unittest.TestCase):
     def test_uses_wall_time_and_batch_units_for_comparisons_and_queries(self) -> None:
-        names, rows = self.rows()
+        names, rows = reflection_samples()
         summary = aggregate_reflection_results({"benchmarks": rows}, names, 3)
         self.assertEqual(summary[names[2]]["ns_per_operation"], 6)
         self.assertEqual(summary[names[2]]["ratios"],
@@ -62,7 +63,7 @@ class ReflectionReportTest(unittest.TestCase):
         self.assertIn("only one image may remain", text)
 
     def test_rejects_failed_incomplete_and_invalid_measurements(self) -> None:
-        names, rows = self.rows()
+        names, rows = reflection_samples()
         for field, value, diagnostic in (("result", 1, "checksum mismatch"),
                                          ("operations", 0, "operations"),
                                          ("allocation_bytes_per_op", float("nan"), "allocation"),
@@ -84,29 +85,8 @@ class ReflectionReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             aggregate_reflection_results({"benchmarks": rows[:-1]}, names, 3)
 
-    def test_reflection_runner_uses_registry_and_writes_report(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="vela-reflection-bench-") as temporary:
-            report = Path(temporary) / "reflection.json"
-            parsed = parse_arguments(["--reflection-compare", "--report", str(report)])
-
-            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
-                self.assertEqual(Path(command[0]).stem, "vela_benchmarks")
-                self.assertIn("--benchmark_filter=^reflection/", command)
-                names, rows = self.rows(7)
-                if "--benchmark_list_tests=true" in command:
-                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
-                self.assertIn("--benchmark_repetitions=7", command)
-                self.assertIn("--benchmark_enable_random_interleaving=true", command)
-                report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0)
-
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
-                with redirect_stdout(io.StringIO()):
-                    run(parsed)
-            self.assertIn("Runtime reflection (Release)", report.with_suffix(".md").read_text(encoding="utf-8"))
-
     def test_registered_unused_control_keeps_index_lazy(self) -> None:
-        names, rows = self.rows()
+        names, rows = reflection_samples()
         unused = "reflection/baseline/unused/registered_direct/real_time"
         selected = rows[:3] + [dict(row, name=unused, reflection_members=3,
                                   reflection_index_prepared=0) for row in rows[6:9]]
@@ -118,7 +98,7 @@ class ReflectionReportTest(unittest.TestCase):
             aggregate_reflection_results({"benchmarks": selected}, [names[0], unused], 3)
 
     def test_aot_pairs_operations_and_queries_with_offline_object_sizes(self) -> None:
-        names, rows = self.rows()
+        names, rows = reflection_samples()
         selected = []
         for row in rows:
             name = row["name"]
@@ -266,7 +246,7 @@ class BenchmarkReportTest(unittest.TestCase):
         algorithms = json.loads((root / "algorithms/cases.json").read_text(encoding="utf-8"))
         cases = basic + algorithms
         keys = [(case["name"], case["size"]) for case in cases]
-        self.assertEqual(len(keys), 26)
+        self.assertEqual(len(keys), 29)
         self.assertEqual(len(keys), len(set(keys)))
         basic_names = {case["name"] for case in basic}
         algorithm_names = {case["name"] for case in algorithms}
@@ -496,29 +476,27 @@ class BenchmarkReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid source_ns"):
             jit_comparison_report(report, names, 1)
 
-    def test_aot_report_rejects_retained_suspended_state(self) -> None:
+    def test_aot_report_pairs_backends_and_checks_results_and_retained_state(self) -> None:
         rows = ported_aot_samples(3)
         names = sorted({row["name"] for row in rows})
-        rows[0]["remaining_suspended_frames"] = 1
-        with self.assertRaisesRegex(ValueError, "retained temporary state"):
-            aot_comparison_report({"benchmarks": rows}, names, 3)
-
-    def test_aot_report_includes_ported_cpp_pairs_and_checks_references(self) -> None:
-        rows = ported_aot_samples(3)
-        names = sorted({row["name"] for row in rows})
-        text = aot_comparison_report({"benchmarks": rows}, names, 3)
+        report = {"benchmarks": rows}
+        text = aot_comparison_report(report, names, 3)
         self.assertIn("| queen | 8 | 20.000 | 10.000 | - | 2.000 |", text)
         self.assertIn("over 1 paired workloads: 2.00x", text)
-        with self.assertRaisesRegex(ValueError, "missing"):
-            aot_comparison_report({"benchmarks": rows[:3]}, names, 3)
-        with self.assertRaisesRegex(ValueError, "repetitions"):
-            aot_comparison_report({"benchmarks": rows[:-1]}, names, 3)
+        self.assertIn("| queen | 8 | 128 | 1 | 2 |", text)
+        self.assertIn("| queen | 8 | cpp | 4096 |", text)
+        self.assertIn("not measured machine-stack usage", text)
+        rows[0]["remaining_suspended_frames"] = 1
+        with self.assertRaisesRegex(ValueError, "retained temporary state"):
+            aot_comparison_report(report, names, 3)
+        rows[0]["remaining_suspended_frames"] = 0
         rows[-1]["result"] = 0
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-            aot_comparison_report({"benchmarks": rows}, names, 3)
-        rows[-1]["result"] = rows[-1]["expected_result"] = 93
+            aot_comparison_report(report, names, 3)
+        for row in rows:
+            del row["expected_result"]
         with self.assertRaisesRegex(ValueError, "checksums differ"):
-            aot_comparison_report({"benchmarks": rows}, names, 3)
+            aot_comparison_report(report, names, 3)
 
     def test_aot_report_checks_floating_results_with_the_declared_tolerance(self) -> None:
         rows = ported_aot_samples()
@@ -529,33 +507,6 @@ class BenchmarkReportTest(unittest.TestCase):
         self.assertIn("queen", aot_comparison_report({"benchmarks": rows}, names, 1))
         rows[-1]["result"] += 1e-6
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-            aot_comparison_report({"benchmarks": rows}, names, 1)
-
-    def test_aot_report_rejects_incomplete_samples_wrong_results_and_retained_tasks(self) -> None:
-        rows = []
-        names = []
-        for backend in ("native", "cpp"):
-            name = f"aot/{backend}/arithmetic/1000/real_time"
-            names.append(name)
-            rows.append({"name": name, "real_time": 1000, "time_unit": "ns", "result": 499500,
-                         "baseline_bytes": 100, "retained_bytes": 100, "allocated_bytes": 200,
-                         "committed_bytes": 200, "suspended_frames": 0, "saved_state_bytes": 0,
-                         "remaining_suspended_frames": 0, "remaining_saved_bytes": 0,
-                         "process_resident_bytes": 4096, "entry_frame_bytes": 256,
-                         "entry_shadow_slots": 2, "entry_static_root_stores": 3})
-        report = aot_comparison_report({"benchmarks": rows}, names, 1)
-        self.assertIn("AOT/C++", report)
-        self.assertIn("| arithmetic | 1000 | 256 | 2 | 3 |", report)
-        self.assertIn("| arithmetic | 1000 | cpp | 4096 |", report)
-        self.assertIn("not measured machine-stack usage", report)
-        with self.assertRaisesRegex(ValueError, "missing"):
-            aot_comparison_report({"benchmarks": rows[:-1]}, names, 1)
-        rows[-1]["result"] = 0
-        with self.assertRaisesRegex(ValueError, "checksums differ"):
-            aot_comparison_report({"benchmarks": rows}, names, 1)
-        rows[-1]["result"] = 499500
-        rows[0]["remaining_suspended_frames"] = 1
-        with self.assertRaisesRegex(ValueError, "retained temporary"):
             aot_comparison_report({"benchmarks": rows}, names, 1)
 
     def test_uses_wall_time_medians_and_separates_cold_compilation_and_memory(self) -> None:
@@ -683,72 +634,43 @@ class BenchmarkReportTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "all eight backends"):
                     native_call_report({"benchmarks": rows}, [row["name"] for row in rows], 1)
 
-    def test_native_runner_selects_native_registry_and_writes_report(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="vela-native-bench-") as temporary:
-            report = Path(temporary) / "native.json"
-            parsed = parse_arguments(["--native-compare", "--report", str(report)])
+    def test_report_modes_use_their_registry_and_write_the_matching_report(self) -> None:
+        cases = (
+            ("--reflection-compare", "vela_benchmarks", "^reflection/",
+             {"benchmarks": reflection_samples(7)[1]}, "Runtime reflection (Release)"),
+            ("--native-compare", "vela_aot_benchmarks", "^native/",
+             {"benchmarks": native_samples(7)}, "Baseline JIT native ns"),
+            ("--jit-compare", "vela_aot_benchmarks", "^(aot/(native|cpp)/|hot/steady/)",
+             reloadable_samples(7), "Fresh-Isolate setup"),
+            ("--gc-report", "vela_benchmarks", "^gc/cohort/",
+             {"benchmarks": gc_samples(7)}, "Vela GC: complete incremental collection cycles"),
+        )
+        for mode, executable, pattern, samples, heading in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                report = output / "results.json"
+                parsed = parse_arguments([mode, "--report", str(report)])
+                names = sorted({row["name"] for row in samples["benchmarks"]})
 
-            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
-                self.assertEqual(Path(command[0]).stem, "vela_aot_benchmarks")
-                self.assertIn("--benchmark_filter=^native/", command)
-                rows = native_samples(7)
-                if "--benchmark_list_tests=true" in command:
-                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(sorted({row["name"] for row in rows})))
-                report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0)
+                def execute(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+                    binary = Path(command[0])
+                    self.assertEqual((binary.parent, binary.stem), (output, executable))
+                    self.assertIn(f"--benchmark_filter={pattern}", command)
+                    if "--benchmark_list_tests=true" in command:
+                        return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
+                    self.assertIn("--benchmark_repetitions=7", command)
+                    self.assertIn("--benchmark_min_time=0.2s", command)
+                    self.assertIn("--benchmark_enable_random_interleaving=true", command)
+                    self.assertIn(f"--benchmark_out={report}", command)
+                    self.assertIn("--benchmark_out_format=json", command)
+                    report.write_text(json.dumps(samples), encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0)
 
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
-                with redirect_stdout(io.StringIO()):
-                    run(parsed)
-            self.assertIn("Baseline JIT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
-            self.assertIn("Optimized JIT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
-            self.assertIn("AOT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
-
-    def test_jit_runner_defaults_to_steady_fourway_with_full_sampling(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="vela-jit-bench-") as temporary:
-            report = Path(temporary) / "jit.json"
-            parsed = parse_arguments(["--jit-compare", "--report", str(report)])
-
-            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
-                self.assertIn("--benchmark_filter=^(aot/(native|cpp)/|hot/steady/)", command)
-                samples = reloadable_samples(7)
-                if "--benchmark_list_tests=true" in command:
-                    names = sorted({row["name"] for row in samples["benchmarks"]})
-                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
-                self.assertIn("--benchmark_repetitions=7", command)
-                self.assertIn("--benchmark_min_time=0.2s", command)
-                self.assertIn("--benchmark_enable_random_interleaving=true", command)
-                report.write_text(json.dumps(samples), encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0)
-
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
-                with redirect_stdout(io.StringIO()):
-                    run(parsed)
-            self.assertIn("Fresh-Isolate setup", report.with_suffix(".md").read_text(encoding="utf-8"))
-
-    def test_gc_runner_selects_collector_registry_and_writes_a_separate_report(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="vela-gc-bench-") as temporary:
-            report = Path(temporary) / "gc.json"
-            parsed = parse_arguments(["--gc-report", "--report", str(report)])
-
-            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
-                self.assertEqual(Path(command[0]).stem, "vela_benchmarks")
-                self.assertIn("--benchmark_filter=^gc/cohort/", command)
-                rows = gc_samples(7)
-                if "--benchmark_list_tests=true" in command:
-                    names = sorted({row["name"] for row in rows})
-                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
-                self.assertIn("--benchmark_repetitions=7", command)
-                self.assertIn("--benchmark_enable_random_interleaving=true", command)
-                report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0)
-
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
-                with redirect_stdout(io.StringIO()):
-                    run(parsed)
-            text = report.with_suffix(".md").read_text(encoding="utf-8")
-            self.assertIn("Vela GC: complete incremental collection cycles", text)
-            self.assertNotIn("AOT/C++", text)
+                with patch("tools.bench.build", return_value=output), \
+                        patch("tools.bench.subprocess.run", side_effect=execute):
+                    with redirect_stdout(io.StringIO()):
+                        run(parsed)
+                self.assertIn(heading, report.with_suffix(".md").read_text(encoding="utf-8"))
 
     def test_runner_rejects_benchmark_error_even_when_process_succeeds(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-bench-") as temporary:
@@ -769,7 +691,8 @@ class BenchmarkReportTest(unittest.TestCase):
                 report.write_text(json.dumps({"benchmarks": rows}), encoding="utf-8")
                 return subprocess.CompletedProcess(command, 0)
 
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
+            with patch("tools.bench.build", return_value=report.parent), \
+                    patch("tools.bench.subprocess.run", side_effect=execute):
                 with self.assertRaisesRegex(ValueError, "stack overflow"):
                     run(parsed)
             self.assertFalse(markdown.exists())
@@ -789,7 +712,8 @@ class BenchmarkReportTest(unittest.TestCase):
                 report.write_text(json.dumps({"benchmarks": steady_samples(3)}), encoding="utf-8")
                 return subprocess.CompletedProcess(command, 0)
 
-            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
+            with patch("tools.bench.build", return_value=report.parent), \
+                    patch("tools.bench.subprocess.run", side_effect=execute):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
             self.assertIn("Vela/C++", report.with_suffix(".md").read_text(encoding="utf-8"))

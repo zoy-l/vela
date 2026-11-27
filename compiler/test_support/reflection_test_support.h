@@ -1,6 +1,5 @@
 #pragma once
 
-#include <expected>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -8,12 +7,22 @@
 #include <utility>
 #include <vector>
 
-#include <vela/error.h>
+#include <gtest/gtest.h>
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 
 namespace vela::compiler::test {
+
+inline std::optional<frontend::TypeName> ParseReflectionType(std::string_view source) {
+  auto parsed = frontend::ParseTypeSource(source);
+  if (!parsed) {
+    ADD_FAILURE() << frontend::DiagnosticsText(parsed.error());
+    return std::nullopt;
+  }
+  return std::move(*parsed);
+}
 
 inline frontend::ReflectionMemberSelection SelectMember(
     frontend::ReflectionMemberKind kind,
@@ -26,7 +35,11 @@ inline frontend::ReflectionMemberSelection SelectMember(
       .location = {},
   };
   for (const auto argument : type_arguments) {
-    member.type_arguments.push_back(*frontend::ParseTypeSource(argument));
+    auto parsed = ParseReflectionType(argument);
+    if (!parsed) {
+      return {};
+    }
+    member.type_arguments.push_back(std::move(*parsed));
   }
   return member;
 }
@@ -35,9 +48,13 @@ inline frontend::ReflectionSelection SelectReflection(
     std::string_view type,
     std::vector<frontend::ReflectionMemberSelection> members,
     std::string_view module = "main.vela") {
+  auto parsed = ParseReflectionType(type);
+  if (!parsed) {
+    return {};
+  }
   return {
       .module = std::string(module),
-      .type = *frontend::ParseTypeSource(type),
+      .type = std::move(*parsed),
       .members = std::move(members),
       .source_path = "<reflection>",
       .location = {},
@@ -55,17 +72,5 @@ class Arguments extends CallArguments {
   constructor(items: CallArgument[]) { super(items: items); }
 }
 )";
-
-template <class T>
-std::expected<T, std::string> RequireReflectionValue(Result<std::optional<T>> result) {
-  if (!result) {
-    return std::unexpected(result.error().message);
-  }
-  auto& value = *result;
-  if (!value) {
-    return std::unexpected("expected reflection result is missing");
-  }
-  return std::move(*value);
-}
 
 }  // namespace vela::compiler::test

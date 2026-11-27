@@ -24,7 +24,7 @@ LookupState Transfer(const ir::Function& function, const ir::BasicBlock& block, 
     if (ir::IsBuiltinCall(instruction, Builtin::MapGet)) {
       state.lookup = index;
     } else {
-      const auto effects = ir::AnalyzeEffects(instruction);
+      const auto effects = ir::AnalyzeEffects(function, instruction);
       if (effects.reads_state || effects.writes_state || effects.MayCollectOnSuccess()) {
         state.lookup.reset();
       }

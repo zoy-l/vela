@@ -43,20 +43,33 @@ INSTANTIATE_TEST_SUITE_P(
     JsonDoubleTest,
     testing::Values("1.0", "1e0", "-0.0", "1e-9999", "-1e-9999", "1.7976931348623157e308"));
 
-class JsonNumberRangeTest : public testing::TestWithParam<std::string_view> {};
+struct NumberRangeCase final {
+  std::string_view source;
+  std::size_t offset;
+};
+
+class JsonNumberRangeTest : public testing::TestWithParam<NumberRangeCase> {};
 TEST_P(JsonNumberRangeTest, RejectsOutOfRangeNumberAtItsOriginalOffset) {
   Isolate isolate;
-  const auto value = ParseJson(GetParam(), isolate);
+  const auto& sample = GetParam();
+  const auto value = ParseJson(sample.source, isolate);
   ASSERT_FALSE(value);
   EXPECT_EQ(value.error().status, ExecutionStatus::JsonDecodeError);
-  EXPECT_EQ(value.error().offset, 0U);
+  EXPECT_EQ(value.error().offset, sample.offset);
 }
-INSTANTIATE_TEST_SUITE_P(InvalidNumberRanges,
-                         JsonNumberRangeTest,
-                         testing::Values("9223372036854775808",
-                                         "18446744073709551616",
-                                         "-9223372036854775809",
-                                         "1e9999"));
+
+constexpr std::string_view kNestedInteger = R"({"1\"":null,"items":["12",-9223372036854775809]})";
+constexpr std::string_view kNestedDouble =
+    R"({"escaped":"\u0031\"2","items":[3,{"😀":4,"overflow":1e9999}]})";
+INSTANTIATE_TEST_SUITE_P(
+    InvalidNumberRanges,
+    JsonNumberRangeTest,
+    testing::Values(NumberRangeCase{"9223372036854775808", 0},
+                    NumberRangeCase{"18446744073709551616", 0},
+                    NumberRangeCase{"-9223372036854775809", 0},
+                    NumberRangeCase{"1e9999", 0},
+                    NumberRangeCase{kNestedInteger, kNestedInteger.find("-9223")},
+                    NumberRangeCase{kNestedDouble, kNestedDouble.find("1e9999")}));
 
 TEST(JsonRuntimeTest, RejectsInvalidSyntaxAndUnicodeWithOriginalOffsets) {
   Isolate isolate;
@@ -76,10 +89,6 @@ TEST(JsonRuntimeTest, RejectsInvalidSyntaxAndUnicodeWithOriginalOffsets) {
        }) {
     EXPECT_FALSE(ParseJson(source, isolate)) << source;
   }
-  const std::string_view source = R"({"1\"":null,"items":["12",-9223372036854775809]})";
-  const auto overflow = ParseJson(source, isolate);
-  ASSERT_FALSE(overflow);
-  EXPECT_EQ(overflow.error().offset, source.find("-9223"));
   const auto eof = ParseJson("[1,", isolate);
   ASSERT_FALSE(eof);
   EXPECT_EQ(eof.error().offset, 3U);
@@ -96,16 +105,6 @@ TEST(JsonRuntimeTest, OwnsUnicodeAndEmbeddedNullAndRetainsDuplicateOrder) {
   ASSERT_TRUE(result);
   ASSERT_TRUE(result->IsString());
   EXPECT_EQ(result->AsString()->value(), "{\"a\":2,\"\\u0000\":\"😀\"}");
-}
-
-TEST(JsonRuntimeTest, NumericErrorUsesRawTokenOffsetAfterEscapedAndUnicodeStrings) {
-  Isolate isolate(1);
-  constexpr std::string_view kSource =
-      R"({"escaped":"\u0031\"2","items":[3,{"😀":4,"overflow":1e9999}]})";
-  const auto parsed = ParseJson(kSource, isolate);
-  ASSERT_FALSE(parsed);
-  EXPECT_EQ(parsed.error().status, ExecutionStatus::JsonDecodeError);
-  EXPECT_EQ(parsed.error().offset, kSource.find("1e9999"));
 }
 
 TEST(JsonRuntimeTest, QuotesAllControlBytesAndUnicodeWithoutLosingContent) {

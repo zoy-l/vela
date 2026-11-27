@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -170,6 +171,9 @@ class Specializer final : public AstCloneTransform {
   void Normalize(Expression* expression, const TypeSubstitutions& substitutions);
   void Normalize(Statement* statement, const TypeSubstitutions& substitutions);
   void NormalizeAttributes(std::span<Attribute> attributes, const TypeSubstitutions& substitutions);
+  void NormalizeInitializedType(TypeName& type,
+                                std::unique_ptr<Expression>& initializer,
+                                const TypeSubstitutions& substitutions);
   void Normalize(Function& function, const TypeSubstitutions& substitutions);
   void Normalize(Class& owner, const TypeSubstitutions& substitutions);
   void NormalizeScoped(Statement* statement, const TypeSubstitutions& substitutions);

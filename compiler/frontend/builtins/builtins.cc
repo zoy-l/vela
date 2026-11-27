@@ -114,7 +114,7 @@ const auto kSignatures = [] {
 FunctionDescriptor MakeBuiltinSignature(TypeDescriptor result,
                                         std::initializer_list<BuiltinParameter> parameters) {
   FunctionDescriptor signature;
-  signature.return_type = result;
+  signature.return_type = std::move(result);
   for (const auto& parameter : parameters) {
     signature.AddParameter(std::string(parameter.name), parameter.type);
   }
@@ -304,7 +304,8 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   }
   method.AddParameter(
       std::move(parameter),
-      MakeFunctionType(callback.parameters, callback.return_type, callback.narrowed_parameter));
+      MakeFunctionType(callback.parameters, callback.return_type, callback.narrowed_parameter,
+                       callback.false_narrowed_parameter));
   if (algorithm == ArrayAlgorithm::Reduce) {
     method.AddParameter("initialValue", callback.return_type);
   }

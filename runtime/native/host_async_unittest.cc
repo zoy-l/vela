@@ -92,14 +92,11 @@ TEST(HostAsyncTest, CompletionEndpointConstructsCopiedTextOnTheOwnerThread) {
   const auto pair = CreateCompletion<String>(scope);
   ASSERT_TRUE(pair.has_value());
   const auto endpoint = pair->completion;
-  std::optional<Result<void>> posted;
+  Result<void> posted;
   std::thread worker(
       [endpoint, &posted] { posted = endpoint.Complete(std::string("from worker")); });
   worker.join();
-  if (!posted) {
-    FAIL() << "expected a completion result from the worker";
-  }
-  ASSERT_TRUE(*posted);
+  ASSERT_TRUE(posted);
   const auto result = pair->future.Wait(scope, WaitMode::WaitForHost);
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->Utf8(), "from worker");

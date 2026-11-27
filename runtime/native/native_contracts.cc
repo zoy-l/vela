@@ -34,7 +34,8 @@ bool IsSameSignature(const NativeImage& left_image,
                      const NativeImage& right_image,
                      const NativeSignatureDescription& right) {
   if (left.has_result != right.has_result || left.parameters.size != right.parameters.size ||
-      left.has_narrowed_parameter != right.has_narrowed_parameter) {
+      left.has_narrowed_parameter != right.has_narrowed_parameter ||
+      left.has_false_narrowed_parameter != right.has_false_narrowed_parameter) {
     return false;
   }
   const auto is_same_optional_type = [&](std::uint32_t present, const NativeTypeDescription& first,
@@ -43,7 +44,9 @@ bool IsSameSignature(const NativeImage& left_image,
   };
   if (!is_same_optional_type(left.has_result, left.result, right.result) ||
       !is_same_optional_type(left.has_narrowed_parameter, left.narrowed_parameter,
-                             right.narrowed_parameter)) {
+                             right.narrowed_parameter) ||
+      !is_same_optional_type(left.has_false_narrowed_parameter, left.false_narrowed_parameter,
+                             right.false_narrowed_parameter)) {
     return false;
   }
   const auto left_parameters = left.parameters.values();
@@ -143,6 +146,25 @@ std::expected<void, NativeContractViolation> CheckFieldContracts(
   return {};
 }
 
+std::expected<void, NativeContractViolation> CheckStructLayoutContract(
+    const NativeClassDescription& previous,
+    const NativeClassDescription& candidate) {
+  if (static_cast<layout::Class::Kind>(previous.kind) != layout::Class::Kind::Struct) {
+    return {};
+  }
+  if (previous.field_count != candidate.field_count ||
+      !std::ranges::equal(previous.value_slots.values(), candidate.value_slots.values()) ||
+      !std::ranges::equal(previous.fields.values(), candidate.fields.values(), {},
+                          &NativeFieldDescription::declaration,
+                          &NativeFieldDescription::declaration)) {
+    return std::unexpected(NativeContractViolation{
+        .declaration = previous.declaration,
+        .message = "struct field layout changed; Reload is required",
+    });
+  }
+  return {};
+}
+
 std::vector<std::uint64_t> InterfaceSet(const NativeImage& image,
                                         const NativeClassDescription& type) {
   std::vector<std::uint64_t> identities;
@@ -165,10 +187,14 @@ bool IsSameNativeType(const NativeImage& left_image,
   }
   using Kind = layout::Type::Kind;
   switch (static_cast<Kind>(left.kind)) {
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum: {
       const auto& first = left_image.classes.values().subspan(left.index).front();
       const auto& second = right_image.classes.values().subspan(right.index).front();
+      if ((static_cast<layout::Class::Kind>(first.kind) == layout::Class::Kind::Struct) !=
+          (static_cast<layout::Class::Kind>(second.kind) == layout::Class::Kind::Struct)) {
+        return false;
+      }
       if (static_cast<layout::Class::Kind>(first.kind) == layout::Class::Kind::Host ||
           static_cast<layout::Class::Kind>(second.kind) == layout::Class::Kind::Host) {
         return first.kind == second.kind && first.native_key.text() == second.native_key.text();
@@ -191,7 +217,8 @@ bool IsSameNativeType(const NativeImage& left_image,
       return IsSameNativeType(
           left_image, left_image.arrays.values().subspan(left.index).front().element, right_image,
           right_image.arrays.values().subspan(right.index).front().element);
-    case Kind::Collection: {
+    case Kind::Set:
+    case Kind::Map: {
       const auto& first = left_image.collections.values().subspan(left.index).front();
       const auto& second = right_image.collections.values().subspan(right.index).front();
       return first.has_value == second.has_value &&
@@ -199,7 +226,7 @@ bool IsSameNativeType(const NativeImage& left_image,
              (first.has_value == 0 ||
               IsSameNativeType(left_image, first.value, right_image, second.value));
     }
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer:
       return IsSameSignature(left_image, left_image.signatures.values().subspan(left.index).front(),
@@ -210,15 +237,21 @@ bool IsSameNativeType(const NativeImage& left_image,
   }
 }
 
-std::expected<void, std::string> CheckNativeCallContract(
+std::expected<void, NativeContractViolation> CheckNativeCallContract(
     const NativeImage& previous_image,
     const NativeFunctionDescription& previous,
     const NativeImage& candidate_image,
     const NativeFunctionDescription& candidate) {
+  const auto violation = [&](std::string_view message) {
+    return std::unexpected(NativeContractViolation{
+        .declaration = candidate.identity.declaration,
+        .message = std::string(message),
+    });
+  };
   const auto generated = (candidate.flags & kNativeGeneratedConstructor) != 0;
   const auto was_generated = (previous.flags & kNativeGeneratedConstructor) != 0;
   if (generated != was_generated) {
-    return std::unexpected("constructor kind changed; Reload is required");
+    return violation("constructor kind changed; Reload is required");
   }
   if (generated) {
     return {};
@@ -229,18 +262,18 @@ std::expected<void, std::string> CheckNativeCallContract(
       previous.hidden_parameters != candidate.hidden_parameters ||
       previous.parameters.size != candidate.parameters.size ||
       previous.native_symbol.text() != candidate.native_symbol.text()) {
-    return std::unexpected("function calling convention changed; Reload is required");
+    return violation("function calling convention changed; Reload is required");
   }
   const auto previous_types = previous_image.types.values();
   const auto candidate_types = candidate_image.types.values();
   const auto first_result = previous.result_type;
   const auto second_result = candidate.result_type;
   if (!IsSameOptionalType(previous_image, first_result, candidate_image, second_result)) {
-    return std::unexpected("function return type changed; Reload is required");
+    return violation("function return type changed; Reload is required");
   }
   if (!IsSameOptionalType(previous_image, previous.receiver_type, candidate_image,
                           candidate.receiver_type)) {
-    return std::unexpected("function receiver type changed; Reload is required");
+    return violation("function receiver type changed; Reload is required");
   }
   const auto first_parameters = previous.parameters.values();
   const auto second_parameters = candidate.parameters.values();
@@ -250,7 +283,7 @@ std::expected<void, std::string> CheckNativeCallContract(
     if (first.name.text() != second.name.text() || first.flags != second.flags ||
         !IsSameNativeType(previous_image, previous_types.subspan(first.type).front(),
                           candidate_image, candidate_types.subspan(second.type).front())) {
-      return std::unexpected("function parameter contract changed; Reload is required");
+      return violation("function parameter contract changed; Reload is required");
     }
   }
   return {};
@@ -298,6 +331,9 @@ std::expected<void, NativeContractViolation> CheckNativeNominalContracts(
           .declaration = type.declaration,
           .message = "class kind, superclass or implemented interfaces changed; Reload is required",
       });
+    }
+    if (const auto layout = CheckStructLayoutContract(type, replacement); !layout) {
+      return layout;
     }
     if (const auto fields = CheckFieldContracts(previous, type, candidate, replacement); !fields) {
       return fields;

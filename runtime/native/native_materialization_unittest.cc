@@ -36,6 +36,7 @@ TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndR
                                                .interfaces = {},
                                                .storage = ClassStorage::Reloadable,
                                                .field_declarations = {{1}, {2}, {3}, {4}},
+                                               .value_slots = {},
                                            });
   const NativeImage image;
   auto state = std::make_unique<NativeProgramState>(NativeHostTarget::Generic);
@@ -146,44 +147,18 @@ TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndR
   EXPECT_EQ(DecodeNativeValue(values.at(3)).AsObject(), first);
   EXPECT_EQ(DecodeNativeValue(values.at(4)).AsObject(), first);
   EXPECT_EQ(DecodeNativeValue(values.at(5)).AsObject(), second);
-  const auto first_field_0 = Heap::GetField(*first, 0);
-  if (!first_field_0.has_value()) {
-    FAIL() << "Expected first_field_0 to have a value";
+  EXPECT_EQ(Heap::GetField(*first, 0).transform(&Value::AsInteger), kFirstValue);
+  EXPECT_EQ(Heap::GetField(*second, 0).transform(&Value::AsInteger), kSecondValue);
+  for (const auto field : {2U, 3U}) {
+    EXPECT_EQ(Heap::GetField(*first, field).transform(&Value::AsObjectOrNull), second) << field;
+    EXPECT_EQ(Heap::GetField(*second, field).transform(&Value::AsObjectOrNull), first) << field;
   }
-  EXPECT_EQ(first_field_0->AsInteger(), 20);
-  const auto second_field_0 = Heap::GetField(*second, 0);
-  if (!second_field_0.has_value()) {
-    FAIL() << "Expected second_field_0 to have a value";
-  }
-  EXPECT_EQ(second_field_0->AsInteger(), 22);
-  const auto first_field_2 = Heap::GetField(*first, 2);
-  if (!first_field_2.has_value()) {
-    FAIL() << "Expected first_field_2 to have a value";
-  }
-  EXPECT_EQ(first_field_2->AsObject(), second);
-  const auto first_field_3 = Heap::GetField(*first, 3);
-  if (!first_field_3.has_value()) {
-    FAIL() << "Expected first_field_3 to have a value";
-  }
-  EXPECT_EQ(first_field_3->AsObject(), second);
-  const auto second_field_2 = Heap::GetField(*second, 2);
-  if (!second_field_2.has_value()) {
-    FAIL() << "Expected second_field_2 to have a value";
-  }
-  EXPECT_EQ(second_field_2->AsObject(), first);
-  const auto second_field_3 = Heap::GetField(*second, 3);
-  if (!second_field_3.has_value()) {
-    FAIL() << "Expected second_field_3 to have a value";
-  }
-  EXPECT_EQ(second_field_3->AsObject(), first);
   prepared->reset();
   text = Value::Null();
   heap.Collect();
-  const auto first_field_1 = Heap::GetField(*first, 1);
-  if (!first_field_1.has_value()) {
-    FAIL() << "Expected first_field_1 to have a value";
-  }
-  EXPECT_EQ(first_field_1->AsString()->value(), "retained");
+  const auto retained = Heap::GetField(*first, 1).value_or(Value::Null());
+  ASSERT_TRUE(retained.IsString());
+  EXPECT_EQ(retained.AsString()->value(), "retained");
   EXPECT_EQ(heap.object_count(), baseline_objects + 2);
   shadow.fill(Value::Null());
   heap.Collect();

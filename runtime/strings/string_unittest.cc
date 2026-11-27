@@ -312,11 +312,7 @@ TEST(StringGcTest, CollectsCycleContainingStringsAndArrays) {
   ASSERT_TRUE(heap.SetElement(*array, 0, root));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 3U);
-  const auto root_field_0 = Heap::GetField(*root.AsObject(), 0);
-  if (!root_field_0.has_value()) {
-    FAIL() << "Expected root_field_0 to have a value";
-  }
-  EXPECT_EQ(root_field_0->AsString()->value(), "inside cycle");
+  EXPECT_EQ(Heap::LoadField(*root.AsObject(), 0).AsString()->value(), "inside cycle");
   root = Value::Null();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 0U);
@@ -325,21 +321,35 @@ TEST(StringGcTest, CollectsCycleContainingStringsAndArrays) {
 class StringBarrierTest : public testing::TestWithParam<std::size_t> {};
 
 TEST_P(StringBarrierTest, ArrayStoreMarksWhiteStringDuringMarkAndSweep) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::String}});
-  auto* string = heap.AllocateString("retained");
-  Value root = Value::Object(heap.AllocateArray(*layout, 1));
-  RootRange roots(heap, &root, 1);
-  heap.StartCollection();
-  heap.Step(GetParam());
-  EXPECT_EQ(heap.phase(), GetParam() == 1 ? GcPhase::Mark : GcPhase::Sweep);
-  ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::String(string)));
-  heap.FinishCollection();
-  EXPECT_EQ(heap.object_count(), 2U);
-  EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsString()->value(), "retained");
-  heap.Collect();
-  EXPECT_EQ(heap.object_count(), 2U);
+  const auto steps = GetParam();
+  for (const auto nullable : {false, true}) {
+    SCOPED_TRACE(nullable);
+    Isolate isolate;
+    auto& heap = isolate.heap();
+    const auto* layout =
+        isolate.CreateArrayLayout({.element = {.kind = ValueKind::String, .nullable = nullable}});
+    EXPECT_EQ(layout->element_size(), sizeof(StringObject*));
+    auto* string = heap.AllocateString("retained");
+    const auto root = Value::Object(heap.AllocateArray(*layout, 1));
+    RootRange roots(heap, &root, 1);
+    auto& array = *root.AsObject();
+    heap.StartCollection();
+    heap.Step(steps);
+    ASSERT_EQ(heap.phase(), steps == 1 ? GcPhase::Mark : GcPhase::Sweep);
+    ASSERT_TRUE(heap.SetElement(array, 0, Value::String(string)));
+    heap.FinishCollection();
+    ASSERT_EQ(heap.object_count(), 2U);
+    const auto retained = heap.GetElement(array, 0);
+    ASSERT_TRUE(retained);
+    ASSERT_TRUE(retained->IsString());
+    ASSERT_EQ(retained->AsString(), string);
+    EXPECT_EQ(string->value(), "retained");
+    if (nullable) {
+      ASSERT_TRUE(heap.SetElement(array, 0, Value::Null()));
+    }
+    heap.Collect();
+    EXPECT_EQ(heap.object_count(), nullable ? 1U : 2U);
+  }
 }
 
 TEST_P(StringBarrierTest, FieldStoreMarksWhiteStringDuringMarkAndSweep) {
@@ -355,11 +365,7 @@ TEST_P(StringBarrierTest, FieldStoreMarksWhiteStringDuringMarkAndSweep) {
   ASSERT_TRUE(heap.SetField(*root.AsObject(), 0, Value::String(string)));
   heap.FinishCollection();
   EXPECT_EQ(heap.object_count(), 2U);
-  const auto root_field_0 = Heap::GetField(*root.AsObject(), 0);
-  if (!root_field_0.has_value()) {
-    FAIL() << "Expected root_field_0 to have a value";
-  }
-  EXPECT_EQ(root_field_0->AsString()->value(), "retained");
+  EXPECT_EQ(Heap::LoadField(*root.AsObject(), 0).AsString()->value(), "retained");
 }
 
 INSTANTIATE_TEST_SUITE_P(IncrementalPhases, StringBarrierTest, testing::Values(1U, 2U));

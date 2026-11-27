@@ -43,6 +43,7 @@ constexpr auto kKeywords = std::to_array<std::pair<std::string_view, TokenKind>>
     {"let", TokenKind::Let},
     {"const", TokenKind::Const},
     {"class", TokenKind::Class},
+    {"struct", TokenKind::Struct},
     {"else", TokenKind::Else},
     {"enum", TokenKind::Enum},
     {"false", TokenKind::False},

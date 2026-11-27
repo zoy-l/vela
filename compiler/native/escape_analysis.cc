@@ -46,10 +46,10 @@ std::uint64_t Reachable(const EscapePlan& plan, const State& state, std::uint64_
   while (pending != 0) {
     const auto object = static_cast<std::size_t>(std::countr_zero(pending));
     pending &= pending - 1;
-    if (!IsVirtual(plan, object)) {
+    const auto& allocation = plan.allocations.at(object);
+    if (!allocation.can_scalar_replace) {
       continue;
     }
-    const auto& allocation = plan.allocations.at(object);
     const auto count = allocation.fields.size();
     for (std::size_t field = 0; field < count; ++field) {
       const auto children = state.at(allocation.state_offset + field).objects & ~reached;
@@ -78,7 +78,16 @@ std::optional<std::size_t> VirtualReceiver(const EscapePlan& plan,
                                            const State& values) {
   const auto reg = instruction.opcode == Opcode::SetField ? instruction.dst : instruction.lhs;
   const auto receiver = Object(values.at(reg));
-  if (!receiver || !IsVirtual(plan, *receiver)) {
+  if (!receiver) {
+    return std::nullopt;
+  }
+  const auto& allocation = plan.allocations.at(*receiver);
+  if (!allocation.can_scalar_replace) {
+    return std::nullopt;
+  }
+  // 数据流保守遍历类型测试的两侧；派生类分支的字段不属于精确基类分配的记录。
+  if ((instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField) &&
+      instruction.index >= allocation.fields.size()) {
     return std::nullopt;
   }
   const auto bit = std::uint64_t{1} << *receiver;
@@ -89,7 +98,7 @@ std::optional<std::size_t> VirtualReceiver(const EscapePlan& plan,
       (instruction.opcode != Opcode::GetField && instruction.opcode != Opcode::SetField)) {
     return std::nullopt;
   }
-  const auto field = plan.allocations.at(*receiver).state_offset + instruction.index;
+  const auto field = allocation.state_offset + instruction.index;
   return values.at(field).objects == 0 &&
                  (instruction.opcode == Opcode::GetField || values.at(instruction.lhs).objects == 0)
              ? receiver
@@ -104,7 +113,7 @@ bool MatchesType(const ir::Program& program,
   if (type.kind == layout::Type::Kind::Dynamic) {
     return true;
   }
-  if (type.kind == layout::Type::Kind::Instance) {
+  if (type.kind == layout::Type::Kind::Class) {
     return type.index == class_index;
   }
   const auto& interfaces = program.classes.at(class_index).interfaces;
@@ -277,7 +286,7 @@ std::vector<BlockState> Solve(const ir::Function& function,
     std::optional<std::size_t> handler;
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions.at(position);
-      if (instruction.handler && ir::AnalyzeEffects(instruction).may_fail) {
+      if (instruction.handler && ir::AnalyzeEffects(function, instruction).may_fail) {
         exceptional = BeforeFailure(plan, program, instruction, accesses[position], values);
         handler = graph.instruction_blocks.at(function.handlers.at(*instruction.handler).target);
       }
@@ -289,17 +298,9 @@ std::vector<BlockState> Solve(const ir::Function& function,
         pending.push_back(successor);
       }
     };
-    const auto& last = function.instructions.at(block.end - 1);
     // 同一块可以同时以正常边和异常边进入同一 handler，分别合并两种定义状态。
-    if ((last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse ||
-         last.opcode == Opcode::JumpIfNull) &&
-        last.index < function.instructions.size()) {
-      propagate(graph.instruction_blocks.at(last.index), values);
-    }
-    if (last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
-        last.opcode != Opcode::Throw && last.opcode != Opcode::Rethrow &&
-        index + 1 < states.size()) {
-      propagate(index + 1, values);
+    for (const auto successor : block.NormalSuccessors()) {
+      propagate(successor, values);
     }
     if (handler) {
       propagate(*handler, exceptional);
@@ -388,7 +389,7 @@ void InspectBoundary(EscapePlan& plan,
                      const ir::Instruction& instruction,
                      const ir::RegisterAccess& access,
                      const State& values) {
-  if (instruction.handler && !ir::AnalyzeEffects(instruction).may_fail &&
+  if (instruction.handler && !ir::AnalyzeEffects(plan.function.get(), instruction).may_fail &&
       NeedsHeap(plan, program, instruction, values)) {
     ir::ForEachUse(instruction, access,
                    [&](ir::RegisterId reg) { Exclude(plan, values.at(reg).objects); });

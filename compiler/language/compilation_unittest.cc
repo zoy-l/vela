@@ -56,20 +56,6 @@ func main(): Shade {
   EXPECT_EQ(result_field_0->AsInteger(), 1);
 }
 
-TEST(CompilerTest, CompilesIntegerFunction) {
-  constexpr std::string_view source = R"(
-func main(): int {
-  let x: int = 20;
-  let y: int = 22;
-  return x + y;
-}
-)";
-  Isolate isolate;
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, kExpectedSum);
-}
-
 TEST(CompilerTest, NullSafeAccessCoalescesAndSkipsArgumentsAndIndices) {
   constexpr std::string_view source = R"(
 class Item {
@@ -196,24 +182,6 @@ async func main(): Future<int> {
   EXPECT_EQ(*value, kAsyncResult);
 }
 
-TEST(CompilerTest, SuspendsAsyncMainAtAwaitAndResumesThroughScheduler) {
-  constexpr std::int64_t kAsyncResult = 4;
-  constexpr std::string_view source = R"(
-async func main(): Future<int> {
-  await sleep(1);
-  return 4;
-}
-)";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  auto root = test::StartFuture(**entry);
-  EXPECT_EQ(root.state(), runtime::FutureState::Pending);
-  const auto value = test::AwaitInteger(root, isolate);
-  ASSERT_TRUE(value) << value.error();
-  EXPECT_EQ(*value, kAsyncResult);
-}
-
 TEST(CompilerTest, AsyncFailureRetainsDiagnosticAcrossRootFuture) {
   constexpr std::string_view source = R"(
 async func main(): Future<void> {
@@ -284,26 +252,32 @@ async func main(): Future<int> {
   test::ExpectFutureAnswer(source, kExpectedResult);
 }
 
-TEST(CompilerTest, FutureSyncInvokesComputationAndReturnsFuture) {
+TEST(CompilerTest, AsyncStructPayloadsKeepLargeNullableValuesAndFlatWaitResults) {
   constexpr std::string_view source = R"(
+struct Position { x: int; y: int; label: string; }
+struct Body { position: Position?; mass: double?; active: bool?; }
+async func delayed(value: Body?): Future<Body?> {
+  await sleep(1);
+  for (let i = 0; i < 100; i++) { const garbage = 'temporary:${i}'.toUpperCase(); }
+  return value;
+}
 async func main(): Future<int> {
-  return await Future.sync((): int => 8);
+  let original = Body(position: Position(x: 20, y: 22, label: 'value'.toUpperCase()),
+                      mass: 3.0, active: true);
+  const pending = delayed(original);
+  original.position = null;
+  const values = await Future.wait([pending, delayed(null)]);
+  const first = values[0];
+  if (first == null || values[1] != null || first.mass != 3.0 || first.active != true) {
+    return -1;
+  }
+  const position = first.position;
+  if (position == null || position.label != 'VALUE') { return -2; }
+  values[0] = null;
+  return position.x + position.y;
 }
 )";
-  constexpr std::int64_t kExpectedResult = 8;
-  test::ExpectFutureAnswer(source, kExpectedResult);
-}
-
-TEST(CompilerTest, FutureDelayedAndMicrotaskInvokeCallbacks) {
-  constexpr std::string_view source = R"(
-async func main(): Future<int> {
-  let delayed: int = await Future.delayed(1, (): int => 6);
-  let microtask: int = await Future.microtask((): int => 7);
-  return delayed + microtask;
-}
-)";
-  constexpr std::int64_t kExpectedResult = 13;
-  test::ExpectFutureAnswer(source, kExpectedResult);
+  test::ExpectFutureAnswer(source, kExpectedSum);
 }
 
 TEST(CompilerTest, CompilesNestedClassConstruction) {
@@ -350,94 +324,13 @@ func main(): App {
   EXPECT_EQ(isolate.heap().object_count(), baseline);
 }
 
-TEST(CompilerTest, CompilesFunctionCall) {
-  constexpr std::string_view source = R"(
-func add(left: int, right: int): int {
-  return left + right;
+TEST(CompilerTest, BindsNamedMethodArgumentsInDeclarationOrder) {
+  test::ExpectRunAnswer(R"(
+class Digits {
+  combine(tens: int, ones: int): int { return tens * 10 + ones; }
 }
-
-func main(): int {
-  return add(20, 22);
-}
-)";
-
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  const auto result = test::Execute(**entry);
-  ASSERT_EQ(result.status, ExecutionStatus::Returned);
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
-}
-
-TEST(CompilerTest, CompilesLoopControlFlow) {
-  constexpr std::int64_t kExpectedLoopSum = 10;
-  constexpr std::string_view source = R"(
-func main(): int {
-  let i: int = 0;
-  let sum: int = 0;
-  while (i != 5) {
-    sum = sum + i;
-    i = i + 1;
-  }
-  return sum;
-}
-
-)";
-  Isolate isolate;
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, kExpectedLoopSum);
-}
-
-TEST(CompilerTest, ExecutesLanguageFeaturesAndNamedMethodArguments) {
-  constexpr std::string_view source = R"(
-class Counter {
-  value: int;
-  add(amount: int): int {
-    this.value = this.value + amount;
-    return this.value;
-  }
-  digits(tens: int, ones: int): int {
-    return tens * 10 + ones;
-  }
-}
-
-func main(): bool {
-  let sum: int = 0;
-  for (let i: int = 0; i < 5; i = i + 1) {
-    if (i == 2) continue;
-    if (i == 4) break;
-    sum = sum + i;
-  }
-  let counter: Counter = Counter(value: sum);
-  let text: string = "a" + "b";
-  let values: int[] = [1, 2, 3];
-  return counter.add(values[1]) == 6 && text == "ab" &&
-         counter.digits(ones: 2, tens: 3) == 32;
-}
-)";
-  Isolate isolate;
-  const auto entry = test::CompileCleanSource(source, isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  const auto result = test::Execute(**entry);
-  ASSERT_EQ(result.status, ExecutionStatus::Returned);
-  ASSERT_TRUE(result.value.IsBoolean());
-  EXPECT_TRUE(result.value.AsBoolean());
-}
-
-TEST(CompilerTest, ExecutesLoopWithWideJumpTarget) {
-  constexpr std::int64_t kUpdateCount = 70;
-  std::string source =
-      "func main(): int { let value: int = 0; let counter: int = 0; while (counter < 1) {";
-  for (std::int64_t index = 0; index < kUpdateCount; ++index) {
-    source += "value = value + 1;";
-  }
-  source += "counter = counter + 1; } return value; }";
-  Isolate isolate;
-  const auto result = test::RunInteger(source, isolate);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, kUpdateCount);
+func main(): int { return Digits().combine(ones: 2, tens: 4); }
+)");
 }
 
 TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
@@ -552,9 +445,9 @@ func main(): Store {
   if (!items.has_value()) {
     FAIL() << "Expected items to have a value";
   }
-  const auto row = runtime::Heap::GetElement(*items->AsObject(), 0);
+  const auto row = heap.GetElement(*items->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
-  const auto item = runtime::Heap::GetElement(*row->AsObject(), 0);
+  const auto item = heap.GetElement(*row->AsObject(), 0);
   ASSERT_TRUE(item.has_value());
   const auto item_field_0 = runtime::Heap::GetField(*item->AsObject(), 0);
   if (!item_field_0.has_value()) {

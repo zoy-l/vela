@@ -35,7 +35,7 @@ struct ReflectionHandle;
     NativeExecution& execution,
     const NativeReflectionMember& member,
     Value receiver,
-    const HeapObject& arguments,
+    HeapObject& arguments,
     const ReflectionHandle& handle);
 
 // arguments 是交替的 value/name NativeValue 窗口，已由生成调用帧完整保根。

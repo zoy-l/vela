@@ -53,7 +53,7 @@ Result<void> ReadHostArray(HandleScope& scope,
                            runtime::Value array,
                            std::int64_t index,
                            runtime::Value& output) {
-  const auto value = runtime::ReadIndex(*array.AsObject(), index);
+  const auto value = runtime::ReadIndex(scope.isolate().heap(), *array.AsObject(), index);
   if (!value) {
     return std::unexpected(Error::FromStatus(value.error()));
   }

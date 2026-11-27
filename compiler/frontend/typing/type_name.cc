@@ -16,9 +16,6 @@ namespace vela::frontend {
 namespace {
 
 std::string_view CanonicalTypeName(std::string_view name) noexcept {
-  if (name == kNullTypeName) {
-    return kNullTypeName;
-  }
   if (name == kSleepFunctionName) {
     return kSleepFunctionName;
   }

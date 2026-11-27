@@ -30,19 +30,6 @@
 
 namespace vela::runtime {
 
-ExecutionStatus ArrayExecutionStatus(ArrayAccessError error) {
-  switch (error) {
-    case ArrayAccessError::NotArray:
-    case ArrayAccessError::ElementTypeMismatch:
-      return ExecutionStatus::TypeError;
-    case ArrayAccessError::OutOfBounds:
-      return ExecutionStatus::IndexOutOfBounds;
-    case ArrayAccessError::OutOfMemory:
-      return ExecutionStatus::OutOfMemory;
-  }
-  std::unreachable();
-}
-
 namespace {
 
 template <class Values, class Projection>
@@ -99,6 +86,32 @@ bool IncludesValues(std::span<const Value> values, Value searched) {
   std::unreachable();
 }
 
+template <class T>
+bool IncludesElements(std::span<const T> values, Value searched) {
+  if constexpr (std::is_same_v<T, Value>) {
+    return IncludesValues(values, searched);
+  } else if constexpr (std::is_same_v<T, double>) {
+    const auto number = searched.AsDouble();
+    return std::isnan(number)
+               ? std::ranges::any_of(values, [](double value) { return std::isnan(value); })
+               : std::ranges::find(values, number) != values.end();
+  } else if constexpr (std::is_pointer_v<T>) {
+    const auto* target = ElementValue<T>(searched);
+    if (target == nullptr) {
+      return std::ranges::find(values, nullptr) != values.end();
+    }
+    if constexpr (std::is_same_v<T, HeapObject*>) {
+      return IncludesObjects(values, *target, std::identity{});
+    } else {
+      return std::ranges::any_of(values, [target](const auto* value) {
+        return value != nullptr && IsEqualString(*value, *target);
+      });
+    }
+  } else {
+    return std::ranges::find(values, ElementValue<T>(searched)) != values.end();
+  }
+}
+
 std::expected<Value, ExecutionStatus> ArrayIncludes(const HeapObject& array,
                                                     std::span<const Value> arguments) {
   const auto* layout = Heap::ArrayTypeOf(array);
@@ -113,35 +126,13 @@ std::expected<Value, ExecutionStatus> ArrayIncludes(const HeapObject& array,
   }
   const auto start = RelativeIndex(from.AsInteger(), length);
   const auto bytes = internal::ElementBytes(array, *layout, length);
+  if (layout->value_layout != nullptr) {
+    return Value::Boolean(IncludesInlineElement(*layout, bytes, start, searched));
+  }
   // 无用户回调、分配或 GC；只在入口选择一次存储表示，不逐元素装箱或检查边界。
   const auto found =
       VisitElementStorage(*layout, bytes, [searched, start]<class T>(std::span<const T> elements) {
-        const auto values = elements.subspan(start);
-        if constexpr (std::is_same_v<T, Value>) {
-          return IncludesValues(values, searched);
-        } else if constexpr (std::is_same_v<T, double>) {
-          const auto number = searched.AsDouble();
-          return std::isnan(number)
-                     ? std::ranges::any_of(values, [](double value) { return std::isnan(value); })
-                     : std::ranges::find(values, number) != values.end();
-        } else if constexpr (std::is_pointer_v<T>) {
-          const auto* target = ElementValue<T>(searched);
-          if (target == nullptr) {
-            return std::ranges::find(values, nullptr) != values.end();
-          }
-          if constexpr (std::is_same_v<T, HeapObject*>) {
-            return IncludesObjects(values, *target, std::identity{});
-          } else {
-            return std::ranges::any_of(values, [target](const auto* value) {
-              if (value == nullptr) {
-                return false;
-              }
-              return IsEqualString(*value, *target);
-            });
-          }
-        } else {
-          return std::ranges::find(values, ElementValue<T>(searched)) != values.end();
-        }
+        return IncludesElements(elements.subspan(start), searched);
       });
   return Value::Boolean(found);
 }
@@ -260,7 +251,7 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
   }
   const auto& type = layout->element;
   if (type.nominal != nullptr ||
-      (!type.dynamic && type.kind != ValueKind::Integer && type.kind != ValueKind::Double &&
+      (!type.IsDynamic() && type.kind != ValueKind::Integer && type.kind != ValueKind::Double &&
        type.kind != ValueKind::Boolean && type.kind != ValueKind::String)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -288,7 +279,7 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
   std::array<char, kScalarTextCapacity> buffer{};
   std::size_t text_bytes = 0;
   for (std::uint32_t index = 0; index < count; ++index) {
-    const auto value = *Heap::GetElement(array, index);
+    const auto value = *heap.GetElement(array, index);
     if (value.IsObject()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
@@ -315,7 +306,7 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
     if (entries[index].position == index) {
       continue;
     }
-    const auto saved = *Heap::GetElement(array, index);
+    const auto saved = *heap.GetElement(array, index);
     auto destination = index;
     while (true) {
       const auto source = entries[destination].position;
@@ -324,7 +315,7 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
         std::ignore = heap.SetElement(array, destination, saved);
         break;
       }
-      std::ignore = heap.SetElement(array, destination, *Heap::GetElement(array, source));
+      std::ignore = heap.SetElement(array, destination, *heap.GetElement(array, source));
       destination = source;
     }
   }
@@ -385,9 +376,9 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
           .transform(integer)
           .transform_error(ArrayExecutionStatus);
     case Builtin::ArrayPop:
-      return Heap::PopArray(array).transform_error(ArrayExecutionStatus);
+      return heap.PopArray(array).transform_error(ArrayExecutionStatus);
     case Builtin::ArrayShift:
-      return Heap::ShiftArray(array).transform_error(ArrayExecutionStatus);
+      return heap.ShiftArray(array).transform_error(ArrayExecutionStatus);
     case Builtin::ArrayClear:
       return Heap::ClearArray(array)
           .transform([] { return Value::Null(); })

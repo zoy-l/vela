@@ -11,6 +11,7 @@
 #include "base/async_operation.h"
 #include "base/builtin.h"
 #include "base/opcode.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
 
@@ -48,15 +49,22 @@ std::vector<RegisterDefinition> FindRegisterDefinitions(const Function& function
     definitions[reg].count = 1;
   }
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-    if (!accesses[index].defines_value) {
-      continue;
+    const auto& instruction = function.instructions[index];
+    const auto define = [&](RegisterId reg) {
+      auto& definition = definitions[reg];
+      if (!definition.first) {
+        definition.first = index;
+      }
+      definition.last = index;
+      ++definition.count;
+    };
+    if (accesses[index].defines_value) {
+      define(instruction.dst);
     }
-    auto& definition = definitions[function.instructions[index].dst];
-    if (!definition.first) {
-      definition.first = index;
+    if (instruction.struct_receiver &&
+        instruction.struct_receiver->kind == StructReceiver::Kind::Local) {
+      define(instruction.struct_receiver->receiver);
     }
-    definition.last = index;
-    ++definition.count;
   }
   return definitions;
 }
@@ -157,7 +165,11 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::SleepFuture:
       return {.defines_value = true, .uses = {Field::Left}, .use_count = 1};
     case Opcode::SetField:
-      return {.uses = {Field::Destination, Field::Left}, .use_count = 2};
+      return {
+          .defines_value = instruction.inline_value,
+          .uses = {Field::Destination, Field::Left},
+          .use_count = 2,
+      };
     case Opcode::SetIndex:
     case Opcode::SetRecordField:
       return {.uses = {Field::Destination, Field::Left, Field::Right}, .use_count = 3};
@@ -174,17 +186,21 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
       return {};
     case Opcode::Call:
       return {
-          .defines_value = true,
+          .defines_value = !instruction.no_normal_return,
           .argument_count = functions[instruction.index].parameter_count,
       };
     case Opcode::CallIndirect:
       return {
-          .defines_value = true,
+          .defines_value = !instruction.no_normal_return,
           .uses = {Field::Right},
           .use_count = 1,
           .argument_count = CallArgumentCount(instruction),
       };
     case Opcode::CallVirtual:
+      return {
+          .defines_value = !instruction.no_normal_return,
+          .argument_count = CallArgumentCount(instruction),
+      };
     case Opcode::BuiltinCall:
     case Opcode::AsyncCall:
     case Opcode::StringInterpolate:
@@ -274,12 +290,12 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
     const auto& instruction = code[index];
     const auto opcode = instruction.opcode;
     const auto is_jump = IsJumpOpcode(opcode);
-    const auto effects = AnalyzeEffects(instruction);
+    const auto effects = AnalyzeEffects(function, instruction);
     if (is_jump && instruction.index < code.size()) {
       starts.at(instruction.index) = 1;
     }
-    if ((is_jump || opcode == Opcode::Return || opcode == Opcode::Throw ||
-         opcode == Opcode::Rethrow || effects.may_suspend ||
+    if ((is_jump || instruction.no_normal_return || opcode == Opcode::Return ||
+         opcode == Opcode::Throw || opcode == Opcode::Rethrow || effects.may_suspend ||
          (instruction.handler && effects.may_fail)) &&
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;
@@ -317,12 +333,13 @@ FlowGraph BuildFlowGraph(const Function& function) {
     if (IsJumpOpcode(last.opcode) && last.index < code.size()) {
       block.successors.push_back(graph.instruction_blocks.at(last.index));
     }
-    if (last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
+    if (!last.no_normal_return && last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
         last.opcode != Opcode::Throw && last.opcode != Opcode::Rethrow &&
         index + 1 < graph.blocks.size()) {
       block.successors.push_back(index + 1);
     }
-    if (last.handler && AnalyzeEffects(last).may_fail) {
+    block.normal_successor_count = block.successors.size();
+    if (last.handler && AnalyzeEffects(function, last).may_fail) {
       const auto target = function.handlers.at(*last.handler).target;
       block.successors.push_back(graph.instruction_blocks.at(target));
     }
@@ -412,8 +429,8 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
       const auto access = AnalyzeRegisters(instruction, functions);
       if (position + 1 == block.end && access.defines_value &&
           !transfer.killed.Has(instruction.dst)) {
-        const auto exceptional =
-            ExceptionalBlock(function, graph, instruction, AnalyzeEffects(instruction));
+        const auto exceptional = ExceptionalBlock(function, graph, instruction,
+                                                  AnalyzeEffects(function, instruction, access));
         if (exceptional) {
           // CFG 在受查指令之后切块；只有尚未被前序定义覆盖的旧目标值需要补回。
           transfer.exceptional =
@@ -523,9 +540,10 @@ std::vector<std::uint8_t> AnalyzeNecessaryLiveness(const Function& function,
   std::vector<Transfer> transfers;
   transfers.reserve(function.instructions.size());
   for (const auto& instruction : function.instructions) {
-    const auto effects = AnalyzeEffects(instruction);
+    const auto access = AnalyzeRegisters(instruction, functions);
+    const auto effects = AnalyzeEffects(function, instruction, access);
     transfers.push_back({
-        .access = AnalyzeRegisters(instruction, functions),
+        .access = access,
         .exceptional = ExceptionalBlock(function, graph, instruction, effects),
         .is_removable = effects.IsRemovable(),
     });
@@ -556,9 +574,10 @@ void TransferLiveness(const Function& function,
                       const RegisterAccess& access,
                       RegisterSet& live,
                       LivenessRequirements requirements) {
-  const auto exceptional = instruction.handler ? ExceptionalBlock(function, graph, instruction,
-                                                                  AnalyzeEffects(instruction))
-                                               : std::nullopt;
+  const auto exceptional = instruction.handler
+                               ? ExceptionalBlock(function, graph, instruction,
+                                                  AnalyzeEffects(function, instruction, access))
+                               : std::nullopt;
   TransferInstruction(instruction, access, exceptional, blocks, live);
   for (const auto reg : requirements.at_instruction) {
     live.Insert(reg);
@@ -614,7 +633,12 @@ void RemapJumpTargets(Function& function, std::span<const std::uint32_t> targets
   }
 }
 
-InstructionEffects AnalyzeEffects(const Instruction& instruction) {
+namespace {
+
+InstructionEffects OpcodeEffects(const Instruction& instruction) {
+  if (instruction.inline_value) {
+    return {};
+  }
   switch (instruction.opcode) {
     case Opcode::LoadNull:
     case Opcode::LoadBool:
@@ -778,6 +802,89 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       };
   }
   std::unreachable();
+}
+
+bool RequiresValueBox(const Function& function, const Instruction& instruction) {
+  // 未类型化的分析测试只描述控制流；生产 IR 的完整类型表决定擦除边界。
+  if (function.value_types.empty() || instruction.inline_value) {
+    return false;
+  }
+  const auto is_struct = [&](RegisterId reg) {
+    return function.value_types.at(reg).value_layout != nullptr;
+  };
+  switch (instruction.opcode) {
+    case Opcode::Move:
+      return is_struct(instruction.lhs) && !is_struct(instruction.dst);
+    case Opcode::EqualValue:
+    case Opcode::NotEqualValue: {
+      const auto& left = function.value_types.at(instruction.lhs);
+      const auto& right = function.value_types.at(instruction.rhs);
+      if (left.kind == frontend::TypeDescriptor::Kind::Null ||
+          right.kind == frontend::TypeDescriptor::Kind::Null) {
+        return false;
+      }
+      const auto left_struct = left.value_layout != nullptr;
+      const auto right_struct = right.value_layout != nullptr;
+      if (left_struct && right_struct &&
+          frontend::NonNullableTypeName(left) == frontend::NonNullableTypeName(right)) {
+        return false;
+      }
+      return left_struct || right_struct;
+    }
+    case Opcode::SetIndex:
+      return is_struct(instruction.rhs);
+    case Opcode::SetField:
+    case Opcode::SetGlobal:
+    case Opcode::Print:
+    case Opcode::IsType:
+    case Opcode::CheckedCast:
+    case Opcode::ExceptionValue:
+    case Opcode::Throw:
+    case Opcode::Rethrow:
+      return is_struct(instruction.lhs);
+    case Opcode::BuiltinCall:
+      for (RegisterId argument = 0; argument < CallArgumentCount(instruction); ++argument) {
+        if (is_struct(instruction.lhs + argument)) {
+          return true;
+        }
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
+InstructionEffects AnalyzeEffects(const Function& function, const Instruction& instruction) {
+  // 直接调用需要函数表来计算实参窗口；该分支无需分析接收者，不能传空表。
+  const auto access = function.struct_receiver && instruction.opcode != Opcode::Call
+                          ? AnalyzeRegisters(instruction, {})
+                          : RegisterAccess{};
+  return AnalyzeEffects(function, instruction, access);
+}
+
+InstructionEffects AnalyzeEffects(const Function& function,
+                                  const Instruction& instruction,
+                                  const RegisterAccess& access) {
+  auto effects = OpcodeEffects(instruction);
+  if (function.struct_receiver && instruction.opcode != Opcode::Call) {
+    bool reads_receiver = false;
+    ForEachUse(instruction, access,
+               [&](RegisterId reg) { reads_receiver = reads_receiver || reg == 0; });
+    const auto writes_receiver = access.defines_value && instruction.dst == 0;
+    // 接收位置可能在重入中失效；写入是外部可见状态，不能按局部死值删除。
+    if (reads_receiver || writes_receiver) {
+      effects.may_fail = true;
+      effects.reads_state = effects.reads_state || reads_receiver;
+      effects.writes_state = effects.writes_state || writes_receiver;
+    }
+  }
+  if (RequiresValueBox(function, instruction)) {
+    effects.may_allocate = true;
+    effects.may_fail = true;
+  }
+  return effects;
 }
 
 }  // namespace vela::ir

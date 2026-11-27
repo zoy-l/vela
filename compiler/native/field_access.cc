@@ -14,6 +14,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -93,7 +94,8 @@ absl::flat_hash_map<DeclarationId, FieldTarget> FindFieldTargets(const ir::Progr
       if (declaration != DeclarationId{}) {
         fields.try_emplace(declaration, FieldTarget{
                                             .owner = static_cast<ir::ClassId>(index),
-                                            .slot = static_cast<ir::FieldId>(slot),
+                                            .slot = ir::PhysicalFieldOffset(
+                                                type, static_cast<std::uint32_t>(slot)),
                                         });
       }
     }
@@ -116,7 +118,8 @@ std::vector<FieldKindWrite> FindFieldKindWrites(const ir::Function& function,
     for (auto index = block.begin; index < block.end; ++index) {
       const auto& instruction = function.instructions.at(index);
       const auto opcode = instruction.opcode;
-      const auto effects = ir::AnalyzeEffects(instruction);
+      const auto access = ir::AnalyzeRegisters(instruction, program.functions);
+      const auto effects = ir::AnalyzeEffects(function, instruction, access);
       if (safepoints[index] != 0 || effects.MayCollectOnSuccess() ||
           (effects.writes_state && opcode != Opcode::SetField)) {
         known.Clear();
@@ -126,7 +129,7 @@ std::vector<FieldKindWrite> FindFieldKindWrites(const ir::Function& function,
       } else if (opcode == Opcode::SetField) {
         writes.at(index) = known.Write(instruction, function);
       }
-      if (ir::AnalyzeRegisters(instruction, program.functions).defines_value) {
+      if (access.defines_value) {
         known.Define(instruction.dst);
       }
     }

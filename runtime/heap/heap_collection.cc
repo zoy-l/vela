@@ -21,6 +21,7 @@
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_operations.h"
+#include "vela/types.h"
 
 namespace vela::runtime {
 namespace {
@@ -128,6 +129,13 @@ std::size_t HashKey(Value value) noexcept {
       }
       if (layout != nullptr && layout->IsEnum()) {
         return absl::HashOf(&layout->nominal_type(), EnumOrdinal(object));
+      }
+      if (layout != nullptr && layout->IsStruct()) {
+        auto hash = absl::HashOf(&layout->nominal_type());
+        for (std::uint32_t field = 0; field < layout->field_count(); ++field) {
+          hash = absl::HashOf(hash, HashKey(Heap::LoadField(object, field)));
+        }
+        return hash;
       }
       return absl::HashOf(value.kind(), value.AsObject());
     }
@@ -292,9 +300,9 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
   return {};
 }
 
-std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObject& object,
-                                                                        Value key,
-                                                                        Value value) noexcept {
+std::expected<Insertion, ExecutionStatus> Heap::InsertCollection(HeapObject& object,
+                                                                 Value key,
+                                                                 Value value) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -372,11 +380,10 @@ void Heap::StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value v
   }
 }
 
-std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
-    HeapObject& object,
-    Value key,
-    std::size_t hash,
-    Value value) noexcept {
+std::expected<Insertion, ExecutionStatus> Heap::InsertCollectionHashed(HeapObject& object,
+                                                                       Value key,
+                                                                       std::size_t hash,
+                                                                       Value value) noexcept {
   const auto& layout = *object.collection_layout();
   auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = storage.table;
@@ -389,11 +396,10 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
       {.hash = hash, .bucket = slot.bucket, .entry = slot.entry, .integer_value = nullptr});
 }
 
-std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionLocated(
-    HeapObject& object,
-    Value key,
-    Value value,
-    MapLookup lookup) noexcept {
+std::expected<Insertion, ExecutionStatus> Heap::InsertCollectionLocated(HeapObject& object,
+                                                                        Value key,
+                                                                        Value value,
+                                                                        MapLookup lookup) noexcept {
   const auto& layout = *object.collection_layout();
   auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = storage.table;
@@ -403,7 +409,7 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionLocated(
     if (layout.values) {
       StoreCollectionEntry(object, slot.entry, value);
     }
-    return CollectionInsert::Updated;
+    return Insertion::Existing;
   }
   if (storage.used == storage.capacity) {
     const auto grown = GrowCollection(object);
@@ -428,7 +434,7 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionLocated(
   if (layout.values && value.IsReference()) {
     WriteBarrier(object, value);
   }
-  return CollectionInsert::Inserted;
+  return Insertion::Inserted;
 }
 
 std::expected<bool, ExecutionStatus> Heap::HasCollectionKey(const HeapObject& object,
@@ -460,15 +466,15 @@ std::expected<std::optional<Value>, ExecutionStatus> Heap::FindCollectionValue(
   return ReadMapEntry(layout, *entry);
 }
 
-std::expected<CollectionRemove, ExecutionStatus> Heap::RemoveCollection(HeapObject& object,
-                                                                        Value key) noexcept {
+std::expected<Removal, ExecutionStatus> Heap::RemoveCollection(HeapObject& object,
+                                                               Value key) noexcept {
   const auto entry = FindEntry(object, key);
   if (!entry) {
     return std::unexpected(entry.error());
   }
   const auto& slot = entry->slot;
   if (!slot.found) {
-    return CollectionRemove::Missing;
+    return Removal::Missing;
   }
   auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = *entry->table;
@@ -487,7 +493,7 @@ std::expected<CollectionRemove, ExecutionStatus> Heap::RemoveCollection(HeapObje
   table.buckets[slot.bucket] = kDeleted;
   --storage.size;
   ++storage.mutation;
-  return CollectionRemove::Removed;
+  return Removal::Removed;
 }
 
 std::expected<void, ExecutionStatus> Heap::ClearCollection(HeapObject& object) noexcept {
@@ -629,8 +635,8 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
   std::uint32_t index = 0;
   for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
     const auto value = LoadElementStorage(*element_layout, elements, entry);
-    if (!SetElement(array, index++, value)) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    if (const auto stored = SetElement(array, index++, value); !stored) {
+      return std::unexpected(ArrayExecutionStatus(stored.error()));
     }
   }
   return {};

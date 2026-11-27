@@ -11,7 +11,13 @@ namespace {
 
 enum class SearchOperation : std::uint8_t { Filter, Find, Includes, NarrowFilter };
 enum class SearchImplementation : std::uint8_t { Existing, Builtin };
-enum class IncludesStorage : std::uint8_t { Objects, TaggedIntegers, TaggedDoubles, TaggedNaNs };
+enum class IncludesStorage : std::uint8_t {
+  Objects,
+  Structs,
+  TaggedIntegers,
+  TaggedDoubles,
+  TaggedNaNs,
+};
 constexpr std::int64_t kExpectedAnswer = 42;
 
 std::string SearchSource(SearchOperation operation,
@@ -82,6 +88,11 @@ void ArrayIncludesStorage(benchmark::State& state, IncludesStorage storage) {
       element = "Item(value: 1)";
       needle = "Item(value: 42)";
       break;
+    case IncludesStorage::Structs:
+      type = "Pair[]";
+      element = "Pair(first: 1, second: 2)";
+      needle = "Pair(first: 1, second: 42)";
+      break;
     case IncludesStorage::TaggedIntegers:
       element = "1";
       needle = "42";
@@ -96,7 +107,8 @@ void ArrayIncludesStorage(benchmark::State& state, IncludesStorage storage) {
       nan = true;
       break;
   }
-  std::string source = "class Item { value: int; } const values: ";
+  std::string source =
+      "class Item { value: int; } struct Pair { first: int; second: int; } const values: ";
   source += type;
   source += " = make(); func make(): ";
   source += type;
@@ -118,6 +130,10 @@ void ArrayIncludesStorage(benchmark::State& state, IncludesStorage storage) {
 
 BENCHMARK_CAPTURE(ArrayIncludesStorage, Objects, IncludesStorage::Objects)
     ->Name("array_search/includes/objects")
+    ->Arg(4096)
+    ->UseRealTime();
+BENCHMARK_CAPTURE(ArrayIncludesStorage, Structs, IncludesStorage::Structs)
+    ->Name("array_search/includes/structs")
     ->Arg(4096)
     ->UseRealTime();
 BENCHMARK_CAPTURE(ArrayIncludesStorage, TaggedIntegers, IncludesStorage::TaggedIntegers)

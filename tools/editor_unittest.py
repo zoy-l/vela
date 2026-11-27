@@ -59,10 +59,16 @@ class EditorPackagingTest(unittest.TestCase):
                         self.assertEqual(svg.tag, '{http://www.w3.org/2000/svg}svg')
                         self.assertEqual(svg.attrib['viewBox'], '0 0 16 16')
                 self.assertNotIn("extension/extension_unittest.cjs", archive.namelist())
-            # Repack replaces an existing output with a complete valid archive.
+    def test_package_replaces_existing_archive(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-vsix-") as temporary:
+            destination = Path(temporary) / "vela.vsix"
+            with zipfile.ZipFile(destination, "w") as archive:
+                archive.writestr("obsolete.txt", b"old package")
             package_extension(destination)
             with zipfile.ZipFile(destination) as archive:
-                self.assertIsNone(archive.testzip())
+                names = archive.namelist()
+                self.assertIn("extension.vsixmanifest", names)
+                self.assertNotIn("obsolete.txt", names)
 
 
 if __name__ == "__main__":

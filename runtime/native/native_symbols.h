@@ -6,7 +6,7 @@ namespace vela::runtime {
 
 // 原生 ABI 的外部符号名由代码生成器和 JIT 绑定共同消费。
 inline constexpr std::string_view kNativeFieldCachesSymbol = "vela_native_v10_field_caches";
-inline constexpr std::string_view kNativeLoadGlobalSymbol = "vela_native_v10_load_global";
+inline constexpr std::string_view kNativeLoadGlobalSymbol = "vela_native_v33_load_global";
 inline constexpr std::string_view kNativeNewArraySymbol = "vela_native_v10_new_array";
 inline constexpr std::string_view kNativePushRecordSymbol = "vela_native_v1_push_record";
 inline constexpr std::string_view kNativeNewCallableSymbol = "vela_native_v10_new_callable";
@@ -53,6 +53,7 @@ inline constexpr std::string_view kNativeResumeReturnSymbol = "vela_native_v1_re
 inline constexpr std::string_view kNativeResuspendSymbol = "vela_native_v1_resuspend";
 inline constexpr std::string_view kNativeRethrowSymbol = "vela_native_v1_rethrow";
 inline constexpr std::string_view kNativeRootsEnterSymbol = "vela_native_v1_roots_enter";
+inline constexpr std::string_view kNativeRootsAttachSymbol = "vela_native_v1_roots_attach";
 inline constexpr std::string_view kNativeRootsExitSymbol = "vela_native_v1_roots_exit";
 inline constexpr std::string_view kNativeReleaseHostHandlesSymbol =
     "vela_native_v1_release_host_handles";
@@ -72,6 +73,8 @@ inline constexpr std::string_view kNativeCallDeclarationSymbol = "vela_native_v3
 inline constexpr std::string_view kNativeCallVirtualV3Symbol = "vela_native_v3_call_virtual";
 inline constexpr std::string_view kNativeCaptureReceiverSymbol = "vela_native_v3_capture_receiver";
 inline constexpr std::string_view kNativeLoadFieldSymbol = "vela_native_v3_load_field";
+inline constexpr std::string_view kNativeBorrowStructFieldSymbol =
+    "vela_native_v33_borrow_struct_field";
 inline constexpr std::string_view kNativeSafepointSymbol = "vela_native_v3_safepoint";
 inline constexpr std::string_view kNativeStoreFieldSymbol = "vela_native_v3_store_field";
 inline constexpr std::string_view kNativeCanOptimizeSymbol = "vela_native_v4_can_optimize";

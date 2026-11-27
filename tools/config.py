@@ -30,6 +30,11 @@ def require_file(path: Path, description: str) -> Path:
     return path
 
 
+def build_tool(name: str) -> Path:
+    path = BUILD_TOOLS_ROOT / name / host_platform() / executable_name(name)
+    return require_file(path, f"project {name} executable")
+
+
 def host_platform() -> str:
     system = platform.system()
     machine = platform.machine().lower()
@@ -116,12 +121,9 @@ def llvm_tools(directory: Path) -> dict[str, Path]:
 def toolchain_tools() -> dict[str, Path]:
     from tools.llvm import sdk_directory
 
-    host = host_platform()
     tools = {
-        "gn": require_file(BUILD_TOOLS_ROOT / "gn" / host / executable_name("gn"),
-                           "project GN executable"),
-        "ninja": require_file(BUILD_TOOLS_ROOT / "ninja" / host / executable_name("ninja"),
-                              "project Ninja executable"),
+        "gn": build_tool("gn"),
+        "ninja": build_tool("ninja"),
         **llvm_tools(sdk_directory()),
     }
     if platform.system() == "Darwin":

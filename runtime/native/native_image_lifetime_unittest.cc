@@ -28,11 +28,9 @@ using test::Text;
 // 动态代码所有者同时提供映像及其全部借用表；别名 shared_ptr 不能只保活映像头。
 struct AsyncImage final {
   AsyncImage() {
-    image.abi_identity = Text(NativeRuntimeAbiIdentity());
-    image.target = Text(NativeTargetIdentity());
     types.front().kind = static_cast<std::uint32_t>(layout::Type::Kind::Future);
     signatures.front().name = Text("Future<int>");
-    signatures.front().result.kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer);
+    signatures.front().result.kind = static_cast<std::uint32_t>(layout::Type::Kind::Int);
     signatures.front().has_result = 1;
     functions.front().name = Text("previousAsync");
     functions.front().result_type = 0;
@@ -44,7 +42,7 @@ struct AsyncImage final {
     image.strings = Table(strings);
   }
 
-  NativeImage image;
+  NativeImage image = test::EmptyImage();
   std::array<NativeTypeDescription, 1> types;
   std::array<NativeSignatureDescription, 1> signatures;
   std::array<NativeFunctionDescription, 1> functions;

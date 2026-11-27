@@ -44,10 +44,11 @@ struct BoundArguments final {
 
 // names 为空表示内部数组回调的纯位置参数；显式动态调用提供与 arguments 等长的名称数组。
 [[nodiscard]] std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
+    Heap& heap,
     const CallSignature& signature,
     const ResolvedCallable& callable,
     const HeapObject& arguments,
-    const HeapObject* names,
+    HeapObject* names,
     DynamicCallStyle style);
 [[nodiscard]] std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
     const CallSignature& signature,
@@ -58,7 +59,7 @@ struct BoundArguments final {
     Heap& heap,
     const CallSignature& signature,
     std::span<const TypeConstraint> types,
-    const HeapObject& arguments,
+    HeapObject& arguments,
     const BoundArguments& bound,
     std::size_t index);
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(

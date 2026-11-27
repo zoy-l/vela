@@ -186,6 +186,10 @@ void Parser::ParseDeclaration(Program& program) {
       Advance();
       append(ParseClass(), program.classes);
       break;
+    case TokenKind::Struct:
+      Advance();
+      append(ParseClass(ClassKind::Value), program.classes);
+      break;
     case TokenKind::Let:
     case TokenKind::Const: {
       reject_attributes("attributes are not supported on global variables");

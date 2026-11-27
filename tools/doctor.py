@@ -10,18 +10,8 @@ def main() -> int:
     tools = toolchain_tools()
     print(f"toolchain root: {BUILD_TOOLS_ROOT}")
     print(f"host platform: {host_platform()}")
-    for name in (
-        "gn",
-        "ninja",
-        "cc",
-        "cxx",
-        "archiver",
-        "linker",
-        "clang_format",
-        "clangd",
-        "clang_tidy",
-    ):
-        print(f"{name}: {tools[name]}")
+    for name, path in tools.items():
+        print(f"{name}: {path}")
     return 0
 
 

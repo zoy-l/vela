@@ -139,6 +139,7 @@ TEST_F(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFina
 
 void NativeFieldLoopTest::ExpectFloatingFieldPrefixes(std::string_view function_name) {
   NativeExecution execution(*instance);
+  auto& heap = isolate.heap();
   const auto prepare = instance->FindFunction("floatPrepare");
   const auto update = instance->FindFunction(function_name);
   ASSERT_TRUE(prepare);
@@ -164,13 +165,13 @@ void NativeFieldLoopTest::ExpectFloatingFieldPrefixes(std::string_view function_
                   ExecutionStatus::Returned);
         Value values = DecodeNativeValue(result);
         ASSERT_TRUE(values.IsObject());
-        const RootRange root(isolate.heap(), &values, 1);
+        const RootRange root(heap, &values, 1);
         std::array<std::array<double, 2>, 5> expected{{
             {1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}, {7.0, 8.0}, {9.0, 10.0},
         }};
-        const auto last = Heap::GetElement(*values.AsObject(), 4);
+        const auto last = heap.GetElement(*values.AsObject(), 4);
         ASSERT_TRUE(last.has_value());
-        ASSERT_TRUE(isolate.heap().SetField(*last->AsObject(), 1, Value::Double(initial)));
+        ASSERT_TRUE(heap.SetField(*last->AsObject(), 1, Value::Double(initial)));
         expected[4][1] = initial;
         const auto slot = [aliased](std::size_t index) {
           return aliased && index == 1 ? std::size_t{0} : index;
@@ -213,7 +214,7 @@ void NativeFieldLoopTest::ExpectFloatingFieldPrefixes(std::string_view function_
           EXPECT_EQ(trace.front().function, function_name);
         }
         for (std::size_t index = 0; index < expected.size(); ++index) {
-          const auto item = Heap::GetElement(*values.AsObject(), static_cast<std::int64_t>(index));
+          const auto item = heap.GetElement(*values.AsObject(), static_cast<std::int64_t>(index));
           ASSERT_TRUE(item.has_value());
           for (std::uint32_t field = 0; field < 2; ++field) {
             const auto actual = Heap::GetField(*item->AsObject(), field);

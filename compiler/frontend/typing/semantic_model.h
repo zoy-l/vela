@@ -20,6 +20,7 @@
 #include "base/builtin.h"
 #include "base/declaration.h"
 #include "base/reflection.h"
+#include "base/type_kind.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -28,35 +29,10 @@ namespace vela::frontend {
 
 using ConstantValue = std::variant<std::int64_t, bool, std::string>;
 
+struct StructLayout;
+
 struct TypeDescriptor final {
-  enum class Kind : std::uint8_t {
-    Invalid,
-    Null,
-    Void,
-    Dynamic,
-    Bool,
-    Int,
-    Double,
-    String,
-    MutableString,
-    ByteArray,
-    ByteData,
-    RegExp,
-    RegExpMatch,
-    Array,
-    Function,
-    Enum,
-    Class,
-    Interface,
-    Future,
-    Completer,
-    Timer,
-    CancellationToken,
-    Set,
-    Map,
-    // 泛型定义检查中的抽象参数；只出现在模板事实中，具体特化与后端不含此类型。
-    Parameter,
-  };
+  using Kind = LanguageTypeKind;
 
   Kind kind = Kind::Invalid;
   std::string_view name;
@@ -67,6 +43,14 @@ struct TypeDescriptor final {
   bool known_non_null = false;
   // 抽象参数显式借用声明节点；消费者通过身份与上界表读取语义，不解析显示名字。
   const TypeParameter* parameter = nullptr;
+  // struct 的规范值布局由类型检查阶段完成；类型副本共享同一份不可变布局。
+  std::shared_ptr<StructLayout> value_layout = nullptr;
+};
+
+struct StructLayout final {
+  std::vector<TypeDescriptor> fields;
+  std::vector<std::uint32_t> offsets;
+  std::vector<TypeDescriptor> slots;
 };
 
 [[nodiscard]] TypeDescriptor MakeArrayType(const TypeDescriptor& element);
@@ -85,6 +69,8 @@ struct FunctionDescriptor final {
   TypeDescriptor return_type;
   // bool 为 true 时对第一个实参的已证明约束；由函数体流分析产生。
   std::optional<TypeDescriptor> narrowed_parameter;
+  // bool 为 false 时的独立证明，不能由 true 约束的补集自动推断。
+  std::optional<TypeDescriptor> false_narrowed_parameter;
   // 函数体节点在特化声明移动到最终 Program 后仍保持身份。
   const Statement* declaration_body = nullptr;
   std::vector<Parameter> parameters;
@@ -114,7 +100,8 @@ struct FunctionDescriptor final {
 [[nodiscard]] TypeDescriptor MakeFunctionType(
     std::span<const FunctionDescriptor::Parameter> parameters,
     const TypeDescriptor& return_type,
-    std::optional<TypeDescriptor> narrowed_parameter);
+    std::optional<TypeDescriptor> narrowed_parameter,
+    std::optional<TypeDescriptor> false_narrowed_parameter);
 
 struct GeneratedFunction final {
   std::unique_ptr<Function> declaration;
@@ -262,6 +249,8 @@ struct NodeFacts {
   absl::flat_hash_map<const Expression*, std::size_t> lambda_indices;
   absl::flat_hash_map<const void*, std::uint32_t> bindings;
   absl::flat_hash_map<const Expression*, TypeDescriptor> expression_types;
+  // 表达式可具有普通值类型，但求值过程的所有路径都不能正常完成。
+  absl::flat_hash_set<const Expression*> non_completing_expressions;
   absl::flat_hash_map<const Expression*, std::string> generic_applications;
   absl::flat_hash_map<const Expression*, TypeDescriptor> checked_conversions;
   absl::flat_hash_map<const Expression*, ConstantValue> case_values;
@@ -283,6 +272,8 @@ struct NodeFacts {
   absl::flat_hash_map<const Statement::Catch*, TypeDescriptor> catch_types;
   absl::flat_hash_map<const Expression*, std::vector<std::uint32_t>> argument_order;
   absl::flat_hash_set<const Expression*> collection_constructions;
+  // 只有这些表达式可借给同步值方法；const、属性结果和临时值保持独立副本。
+  absl::flat_hash_set<const Expression*> mutable_struct_places;
 };
 
 struct SemanticModel final : NodeFacts {

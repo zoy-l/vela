@@ -1,10 +1,12 @@
 #include "runtime/native/native_dispatch.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -42,7 +44,10 @@ constexpr DeclarationId kCaller{20};
 constexpr DeclarationId kReplacement{30};
 constexpr std::int64_t kOldValue = 40;
 constexpr std::int64_t kNewValue = 42;
+constexpr std::int64_t kOptionalValue = 2;
 constexpr std::uint32_t kSourceLineStride = 10;
+constexpr std::uint32_t kOptionalAndRestArgumentCount = 6;
+constexpr std::uint32_t kBoundArgumentCount = 4;
 
 std::uint8_t OldAnswer(NativeExecution* /*unused*/,
                        const NativeValue* /*unused*/,
@@ -57,6 +62,53 @@ std::uint8_t NewAnswer(NativeExecution* /*unused*/,
                        std::uint64_t /*unused*/,
                        NativeValue* output) noexcept {
   *output = EncodeNativeValue(Value::Integer(kNewValue));
+  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+}
+
+void ExpectArgument(std::span<const NativeValue> arguments, std::size_t index, Value expected) {
+  const auto& argument = arguments[index];
+  const auto encoded = EncodeNativeValue(expected);
+  EXPECT_EQ(argument.kind, encoded.kind) << "argument " << index;
+  EXPECT_EQ(argument.payload, encoded.payload) << "argument " << index;
+}
+
+std::uint8_t InspectOptionalAndRest(NativeExecution* /*unused*/,
+                                    const NativeValue* arguments,
+                                    std::uint64_t count,
+                                    NativeValue* output) noexcept {
+  if (count != kOptionalAndRestArgumentCount) {
+    return static_cast<std::uint8_t>(ExecutionStatus::TypeError);
+  }
+  const auto values = std::span(arguments, count);
+  ExpectArgument(values, 0, Value::Integer(kOldValue));
+  const bool optional_present = !DecodeNativeValue(values[1]).IsNull();
+  if (optional_present) {
+    ExpectArgument(values, 1, Value::Integer(kOptionalValue));
+  }
+  const auto* rest = DecodeNativeValue(values[2]).AsObjectOrNull();
+  if (rest == nullptr) {
+    return static_cast<std::uint8_t>(ExecutionStatus::TypeError);
+  }
+  EXPECT_EQ(Heap::ArrayLength(*rest), 0U);
+  ExpectArgument(values, 3, Value::Boolean(true));
+  ExpectArgument(values, 4, Value::Boolean(optional_present));
+  ExpectArgument(values, values.size() - 1, Value::Boolean(false));
+  *output = EncodeNativeValue(Value::Integer(optional_present ? 1 : 0));
+  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+}
+
+std::uint8_t InspectBoundPresence(NativeExecution* /*unused*/,
+                                  const NativeValue* arguments,
+                                  std::uint64_t count,
+                                  NativeValue* output) noexcept {
+  if (count != kBoundArgumentCount) {
+    return static_cast<std::uint8_t>(ExecutionStatus::TypeError);
+  }
+  const auto values = std::span(arguments, count);
+  ExpectArgument(values, 1, Value::Null());
+  ExpectArgument(values, 2, Value::Boolean(true));
+  ExpectArgument(values, 3, Value::Boolean(false));
+  *output = values.front();
   return static_cast<std::uint8_t>(ExecutionStatus::Returned);
 }
 
@@ -84,11 +136,9 @@ std::uint8_t Fail(NativeExecution* execution,
 
 struct VersionedImage final {
   VersionedImage(std::uint64_t revision, NativeEntry answer) {
-    image.abi_identity = Text(NativeRuntimeAbiIdentity());
-    image.target = Text(NativeTargetIdentity());
     image.revision = revision;
     image.native_mode = static_cast<std::uint32_t>(NativeProgramMode::Reloadable);
-    types.front().kind = static_cast<std::uint32_t>(layout::Type::Kind::Integer);
+    types.front().kind = static_cast<std::uint32_t>(layout::Type::Kind::Int);
     locations.front().line = static_cast<std::uint32_t>(revision * kSourceLineStride);
     paths.front() = Text("main.vela");
     source.front() = Text(revision == 1 ? "old source" : "new source");
@@ -152,7 +202,7 @@ struct VersionedImage final {
     image.source_paths = Table(paths);
     image.source_texts = Table(source);
   }
-  NativeImage image;
+  NativeImage image = test::EmptyImage();
   std::array<NativeFunctionDescription, 2> functions;
   std::array<NativeDeclarationDescription, 3> declarations;
   std::array<NativeTypeDescription, 1> types;
@@ -206,7 +256,7 @@ TEST(NativeDispatchTest, ClosedCapturedEntryOwnsItsProgramAndBlocksStopUntilRele
   EXPECT_TRUE(isolate.TryStop());
 }
 
-TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsItsOriginalCode) {
+TEST(NativeDispatchTest, NamedEntryFollowsReloadAndCapturedEntriesKeepTheirOriginalCodeAlive) {
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   auto first = std::make_shared<VersionedImage>(1, OldAnswer);
@@ -214,22 +264,33 @@ TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsIts
   ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto entry = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
-  EXPECT_EQ(entry->Invoke({})->AsInteger(), 40);
-  std::optional<NativeVersionEntry> captured = *entry->Capture();
-  auto caller = dispatch.FindEntry("main.vela", "caller");
-  ASSERT_TRUE(caller);
-  const auto old_caller = caller->Capture();
-  ASSERT_TRUE(old_caller);
-  auto second = std::make_shared<VersionedImage>(2, NewAnswer);
-  std::swap(second->functions.front(), second->functions.back());
-  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
-  first.reset();
+  EXPECT_EQ(entry->Invoke({})->AsInteger(), kOldValue);
+  {
+    const auto captured = entry->Capture();
+    ASSERT_TRUE(captured);
+    const auto caller = dispatch.FindEntry("main.vela", "caller");
+    ASSERT_TRUE(caller);
+    const auto old_caller = caller->Capture();
+    ASSERT_TRUE(old_caller);
+    auto second = std::make_shared<VersionedImage>(2, NewAnswer);
+    std::swap(second->functions.front(), second->functions.back());
+    ASSERT_TRUE(PublishVersion(dispatch, 1, second));
+    first.reset();
+    isolate.heap().Collect();
+    EXPECT_FALSE(old_lifetime.expired());
+    EXPECT_EQ(entry->Invoke({})->AsInteger(), kNewValue);
+    EXPECT_EQ(captured->Invoke({})->AsInteger(), kOldValue);
+    EXPECT_EQ(old_caller->Invoke({})->AsInteger(), kNewValue);
+    EXPECT_EQ(captured->identity().revision, 1U);
+  }
   isolate.heap().Collect();
-  EXPECT_FALSE(old_lifetime.expired());
-  EXPECT_EQ(entry->Invoke({})->AsInteger(), 42);
-  EXPECT_EQ(captured->Invoke({})->AsInteger(), 40);
-  EXPECT_EQ(old_caller->Invoke({})->AsInteger(), 42);
-  EXPECT_EQ(captured->identity().revision, 1U);
+  EXPECT_TRUE(old_lifetime.expired());
+  EXPECT_EQ(entry->Invoke({})->AsInteger(), kNewValue);
+  const auto blockers = isolate.ReloadBlockers();
+  ASSERT_EQ(blockers.size(), 1U);
+  EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativeNamedEntry);
+  EXPECT_EQ(blockers.front().references, 1U);
+  EXPECT_FALSE(isolate.TryStop());
 }
 
 TEST(NativeDispatchTest, UnpublishedAndClosedDispatchRejectAllLookupBoundaries) {
@@ -243,20 +304,17 @@ TEST(NativeDispatchTest, UnpublishedAndClosedDispatchRejectAllLookupBoundaries) 
   ASSERT_TRUE(instance);
   NativeExecution execution(**instance);
   NativeGlobalCache cache;
-  EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(dispatch.ResolveVirtual(*nominal, kAnswer).error(), ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(), ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),
-            ExecutionStatus::InvalidEntry);
+  const auto expect_lookup_errors = [&](ExecutionStatus status) {
+    const auto expected = std::unexpected(status);
+    EXPECT_EQ(dispatch.FindEntry("main.vela", "answer"), expected);
+    EXPECT_EQ(dispatch.Resolve(kAnswer), expected);
+    EXPECT_EQ(dispatch.ResolveVirtual(*nominal, kAnswer), expected);
+    EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache), expected);
+    EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache), expected);
+  };
+  expect_lookup_errors(ExecutionStatus::InvalidEntry);
   dispatch.Close();
-  EXPECT_EQ(dispatch.FindEntry("main.vela", "answer").error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(dispatch.Resolve(kAnswer).error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(dispatch.ResolveVirtual(*nominal, kAnswer).error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(dispatch.LoadGlobal(execution, kAnswer, cache).error(),
-            ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(dispatch.StoreGlobal(kAnswer, Value::Null(), cache).error(),
-            ExecutionStatus::ExecutionStopped);
+  expect_lookup_errors(ExecutionStatus::ExecutionStopped);
 }
 
 TEST(NativeDispatchTest, BusyPublicationKeepsItsCandidateUntilHostAndInitializationScopesExit) {
@@ -298,31 +356,6 @@ TEST(NativeDispatchTest, StopRejectsPreparedAndNewPublicationsWithoutAdvancingTh
   const auto refused = dispatch.Prepare(1, image);
   ASSERT_FALSE(refused);
   EXPECT_EQ(refused.error().status, NativePublicationStatus::Stopped);
-}
-
-TEST(NativeDispatchTest, NamedEntryDoesNotKeepHistoricalCodeAlive) {
-  Isolate isolate(1);
-  auto& dispatch = isolate.native_dispatch();
-  auto first = std::make_shared<VersionedImage>(1, OldAnswer);
-  const std::weak_ptr<VersionedImage> lifetime = first;
-  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
-  const auto named = dispatch.FindEntry("main.vela", "answer");
-  ASSERT_TRUE(named);
-  auto version = std::optional<NativeVersionEntry>(*named->Capture());
-  auto second = std::make_shared<VersionedImage>(2, NewAnswer);
-  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
-  first.reset();
-  isolate.heap().Collect();
-  EXPECT_FALSE(lifetime.expired());
-  version.reset();
-  isolate.heap().Collect();
-  EXPECT_TRUE(lifetime.expired());
-  EXPECT_EQ(named->Invoke({})->AsInteger(), 42);
-  const auto blockers = isolate.ReloadBlockers();
-  ASSERT_EQ(blockers.size(), 1U);
-  EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativeNamedEntry);
-  EXPECT_EQ(blockers.front().references, 1U);
-  EXPECT_FALSE(isolate.TryStop());
 }
 
 TEST(NativeDispatchTest, DroppedAndStaleCandidatesLeaveThePublishedProgramUntouched) {
@@ -447,6 +480,110 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
   const auto foreign = ResolveNativeCallable(**independent, value.value());
   ASSERT_FALSE(foreign);
   EXPECT_EQ(foreign.error(), ExecutionStatus::InvalidIsolate);
+}
+
+TEST(NativeDispatchTest, IndirectCallsCompleteDefaultsAndRestAndRejectWrongArity) {
+  Isolate isolate(1);
+  auto image = std::make_shared<VersionedImage>(1, InspectOptionalAndRest);
+  image->image.native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  const std::array types{
+      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Int)},
+      NativeTypeDescription{.kind = static_cast<std::uint32_t>(layout::Type::Kind::Array)},
+  };
+  const std::array arrays{NativeArrayDescription{.name = Text("int[]"), .element = types[0]}};
+  const std::array parameters{
+      NativeCallParameter{.name = Text("required"), .type = 0},
+      NativeCallParameter{
+          .name = Text("optional"),
+          .type = 0,
+          .flags = kNativeOptionalParameter | kNativeDefaultParameter,
+      },
+      NativeCallParameter{.name = Text("rest"), .type = 1, .flags = kNativeRestParameter},
+  };
+  const std::array signature{
+      NativeSignatureParameter{.type = types[0]},
+      NativeSignatureParameter{.type = types[0], .flags = kNativeOptionalParameter},
+      NativeSignatureParameter{.type = types[1], .flags = kNativeRestParameter},
+  };
+  image->image.types = Table(types);
+  image->image.arrays = Table(arrays);
+  image->signatures.front().parameters = Table(signature);
+  auto& function = image->functions.front();
+  function.parameters = Table(parameters);
+  function.parameter_count = kOptionalAndRestArgumentCount;
+  const auto instance = NativeInstance::Instantiate(isolate, Image(image));
+  ASSERT_TRUE(instance);
+  auto& heap = isolate.heap();
+  auto* object = heap.AllocateInstance(*(*instance)->layouts().classes.front());
+  ASSERT_NE(object, nullptr);
+  heap.SetNativeEnvironment(*object, *(*instance)->state().front().AsObject(), 0);
+  const auto callable = HostRoot::Create(isolate, Value::Object(object));
+  ASSERT_TRUE(callable);
+  NativeExecution execution(**instance);
+  const auto encoded = EncodeNativeValue(callable->value());
+  std::array<NativeValue, parameters.size() + 2> arguments{};
+  arguments[1] = EncodeNativeValue(Value::Integer(kOldValue));
+  NativeValue output;
+  EXPECT_EQ(static_cast<ExecutionStatus>(
+                vela_native_v1_call_indirect(&execution, &encoded, arguments.data(), 0, &output)),
+            ExecutionStatus::TypeError);
+  ASSERT_EQ(static_cast<ExecutionStatus>(
+                vela_native_v1_call_indirect(&execution, &encoded, arguments.data(), 1, &output)),
+            ExecutionStatus::Returned);
+  EXPECT_EQ(DecodeNativeValue(output).AsInteger(), 0);
+  arguments[2] = EncodeNativeValue(Value::Integer(kOptionalValue));
+  ASSERT_EQ(static_cast<ExecutionStatus>(
+                vela_native_v1_call_indirect(&execution, &encoded, arguments.data(), 2, &output)),
+            ExecutionStatus::Returned);
+  EXPECT_EQ(DecodeNativeValue(output).AsInteger(), 1);
+  EXPECT_EQ(static_cast<ExecutionStatus>(
+                vela_native_v1_call_indirect(&execution, &encoded, arguments.data(), 4, &output)),
+            ExecutionStatus::TypeError);
+  const std::array callback_arguments{Value::Integer(kOldValue)};
+  const auto callback = InvokeNativeCallable(execution, callable->value(), callback_arguments);
+  ASSERT_TRUE(callback);
+  EXPECT_EQ(callback->AsInteger(), 0);
+}
+
+TEST(NativeDispatchTest, BoundReceiverCountsAsPresentWhenItIsASignatureParameter) {
+  Isolate isolate(1);
+  auto image = std::make_shared<VersionedImage>(1, InspectBoundPresence);
+  image->image.native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  image->classes.front().field_count = 1;
+  image->classes.front().callable_mode = static_cast<std::uint32_t>(CallableMode::BoundMethod);
+  const std::array parameters{
+      NativeCallParameter{.name = Text("receiver"), .type = 0},
+      NativeCallParameter{
+          .name = Text("optional"),
+          .type = 0,
+          .flags = kNativeOptionalParameter | kNativeDefaultParameter,
+      },
+  };
+  auto& function = image->functions.front();
+  function.parameters = Table(parameters);
+  function.parameter_count = kBoundArgumentCount;
+  const auto instance = NativeInstance::Instantiate(isolate, Image(image));
+  ASSERT_TRUE(instance);
+  auto& heap = isolate.heap();
+  const std::array fields{Value::Integer(kOldValue)};
+  auto* object = heap.AllocateInstance(*(*instance)->layouts().classes.front(), fields);
+  ASSERT_NE(object, nullptr);
+  heap.SetNativeEnvironment(*object, *(*instance)->state().front().AsObject(), 0);
+  const auto callable = HostRoot::Create(isolate, Value::Object(object));
+  ASSERT_TRUE(callable);
+  NativeExecution execution(**instance);
+  const auto encoded = EncodeNativeValue(callable->value());
+  std::array<NativeValue, 1> arguments{};
+  NativeValue output;
+  ASSERT_EQ(static_cast<ExecutionStatus>(
+                vela_native_v1_call_indirect(&execution, &encoded, arguments.data(), 0, &output)),
+            ExecutionStatus::Returned);
+  EXPECT_EQ(output.kind, NativeValueKind::Integer);
+  EXPECT_EQ(DecodeNativeValue(output).AsInteger(), kOldValue);
+  const auto callback = InvokeNativeCallable(execution, callable->value(), {});
+  ASSERT_TRUE(callback);
+  EXPECT_TRUE(callback->IsInteger());
+  EXPECT_EQ(callback->AsInteger(), kOldValue);
 }
 
 }  // namespace

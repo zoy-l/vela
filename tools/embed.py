@@ -9,25 +9,22 @@ import shutil
 import subprocess
 import sys
 
+from tools.build import build, describe_targets, target_closure
 from tools.config import (
     BUILD_VARIANTS,
     MACOS_DEPLOYMENT_TARGET,
     ROOT,
     add_compiler_wrapper_argument,
-    configure,
     executable_name,
     static_library_name,
     target_cpu,
     target_os,
-    toolchain_tools,
 )
 from tools.package import (
     copy_file,
-    describe_targets,
     package_bindgen,
     package_headers,
     package_licenses,
-    target_closure,
 )
 
 RUNTIME_TARGET = "//runtime:vela_runtime"
@@ -70,7 +67,7 @@ def package_embedding(output: Path, destination: Path, variant: str) -> None:
         contracts[name] = ([library, *dependencies], system, frameworks)
 
     compiler = "bin/" + executable_name("vela")
-    copy_file(output / executable_name("vela"), destination, compiler, "compiler", "Vela", "MIT")
+    copy_file(output / executable_name("vela"), destination, compiler)
     bindgen = package_bindgen(output / executable_name("vela_bindgen"), destination)
     package_headers(targets, DEVELOPMENT_TARGET, destination)
     package_licenses(destination)
@@ -80,14 +77,15 @@ def package_embedding(output: Path, destination: Path, variant: str) -> None:
     if len(set(archives.values())) != len(archives):
         raise RuntimeError("Embedding SDK archives must have distinct file names")
     for source, relative in archives.items():
-        copy_file(source, destination, relative, "link", "Vela SDK", "share/vela/licenses")
+        copy_file(source, destination, relative)
 
+    host_os = target_os()
     manifest = {
         "format_version": 5,
-        "target_os": target_os(),
+        "target_os": host_os,
         "target_cpu": target_cpu(),
         "variant": variant,
-        "macos_deployment_target": MACOS_DEPLOYMENT_TARGET if target_os() == "mac" else "",
+        "macos_deployment_target": MACOS_DEPLOYMENT_TARGET if host_os == "mac" else "",
         "compiler": compiler,
         "bindgen": {
             "command": bindgen,
@@ -107,11 +105,7 @@ def export(variant: str, destination: Path, cc_wrapper: str) -> Path:
     destination = destination.resolve()
     destination.mkdir(parents=True)
     try:
-        output = configure(variant, cc_wrapper=cc_wrapper)
-        subprocess.run(
-            [str(toolchain_tools()["ninja"]), "-C", str(output), ":embedding"],
-            cwd=ROOT, check=True,
-        )
+        output = build(variant, "embedding", cc_wrapper=cc_wrapper)
         package_embedding(output, destination, variant)
     except BaseException:
         shutil.rmtree(destination)

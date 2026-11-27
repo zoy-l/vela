@@ -69,6 +69,16 @@ def checked_result(name: str, entry: dict) -> float:
     return expected
 
 
+def checked_steady_result(name: str, backend: str, entry: dict) -> float:
+    resident = entry["process_resident_bytes"]
+    if not math.isfinite(resident) or resident <= 0:
+        raise ValueError(f"{name}: invalid resident-memory counter")
+    if backend != "cpp" and (entry["baseline_bytes"] != entry["retained_bytes"] or
+                             entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
+        raise ValueError(f"{name}: retained temporary state after completion and GC")
+    return checked_result(name, entry)
+
+
 def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) -> dict[str, list[dict]]:
     expected = set(expected_cases)
     if not expected or repetitions < 1:
@@ -133,8 +143,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         raise ValueError("No supported AOT comparison cases selected")
     rows = iteration_rows(report, expected_cases, repetitions)
     samples = {}
-    counters = {}
-    residents = {}
+    steady = {}
     checksums = defaultdict(set)
     for name, entries in rows.items():
         backend, workload, size = pattern.fullmatch(name).groups()
@@ -142,24 +151,15 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         samples[backend, *key] = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
         if backend == "first_native":
             continue
-        for entry in entries:
-            checksums[key].add(checked_result(name, entry))
-        resident = [entry["process_resident_bytes"] for entry in entries]
-        if any(not math.isfinite(value) or value <= 0 for value in resident):
-            raise ValueError(f"{name}: invalid process resident-memory counter")
-        residents[backend, *key] = resident
+        steady[backend, *key] = entries
+        checksums[key].update(checked_steady_result(name, backend, entry) for entry in entries)
         if backend == "cpp":
             continue
         fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes",
-                  "suspended_frames", "saved_state_bytes", "remaining_suspended_frames", "remaining_saved_bytes")
-        fields += ("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
-        values = {field: [entry[field] for entry in entries] for field in fields}
+                  "suspended_frames", "saved_state_bytes", "entry_frame_bytes", "entry_shadow_slots",
+                  "entry_static_root_stores")
         for entry in entries:
             validate_counters(name, entry, fields)
-            if (entry["baseline_bytes"] != entry["retained_bytes"] or
-                    entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
-                raise ValueError(f"{name}: retained temporary state after completion and GC")
-        counters[backend, *key] = values
     if any(len(values) != 1 for values in checksums.values()):
         raise ValueError("AOT and C++ checksums differ")
     lines = ["Offline AOT and C++: median wall microseconds per workload.",
@@ -182,12 +182,13 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                   for backend in ("native", "cpp", "first_native")}
         medians = {backend: median(times) for backend, times in values.items() if times}
         elapsed = [f"{medians[backend]:.3f}" if backend in medians else "-" for backend in values]
-        ratios = [f"{medians['native'] / medians[backend]:.3f}" if "native" in medians and backend in medians
-                  else "-" for backend in ("cpp",)]
-        cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "cpp"))
-        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs]) + " |")
+        ratio_cell = "-"
         if "native" in medians and "cpp" in medians:
-            paired_ratios.append(medians["native"] / medians["cpp"])
+            ratio = medians["native"] / medians["cpp"]
+            ratio_cell = f"{ratio:.3f}"
+            paired_ratios.append(ratio)
+        cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "cpp"))
+        lines.append("| " + " | ".join([workload, str(size), *elapsed, ratio_cell, cvs]) + " |")
     if paired_ratios:
         geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
         lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
@@ -200,28 +201,29 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                       "SHA and iterative Fibonacci explicitly wrap at 32 bits."])
     lines.extend(["", "| Workload | Size | Backend | Baseline bytes | End bytes | Retained bytes | Committed bytes | Suspended frames | Saved bytes |",
                   "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
-    for (backend, workload, size), fields in sorted(counters.items()):
-        values = [median_cell(fields[field], 0) for field in
-                  ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "suspended_frames", "saved_state_bytes")]
-        lines.append("| " + " | ".join([workload, str(size), backend, *values]) + " |")
+    for workload, size in keys:
+        entries = steady.get(("native", workload, size))
+        if entries:
+            values = median_cells(entries, ("baseline_bytes", "allocated_bytes", "retained_bytes",
+                                            "committed_bytes", "suspended_frames", "saved_state_bytes"), 0)
+            lines.append("| " + " | ".join([workload, str(size), "native", *values]) + " |")
     lines.extend(["", "Native frame storage is the declared LLVM frame aggregate before optimization; "
                   "it is not measured machine-stack usage. Root stores count planned safepoint writes before LLVM optimization.", "",
                   "| Workload | Size | AOT frame storage bytes | AOT shadow slots | AOT static root stores |",
                   "| --- | ---: | ---: | ---: | ---: |"])
     for workload, size in keys:
-        columns = []
-        for backend, field in (("native", "entry_frame_bytes"), ("native", "entry_shadow_slots"),
-                               ("native", "entry_static_root_stores")):
-            values = counters.get((backend, workload, size), {}).get(field)
-            columns.append(f"{median(values):.0f}" if values else "-")
+        entries = steady.get(("native", workload, size))
+        fields = ("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
+        columns = median_cells(entries, fields, 0) if entries else ["-"] * len(fields)
         lines.append("| " + " | ".join([workload, str(size), *columns]) + " |")
     lines.extend(["", "Process resident snapshots include the complete comparison executable and prior "
                   "work in this process. Run one backend filter per process to compare resident costs. "
                   "These are not peak RSS or the footprint of a standalone AOT application.", "",
                   "| Workload | Size | Backend | Process resident bytes |",
                   "| --- | ---: | --- | ---: |"])
-    for (backend, workload, size), values in sorted(residents.items()):
-        lines.append("| " + " | ".join([workload, str(size), backend, f"{median(values):.0f}"]) + " |")
+    for (backend, workload, size), entries in sorted(steady.items()):
+        resident = median_cell((entry["process_resident_bytes"] for entry in entries), 0)
+        lines.append("| " + " | ".join([workload, str(size), backend, resident]) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -374,15 +376,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                                  for entry in entries]
         counters[backend, *key] = entries
         for entry in entries:
-            checksums[key].add(checked_result(name, entry))
-            resident = entry["process_resident_bytes"]
-            if not math.isfinite(resident) or resident <= 0:
-                raise ValueError(f"{name}: invalid resident-memory counter")
-            if backend == "cpp":
-                continue
-            if (entry["baseline_bytes"] != entry["retained_bytes"] or
-                    entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
-                raise ValueError(f"{name}: retained temporary state")
+            checksums[key].add(checked_steady_result(name, backend, entry))
             if backend in {"baseline", "optimized"}:
                 for field in ("code_batches", "code_executable_bytes"):
                     value = entry[field]

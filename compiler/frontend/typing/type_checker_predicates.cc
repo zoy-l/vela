@@ -17,7 +17,7 @@
 
 namespace vela::frontend {
 
-void TypeChecker::RefinePredicateCall(const Expression& condition) {
+void TypeChecker::RefinePredicateCall(const Expression& condition, ConditionTruth outcome) {
   const auto target = facts_.call_targets.find(&condition);
   if (target == facts_.call_targets.end()) {
     return;
@@ -40,7 +40,7 @@ void TypeChecker::RefinePredicateCall(const Expression& condition) {
       return;
     }
     const auto binding_id = binding->id;
-    const auto narrowed = ResolvePredicate(target->second.signature);
+    const auto narrowed = ResolvePredicate(target->second.signature, outcome);
     if (!narrowed) {
       return;
     }
@@ -68,13 +68,15 @@ void TypeChecker::RefineAlternatives(const Expression& condition, ConditionTruth
     RefineCondition(*condition.left, outcome);
   }
   auto first_facts = refinements_.Capture(first);
+  const bool first_completes = !conditional || ExpressionCanComplete(*condition.left);
   const auto second = refinements_.BeginBranch();
   RefineCondition(selector, NegateConditionTruth(first_outcome));
   InvalidateAssignments(*condition.right);
   RefineCondition(*condition.right, outcome);
   const auto second_facts = refinements_.Capture(second);
-  refinements_.Intersect(first_facts, second_facts);
-  refinements_.Apply(first_facts);
+  const bool second_completes = ExpressionCanComplete(*condition.right);
+  refinements_.MergeAlternatives(first_facts, second_facts,
+                                 {.first = first_completes, .second = second_completes});
 }
 
 bool TypeChecker::CanInferPredicate(const Function& function, const FunctionInfo& signature) {
@@ -91,8 +93,12 @@ void TypeChecker::BeginPredicate(const Function& function, const FunctionInfo& s
   }
   const auto* binding = LookupLocal(function.parameters.front().name);
   if (binding != nullptr) {
-    predicate_scope_.emplace(
-        PredicateScope{.binding = binding->id, .original = binding->type, .matched = std::nullopt});
+    predicate_scope_.emplace(PredicateScope{
+        .binding = binding->id,
+        .original = binding->type,
+        .matched = std::nullopt,
+        .unmatched = std::nullopt,
+    });
   }
 }
 
@@ -101,28 +107,33 @@ void TypeChecker::RecordPredicateReturn(const Expression& expression) {
     return;
   }
   auto& predicate = *predicate_scope_;
-  if (predicate.assigned || captured_mutables_.contains(predicate.binding) ||
-      (predicate.matched && IsSameType(*predicate.matched, predicate.original))) {
+  if (predicate.assigned || captured_mutables_.contains(predicate.binding)) {
     return;
   }
+  std::optional<bool> returned;
   if (const auto constant = EvaluateConstant(expression)) {
-    if (const auto* value = std::get_if<bool>(&*constant); value != nullptr && !*value) {
-      return;
+    if (const auto* value = std::get_if<bool>(&*constant)) {
+      returned = *value;
     }
   }
-  const auto checkpoint = refinements_.BeginBranch();
-  RefineCondition(expression, ConditionTruth::AlwaysTrue);
-  const auto* refined = refinements_.Find(predicate.binding);
-  const auto matched = refined == nullptr ? predicate.original : *refined;
-  refinements_.Discard(checkpoint);
-  if (!predicate.matched) {
-    predicate.matched = matched;
-    return;
+  const auto record = [&](ConditionTruth outcome, std::optional<Type>& accumulated) {
+    const auto checkpoint = refinements_.BeginBranch();
+    RefineCondition(expression, outcome);
+    const auto* refined = refinements_.Find(predicate.binding);
+    const auto type = refined == nullptr ? predicate.original : *refined;
+    refinements_.Discard(checkpoint);
+    if (!accumulated) {
+      accumulated = type;
+    } else if (!IsSameType(type, *accumulated)) {
+      accumulated = PredicateUpperBound(*accumulated, type).value_or(predicate.original);
+    }
+  };
+  if (!returned || *returned) {
+    record(ConditionTruth::AlwaysTrue, predicate.matched);
   }
-  if (IsSameType(matched, *predicate.matched)) {
-    return;
+  if (!returned || !*returned) {
+    record(ConditionTruth::AlwaysFalse, predicate.unmatched);
   }
-  predicate.matched = PredicateUpperBound(*predicate.matched, matched).value_or(predicate.original);
 }
 
 std::optional<TypeChecker::Type> TypeChecker::PredicateUpperBound(const Type& first,
@@ -164,7 +175,7 @@ std::optional<TypeChecker::Type> TypeChecker::PredicateUpperBound(const Type& fi
   absl::flat_hash_set<std::string_view> visited;
   visited.insert(first.name);
   for (std::size_t index = 0; index < candidates.size(); ++index) {
-    const auto candidate = candidates[index];
+    auto candidate = candidates[index];
     if (!visited.insert(candidate.name).second) {
       continue;
     }
@@ -176,20 +187,26 @@ std::optional<TypeChecker::Type> TypeChecker::PredicateUpperBound(const Type& fi
   return std::nullopt;
 }
 
-std::optional<TypeChecker::Type> TypeChecker::FinishPredicate() {
+TypeChecker::PredicateResult TypeChecker::FinishPredicate() {
   auto predicate = std::exchange(predicate_scope_, std::nullopt);
-  if (!predicate || predicate->assigned || captured_mutables_.contains(predicate->binding) ||
-      !predicate->matched || IsSameType(*predicate->matched, predicate->original) ||
-      !CanAssign(predicate->original, *predicate->matched)) {
-    return std::nullopt;
+  if (!predicate || predicate->assigned || captured_mutables_.contains(predicate->binding)) {
+    return {};
   }
-  return predicate->matched;
+  const auto validate = [&](std::optional<Type> type) -> std::optional<Type> {
+    return type && !IsSameType(*type, predicate->original) && CanAssign(predicate->original, *type)
+               ? type
+               : std::nullopt;
+  };
+  return {.matched = validate(predicate->matched), .unmatched = validate(predicate->unmatched)};
 }
 
-std::optional<TypeChecker::Type> TypeChecker::ResolvePredicate(const FunctionInfo& signature) {
-  if (signature.narrowed_parameter || signature.return_type.kind != Type::Kind::Bool ||
+std::optional<TypeChecker::Type> TypeChecker::ResolvePredicate(const FunctionInfo& signature,
+                                                               ConditionTruth outcome) {
+  auto narrowed = outcome == ConditionTruth::AlwaysTrue ? signature.narrowed_parameter
+                                                        : signature.false_narrowed_parameter;
+  if (narrowed || signature.return_type.kind != Type::Kind::Bool ||
       signature.return_type.nullable || signature.declaration_body == nullptr) {
-    return signature.narrowed_parameter;
+    return narrowed;
   }
   const auto source = predicate_declarations_.find(signature.declaration_body);
   if (source == predicate_declarations_.end()) {
@@ -209,7 +226,7 @@ std::optional<TypeChecker::Type> TypeChecker::ResolvePredicate(const FunctionInf
     CheckFunctionBody(*declaration, checking, owner);
   }
   if (const auto found = function_predicates_.find(body); found != function_predicates_.end()) {
-    return found->second;
+    return outcome == ConditionTruth::AlwaysTrue ? found->second.matched : found->second.unmatched;
   }
   return std::nullopt;
 }

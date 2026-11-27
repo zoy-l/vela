@@ -213,7 +213,7 @@ class NativeHostEntryTest : public ::testing::Test {
     EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
     EXPECT_EQ(Read(), -1);
     for (std::size_t index = 0; index < terms.size(); ++index) {
-      const auto value = Heap::GetElement(*arguments.front().AsObject(), index);
+      const auto value = isolate.heap().GetElement(*arguments.front().AsObject(), index);
       ASSERT_TRUE(value);
       EXPECT_EQ(value->AsInteger(), terms[index]);
     }
@@ -283,9 +283,10 @@ TEST_F(NativeHostEntryTest, OrdinaryTargetsPreserveOverflowTracesAndCompletedWri
     EXPECT_EQ(result.status, ExecutionStatus::IntegerOverflow);
     ASSERT_FALSE(result.stack_trace.empty());
     EXPECT_EQ(result.stack_trace.front().function, "ordinaryMutate");
-    EXPECT_EQ(Heap::GetElement(*input.AsObject(), 0)->AsInteger(), 2);
-    EXPECT_EQ(Heap::GetElement(*input.AsObject(), 1)->AsInteger(), terms[1]);
-    EXPECT_EQ(Heap::GetElement(*input.AsObject(), 2)->AsInteger(), terms[2]);
+    auto& heap = isolate.heap();
+    EXPECT_EQ(heap.GetElement(*input.AsObject(), 0)->AsInteger(), 2);
+    EXPECT_EQ(heap.GetElement(*input.AsObject(), 1)->AsInteger(), terms[1]);
+    EXPECT_EQ(heap.GetElement(*input.AsObject(), 2)->AsInteger(), terms[2]);
     const std::array crossing{std::numeric_limits<std::int64_t>::max(), std::int64_t{1},
                                std::int64_t{-1}};
     auto cancelled = Array(crossing);
@@ -324,8 +325,8 @@ TEST_F(NativeHostEntryTest, OrdinaryTargetsProcessScheduledObservationsOnce) {
     EXPECT_EQ(result->AsInteger(), 3);
     EXPECT_EQ(observed, 1U);
     EXPECT_EQ(Read(), 2);
-    EXPECT_EQ(Heap::GetElement(*arguments.front().AsObject(), 0)->AsInteger(), 1);
-    EXPECT_EQ(Heap::GetElement(*arguments.front().AsObject(), 1)->AsInteger(), 2);
+    EXPECT_EQ(isolate.heap().GetElement(*arguments.front().AsObject(), 0)->AsInteger(), 1);
+    EXPECT_EQ(isolate.heap().GetElement(*arguments.front().AsObject(), 1)->AsInteger(), 2);
   }
 }
 
@@ -645,7 +646,7 @@ TEST_F(NativeHostEntryTest, CompletedEffectsAreNotReplayedAtReturnObservation) {
   const auto result = entry.Invoke(arguments, &parent);
   ASSERT_TRUE(result);
   EXPECT_EQ(result->AsInteger(), 6);
-  EXPECT_EQ(Heap::GetElement(*input.AsObject(), 0)->AsInteger(), 900);
+  EXPECT_EQ(isolate.heap().GetElement(*input.AsObject(), 0)->AsInteger(), 900);
   EXPECT_EQ(Read(), 3);
   EXPECT_EQ(*head, previous);
   EXPECT_EQ(parent.current_frame(), &frame);

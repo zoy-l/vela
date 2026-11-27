@@ -1,12 +1,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "base/execution_status.h"
+#include "base/inline_layout.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
@@ -18,6 +21,69 @@
 
 namespace vela::runtime {
 namespace {
+
+TEST(InstanceStorageTest, NestedStructSnapshotsReportOomAndWritesTraceReferenceLeaves) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  auto* nested = isolate.CreateClassLayout(
+      2, std::array<std::uint32_t, 1>{1},
+      {
+          .callable = {},
+          .interfaces = {},
+          .nominal = isolate.CreateNominalType(
+              {.kind = NominalKind::Struct, .interfaces = {}, .declaration = {}}),
+          .field_declarations = {},
+          .value_slots = {InlineSlotKind::Integer, InlineSlotKind::String},
+      });
+  auto* outer = isolate.CreateClassLayout(
+      4, std::array<std::uint32_t, 1>{2},
+      {
+          .callable = {},
+          .interfaces = {},
+          .nominal = isolate.CreateNominalType(
+              {.kind = NominalKind::Struct, .interfaces = {}, .declaration = {}}),
+          .field_declarations = {},
+          .value_slots =
+              {
+                  InlineSlotKind::Boolean,
+                  InlineSlotKind::Integer,
+                  InlineSlotKind::String,
+                  InlineSlotKind::Integer,
+              },
+      });
+  outer->BindValueFields({{.offset = 0, .layout = nested, .nullable = true}, {.offset = 3}});
+  std::array values{Value::Object(heap.AllocateInstance(*outer)), Value::Null(), Value::Null()};
+  ASSERT_NE(values[0].AsObject(), nullptr);
+  const RootRange roots(heap, values.data(), values.size());
+  values[1] = Value::Object(heap.AllocateInstance(*nested));
+  ASSERT_NE(values[1].AsObject(), nullptr);
+  ASSERT_TRUE(heap.SetField(*values[1].AsObject(), 0, Value::Integer(40)));
+  ASSERT_TRUE(
+      heap.SetField(*values[1].AsObject(), 1, Value::String(heap.AllocateString("retained"))));
+  auto& object = *values[0].AsObject();
+  heap.StartCollection();
+  heap.WriteValueField(object, 0, values[1]);
+  heap.WriteValueField(object, 1, Value::Integer(2));
+  values[1] = Value::Null();
+  heap.FinishCollection();
+  heap.SetAllocationCountLimit(0);
+  const auto failed = heap.ReadValueField(object, 0);
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error(), ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(heap.ReadValueField(object, 1)->AsInteger(), 2);
+  heap.SetAllocationCountLimit(std::numeric_limits<std::size_t>::max());
+  const auto copy = heap.ReadValueField(object, 0);
+  ASSERT_TRUE(copy);
+  values[2] = *copy;
+  ASSERT_TRUE(heap.SetField(*copy->AsObject(), 0, Value::Integer(99)));
+  EXPECT_EQ(Heap::LoadField(object, 1).AsInteger(), 40);
+  heap.WriteValueField(object, 0, Value::Null());
+  heap.Collect();
+  EXPECT_TRUE(heap.ReadValueField(object, 0)->IsNull());
+  EXPECT_EQ(Heap::LoadField(object, 1).AsInteger(), 0);
+  EXPECT_TRUE(Heap::LoadField(object, 2).IsNull());
+  EXPECT_EQ(Heap::LoadField(*values[2].AsObject(), 1).AsString()->value(), "retained");
+}
 
 TEST(InstanceStorageTest, InlineFieldsReuseTheMetadataTailAndKeepSixScalarFieldsInOneSmallBlock) {
   Isolate isolate(1);
@@ -77,21 +143,20 @@ TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKe
                                                .interfaces = {},
                                                .storage = ClassStorage::Reloadable,
                                                .field_declarations = {{1}, {2}},
+                                               .value_slots = {},
                                            });
   const auto bytes = heap.allocated_bytes();
   const std::array fields{Value::Integer(40), Value::Integer(2)};
   auto* object = heap.AllocateInstance(*layout, fields);
   ASSERT_NE(object, nullptr);
   EXPECT_NE(ObjectFieldStorage(*object).data(), StorageAfter<std::byte>(*object));
-  EXPECT_GT(heap.allocated_bytes() - bytes,
-            sizeof(HeapObject) + FieldStorage::Size(layout->field_count()));
-  EXPECT_GT(heap.instance_field_bytes(), FieldStorage::Size(layout->field_count()));
+  const auto field_bytes = FieldStorage::Size(layout->field_count());
+  EXPECT_GT(heap.allocated_bytes() - bytes, sizeof(HeapObject) + field_bytes);
+  EXPECT_GT(heap.instance_field_bytes(), field_bytes);
   EXPECT_EQ(heap.instance_type_count(), 1U);
-  const auto object_field_0 = Heap::GetField(*object, 0);
-  if (!object_field_0.has_value()) {
-    FAIL() << "Expected object_field_0 to have a value";
-  }
-  EXPECT_EQ(object_field_0->AsInteger(), 40);
+  const auto field = Heap::GetField(*object, 0);
+  ASSERT_TRUE(field.has_value());
+  EXPECT_EQ(field->AsInteger(), 40);
   std::vector<Value> instances;
   Heap::AppendInstances(layout->nominal_type(), instances);
   ASSERT_EQ(instances.size(), 1U);
@@ -120,6 +185,7 @@ TEST(InstanceStorageTest,
                                                  .nominal = nominal,
                                                  .storage = ClassStorage::Reloadable,
                                                  .field_declarations = {{1}, {2}},
+                                                 .value_slots = {},
                                              });
   Value root = Value::Object(heap.AllocateInstance(*original));
   const RootRange roots(heap, &root, 1);
@@ -133,6 +199,7 @@ TEST(InstanceStorageTest,
                                                     .nominal = nominal,
                                                     .storage = ClassStorage::Reloadable,
                                                     .field_declarations = {{1}, {}, {3}},
+                                                    .value_slots = {},
                                                 });
   const auto* old_fields = ObjectFieldStorage(*object).data();
   {
@@ -147,23 +214,11 @@ TEST(InstanceStorageTest,
   ASSERT_TRUE(candidate);
   (*candidate)->Commit();
   EXPECT_EQ(root.AsObject(), object);
-  EXPECT_EQ(Heap::ClassOf(*object), replacement);
+  ASSERT_EQ(Heap::ClassOf(*object), replacement);
   EXPECT_NE(ObjectFieldStorage(*object).data(), old_fields);
-  const auto object_field_0 = Heap::GetField(*object, 0);
-  if (!object_field_0.has_value()) {
-    FAIL() << "Expected object_field_0 to have a value";
-  }
-  EXPECT_EQ(object_field_0->AsInteger(), 42);
-  const auto object_field_1 = Heap::GetField(*object, 1);
-  if (!object_field_1.has_value()) {
-    FAIL() << "Expected object_field_1 to have a value";
-  }
-  EXPECT_TRUE(object_field_1->IsNull());
-  const auto object_field_2 = Heap::GetField(*object, 2);
-  if (!object_field_2.has_value()) {
-    FAIL() << "Expected object_field_2 to have a value";
-  }
-  EXPECT_TRUE(object_field_2->IsNull());
+  EXPECT_EQ(Heap::LoadField(*object, 0).AsInteger(), 42);
+  EXPECT_TRUE(Heap::LoadField(*object, 1).IsNull());
+  EXPECT_TRUE(Heap::LoadField(*object, 2).IsNull());
   ASSERT_TRUE(heap.SetField(*object, 2, Value::Object(heap.AllocateInstance(*leaf))));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 2U);
@@ -186,6 +241,7 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
                                                  .nominal = nominal,
                                                  .storage = ClassStorage::Reloadable,
                                                  .field_declarations = {{1}},
+                                                 .value_slots = {},
                                              });
   Value root = Value::Object(heap.AllocateInstance(*original));
   const RootRange roots(heap, &root, 1);
@@ -197,6 +253,7 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
                                                     .nominal = nominal,
                                                     .storage = ClassStorage::Reloadable,
                                                     .field_declarations = {{1}, {2}},
+                                                    .value_slots = {},
                                                 });
   heap.StartCollection();
   heap.Step(1);
@@ -222,6 +279,7 @@ TEST(InstanceStorageTest, MigrationToAShorterLayoutDropsRemovedFields) {
       .nominal = nominal,
       .storage = ClassStorage::Reloadable,
       .field_declarations = {{1}, {2}},
+      .value_slots = {},
   };
   auto* original = isolate.CreateClassLayout(2, std::array<std::uint32_t, 1>{1}, options);
   Value value = Value::Object(heap.AllocateInstance(*original));
@@ -246,26 +304,16 @@ TEST(InstanceStorageTest, MigrationToAShorterLayoutDropsRemovedFields) {
 TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeCreationAndMiddleRemoval) {
   Isolate isolate;
   auto& heap = isolate.heap();
-  auto* layout = isolate.CreateClassLayout(0, {},
-                                           {
-                                               .callable = {},
-                                               .interfaces = {},
-                                               .storage = ClassStorage::Reloadable,
-                                               .field_declarations = {},
-                                           });
+  ClassLayoutOptions options;
+  options.storage = ClassStorage::Reloadable;
+  auto* layout = isolate.CreateClassLayout(0, {}, options);
   std::array roots{Value::Object(heap.AllocateInstance(*layout)), Value::Null(), Value::Null()};
   const RootRange range(heap, roots.data(), roots.size());
   roots.at(1) = Value::Object(heap.AllocateInstance(*layout));
   roots.back() = Value::Object(heap.AllocateInstance(*layout));
   constexpr std::size_t kTypes = 128;
   for (std::size_t index = 0; index < kTypes; ++index) {
-    auto* other = isolate.CreateClassLayout(0, {},
-                                            {
-                                                .callable = {},
-                                                .interfaces = {},
-                                                .storage = ClassStorage::Reloadable,
-                                                .field_declarations = {},
-                                            });
+    auto* other = isolate.CreateClassLayout(0, {}, options);
     ASSERT_NE(heap.AllocateInstance(*other), nullptr);
   }
   roots.at(1) = Value::Null();

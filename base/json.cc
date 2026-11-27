@@ -53,10 +53,14 @@ yyjson_mut_val* JsonOutput::root() const noexcept {
 
 std::expected<std::string, JsonError> JsonOutput::Serialize() const {
   std::size_t length = 0;
+  yyjson_write_err error{};
   const std::unique_ptr<char, decltype(&std::free)> bytes(
-      yyjson_mut_write(document_.get(), 0, &length), &std::free);
+      yyjson_mut_write_opts(document_.get(), 0, nullptr, &length, &error), &std::free);
   if (bytes == nullptr) {
-    return std::unexpected(JsonError{.message = "cannot serialize JSON"});
+    return std::unexpected(JsonError{
+        .message = error.msg != nullptr ? error.msg : "cannot serialize JSON",
+        .out_of_memory = error.code == YYJSON_WRITE_ERROR_MEMORY_ALLOCATION,
+    });
   }
   return std::string(bytes.get(), length);
 }

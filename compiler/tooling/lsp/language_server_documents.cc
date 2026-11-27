@@ -26,8 +26,11 @@ using protocol::kRequestFailed;
 std::expected<TextRange, std::string> ChangeRange(const yyjson_val* value) {
   const auto start = ReadTextPosition(GetJsonField(value, protocol::kStart));
   const auto end = ReadTextPosition(GetJsonField(value, protocol::kEnd));
-  if (!start || !end) {
-    return std::unexpected("invalid document edit range");
+  if (!start) {
+    return std::unexpected("document edit start: " + start.error());
+  }
+  if (!end) {
+    return std::unexpected("document edit end: " + end.error());
   }
   return TextRange{.start = *start, .end = *end};
 }

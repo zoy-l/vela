@@ -27,10 +27,7 @@ func main(): int {
   return result + value;
 }
 )");
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(RefinementTest, NullSafeResultsRemainNullableAfterReceiverPromotion) {
@@ -50,10 +47,7 @@ func main(): string {
   return field + getter + length + indexed;
 }
 )");
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 
 class NullableOperandDiagnosticTest : public testing::TestWithParam<std::string_view> {};
@@ -172,10 +166,7 @@ func choose(selector: bool, value: string?): string? {
   };
 }
 )");
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(RefinementTest, NestedSwitchScopesAndLambdaChecksPreserveOuterBranches) {
@@ -198,10 +189,7 @@ func inspect(selector: int, flag: bool, value: string?): int {
   return value.length;
 }
 )");
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(RefinementTest, ConditionalArmsUseIndependentFactsAndMergeTheirWrites) {

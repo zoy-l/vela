@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -30,15 +29,14 @@ func main(): void { named(value: 1); }
 )";
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   const SemanticIndex index(input.path, std::span(&input, 1));
-  EXPECT_FALSE(frontend::HasErrors(index.diagnostics()));
   const auto diagnostics = index.diagnostics();
-  ASSERT_EQ(diagnostics.size(), 4U);
-  const std::vector<std::uint32_t> expected_lines{7, 8, 9, 10};
+  constexpr std::array<std::uint32_t, 4> kExpectedLines{7, 8, 9, 10};
+  ASSERT_EQ(diagnostics.size(), kExpectedLines.size());
   for (std::size_t position = 0; position < diagnostics.size(); ++position) {
     const auto& diagnostic = diagnostics[position];
     EXPECT_EQ(diagnostic.code, frontend::DiagnosticCode::UnusedParameter);
     EXPECT_EQ(diagnostic.severity, frontend::DiagnosticSeverity::Warning);
-    EXPECT_EQ(diagnostic.location.line, expected_lines[position]);
+    EXPECT_EQ(diagnostic.location.line, kExpectedLines[position]);
     EXPECT_EQ(diagnostic.length, 5U);
   }
 }
@@ -60,14 +58,14 @@ func main(): void { const unused = 1; print(unused); }
       {.path = "spare.vela", .text = "export func execute(): void {}"},
   });
   const SemanticIndex index(frontend::LoadSources(inputs, "main.vela"));
-  EXPECT_FALSE(frontend::HasErrors(index.diagnostics()));
   const auto diagnostics = index.diagnostics();
-  ASSERT_EQ(diagnostics.size(), 3U);
-  const std::vector<std::uint32_t> expected_lines{2, 3, 5};
+  constexpr std::array<std::uint32_t, 3> kExpectedLines{2, 3, 5};
+  ASSERT_EQ(diagnostics.size(), kExpectedLines.size());
   for (std::size_t position = 0; position < diagnostics.size(); ++position) {
     const auto& diagnostic = diagnostics[position];
     EXPECT_EQ(diagnostic.code, frontend::DiagnosticCode::UnusedImport);
-    EXPECT_EQ(diagnostic.location.line, expected_lines[position]);
+    EXPECT_EQ(diagnostic.severity, frontend::DiagnosticSeverity::Warning);
+    EXPECT_EQ(diagnostic.location.line, kExpectedLines[position]);
     EXPECT_EQ(diagnostic.location.column, 1U);
     EXPECT_GT(diagnostic.length, 7U);
   }
@@ -79,8 +77,9 @@ TEST(SemanticUnusedTest, SuppressesUnusedReportsUntilInvalidReferencesCanBeResol
       .text = "func incomplete(value: int): void { missing(); }",
   };
   const SemanticIndex index(input.path, std::span(&input, 1));
-  EXPECT_TRUE(frontend::HasErrors(index.diagnostics()));
-  for (const auto& diagnostic : index.diagnostics()) {
+  const auto diagnostics = index.diagnostics();
+  EXPECT_TRUE(frontend::HasErrors(diagnostics));
+  for (const auto& diagnostic : diagnostics) {
     EXPECT_NE(diagnostic.code, frontend::DiagnosticCode::UnusedImport);
     EXPECT_NE(diagnostic.code, frontend::DiagnosticCode::UnusedParameter);
   }

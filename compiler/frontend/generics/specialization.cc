@@ -520,6 +520,14 @@ void Specializer::NormalizeScoped(Statement* statement, const TypeSubstitutions&
   }
 }
 
+void Specializer::NormalizeInitializedType(TypeName& type,
+                                          std::unique_ptr<Expression>& initializer,
+                                          const TypeSubstitutions& substitutions) {
+  Normalize(type, substitutions);
+  InitializeNullableDefault(type, initializer);
+  Normalize(initializer.get(), substitutions);
+}
+
 void Specializer::Normalize(Function& function, const TypeSubstitutions& substitutions) {
   NormalizeAttributes(function.attributes, substitutions);
   scopes_.emplace_back();
@@ -530,8 +538,7 @@ void Specializer::Normalize(Function& function, const TypeSubstitutions& substit
   }
   Normalize(function.return_type, substitutions);
   for (auto& parameter : function.parameters) {
-    Normalize(parameter.type, substitutions);
-    Normalize(parameter.initializer.get(), substitutions);
+    NormalizeInitializedType(parameter.type, parameter.initializer, substitutions);
     if (parameter.binding == Parameter::Binding::Local) {
       scopes_.back().insert(parameter.name);
     }
@@ -550,8 +557,7 @@ void Specializer::Normalize(Class& owner, const TypeSubstitutions& substitutions
   }
   for (auto& field : owner.fields) {
     NormalizeAttributes(field.attributes, substitutions);
-    Normalize(field.type, substitutions);
-    Normalize(field.initializer.get(), substitutions);
+    NormalizeInitializedType(field.type, field.initializer, substitutions);
   }
   for (auto& method : owner.methods) {
     Normalize(method, substitutions);

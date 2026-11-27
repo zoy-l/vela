@@ -67,32 +67,29 @@ TEST_F(ByteOperationsTest, ZeroInitializesFixedStorageAndRejectsUnrepresentableL
   const auto empty = Call(Builtin::NewByteArray, {Value::Integer(0)});
   ASSERT_TRUE(empty);
   EXPECT_TRUE(Heap::ByteArrayBytes(*empty->AsObject()).empty());
-  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Integer(-1)}).error(),
-            ExecutionStatus::InvalidNumericConversion);
-  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Integer(std::numeric_limits<std::int64_t>::max())})
-                .error(),
-            ExecutionStatus::OutOfMemory);
-  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Double(8.0)}).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Integer(-1)}),
+            std::unexpected(ExecutionStatus::InvalidNumericConversion));
+  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Integer(std::numeric_limits<std::int64_t>::max())}),
+            std::unexpected(ExecutionStatus::OutOfMemory));
+  EXPECT_EQ(Call(Builtin::NewByteArray, {Value::Double(8.0)}),
+            std::unexpected(ExecutionStatus::TypeError));
 }
 
 TEST_F(ByteOperationsTest, ByteWritesCheckValueAndIndexBeforeMutating) {
   auto bytes = Heap::ByteArrayBytes(*roots().front().AsObject());
   std::ranges::fill(bytes, kSentinel);
   EXPECT_EQ(
-      Call(Builtin::ByteArraySetIndex, {roots().front(), Value::Integer(0), Value::Integer(256)})
-          .error(),
-      ExecutionStatus::InvalidNumericConversion);
+      Call(Builtin::ByteArraySetIndex, {roots().front(), Value::Integer(0), Value::Integer(256)}),
+      std::unexpected(ExecutionStatus::InvalidNumericConversion));
   EXPECT_EQ(
-      Call(Builtin::ByteArraySetIndex, {roots().front(), Value::Integer(0), Value::Integer(-1)})
-          .error(),
-      ExecutionStatus::InvalidNumericConversion);
+      Call(Builtin::ByteArraySetIndex, {roots().front(), Value::Integer(0), Value::Integer(-1)}),
+      std::unexpected(ExecutionStatus::InvalidNumericConversion));
   EXPECT_TRUE(std::ranges::all_of(bytes, [](auto byte) { return byte == kSentinel; }));
-  EXPECT_EQ(Call(Builtin::ByteArrayGetIndex, {roots().front(), Value::Integer(-1)}).error(),
-            ExecutionStatus::IndexOutOfBounds);
+  EXPECT_EQ(Call(Builtin::ByteArrayGetIndex, {roots().front(), Value::Integer(-1)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
   EXPECT_EQ(Call(Builtin::ByteArrayGetIndex,
-                 {roots().front(), Value::Integer(std::numeric_limits<std::int64_t>::max())})
-                .error(),
-            ExecutionStatus::IndexOutOfBounds);
+                 {roots().front(), Value::Integer(std::numeric_limits<std::int64_t>::max())}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
   ASSERT_TRUE(
       Call(Builtin::ByteArraySetIndex, {roots().front(), Value::Integer(23), Value::Integer(255)}));
   EXPECT_EQ(bytes.back(), 255);
@@ -105,8 +102,8 @@ TEST_F(ByteOperationsTest, CopiesOnlyValidatedIntArraysAndDoesNotShareStorage) {
   ASSERT_TRUE(heap().SetElement(array, 0, Value::Integer(42)));
   ASSERT_TRUE(heap().SetElement(array, 1, Value::Integer(255)));
   ASSERT_TRUE(heap().SetElement(array, 2, Value::Integer(256)));
-  EXPECT_EQ(Call(Builtin::ByteArrayFrom, {roots().at(2)}).error(),
-            ExecutionStatus::InvalidNumericConversion);
+  EXPECT_EQ(Call(Builtin::ByteArrayFrom, {roots().at(2)}),
+            std::unexpected(ExecutionStatus::InvalidNumericConversion));
   ASSERT_TRUE(heap().SetElement(array, 2, Value::Integer(0)));
   const auto copy = Call(Builtin::ByteArrayFrom, {roots().at(2)});
   ASSERT_TRUE(copy);
@@ -114,8 +111,9 @@ TEST_F(ByteOperationsTest, CopiesOnlyValidatedIntArraysAndDoesNotShareStorage) {
   EXPECT_EQ(bytes.front(), 42);
   EXPECT_EQ(bytes.subspan(1).front(), 255);
   bytes.front() = 0;
-  EXPECT_EQ(Heap::GetElement(array, 0)->AsInteger(), 42);
-  EXPECT_EQ(Call(Builtin::ByteArrayFrom, {roots().front()}).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(heap().GetElement(array, 0)->AsInteger(), 42);
+  EXPECT_EQ(Call(Builtin::ByteArrayFrom, {roots().front()}),
+            std::unexpected(ExecutionStatus::TypeError));
 }
 
 struct SliceSample final {
@@ -166,18 +164,18 @@ TEST_F(ByteOperationsTest, ViewsShareStorageAndCheckTheirOwnStrictBounds) {
   Heap::ByteDataBytes(*other->AsObject()).front() = kAnswer;
   EXPECT_EQ(Heap::ByteDataBytes(*view.AsObject()).subspan(1).front(), 42);
   EXPECT_EQ(Heap::ByteArrayBytes(*owner.AsObject()).subspan(2).front(), 42);
-  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(-1), Value::Null()}).error(),
-            ExecutionStatus::IndexOutOfBounds);
-  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(25), Value::Integer(0)}).error(),
-            ExecutionStatus::IndexOutOfBounds);
-  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(1), Value::Integer(24)}).error(),
-            ExecutionStatus::IndexOutOfBounds);
-  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(0), Value::Integer(-1)}).error(),
-            ExecutionStatus::IndexOutOfBounds);
+  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(-1), Value::Null()}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
+  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(25), Value::Integer(0)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
+  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(1), Value::Integer(24)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
+  EXPECT_EQ(Call(Builtin::ByteDataView, {owner, Value::Integer(0), Value::Integer(-1)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
   const auto empty = Call(Builtin::ByteDataView, {owner, Value::Integer(24), Value::Integer(0)});
   ASSERT_TRUE(empty);
-  EXPECT_EQ(Call(Builtin::ByteDataGetUint8, {*empty, Value::Integer(0)}).error(),
-            ExecutionStatus::IndexOutOfBounds);
+  EXPECT_EQ(Call(Builtin::ByteDataGetUint8, {*empty, Value::Integer(0)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
 }
 
 struct IntegerSample final {
@@ -191,17 +189,29 @@ struct IntegerSample final {
 class ByteIntegerTest : public ByteOperationsTest,
                         public testing::WithParamInterface<IntegerSample> {
  protected:
+  std::expected<Value, ExecutionStatus> Write(std::int64_t offset,
+                                              std::int64_t value,
+                                              ByteOrder order = ByteOrder::Big) {
+    const auto builtin = GetParam().set;
+    const std::array arguments{
+        roots().at(1),
+        Value::Integer(offset),
+        Value::Integer(value),
+        Value::Integer(static_cast<std::int64_t>(order)),
+    };
+    return ExecuteByteBuiltin(builtin, std::span(arguments).first(BuiltinArity(builtin)), heap());
+  }
+
   void CheckRoundTrip(std::int64_t value, ByteOrder order) {
-    const auto& sample = GetParam();
-    const auto view = roots().at(1);
-    const auto code = Value::Integer(static_cast<std::int64_t>(order));
-    const std::array arguments{view, Value::Integer(1), Value::Integer(value), code};
-    const auto written = ExecuteByteBuiltin(
-        sample.set, std::span(arguments).first(BuiltinArity(sample.set)), heap());
-    ASSERT_TRUE(written);
-    const std::array reading{view, Value::Integer(1), code};
+    ASSERT_TRUE(Write(1, value, order));
+    const auto builtin = GetParam().get;
+    const std::array reading{
+        roots().at(1),
+        Value::Integer(1),
+        Value::Integer(static_cast<std::int64_t>(order)),
+    };
     const auto read =
-        ExecuteByteBuiltin(sample.get, std::span(reading).first(BuiltinArity(sample.get)), heap());
+        ExecuteByteBuiltin(builtin, std::span(reading).first(BuiltinArity(builtin)), heap());
     ASSERT_TRUE(read);
     EXPECT_EQ(read->AsInteger(), value);
   }
@@ -209,7 +219,8 @@ class ByteIntegerTest : public ByteOperationsTest,
 
 TEST_P(ByteIntegerTest, PreservesEndpointsInEveryByteOrderAndRejectsOverflowBeforeWriting) {
   const auto& sample = GetParam();
-  for (const auto order : {ByteOrder::Big, ByteOrder::Little, ByteOrder::Host}) {
+  constexpr std::array kOrders{ByteOrder::Big, ByteOrder::Little, ByteOrder::Host};
+  for (const auto order : std::span(kOrders).first(sample.width == 1 ? 1 : kOrders.size())) {
     CheckRoundTrip(sample.minimum, order);
     CheckRoundTrip(sample.maximum, order);
   }
@@ -218,18 +229,13 @@ TEST_P(ByteIntegerTest, PreservesEndpointsInEveryByteOrderAndRejectsOverflowBefo
     auto storage = Heap::ByteDataBytes(*view.AsObject());
     std::ranges::fill(storage, kSentinel);
     for (const auto invalid : {sample.minimum - 1, sample.maximum + 1}) {
-      const std::array args{view, Value::Integer(0), Value::Integer(invalid), Value::Integer(0)};
-      EXPECT_EQ(
-          ExecuteByteBuiltin(sample.set, std::span(args).first(BuiltinArity(sample.set)), heap())
-              .error(),
-          ExecutionStatus::InvalidNumericConversion);
+      EXPECT_EQ(Write(0, invalid), std::unexpected(ExecutionStatus::InvalidNumericConversion));
     }
     EXPECT_TRUE(std::ranges::all_of(storage, [](auto byte) { return byte == kSentinel; }));
   }
 }
 
 TEST_P(ByteIntegerTest, RejectsOutOfViewOffsetsBeforeWriting) {
-  const auto& sample = GetParam();
   const auto view = roots().at(1);
   auto storage = Heap::ByteDataBytes(*view.AsObject());
   std::ranges::fill(storage, kSentinel);
@@ -238,11 +244,7 @@ TEST_P(ByteIntegerTest, RejectsOutOfViewOffsetsBeforeWriting) {
            static_cast<std::int64_t>(kViewLength),
            std::numeric_limits<std::int64_t>::max(),
        }) {
-    const std::array args{view, Value::Integer(offset), Value::Integer(0), Value::Integer(0)};
-    EXPECT_EQ(
-        ExecuteByteBuiltin(sample.set, std::span(args).first(BuiltinArity(sample.set)), heap())
-            .error(),
-        ExecutionStatus::IndexOutOfBounds);
+    EXPECT_EQ(Write(offset, 0), std::unexpected(ExecutionStatus::IndexOutOfBounds));
   }
   EXPECT_TRUE(std::ranges::all_of(storage, [](auto byte) { return byte == kSentinel; }));
 }
@@ -253,14 +255,7 @@ TEST_P(ByteIntegerTest, WritesTheGoldenByteWidthAtTheLastValidOffset) {
   auto bytes = Heap::ByteDataBytes(*view.AsObject());
   std::ranges::fill(bytes, kSentinel);
   const auto offset = bytes.size() - sample.width;
-  const std::array arguments{
-      view,
-      Value::Integer(static_cast<std::int64_t>(offset)),
-      Value::Integer(sample.maximum),
-      Value::Integer(0),
-  };
-  ASSERT_TRUE(
-      ExecuteByteBuiltin(sample.set, std::span(arguments).first(BuiltinArity(sample.set)), heap()));
+  ASSERT_TRUE(Write(static_cast<std::int64_t>(offset), sample.maximum));
   EXPECT_TRUE(
       std::ranges::all_of(bytes.first(offset), [](auto byte) { return byte == kSentinel; }));
   const auto written = bytes.subspan(offset);
@@ -322,9 +317,8 @@ TEST_F(ByteOperationsTest, EndianGoldenVectorsAndUnalignedViews) {
       Call(Builtin::ByteDataGetUint32, {view, Value::Integer(0), Value::Integer(2)})->AsInteger(),
       std::endian::native == std::endian::little ? 0x78563412 : 0x12345678);
   EXPECT_EQ(Call(Builtin::ByteDataSetUint32,
-                 {view, Value::Integer(0), Value::Integer(0), Value::Integer(3)})
-                .error(),
-            ExecutionStatus::TypeError);
+                 {view, Value::Integer(0), Value::Integer(0), Value::Integer(3)}),
+            std::unexpected(ExecutionStatus::TypeError));
   EXPECT_TRUE(std::ranges::equal(bytes.subspan(1, 4), big));
 }
 
@@ -385,13 +379,11 @@ TEST_F(ByteOperationsTest, AcceptsNanAndDoesNotChangeBytesForFloatTypeOrRangeErr
   auto bytes = Heap::ByteDataBytes(*view.AsObject());
   std::ranges::fill(bytes, kSentinel);
   EXPECT_EQ(Call(Builtin::ByteDataSetFloat64,
-                 {view, Value::Integer(0), Value::Integer(1), Value::Integer(0)})
-                .error(),
-            ExecutionStatus::TypeError);
+                 {view, Value::Integer(0), Value::Integer(1), Value::Integer(0)}),
+            std::unexpected(ExecutionStatus::TypeError));
   EXPECT_EQ(Call(Builtin::ByteDataSetFloat64,
-                 {view, Value::Integer(9), Value::Double(0.0), Value::Integer(0)})
-                .error(),
-            ExecutionStatus::IndexOutOfBounds);
+                 {view, Value::Integer(9), Value::Double(0.0), Value::Integer(0)}),
+            std::unexpected(ExecutionStatus::IndexOutOfBounds));
   EXPECT_TRUE(std::ranges::all_of(bytes, [](auto byte) { return byte == kSentinel; }));
 }
 

@@ -22,7 +22,8 @@ inline auto InstructionOperands(const Instruction& instruction) {
   return std::tie(instruction.opcode, instruction.dst, instruction.lhs, instruction.rhs,
                   instruction.immediate, instruction.index, instruction.handler,
                   instruction.array_type, instruction.field_declaration,
-                  instruction.binding_receiver, instruction.completes_construction);
+                  instruction.binding_receiver, instruction.completes_construction,
+                  instruction.no_normal_return);
 }
 
 }  // namespace vela::ir::test

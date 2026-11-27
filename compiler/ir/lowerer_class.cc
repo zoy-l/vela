@@ -11,6 +11,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,6 +26,15 @@
 #include "compiler/ir/layout_description.h"
 
 namespace vela::ir {
+namespace {
+
+bool HasNullDefault(const frontend::Field& field) {
+  return field.initializer != nullptr &&
+         field.initializer->kind == frontend::Expression::Kind::NullLiteral;
+}
+
+}  // namespace
+
 void Lowerer::BuildNativeClassContracts() {
   struct Contract final {
     ClassId owner;
@@ -104,26 +114,45 @@ bool Lowerer::HasInstanceInitialization(const frontend::ClassDescriptor& owner) 
       source.constructor ||
       (!owner.UsesFieldConstructor() && !owner.constructor.parameters.empty()) ||
       std::ranges::any_of(source.fields,
-                          [](const auto& field) {
+                          [&](const auto& field) {
                             return field.storage == frontend::MemberStorage::Instance &&
-                                   field.initializer;
+                                   field.initializer &&
+                                   !(source.IsConstructorField(field) && HasNullDefault(field));
                           }) ||
       (owner.base_class && HasInstanceInitialization(model_.classes.at(*owner.base_class)));
   instance_initialization_.emplace(owner.type.name, initialized);
   return initialized;
 }
 
+bool Lowerer::IsReloadableClass(const frontend::ClassDescriptor& owner) const {
+  return native_mode_ == NativeProgramMode::Reloadable && owner.type.value_layout == nullptr;
+}
+
 bool Lowerer::NeedsConstructorInitialization(const frontend::ClassDescriptor& owner) {
-  return (native_mode_ == NativeProgramMode::Reloadable && owner.UsesFieldConstructor()) ||
+  return (IsReloadableClass(owner) && owner.UsesFieldConstructor()) ||
          HasInstanceInitialization(owner);
 }
 
+bool Lowerer::CanSkipStructInitialization(const frontend::ClassDescriptor& owner) {
+  const auto& declaration = *owner.declaration;
+  return owner.type.value_layout != nullptr && declaration.constructor == nullptr &&
+         std::ranges::none_of(declaration.fields, [&](const auto& field) {
+           return field.storage == frontend::MemberStorage::Instance && field.initializer &&
+                  !declaration.IsConstructorField(field);
+         });
+}
+
 std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& owner) const {
-  if (native_mode_ == NativeProgramMode::Reloadable) {
+  if (IsReloadableClass(owner)) {
     return 0;
   }
+  // null 缺省值在调用端直接写入；只有需要执行表达式的缺省值占用构造器掩码。
   const bool has_optional_fields =
-      owner.UsesFieldConstructor() && !owner.constructor.optional_parameters.empty();
+      owner.UsesFieldConstructor() &&
+      std::ranges::any_of(owner.constructor_bindings, [](const auto& binding) {
+        const auto* field = binding.field;
+        return field->declaration->initializer != nullptr && !HasNullDefault(*field->declaration);
+      });
   return has_optional_fields
              ? static_cast<std::uint32_t>((owner.field_order.size() + kConstructorMaskBits - 1) /
                                           kConstructorMaskBits)
@@ -161,10 +190,11 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
       LowerConstructorField(owner, field, descriptor, *bound_parameter);
       continue;
     }
-    if (!field.initializer) {
+    if (!field.initializer ||
+        (field_arguments && source.IsConstructorField(field) && HasNullDefault(field))) {
       continue;
     }
-    if (native_mode_ == NativeProgramMode::Reloadable && field_arguments) {
+    if (IsReloadableClass(owner) && field_arguments) {
       // 显式实参已按稳定字段身份写入对象；读取只为尚未提供的槽运行当前初始化器。
       const auto value = EmitTemporary({
           .opcode = Opcode::GetField,
@@ -367,7 +397,7 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
   }
   std::vector<LoweredValue> evaluated;
   std::optional<Construction> construction;
-  if (native_mode_ == NativeProgramMode::Reloadable) {
+  if (IsReloadableClass(info)) {
     // 实参可能 await；在分配对象及进入初始化屏障前求值并快照，避免挂起半初始化实例。
     for (const auto& argument : expression.arguments) {
       const auto value = LowerExpression(*argument.value);
@@ -388,7 +418,7 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
   const auto result =
       LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
                            expression.location, info, object, evaluated);
-  if (native_mode_ == NativeProgramMode::Reloadable) {
+  if (IsReloadableClass(info)) {
     current_function_->instructions.back().completes_construction = true;
   }
   return result;
@@ -457,10 +487,12 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   auto arguments = generated ? std::vector<RegisterId>{}
                              : PrepareConstructorArguments(signature, argument_order, location);
   std::vector<std::uint64_t> provided(masks, 0);
+  std::vector<bool> supplied(signature.parameters.size());
   // 自动构造的实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
     const auto& argument = call_arguments[index];
     const auto parameter = argument_order[index];
+    supplied[parameter] = true;
     const auto value = evaluated.empty() ? LowerExpression(*argument.value) : evaluated[index];
     if (generated) {
       const auto field = info.constructor_bindings[parameter].field->index;
@@ -482,7 +514,29 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
       arguments.at(parameter) = saved;
     }
   }
-  if (NeedsConstructorInitialization(info)) {
+  if (generated) {
+    for (std::size_t parameter = 0; parameter < supplied.size(); ++parameter) {
+      const auto& field = *info.constructor_bindings[parameter].field;
+      if (supplied[parameter] || !HasNullDefault(*field.declaration)) {
+        continue;
+      }
+      const auto value = EmitTemporary({.opcode = Opcode::LoadNull, .location = location});
+      Emit({
+          .opcode = Opcode::SetField,
+          .dst = object,
+          .lhs = value,
+          .index = field.index,
+          .location = location,
+          .field_declaration = FieldDeclaration(info.type, field.index),
+      });
+      supplied[parameter] = true;
+    }
+  }
+  // 调用端已写入 struct 的全部构造字段且没有剩余初始化工作时，省去空调用。
+  // class 仍需构造入口的初始化屏障、调试入口和热重载函数体依赖。
+  const bool fully_supplied = generated && std::ranges::all_of(supplied, std::identity{});
+  if (NeedsConstructorInitialization(info) &&
+      !(fully_supplied && CanSkipStructInitialization(info))) {
     if (generated) {
       for (const auto mask : provided) {
         arguments.push_back(EmitTemporary({
@@ -534,16 +588,26 @@ std::vector<RegisterId> Lowerer::LowerFieldConstructorArguments(
   }
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     const auto& parameter = parameters[index];
-    if (!parameter.value) {
+    const auto& field = *owner.constructor_bindings[index].field;
+    const auto null_default = HasNullDefault(*field.declaration);
+    if (!parameter.value && !null_default) {
       continue;
     }
     std::optional<std::size_t> skip;
-    if (parameter.supplied) {
+    if (parameter.supplied && !null_default) {
       skip = current_function_->instructions.size();
       Emit({.opcode = Opcode::JumpIfFalse, .lhs = *parameter.supplied, .location = location});
     }
-    const auto field = owner.constructor_bindings[index].field->index;
-    const auto input = *parameter.value;
+    auto input = parameter.value
+                     ? *parameter.value
+                     : EmitTemporary({.opcode = Opcode::LoadNull, .location = location});
+    if (parameter.supplied && null_default) {
+      // 可空字段省略与显式 null 都写入 null；字段在构造结束前即获得 Ready 状态。
+      input = LowerDefaultValue(*field.declaration->initializer,
+                                {.reg = input, .type = current_function_->value_types.at(input)},
+                                *parameter.supplied, owner.constructor.parameters[index].type,
+                                location);
+    }
     const auto value =
         LowerConversion({.reg = input, .type = current_function_->value_types.at(input)},
                         owner.constructor.parameters[index].type, location);
@@ -551,12 +615,12 @@ std::vector<RegisterId> Lowerer::LowerFieldConstructorArguments(
         .opcode = Opcode::SetField,
         .dst = object,
         .lhs = value.reg,
-        .index = field,
+        .index = field.index,
         .location = location,
-        .field_declaration = FieldDeclaration(owner.type, field),
+        .field_declaration = FieldDeclaration(owner.type, field.index),
     });
     if (masks != 0 && parameter.supplied) {
-      const auto field_mask = ConstructorMask(field);
+      const auto field_mask = ConstructorMask(field.index);
       const auto bit = EmitTemporary({
           .opcode = Opcode::LoadInt,
           .immediate = std::bit_cast<std::int64_t>(field_mask.bit),
@@ -631,10 +695,11 @@ void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& inf
         .location = location,
     });
   }
-  const auto ignored = AllocateRegister(location);
+  // struct 初始化函数返回完成后的聚合值；构造期间尚无可借用的外部存储位置。
+  const auto result = info.type.value_layout != nullptr ? object : AllocateRegister(location);
   Emit({
       .opcode = Opcode::Call,
-      .dst = ignored,
+      .dst = result,
       .lhs = base,
       .index = target,
       .location = location,

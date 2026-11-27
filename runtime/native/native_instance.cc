@@ -1,4 +1,5 @@
 #include "runtime/native/native_instance.h"
+#include "base/inline_layout.h"
 #include "runtime/isolate/external_resources.h"
 
 #include <algorithm>
@@ -77,8 +78,28 @@ std::optional<std::uint32_t> OptionalIndex(std::uint32_t index) {
   return index == kNoNativeIndex ? std::nullopt : std::optional(index);
 }
 
+std::uint32_t RequireFieldIndex(const ClassLayout& layout, DeclarationId declaration) {
+  const auto slot = layout.FieldIndex(declaration);
+  if (!slot) {
+    std::unreachable();
+  }
+  return *slot;
+}
+
 std::string Text(NativeText text) {
   return std::string(text.text());
+}
+
+std::uint32_t NativeFieldSlots(const NativeImage& image, const NativeFieldDescription& field) {
+  const auto& type = image.types.values()[field.type];
+  if (type.kind != static_cast<std::uint32_t>(layout::Type::Kind::Class)) {
+    return 1;
+  }
+  const auto& owner = image.classes.values()[type.index];
+  if (owner.kind != static_cast<std::uint32_t>(layout::Class::Kind::Struct)) {
+    return 1;
+  }
+  return InlineFieldSlotCount(owner.field_count, type.nullable != 0);
 }
 
 layout::Type DescribeType(const NativeTypeDescription& type) {
@@ -100,6 +121,7 @@ layout::Class DescribeClass(const NativeClassDescription& source) {
       .callable = std::nullopt,
       .interfaces = CopyTable(source.interfaces),
       .callable_type = OptionalIndex(source.callable_type),
+      .value_slots = CopyTable(source.value_slots),
   };
   if (source.callable_function != kNoNativeIndex) {
     result.callable = CallableTarget{
@@ -128,6 +150,9 @@ layout::Signature DescribeSignature(const NativeSignatureDescription& source) {
   }
   if (source.has_narrowed_parameter != 0) {
     result.narrowed_parameter = DescribeType(source.narrowed_parameter);
+  }
+  if (source.has_false_narrowed_parameter != 0) {
+    result.false_narrowed_parameter = DescribeType(source.false_narrowed_parameter);
   }
   return result;
 }
@@ -186,9 +211,13 @@ std::expected<void, NativeInstantiationError> InitializeDirectFieldLayouts(
   for (std::size_t index = 0; index < count; ++index) {
     const auto& description = classes[index];
     const auto* layout = state.layouts.classes[index];
-    const auto canonical =
-        std::ranges::equal(description.fields.values(), layout->field_declarations(), {},
-                           &NativeFieldDescription::declaration);
+    std::uint32_t offset = 0;
+    bool canonical = true;
+    for (const auto& field : description.fields.values()) {
+      canonical = canonical && layout->FieldIndex(field.declaration) == offset;
+      offset += NativeFieldSlots(*state.image, field);
+    }
+    canonical = canonical && offset == layout->field_count();
     direct_layouts[index] = canonical ? layout : nullptr;
   }
   return {};
@@ -225,6 +254,7 @@ layout::Program DescribeLayouts(const NativeImage& image) {
 
 void BindReloadableFields(layout::Class& description,
                           const NativeClassDescription& type,
+                          const NativeImage& image,
                           std::vector<DeclarationId>& fields,
                           ClassLayoutOptions& options) {
   options.storage = ClassStorage::Reloadable;
@@ -242,14 +272,20 @@ void BindReloadableFields(layout::Class& description,
       slots.emplace(field, static_cast<std::uint32_t>(slot));
     }
   }
+  std::vector<std::uint32_t> remapping;
   for (const auto& field : declared) {
-    if (!slots.contains(field.declaration)) {
-      slots.emplace(field.declaration, static_cast<std::uint32_t>(fields.size()));
-      fields.push_back(field.declaration);
+    const auto [slot, inserted] =
+        slots.try_emplace(field.declaration, static_cast<std::uint32_t>(fields.size()));
+    const auto count = NativeFieldSlots(image, field);
+    if (inserted) {
+      fields.insert(fields.end(), count, field.declaration);
+    }
+    for (std::uint32_t leaf = 0; leaf < count; ++leaf) {
+      remapping.push_back(slot->second + leaf);
     }
   }
   for (auto& reference : description.reference_fields) {
-    reference = slots.at(declared[reference].declaration);
+    reference = remapping[reference];
   }
   description.field_count = static_cast<std::uint32_t>(fields.size());
   options.field_declarations = fields;
@@ -301,7 +337,7 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
         interfaces.push_back(cache.interfaces.at(description.interfaces[interface]));
       }
       entry->second = isolate.CreateNominalType({
-          .kind = kind == layout::Class::Kind::Enum ? NominalKind::Enum : NominalKind::Class,
+          .kind = ClassNominalKind(description.classes[index]),
           .interfaces = std::move(interfaces),
           .declaration = type.declaration,
       });
@@ -310,7 +346,7 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
     options.nominal = entry->second;
     if (kind == layout::Class::Kind::Instance && type.callable_function == kNoNativeIndex) {
       auto& fields = identities.fields.try_emplace(type.declaration).first->second;
-      BindReloadableFields(description.classes[index], type, fields, options);
+      BindReloadableFields(description.classes[index], type, image, fields, options);
     }
   }
   return result;
@@ -325,13 +361,17 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
     if (member.kind == static_cast<std::uint32_t>(MemberKind::Field)) {
       const auto& receiver = image.types.values()[member.receiver_type];
       const auto* layout = layouts.classes[receiver.index];
-      if (layout->storage() == ClassStorage::Reloadable) {
+      if (!layout->IsStruct()) {
         const auto fields = image.classes.values()[receiver.index].fields.values();
-        const auto field = layout->FieldIndex(fields[target].declaration);
-        if (!field) {
-          std::unreachable();
+        if (layout->storage() == ClassStorage::Reloadable) {
+          target = RequireFieldIndex(*layout, fields[target].declaration);
+        } else {
+          std::uint32_t offset = 0;
+          for (const auto& field : fields.first(target)) {
+            offset += NativeFieldSlots(image, field);
+          }
+          target = offset;
         }
-        target = *field;
       }
     }
     members.push_back({
@@ -345,6 +385,52 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
     });
   }
   return members;
+}
+
+void BindClassValueFields(const NativeImage& image,
+                          const ProgramLayouts& layouts,
+                          std::size_t index) {
+  const auto& description = image.classes.values()[index];
+  auto& layout = *layouts.classes[index];
+  std::vector<ValueField> fields;
+  if (!layout.IsStruct()) {
+    fields.resize(layout.field_count());
+    for (std::uint32_t slot = 0; slot < fields.size(); ++slot) {
+      fields[slot].offset = slot;
+    }
+  }
+  std::uint32_t offset = 0;
+  for (const auto& field : description.fields.values()) {
+    const auto& type = layouts.types[field.type];
+    const auto* nominal = type.nominal;
+    const auto* nested =
+        nominal != nullptr && nominal->IsStruct() ? nominal->fixed_layout() : nullptr;
+    if (layout.storage() == ClassStorage::Reloadable) {
+      offset = RequireFieldIndex(layout, field.declaration);
+    }
+    const ValueField value{.offset = offset, .layout = nested, .nullable = type.nullable};
+    if (layout.IsStruct()) {
+      fields.push_back(value);
+      // struct 内部只保存叶子和可空存在位；空嵌套值没有对象字段的占位槽。
+      offset += nested == nullptr ? 1U : nested->field_count() + (type.nullable ? 1U : 0U);
+    } else {
+      fields[offset] = value;
+      offset += NativeFieldSlots(image, field);
+    }
+  }
+  layout.BindValueFields(std::move(fields));
+}
+
+void BindValueFields(const NativeImage& image, const ProgramLayouts& layouts) {
+  const auto descriptions = image.classes.values();
+  for (std::size_t index = 0; index < descriptions.size(); ++index) {
+    const auto& layout = *layouts.classes[index];
+    const auto kind = static_cast<layout::Class::Kind>(descriptions[index].kind);
+    if ((kind == layout::Class::Kind::Struct || kind == layout::Class::Kind::Instance) &&
+        layout.value_fields().empty()) {
+      BindClassValueFields(image, layouts, index);
+    }
+  }
 }
 
 CallSignature DescribeCall(const NativeFunctionDescription& source) {
@@ -612,6 +698,7 @@ NativeInstance::Instantiate(Isolate& isolate,
     state.code_identity = cache.code_identity;
     BindNominalBases(image, state.layouts);
   }
+  BindValueFields(image, state.layouts);
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
   state.class_name_indices.reserve(state.layouts.classes.size());

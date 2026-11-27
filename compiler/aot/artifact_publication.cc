@@ -33,11 +33,17 @@ std::expected<void, std::string> VerifyLibraryIdentity(const yyjson_val* root) {
   const auto optimization = GetJsonString(root, "optimization");
   const auto release = NativeOptimizationName(NativeOptimization::Release);
   if (optimization != release) {
-    return std::unexpected("unsupported native library optimization settings");
+    return std::unexpected("unsupported native library optimization settings: expected " +
+                           std::string(release) + ", received " + std::string(optimization));
   }
-  if ((kind != "obj" && kind != "staticlib") ||
-      !HasNativeArtifactIdentity(root, NativeToolchainBuildIdentity(NativeOptimization::Release))) {
-    return std::unexpected("native library format, target, or ABI identity mismatch");
+  if (kind != "obj" && kind != "staticlib") {
+    return std::unexpected("unsupported native library kind: " + std::string(kind));
+  }
+  if (!HasNativeArtifactIdentity(root, NativeToolchainBuildIdentity(NativeOptimization::Release))) {
+    return std::unexpected("native library format, target, or ABI identity mismatch: target=" +
+                           std::string(GetJsonString(root, "target")) + ", runtime_abi=" +
+                           std::string(GetJsonString(root, "runtime_abi")) + ", toolchain_build=" +
+                           std::string(GetJsonString(root, "toolchain_build")));
   }
   return {};
 }

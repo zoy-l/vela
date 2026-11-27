@@ -285,9 +285,9 @@ Result<std::int64_t> ReadArrayElement(HandleScope& scope, const Container& value
     }
   } else {
     const auto value =
-        runtime::Heap::GetElement(*internal::HandleAccess::Read(*values).AsObject(), 0);
+        scope.isolate().heap().GetElement(*internal::HandleAccess::Read(*values).AsObject(), 0);
     if (!value) {
-      return std::unexpected(Error{.message = "array read failed", .stack_trace = {}});
+      return std::unexpected(Error::FromStatus(runtime::ArrayExecutionStatus(value.error())));
     }
     if constexpr (Kind == Element::Scalar) {
       return value->AsInteger();

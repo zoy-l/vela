@@ -12,6 +12,24 @@
 namespace vela::tooling {
 namespace {
 
+void ExpectIdempotent(std::string_view formatted) {
+  const auto repeated = FormatSource(formatted);
+  ASSERT_TRUE(repeated) << frontend::DiagnosticsText(repeated.error());
+  EXPECT_EQ(*repeated, formatted);
+}
+
+TEST(FormatterTest, NullableDefaultsRemainImplicitAndFormattingIsIdempotent) {
+  const auto formatted = FormatSource(
+      "class View{overlayKey:string?;surface:Drawing?;}"
+      "func read(value:int?):int{return value??42;}");
+  ASSERT_TRUE(formatted) << frontend::DiagnosticsText(formatted.error());
+  EXPECT_TRUE(formatted->contains("overlayKey: string?;"));
+  EXPECT_TRUE(formatted->contains("surface: Drawing?;"));
+  EXPECT_TRUE(formatted->contains("read(value: int?)"));
+  EXPECT_FALSE(formatted->contains("= null"));
+  ExpectIdempotent(*formatted);
+}
+
 TEST(FormatterTest, FormatsMapEntriesAndPreservesLambdaParenthesesIdempotently) {
   const auto formatted = FormatSource(
       "func main():void{const empty:Map<string,int>={};"
@@ -22,9 +40,7 @@ TEST(FormatterTest, FormatsMapEntriesAndPreservesLambdaParenthesesIdempotently) 
   EXPECT_TRUE(formatted->contains("= {};"));
   EXPECT_TRUE(formatted->contains("x => ({'key': x})"));
   EXPECT_TRUE(formatted->contains("true ? 'a' : 'b': {'inner': [1, 2]}"));
-  const auto second = FormatSource(*formatted);
-  ASSERT_TRUE(second) << frontend::DiagnosticsText(second.error());
-  EXPECT_EQ(*second, *formatted);
+  ExpectIdempotent(*formatted);
 }
 
 TEST(FormatterTest, KeepsAttributesOnDeclarationLinesAndArraysAsExpressions) {
@@ -35,9 +51,7 @@ TEST(FormatterTest, KeepsAttributesOnDeclarationLinesAndArraysAsExpressions) {
   EXPECT_TRUE(formatted->contains("[Reflect]\nclass Counter"));
   EXPECT_TRUE(formatted->contains("  [Button(label: 'reset')]\n  reset(): void"));
   EXPECT_TRUE(formatted->contains("[1, 2][0];"));
-  const auto repeated = FormatSource(*formatted);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*formatted, *repeated);
+  ExpectIdempotent(*formatted);
 }
 
 TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
@@ -57,9 +71,7 @@ TEST(FormatterTest, FormatsPrivateNamesAndFieldFormals) {
   EXPECT_EQ(*result,
             "class Example {\n  const value: int;\n  #hidden: string;\n  "
             "constructor(this.value, this.#hidden);\n}\n");
-  const auto again = FormatSource(*result);
-  ASSERT_TRUE(again);
-  EXPECT_EQ(*again, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, SpacesRemainderExpressionsAndAssignmentsBeforeParentheses) {
@@ -69,9 +81,7 @@ TEST(FormatterTest, SpacesRemainderExpressionsAndAssignmentsBeforeParentheses) {
   EXPECT_EQ(*result,
             "func remainder(value: int, modulus: int): int {\n"
             "  value %= (modulus + 1);\n  return value % (modulus + 1);\n}\n");
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
@@ -98,9 +108,7 @@ TEST(FormatterTest, PreservesNestedBoundsAndGenericMethodDeclarationsAndApplicat
   EXPECT_TRUE(result->contains("class Box<T extends Reader<int>>"));
   EXPECT_TRUE(result->contains("func use<T extends U, U extends Reader<int>>"));
   EXPECT_TRUE(result->contains("read<Map<string, Future<int[]>>>(Map<string, Future<int[]>>());"));
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, SpacesConditionalOperatorsWithoutChangingNullableTypesOrNamedArguments) {
@@ -112,9 +120,7 @@ TEST(FormatterTest, SpacesConditionalOperatorsWithoutChangingNullableTypesOrName
             "func choose(value: int?, flag: bool): int? {\n"
             "  return flag ? (value ?? 0) : flag ? null : -1;\n}\n\n"
             "func main(): int {\n  return choose(value: true ? 1 : 2, flag: true) ?? 0;\n}\n");
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, ConditionalColonDoesNotEndASwitchCaseLabel) {
@@ -145,9 +151,7 @@ TEST(FormatterTest, FormatsContextualAndInferredLambdasWithoutAddingAnnotations)
   EXPECT_TRUE(result->contains("values.sort((left, right) => left - right);"));
   EXPECT_TRUE(result->contains("values.forEach(value => {"));
   EXPECT_TRUE(result->contains("const twice = (value: int) => value * 2;"));
-  const auto second = FormatSource(*result);
-  ASSERT_TRUE(second);
-  EXPECT_EQ(*result, *second);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, SpacesFunctionTypesNamedArgumentsAndOperators) {
@@ -174,9 +178,7 @@ TEST(FormatterTest, DefaultsToSingleQuotesWithoutChangingEscapedValues) {
   EXPECT_TRUE(result->contains(R"(print('it\'s "quoted" \\ \n \u0041 \${literal}');)"));
   EXPECT_TRUE(result->contains(R"(print('already \'single\' and "double"');)"));
   EXPECT_TRUE(result->contains(R"(print('${'${'nested'}'}');)"));
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, SeparatesTopLevelDeclarationsAndPreservesAnInnerBlankLine) {
@@ -187,16 +189,6 @@ TEST(FormatterTest, SeparatesTopLevelDeclarationsAndPreservesAnInnerBlankLine) {
   EXPECT_EQ(*result,
             "import 'one.vela';\nimport 'two.vela';\n\nclass A {\n  value: int;\n}\n\n"
             "func main(): void {\n  let value = 1;\n\n  print(value);\n}\n");
-}
-
-class FormattingInvariantTest : public testing::TestWithParam<std::string_view> {};
-
-TEST_P(FormattingInvariantTest, IsIdempotent) {
-  const auto formatted = FormatSource(GetParam());
-  ASSERT_TRUE(formatted) << formatted.error().front().message;
-  const auto repeated = FormatSource(*formatted);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *formatted);
 }
 
 void ExpectSameTokens(const frontend::LexResult& before, const frontend::LexResult& after) {
@@ -269,9 +261,7 @@ TEST(FormatterTest, BreaksCommentedArgumentsAndPlacesTrailingCommasBeforeComment
   EXPECT_EQ(*result,
             "func main(): void {\n  call(\n    1, // first\n    2, /* last */\n  );\n"
             "  const values = [\n    1, // item\n  ];\n}\n");
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
 TEST(FormatterTest, IncludesCallPrefixAndIndentationWhenBreakingAtOneHundredColumns) {
@@ -283,15 +273,17 @@ TEST(FormatterTest, IncludesCallPrefixAndIndentationWhenBreakingAtOneHundredColu
             "func main(): void {\n  const result = longFunctionName(\n"
             "    firstLongArgumentName,\n    secondLongArgumentName,\n"
             "    thirdLongArgumentName,\n  );\n}\n");
-  const auto repeated = FormatSource(*result);
-  ASSERT_TRUE(repeated);
-  EXPECT_EQ(*repeated, *result);
+  ExpectIdempotent(*result);
 }
 
-TEST_P(FormattingInvariantTest, PreservesEveryLanguageToken) {
-  const auto formatted = FormatSource(GetParam());
-  ASSERT_TRUE(formatted);
-  ExpectSameTokens(frontend::Lexer(GetParam()).Tokenize(), frontend::Lexer(*formatted).Tokenize());
+class FormattingInvariantTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(FormattingInvariantTest, PreservesTokensAndFormatsIdempotently) {
+  const auto source = GetParam();
+  const auto formatted = FormatSource(source);
+  ASSERT_TRUE(formatted) << frontend::DiagnosticsText(formatted.error());
+  ExpectSameTokens(frontend::Lexer(source).Tokenize(), frontend::Lexer(*formatted).Tokenize());
+  ExpectIdempotent(*formatted);
 }
 
 INSTANTIATE_TEST_SUITE_P(

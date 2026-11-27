@@ -73,6 +73,36 @@ enum class IneligibleRecursion : std::uint8_t { Nonrecursive, OverBudget };
 
 enum class AnalysisPass : std::uint8_t { Escapes, Borrows, Generation };
 
+void ArrayElementGeneration(benchmark::State& state) {
+  std::string source =
+      "struct Entry { value: int; } "
+      "export func update(values: Entry[], value: Entry, index: int): Entry {";
+  for (std::int64_t index = 0; index < state.range(0); ++index) {
+    source += "values[index] = value; value = values[index];";
+  }
+  source += "return value; }";
+  const frontend::SourceInput input{.path = "array.vela", .text = source};
+  const auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  if (!prepared.Succeeded()) {
+    state.SkipWithError(frontend::DiagnosticsText(prepared.diagnostics));
+    return;
+  }
+  const auto& program = prepared.program;
+  const auto calls = compiler::native::PlanNativeCalls(program, NativeCodeTier::Baseline);
+  const auto fields = compiler::native::FindFieldTargets(program);
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    auto generated = compiler::native::Generate(program, calls, fields, "array");
+    if (!generated) {
+      state.SkipWithError(frontend::DiagnosticsText(generated.error()));
+      return;
+    }
+    benchmark::DoNotOptimize(generated);
+  }
+}
+
+BENCHMARK(ArrayElementGeneration)->Name("native_analysis/array_elements")->Arg(128)->UseRealTime();
+
 void ObjectAnalysis(benchmark::State& state, AnalysisPass pass) {
   const auto count = state.range(0);
   std::string updates;

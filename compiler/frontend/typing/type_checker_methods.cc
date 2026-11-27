@@ -200,7 +200,7 @@ const TypeChecker::InferenceSignature& TypeChecker::FunctionInferenceSignature(
   }
   InferenceSignature source;
   source.type_parameters = function.type_parameters;
-  SetInferenceParameters(function.parameters, source);
+  SetInferenceParameters(function, source);
   source.return_type = function.return_type;
   source.optional_parameters.insert(function.optional_parameters.begin(),
                                     function.optional_parameters.end());
@@ -310,7 +310,7 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
     }
   }
   const auto function_type = FunctionValueType(signature, call == nullptr ? expected : nullptr);
-  facts_.expression_types.insert_or_assign(&member, function_type);
+  RecordExpressionType(member, function_type);
   return call != nullptr ? CheckFunctionCall(signature, *call, checked) : function_type;
 }
 

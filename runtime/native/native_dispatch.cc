@@ -75,6 +75,17 @@ std::unexpected<NativePublicationError> StalePublication() {
   });
 }
 
+std::unexpected<NativePublicationError> ContractFailure(const NativeContractViolation& error) {
+  return std::unexpected(NativePublicationError{
+      .status = error.status == NativeContractStatus::NeedsCompilation
+                    ? NativePublicationStatus::NeedsCompilation
+                    : NativePublicationStatus::RequiresReload,
+      .message = error.message,
+      .declaration = error.declaration,
+      .dependency = error.dependency,
+  });
+}
+
 NativeGlobalCache CacheGlobalSlot(GlobalSlot& slot,
                                   const std::uint64_t* epoch,
                                   std::uint64_t observed) {
@@ -159,11 +170,7 @@ std::expected<void, NativePublicationError> NativeDispatchSnapshot::IndexFunctio
         const auto contract =
             CheckNativeCallContract(*previous_image, previous, description, function);
         if (!contract) {
-          return std::unexpected(NativePublicationError{
-              .status = NativePublicationStatus::RequiresReload,
-              .message = contract.error(),
-              .declaration = identity.declaration,
-          });
+          return ContractFailure(contract.error());
         }
       }
     }
@@ -443,12 +450,7 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
   if (previous_image != nullptr) {
     const auto compatible = CheckNativeNominalContracts(*previous_image, description);
     if (!compatible) {
-      const auto& error = compatible.error();
-      return std::unexpected(NativePublicationError{
-          .status = NativePublicationStatus::RequiresReload,
-          .message = error.message,
-          .declaration = error.declaration,
-      });
+      return ContractFailure(compatible.error());
     }
   }
   if (const auto indexed = snapshot->IndexFunctions(description, current_.get()); !indexed) {
@@ -530,15 +532,7 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   const auto* previous_image = current_ == nullptr ? nullptr : &current_->image();
   if (const auto checked = CheckRetainedNativeContracts(retained, required, previous_image, image);
       !checked) {
-    const auto& error = checked.error();
-    return std::unexpected(NativePublicationError{
-        .status = error.status == NativeContractStatus::NeedsCompilation
-                      ? NativePublicationStatus::NeedsCompilation
-                      : NativePublicationStatus::RequiresReload,
-        .message = error.message,
-        .declaration = error.declaration,
-        .dependency = error.dependency,
-    });
+    return ContractFailure(checked.error());
   }
   timings.validation = Clock::now() - started - timings.materialization;
   const auto preparing = Clock::now();
@@ -732,10 +726,11 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(
   return {};
 }
 
-extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
+extern "C" std::uint8_t vela_native_v33_load_global(NativeExecution* execution,
+                                                    NativeProgramState* origin,
                                                     std::uint32_t index,
                                                     NativeValue* result) {
-  auto& program = execution->instance().program();
+  auto& program = *origin;
   auto& dispatch = *program.dispatch;
   auto& cache = program.global_cache(index);
   return internal::StoreNativeResult(
@@ -823,7 +818,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
   auto& storage = Heap::InstanceFields(object);
   auto& state = storage.states()[slot];
   if (state == FieldState::Ready) {
-    return Heap::LoadField(object, slot);
+    return isolate_->heap().ReadValueField(object, slot);
   }
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
@@ -846,7 +841,8 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
     return std::unexpected(status);
   }
   const auto value = DecodeNativeValue(result);
-  return isolate_->heap().SetField(object, slot, value).transform([value] { return value; });
+  isolate_->heap().WriteValueField(object, slot, value);
+  return value;
 }
 
 std::expected<void, ExecutionStatus> NativeDispatch::StoreField(HeapObject& object,
@@ -867,7 +863,8 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreFieldAt(HeapObject& ob
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
   }
-  return isolate_->heap().SetField(object, slot, value);
+  isolate_->heap().WriteValueField(object, slot, value);
+  return {};
 }
 
 NativeFieldCache& NativeProgramState::field_cache(std::uint64_t access) {
@@ -926,6 +923,41 @@ extern "C" std::uint8_t vela_native_v3_load_field(NativeExecution* execution,
   return internal::StoreNativeResult(
       result, state.dispatch->LoadField(*execution, *object, DeclarationId{field},
                                         state.field_cache(access)));
+}
+
+std::expected<NativeStructField, ExecutionStatus> NativeDispatch::BorrowStructField(
+    HeapObject& object,
+    DeclarationId field) noexcept {
+  const auto& layout = *Heap::ClassOf(object);
+  const auto slot = layout.FieldIndex(field);
+  if (!slot) {
+    return std::unexpected(ExecutionStatus::TargetDeleted);
+  }
+  // 接收者求值已完成初始化；迁移按声明保留该字段的 Ready 状态。
+  const auto state = Heap::InstanceFields(object).states()[*slot];
+  if (state != FieldState::Ready) {
+    return std::unexpected(state == FieldState::Initializing ? ExecutionStatus::CyclicInitialization
+                                                             : ExecutionStatus::TypeError);
+  }
+  const auto count = layout.field_count();
+  auto fields = ObjectFieldStorage(object);
+  return NativeStructField{
+      .payloads = fields.subspan(*slot * FieldStorage::kPayloadBytes).data(),
+      .kinds = fields.subspan(FieldStorage::KindOffset(count, *slot)).data(),
+  };
+}
+
+extern "C" std::uint8_t vela_native_v33_borrow_struct_field(
+    [[maybe_unused]] NativeExecution* execution,
+    HeapObject* object,
+    std::uint64_t field,
+    NativeStructField* result) {
+  const auto borrowed = NativeDispatch::BorrowStructField(*object, DeclarationId{field});
+  if (!borrowed) {
+    return ToNativeStatus(borrowed.error());
+  }
+  *result = *borrowed;
+  return ToNativeStatus(ExecutionStatus::Returned);
 }
 
 extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,

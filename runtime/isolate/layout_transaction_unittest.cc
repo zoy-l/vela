@@ -67,29 +67,19 @@ TEST(LayoutTransactionTest, CommittedMetadataCanOwnInstancesAfterTheTransactionE
 TEST(LayoutTransactionTest, RollbackClearsFixedLayoutOnAnExistingNominal) {
   Isolate isolate;
   auto* nominal = isolate.CreateNominalType({.interfaces = {}, .declaration = {}});
+  ClassLayoutOptions options;
+  options.nominal = nominal;
   const auto initial = isolate.layout_counts();
   {
     LayoutTransaction transaction(isolate);
-    const auto* layout = isolate.CreateClassLayout(1, {},
-                                                   {
-                                                       .callable = {},
-                                                       .interfaces = {},
-                                                       .nominal = nominal,
-                                                       .field_declarations = {},
-                                                   });
+    const auto* layout = isolate.CreateClassLayout(1, {}, options);
     EXPECT_EQ(nominal->fixed_layout(), layout);
   }
   EXPECT_EQ(isolate.layout_counts(), initial);
   EXPECT_EQ(nominal->fixed_layout(), nullptr);
-  const auto* replacement = isolate.CreateClassLayout(2, {},
-                                                      {
-                                                          .callable = {},
-                                                          .interfaces = {},
-                                                          .nominal = nominal,
-                                                          .field_declarations = {},
-                                                      });
+  const auto* replacement = isolate.CreateClassLayout(2, {}, options);
   EXPECT_EQ(nominal->fixed_layout(), replacement);
-  EXPECT_EQ(nominal->fixed_layout()->field_count(), 2U);
+  EXPECT_EQ(replacement->field_count(), 2U);
 }
 
 TEST(LayoutTransactionTest, RolledBackLayoutIdentitiesAreNotReusedByLaterTransactions) {

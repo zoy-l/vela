@@ -2,12 +2,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
+#include "base/inline_layout.h"
 #include "base/layout_description.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
@@ -20,8 +23,8 @@ using SourceType = frontend::TypeDescriptor;
 
 bool HasReference(SourceType::Kind kind) {
   using Kind = SourceType::Kind;
-  return kind != Kind::Invalid && kind != Kind::Null && kind != Kind::Void && kind != Kind::Bool &&
-         kind != Kind::Int && kind != Kind::Double && kind != Kind::Enum;
+  return kind != Kind::Invalid && kind != Kind::Null && kind != Kind::Void && kind != Kind::Never &&
+         kind != Kind::Bool && kind != Kind::Int && kind != Kind::Double && kind != Kind::Enum;
 }
 
 class LayoutDescription final {
@@ -87,7 +90,7 @@ std::string LayoutDescription::Nominal(const std::string& name) {
 void LayoutDescription::Canonicalize(layout::Type type) {
   using Kind = layout::Type::Kind;
   switch (type.kind) {
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum: {
       auto& nominal = result_.classes.at(type.index);
       nominal.name = Nominal(program_->classes.at(type.index).name);
@@ -104,7 +107,8 @@ void LayoutDescription::Canonicalize(layout::Type type) {
     case Kind::Array:
       Canonicalize(result_.arrays.at(type.index).element);
       break;
-    case Kind::Collection: {
+    case Kind::Set:
+    case Kind::Map: {
       const auto collection = result_.collections.at(type.index);
       Canonicalize(collection.key);
       if (collection.value) {
@@ -112,7 +116,7 @@ void LayoutDescription::Canonicalize(layout::Type type) {
       }
       break;
     }
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer: {
       const auto signature = result_.signatures.at(type.index);
@@ -125,6 +129,9 @@ void LayoutDescription::Canonicalize(layout::Type type) {
       if (signature.narrowed_parameter) {
         Canonicalize(*signature.narrowed_parameter);
       }
+      if (signature.false_narrowed_parameter) {
+        Canonicalize(*signature.false_narrowed_parameter);
+      }
       break;
     }
     default:
@@ -134,77 +141,43 @@ void LayoutDescription::Canonicalize(layout::Type type) {
 
 layout::Type LayoutDescription::Type(const SourceType& type) {
   using Source = SourceType::Kind;
-  using Kind = layout::Type::Kind;
-  layout::Type result{.nullable = type.nullable};
+  layout::Type result{.kind = type.kind, .nullable = type.nullable};
   switch (type.kind) {
+    case Source::Null:
+    case Source::Never:
     case Source::Dynamic:
-      result.kind = Kind::Dynamic;
-      break;
     case Source::Bool:
-      result.kind = Kind::Boolean;
-      break;
     case Source::Int:
-      result.kind = Kind::Integer;
-      break;
     case Source::Double:
-      result.kind = Kind::Double;
-      break;
     case Source::String:
-      result.kind = Kind::String;
-      break;
     case Source::MutableString:
-      result.kind = Kind::MutableString;
-      break;
     case Source::ByteArray:
-      result.kind = Kind::ByteArray;
-      break;
     case Source::ByteData:
-      result.kind = Kind::ByteData;
-      break;
     case Source::RegExp:
-      result.kind = Kind::RegExp;
-      break;
     case Source::RegExpMatch:
-      result.kind = Kind::RegExpMatch;
+    case Source::Timer:
+    case Source::CancellationToken:
       break;
     case Source::Class:
     case Source::Enum:
-      result.kind = type.kind == Source::Enum ? Kind::Enum : Kind::Instance;
       result.index = classes_.at(frontend::NonNullableTypeName(type));
       break;
     case Source::Interface:
-      result.kind = Kind::Interface;
       result.index = model_->interfaces.at(frontend::NonNullableTypeName(type)).index;
       break;
     case Source::Array:
-      result.kind = Kind::Array;
       result.index = Array(type);
       break;
     case Source::Set:
     case Source::Map:
-      result.kind = Kind::Collection;
       result.index = Collection(type);
       break;
     case Source::Function:
-      result.kind = Kind::Callable;
-      result.index = Signature(type);
-      break;
     case Source::Future:
-      result.kind = Kind::Future;
-      result.index = Signature(type);
-      break;
     case Source::Completer:
-      result.kind = Kind::Completer;
       result.index = Signature(type);
-      break;
-    case Source::Timer:
-      result.kind = Kind::Timer;
-      break;
-    case Source::CancellationToken:
-      result.kind = Kind::CancellationToken;
       break;
     case Source::Invalid:
-    case Source::Null:
     case Source::Void:
     case Source::Parameter:
       std::unreachable();
@@ -251,6 +224,9 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
     if (function.narrowed_parameter) {
       descriptor.narrowed_parameter = Type(*function.narrowed_parameter);
     }
+    if (function.false_narrowed_parameter) {
+      descriptor.false_narrowed_parameter = Type(*function.false_narrowed_parameter);
+    }
     for (const auto& parameter : function.parameters) {
       descriptor.parameters.push_back({.type = Type(parameter.type)});
     }
@@ -292,6 +268,10 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   if (call.narrowed_parameter) {
     descriptor.narrowed_parameter = Type(program.runtime_types.at(*call.narrowed_parameter));
   }
+  if (call.false_narrowed_parameter) {
+    descriptor.false_narrowed_parameter =
+        Type(program.runtime_types.at(*call.false_narrowed_parameter));
+  }
   for (std::size_t index = skipped; index < call.parameters.size(); ++index) {
     const auto& parameter = call.parameters.at(index);
     descriptor.parameters.push_back({
@@ -308,6 +288,25 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   return index;
 }
 
+InlineSlotKind DescribeInlineSlot(const SourceType& field) {
+  using Kind = SourceType::Kind;
+  switch (field.kind) {
+    case Kind::Bool:
+      return field.nullable ? InlineSlotKind::NullableBoolean : InlineSlotKind::Boolean;
+    case Kind::Int:
+    case Kind::Enum:
+      return field.nullable ? InlineSlotKind::NullableInteger : InlineSlotKind::Integer;
+    case Kind::Double:
+      return field.nullable ? InlineSlotKind::NullableDouble : InlineSlotKind::Double;
+    case Kind::Dynamic:
+      return InlineSlotKind::Dynamic;
+    case Kind::String:
+      return InlineSlotKind::String;
+    default:
+      return InlineSlotKind::Reference;
+  }
+}
+
 layout::Class LayoutDescription::DescribeClass(const Class& type) {
   layout::Class descriptor{
       .name = type.name,
@@ -317,6 +316,7 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
       .reference_fields = {},
       .callable = type.callable,
       .interfaces = type.interfaces,
+      .value_slots = {},
   };
   switch (type.kind) {
     case Class::Kind::Instance:
@@ -340,10 +340,34 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
     case Class::Kind::ReflectionIdentity:
       descriptor.kind = layout::Class::Kind::ReflectionIdentity;
       break;
+    case Class::Kind::Struct:
+      descriptor.kind = layout::Class::Kind::Struct;
+      descriptor.field_count = static_cast<std::uint32_t>(type.value_layout->slots.size());
+      break;
   }
-  for (std::size_t index = 0; index < type.field_types.size(); ++index) {
-    if (HasReference(type.field_types.at(index).kind)) {
+  std::vector<SourceType> physical_fields;
+  if (type.value_layout == nullptr) {
+    for (const auto& field : type.field_types) {
+      if (field.value_layout == nullptr) {
+        physical_fields.push_back(field);
+        continue;
+      }
+      if (FieldSlotCount(field) > field.value_layout->slots.size()) {
+        physical_fields.push_back({.kind = SourceType::Kind::Bool, .name = {}});
+      }
+      physical_fields.insert(physical_fields.end(), field.value_layout->slots.begin(),
+                             field.value_layout->slots.end());
+    }
+    descriptor.field_count = static_cast<std::uint32_t>(physical_fields.size());
+  }
+  const auto& fields = type.value_layout == nullptr ? physical_fields : type.value_layout->slots;
+  for (std::size_t index = 0; index < fields.size(); ++index) {
+    const auto& field = fields.at(index);
+    if (HasReference(field.kind)) {
       descriptor.reference_fields.push_back(static_cast<std::uint32_t>(index));
+    }
+    if (type.value_layout != nullptr) {
+      descriptor.value_slots.push_back(DescribeInlineSlot(field));
     }
   }
   if (type.callable) {
@@ -389,8 +413,7 @@ layout::Program LayoutDescription::Build() {
     result_.types.push_back(Type(type));
   }
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    Canonicalize(
-        {.kind = layout::Type::Kind::Instance, .index = static_cast<std::uint32_t>(index)});
+    Canonicalize({.kind = layout::Type::Kind::Class, .index = static_cast<std::uint32_t>(index)});
   }
   for (std::size_t index = 0; index < result_.interfaces.size(); ++index) {
     if (!result_.interfaces.at(index).empty()) {
@@ -402,6 +425,25 @@ layout::Program LayoutDescription::Build() {
 }
 
 }  // namespace
+
+std::uint32_t FieldSlotCount(const frontend::TypeDescriptor& type) {
+  if (type.value_layout == nullptr) {
+    return 1;
+  }
+  return InlineFieldSlotCount(static_cast<std::uint32_t>(type.value_layout->slots.size()),
+                              type.nullable);
+}
+
+std::uint32_t PhysicalFieldOffset(const Class& owner, std::uint32_t field) {
+  if (owner.value_layout != nullptr) {
+    return owner.value_layout->offsets.at(field);
+  }
+  std::uint32_t offset = 0;
+  for (const auto& type : std::span(owner.field_types).first(field)) {
+    offset += FieldSlotCount(type);
+  }
+  return offset;
+}
 
 layout::Program DescribeLayouts(const Program& program,
                                 const frontend::SemanticModel& model,

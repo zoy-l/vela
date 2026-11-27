@@ -205,6 +205,18 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   options.is_cancelled = IsCancelled;
   options.select = [&command](const TestResult& test) { return command.IsSelected(test.name); };
   const auto timeout = options.settings.suite_load_timeout.Apply(kDefaultTimeout);
+  if (!timeout) {
+    PublishFailure(reporter, result, identity, file,
+                   {
+                       .phase = TestPhase::Registration,
+                       .category = "RegistrationError",
+                       .message = timeout.error(),
+                       .trace = {},
+                       .difference = std::nullopt,
+                   },
+                   kRuntimeErrorExitCode);
+    return result;
+  }
   if (*timeout) {
     options.load_deadline = runtime::FutureScheduler::Clock::now() + **timeout;
   }

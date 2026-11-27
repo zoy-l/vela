@@ -14,6 +14,7 @@
 
 #include "base/callable.h"
 #include "base/declaration.h"
+#include "base/inline_layout.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -31,7 +32,14 @@ struct InterfaceType final {
 struct CodeIdentity final {};
 class ClassLayout;
 
-enum class NominalKind : std::uint8_t { Class, Enum, Callable };
+// 逻辑字段映射到展开后的存储槽；嵌套值借用同一 Isolate 的固定布局。
+struct ValueField final {
+  std::uint32_t offset{};
+  const ClassLayout* layout = nullptr;
+  bool nullable = false;
+};
+
+enum class NominalKind : std::uint8_t { Class, Enum, Callable, Struct };
 struct NominalTypeOptions final {
   NominalKind kind = NominalKind::Class;
   std::vector<const InterfaceType*> interfaces;
@@ -48,6 +56,7 @@ class NominalType final {
   NominalType& operator=(NominalType&&) = delete;
   ~NominalType() = default;
   [[nodiscard]] bool IsEnum() const noexcept { return kind_ == NominalKind::Enum; }
+  [[nodiscard]] bool IsStruct() const noexcept { return kind_ == NominalKind::Struct; }
   [[nodiscard]] bool IsCallable() const noexcept { return kind_ == NominalKind::Callable; }
   [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
   [[nodiscard]] bool IsSubtypeOf(const NominalType& target) const noexcept;
@@ -78,13 +87,13 @@ enum class ClassStorage : std::uint8_t { Inline, Reloadable, Host };
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
   std::vector<const InterfaceType*> interfaces;
-  bool is_enum = false;
   bool is_metadata = false;
   bool reflection_identity = false;
   const TypeSignature* callable_type = nullptr;
   NominalType* nominal = nullptr;
   ClassStorage storage = ClassStorage::Inline;
   std::vector<DeclarationId> field_declarations;
+  std::vector<InlineSlotKind> value_slots;
 };
 
 class ClassLayout final {
@@ -114,6 +123,10 @@ class ClassLayout final {
   }
   [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
   [[nodiscard]] bool IsEnum() const noexcept { return nominal_->IsEnum(); }
+  [[nodiscard]] bool IsStruct() const noexcept { return nominal_->IsStruct(); }
+  [[nodiscard]] const InlineLayout& value_layout() const noexcept { return value_layout_; }
+  [[nodiscard]] std::span<const ValueField> value_fields() const noexcept { return value_fields_; }
+  void BindValueFields(std::vector<ValueField> fields);
   [[nodiscard]] const TypeSignature* callable_type() const noexcept { return callable_type_; }
   void BindCallableType(const TypeSignature& type) noexcept;
   [[nodiscard]] const CodeIdentity* code_identity() const noexcept { return code_identity_; }
@@ -133,6 +146,8 @@ class ClassLayout final {
   std::uint32_t field_count_;
   std::uint64_t id_ = 0;
   std::vector<std::uint32_t> reference_fields_;
+  InlineLayout value_layout_;
+  std::vector<ValueField> value_fields_;
   std::optional<CallableTarget> callable_;
   NominalType* nominal_ = nullptr;
   ClassStorage storage_ = ClassStorage::Inline;
@@ -191,6 +206,7 @@ template <class T, class Header>
 }
 
 struct TypeConstraint final {
+  enum class Category : std::uint8_t { Value, Dynamic, Never };
   ValueKind kind = ValueKind::Null;
   ObjectKind object_kind = ObjectKind::Instance;
   const NominalType* nominal = nullptr;
@@ -199,16 +215,18 @@ struct TypeConstraint final {
   const InterfaceType* interface = nullptr;
   bool nullable = false;
   bool callable = false;
-  bool dynamic = false;
+  Category category = Category::Value;
   const TypeSignature* signature = nullptr;
 
+  [[nodiscard]] bool IsDynamic() const noexcept { return category == Category::Dynamic; }
+  [[nodiscard]] bool IsNever() const noexcept { return category == Category::Never; }
   [[nodiscard]] bool IsSubtypeOf(const TypeConstraint& target) const noexcept;
 
   bool operator==(const TypeConstraint&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const TypeConstraint& type) {
     return H::combine(std::move(hash), type.kind, type.object_kind, type.nominal, type.array,
-                      type.collection, type.interface, type.nullable, type.callable, type.dynamic,
+                      type.collection, type.interface, type.nullable, type.callable, type.category,
                       type.signature);
   }
 };
@@ -228,13 +246,14 @@ struct TypeSignature final {
   std::vector<Parameter> parameters;
   std::optional<TypeConstraint> result = std::nullopt;
   std::optional<TypeConstraint> narrowed_parameter = std::nullopt;
+  std::optional<TypeConstraint> false_narrowed_parameter = std::nullopt;
   [[nodiscard]] std::optional<TypeConstraint> FlattenedResult() const noexcept;
   [[nodiscard]] bool IsSubtypeOf(const TypeSignature& target) const noexcept;
   bool operator==(const TypeSignature&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const TypeSignature& signature) {
     return H::combine(std::move(hash), signature.parameters, signature.result,
-                      signature.narrowed_parameter);
+                      signature.narrowed_parameter, signature.false_narrowed_parameter);
   }
 };
 
@@ -242,17 +261,24 @@ struct TypeSignature final {
 struct ArrayLayout final {
   TypeConstraint element{.kind = ValueKind::Integer};
   std::uint32_t record_fields = 0;
+  const ClassLayout* value_layout = nullptr;
 
   [[nodiscard]] bool HasTaggedElements() const noexcept {
-    if (element.kind == ValueKind::Object || element.kind == ValueKind::String) {
-      return element.dynamic;
+    if (element.IsNever()) {
+      return true;
     }
-    return element.nullable || element.dynamic;
+    if (element.kind == ValueKind::Object || element.kind == ValueKind::String) {
+      return element.IsDynamic();
+    }
+    return element.nullable || element.IsDynamic();
   }
 
   [[nodiscard]] std::size_t element_size() const noexcept;
   [[nodiscard]] bool HasReferences() const noexcept {
-    return record_fields == 0 && (element.dynamic || element.kind == ValueKind::Object ||
+    if (value_layout != nullptr) {
+      return value_layout->value_layout().HasReferences();
+    }
+    return record_fields == 0 && (element.IsDynamic() || element.kind == ValueKind::Object ||
                                   element.kind == ValueKind::String);
   }
   [[nodiscard]] TypeConstraint value_type() const noexcept {
@@ -265,7 +291,7 @@ struct ArrayLayout final {
   bool operator==(const ArrayLayout&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const ArrayLayout& layout) {
-    return H::combine(std::move(hash), layout.element, layout.record_fields);
+    return H::combine(std::move(hash), layout.element, layout.record_fields, layout.value_layout);
   }
 };
 
@@ -307,8 +333,8 @@ struct HeapObject final {
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
   struct StringPosition final {
-    std::uint32_t index;
-    std::uint32_t offset;
+    std::uint32_t index{};
+    std::uint32_t offset = 0;
   };
   // length：String 为 UTF-8 字节数，MutableString 为已用字节数，Array/ValueSlots
   // 为元素数，ByteArray/ByteData 为可见字节数；native callable 的 Instance 为函数编号。

@@ -107,9 +107,9 @@ class ValueCollector final {
     if (type->isBooleanType() || type->isIntegerType() || type->isFloatingType()) {
       auto kind = Kind::Double;
       if (type->isBooleanType()) {
-        kind = Kind::Boolean;
+        kind = Kind::Bool;
       } else if (type->isIntegerType()) {
-        kind = Kind::Integer;
+        kind = Kind::Int;
       }
       result.value = layout::Type{.kind = kind};
       return result;
@@ -192,7 +192,7 @@ class ValueCollector final {
         add(argument);
       }
     }
-    result.value = layout::Type{.kind = layout::Type::Kind::Callable};
+    result.value = layout::Type{.kind = layout::Type::Kind::Function};
     result.layouts.signatures.push_back(std::move(signature));
     return result;
   }
@@ -291,6 +291,7 @@ class ValueCollector final {
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
+        .value_slots = {},
     });
     return result;
   }
@@ -322,7 +323,7 @@ class ValueCollector final {
     }
     auto mapped = Map(field.getType());
     const auto codec = Codec(Cpp(field.getType()));
-    const bool callback = mapped.value && mapped.value->kind == layout::Type::Kind::Callable;
+    const bool callback = mapped.value && mapped.value->kind == layout::Type::Kind::Function;
     if (!callback) {
       Member getter{
           .kind = MemberKind::Getter,

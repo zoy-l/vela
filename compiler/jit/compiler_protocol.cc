@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -13,11 +14,20 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
+
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/fingerprint.h"
+#include "base/inline_layout.h"
+#include "base/json_decode.h"
 #include "base/layout_description.h"
 #include "base/member.h"
+#include "base/native_program_mode.h"
+#include "base/opcode.h"
 #include "base/reflection.h"
+#include "base/type_kind.h"
 #include "compiler/development/development_changes.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
@@ -68,7 +78,8 @@ template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, CallSignature>
 auto Fields(Record& value) {
   return std::tie(value.parameters, value.result, value.hidden_parameters, value.receiver,
-                  value.parameter_name_order);
+                  value.parameter_name_order, value.narrowed_parameter,
+                  value.false_narrowed_parameter);
 }
 
 template <class Record>
@@ -81,7 +92,26 @@ auto Fields(Record& value) {
 template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, frontend::TypeDescriptor>
 auto Fields(Record& value) {
-  return std::tie(value.kind, value.name, value.nullable, value.is_abstract, value.known_non_null);
+  return std::tie(value.kind, value.name, value.nullable, value.is_abstract, value.known_non_null,
+                  value.value_layout);
+}
+
+template <class Record>
+  requires std::is_same_v<std::remove_cv_t<Record>, frontend::StructLayout>
+auto Fields(Record& value) {
+  return std::tie(value.fields, value.offsets, value.slots);
+}
+
+template <class Record>
+  requires std::is_same_v<std::remove_cv_t<Record>, std::shared_ptr<frontend::StructLayout>>
+auto Fields(Record& value) {
+  return std::tuple(value.get());
+}
+
+template <class Record>
+  requires std::is_same_v<std::remove_cv_t<Record>, std::shared_ptr<const ir::StructReceiver>>
+auto Fields(Record& value) {
+  return std::tuple(value.get());
 }
 
 template <class Record>
@@ -111,7 +141,8 @@ auto Fields(Record& value) {
 template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, layout::Signature>
 auto Fields(Record& value) {
-  return std::tie(value.name, value.parameters, value.result);
+  return std::tie(value.name, value.parameters, value.result, value.narrowed_parameter,
+                  value.false_narrowed_parameter);
 }
 
 template <class Record>
@@ -119,7 +150,7 @@ template <class Record>
 auto Fields(Record& value) {
   return std::tie(value.name, value.native_key, value.native_contract, value.kind,
                   value.field_count, value.reference_fields, value.callable, value.interfaces,
-                  value.callable_type);
+                  value.callable_type, value.value_slots);
 }
 
 template <class Record>
@@ -143,12 +174,20 @@ auto Fields(Record& value) {
 }
 
 template <class Record>
+  requires std::is_same_v<std::remove_cv_t<Record>, ir::StructReceiver>
+auto Fields(Record& value) {
+  return std::tie(value.kind, value.receiver, value.index, value.slot, value.declaration,
+                  value.type, value.fields);
+}
+
+template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, ir::Instruction>
 auto Fields(Record& value) {
   return std::tie(value.opcode, value.dst, value.lhs, value.rhs, value.immediate, value.index,
                   value.location, value.handler, value.array_type, value.field_declaration,
                   value.binding_receiver, value.reflection_member, value.construction,
-                  value.completes_construction);
+                  value.completes_construction, value.inline_value, value.struct_receiver,
+                  value.no_normal_return);
 }
 
 template <class Record>
@@ -164,7 +203,7 @@ auto Fields(Record& value) {
   return std::tie(value.name, value.field_types, value.callable, value.interfaces,
                   value.dispatch_targets, value.kind, value.native_key, value.native_contract,
                   value.callable_type, value.declaration, value.fields, value.base_class,
-                  value.constructor, value.enum_members);
+                  value.constructor, value.enum_members, value.value_layout);
 }
 
 template <class Record>
@@ -180,7 +219,7 @@ auto Fields(Record& value) {
                   value.register_count, value.value_types, value.instructions, value.doubles,
                   value.native_symbol, value.handlers, value.is_async, value.is_exported,
                   value.is_generated_constructor, value.visibility, value.signature, value.identity,
-                  value.type_dependencies, value.json_decode_plan);
+                  value.type_dependencies, value.json_decode_plan, value.struct_receiver);
 }
 
 template <class Record>
@@ -378,21 +417,150 @@ auto Fields(Record& value) {
   return std::tie(value.diagnostics, value.update, value.entry);
 }
 
-struct WireRecords final {
+struct WireRecords {
+  // 此 IPC schema 中的枚举均从零连续编号；最大值随所属领域定义演进。
+  static constexpr auto EnumMaximum(CallableMode /*kind*/) { return CallableMode::VirtualMethod; }
+  static constexpr auto EnumMaximum(MemberKind /*unused*/) { return MemberKind::Property; }
+  static constexpr auto EnumMaximum(LanguageTypeKind /*unused*/) {
+    return LanguageTypeKind::Parameter;
+  }
+  static constexpr auto EnumMaximum(InlineSlotKind /*unused*/) {
+    return InlineSlotKind::NullableDouble;
+  }
+  static constexpr auto EnumMaximum(layout::Class::Kind /*unused*/) {
+    return layout::Class::Kind::Struct;
+  }
+  static constexpr auto EnumMaximum(ir::Class::Kind /*unused*/) { return ir::Class::Kind::Struct; }
+  static constexpr auto EnumMaximum(ir::StructReceiver::Kind /*unused*/) {
+    return ir::StructReceiver::Kind::Index;
+  }
+  static constexpr auto EnumMaximum(Opcode /*unused*/) { return Opcode::Return; }
+  static constexpr auto EnumMaximum(JSONDecodeKind /*unused*/) { return JSONDecodeKind::Class; }
+  static constexpr auto EnumMaximum(frontend::BindingKind /*unused*/) {
+    return frontend::BindingKind::Constant;
+  }
+  static constexpr auto EnumMaximum(DeclarationKind /*unused*/) {
+    return DeclarationKind::EnumMember;
+  }
+  static constexpr auto EnumMaximum(frontend::Visibility /*unused*/) {
+    return frontend::Visibility::Private;
+  }
+  static constexpr auto EnumMaximum(NativeProgramMode /*unused*/) {
+    return NativeProgramMode::Reloadable;
+  }
+  static constexpr auto EnumMaximum(reflection::TypeKind /*unused*/) {
+    return reflection::TypeKind::Never;
+  }
+  static constexpr auto EnumMaximum(reflection::MemberKind /*unused*/) {
+    return reflection::MemberKind::EnumMember;
+  }
+  static constexpr auto EnumMaximum(frontend::TypeName::Kind /*unused*/) {
+    return frontend::TypeName::Kind::Parameter;
+  }
+  static constexpr auto EnumMaximum(frontend::ReflectionMemberKind /*unused*/) {
+    return frontend::ReflectionMemberKind::EnumMember;
+  }
+  static constexpr auto EnumMaximum(frontend::DiagnosticKind /*unused*/) {
+    return frontend::DiagnosticKind::Internal;
+  }
+  static constexpr auto EnumMaximum(frontend::DiagnosticSeverity /*unused*/) {
+    return frontend::DiagnosticSeverity::Error;
+  }
+  static constexpr auto EnumMaximum(frontend::DiagnosticCode /*unused*/) {
+    return frontend::DiagnosticCode::UnusedImport;
+  }
+  static constexpr auto EnumMaximum(SourceCandidateStatus /*unused*/) {
+    return SourceCandidateStatus::RequiresReload;
+  }
+  static constexpr auto EnumMaximum(frontend::TypeIdentity::Kind /*unused*/) {
+    return frontend::TypeIdentity::Kind::Generic;
+  }
+  template <class T>
+  static constexpr bool IsValidEnum(T value) {
+    const auto raw = std::to_underlying(value);
+    static_assert(std::is_unsigned_v<decltype(raw)>);
+    return raw <= std::to_underlying(EnumMaximum(value));
+  }
   template <class T>
   static auto Record(T& value) -> decltype(Fields(value)) {
     return Fields(value);
   }
 };
-using Encoder = BinaryEncoder<WireRecords>;
+struct TransferRecords final : WireRecords {
+  template <class Encoder>
+  void WriteCustom(Encoder& encoder, const std::shared_ptr<frontend::StructLayout>& value) {
+    encoder.Write(value != nullptr);
+    if (value == nullptr) {
+      return;
+    }
+    const auto [found, inserted] =
+        layouts.try_emplace(value.get(), static_cast<std::uint32_t>(layouts.size()));
+    encoder.Write(found->second);
+    if (inserted) {
+      encoder.Write(*value);
+    }
+  }
+
+  absl::flat_hash_map<const frontend::StructLayout*, std::uint32_t> layouts;
+};
+
+using Encoder = BinaryEncoder<TransferRecords>;
+// 指纹只依赖布局内容，不依赖消息中对象是否共享同一地址。
+using ContentEncoder = BinaryEncoder<WireRecords>;
 
 class Decoder final : public BinaryDecoder<Decoder, WireRecords> {
  public:
   explicit Decoder(std::span<const std::byte> bytes) : BinaryDecoder(bytes) {}
+  void ReadCustom(std::shared_ptr<const ir::StructReceiver>& value) {
+    bool present = false;
+    Read(present);
+    if (!present || !CanAllocate(1, sizeof(ir::StructReceiver))) {
+      return;
+    }
+    auto receiver = std::make_shared<ir::StructReceiver>();
+    Read(*receiver);
+    value = std::move(receiver);
+  }
+  void ReadCustom(std::shared_ptr<frontend::StructLayout>& value) {
+    bool present = false;
+    Read(present);
+    if (HasError() || !present) {
+      return;
+    }
+    std::uint32_t layout_id = 0;
+    Read(layout_id);
+    if (HasError()) {
+      return;
+    }
+    if (layout_id < layouts_.size()) {
+      const auto& layout = layouts_[layout_id];
+      if (layout == nullptr) {
+        Fail(reader().Error("cyclic struct layout reference"));
+      } else {
+        value = layout;
+      }
+      return;
+    }
+    if (layout_id != layouts_.size()) {
+      Fail(reader().Error("invalid struct layout reference"));
+      return;
+    }
+    if (!CanAllocate(1, sizeof(frontend::StructLayout) + sizeof(value))) {
+      return;
+    }
+    // 先保留编号，完成后才发布；拒绝环和前向引用，不留下 shared_ptr 所有权环。
+    layouts_.emplace_back();
+    auto layout = std::make_shared<frontend::StructLayout>();
+    Read(*layout);
+    if (!HasError()) {
+      layouts_[layout_id] = layout;
+      value = std::move(layout);
+    }
+  }
   void ReadCustom(std::string_view& value) {
     std::string text;
     Read(text);
-    if (error().empty()) {
+    if (!HasError()) {
       value = frontend::InternTypeName(std::move(text));
     }
   }
@@ -405,6 +573,9 @@ class Decoder final : public BinaryDecoder<Decoder, WireRecords> {
     }
     return value;
   }
+
+ private:
+  std::vector<std::shared_ptr<frontend::StructLayout>> layouts_;
 };
 
 constexpr auto kMaximumCompilerFrame = kMaximumBinaryPayloadBytes;
@@ -422,7 +593,7 @@ std::vector<std::byte> EncodeCompilationEnvironment(const ir::Program& program) 
   // 环境投影与完整 Program 编码共用字段表，排除函数体和调试文本。
   // 两种指纹还绑定 kCompilerBuildIdentity，不跨编译器 schema 复用缓存。
   BinaryWriter writer;
-  Encoder encoder(writer);
+  ContentEncoder encoder(writer);
   std::apply([&](const auto&... fields) { (encoder.Write(fields), ...); },
              CompilationEnvironmentFields(program));
   for (const auto& function : program.functions) {
@@ -489,7 +660,7 @@ std::expected<ir::Program, std::string> DecodeProgram(std::span<const std::byte>
 
 std::vector<std::byte> EncodeFunction(const ir::Function& function) {
   BinaryWriter writer;
-  Encoder(writer).Write(function);
+  ContentEncoder(writer).Write(function);
   return std::move(writer).Take();
 }
 
@@ -560,7 +731,9 @@ std::expected<void, std::string> WriteCompilerFrame(std::FILE* output,
   }
   const auto restore_error = pthread_sigmask(SIG_SETMASK, &previous, nullptr);
   if (restore_error != 0) {
-    return std::unexpected("cannot restore compiler pipe signal mask");
+    return std::unexpected(
+        failed ? "cannot write compiler pipe; cannot restore compiler pipe signal mask"
+               : "cannot restore compiler pipe signal mask");
   }
 #endif
   if (failed) {

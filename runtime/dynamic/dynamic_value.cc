@@ -115,7 +115,7 @@ Result ArrayIndex(Builtin builtin, std::span<const Value> arguments, Heap& heap)
     const auto written = WriteIndex(heap, object, index.AsInteger(), value);
     return written ? Result(original) : std::unexpected(written.error());
   }
-  const auto value = ReadIndex(object, index.AsInteger());
+  const auto value = ReadIndex(heap, object, index.AsInteger());
   return value ? BoxDynamicValue(heap, *value, layout.element) : value;
 }
 

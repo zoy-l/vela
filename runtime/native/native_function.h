@@ -73,7 +73,7 @@ template <>
 struct NativeCodec<std::int64_t> final : NativePlainCodec {
   using AbiType = std::int64_t;
   static constexpr NativeType kType{
-      .type = layout::Type{.kind = layout::Type::Kind::Integer},
+      .type = layout::Type{.kind = layout::Type::Kind::Int},
       .hosts = {},
   };
   static NativeResult Encode(NativeContext& /*unused*/, std::int64_t value) {
@@ -97,7 +97,7 @@ template <>
 struct NativeCodec<bool> final : NativePlainCodec {
   using AbiType = std::uint8_t;
   static constexpr NativeType kType{
-      .type = layout::Type{.kind = layout::Type::Kind::Boolean},
+      .type = layout::Type{.kind = layout::Type::Kind::Bool},
       .hosts = {},
   };
   static NativeResult Encode(NativeContext& /*unused*/, bool value) {
@@ -131,6 +131,18 @@ template <>
 struct NativeCodec<void> final : NativePlainCodec {
   using AbiType = std::uint8_t;
   static constexpr NativeType kType{.hosts = {}};
+};
+
+template <>
+struct NativeCodec<Never> final : NativePlainCodec {
+  using AbiType = std::uint8_t;
+  static constexpr NativeType kType{
+      .type = layout::Type{.kind = layout::Type::Kind::Never},
+      .hosts = {},
+  };
+  static NativeResult Encode(NativeContext& /*context*/, Never /*value*/) {
+    return std::unexpected(vela::Error::FromStatus(ExecutionStatus::InvalidEntry));
+  }
 };
 
 template <>
@@ -356,7 +368,7 @@ struct NativeAbiCodec final {
       return value.AsDouble();
     } else if constexpr (std::is_same_v<T, bool>) {
       return value.AsBoolean() ? 1 : 0;
-    } else if constexpr (std::is_void_v<T>) {
+    } else if constexpr (std::is_void_v<T> || std::is_same_v<T, Never>) {
       return 0;
     } else if constexpr (std::is_same_v<Type, StringObject*>) {
       return value.IsNull() ? nullptr : value.AsString();

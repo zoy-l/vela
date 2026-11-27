@@ -124,7 +124,7 @@ class NativeArrayEntry final {
     std::uint32_t function,
     const CallSignature& signature,
     const BoundArguments& bound,
-    const HeapObject& arguments,
+    HeapObject& arguments,
     std::optional<Value> receiver);
 [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeBoundNativeTarget(
     NativeExecution& execution,

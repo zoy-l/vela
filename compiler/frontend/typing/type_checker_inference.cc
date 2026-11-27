@@ -17,16 +17,16 @@
 
 namespace vela::frontend {
 
-void TypeChecker::SetInferenceParameters(std::span<const Parameter> parameters,
-                                         InferenceSignature& signature) {
-  for (const auto& parameter : parameters) {
+void TypeChecker::SetInferenceParameters(const Function& function, InferenceSignature& signature) {
+  for (const auto& parameter : function.parameters) {
+    const auto default_kind = function.DefaultFor(parameter);
     signature.parameters.push_back({
         .type = parameter.type,
         .name = parameter.name,
         .location = parameter.location,
-        .has_default = parameter.initializer != nullptr,
+        .has_default = default_kind == Function::ParameterDefault::Expression,
     });
-    if (parameter.initializer) {
+    if (default_kind != Function::ParameterDefault::Required) {
       signature.optional_parameters.insert(parameter.name);
     }
   }
@@ -345,8 +345,8 @@ TypeChecker::Type TypeChecker::InferFutureResult(const Expression& expression,
   Type produced;
   const bool dynamic_value = actual != nullptr && actual->kind == Type::Kind::Dynamic &&
                              expression.callee->text == "value";
-  if (actual != nullptr && actual->kind == Type::Kind::Null) {
-    if (!IsValid(context) || !CanAssign(context, *actual)) {
+  if (actual != nullptr && actual->kind == Type::Kind::Null && IsValid(context)) {
+    if (!CanAssign(context, *actual)) {
       AddDiagnostic(expression.location, "null Future value requires a nullable payload type");
       return InvalidType();
     }

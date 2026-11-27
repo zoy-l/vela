@@ -179,6 +179,7 @@ source_set("standard_api_workloads") {
 executable("vela_benchmarks") {
   testonly = true
   sources = [
+    "array_fill_benchmark.cc",
     "array_search_benchmark.cc",
     "async_benchmark.cc",
     "byte_data_benchmark.cc",
@@ -361,6 +362,7 @@ source_set("aot_benchmark_kernels") {
     "aot_benchmark_kernels.h",
     "aot_benchmark_types.h",
   ]
+  deps = [ "//third_party:benchmark" ]
 }
 
 executable("vela_benchmark_tests") {

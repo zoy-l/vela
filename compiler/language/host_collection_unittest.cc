@@ -53,26 +53,18 @@ namespace compiler {
 namespace {
 
 TEST(HostNominalTypeTest, SameNamedDeclarationsBindOnlyToTheirExplicitProgram) {
-  runtime::Isolate isolate(1);
-  auto first = test::CompileCleanSource(R"(
+  constexpr std::string_view source = R"(
 interface Readable { read(): int; }
 class Node implements Readable {
   value: int;
   read(): int { return this.value; }
 }
 func main(): Node { return Node(value: 42); }
-)",
-                                        isolate);
-  auto second = test::CompileCleanSource(R"(
-interface Readable { read(): int; }
-class Node implements Readable {
-  value: int;
-  read(): int { return this.value; }
-}
-func main(): Node { return Node(value: 1); }
-)",
-                                         isolate);
+)";
+  runtime::Isolate isolate(1);
+  auto first = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(first) << first.error();
+  auto second = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(second) << second.error();
   const auto unbound = Type<Object<NodeTag>>::Bind(isolate);
   ASSERT_FALSE(unbound);

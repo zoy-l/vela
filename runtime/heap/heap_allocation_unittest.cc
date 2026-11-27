@@ -19,27 +19,26 @@ namespace vela::runtime {
 namespace {
 
 TEST(HeapAllocationTest, BlockPagesHaveIndependentAlignedWritableStorage) {
-  constexpr auto kFirstPageBytes = internal::kHeapBlockPageBytes;
-  constexpr auto kSecondPageBytes = internal::kHeapBlockPageBytes;
+  constexpr auto kPageBytes = internal::kHeapBlockPageBytes;
   auto* first = internal::ReserveHeapBlockPage();
   auto* second = internal::ReserveHeapBlockPage();
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
-  ASSERT_EQ(internal::CommitHeapBlockPage(first, kFirstPageBytes),
-            internal::HeapPageCommit::Committed);
-  ASSERT_EQ(internal::CommitHeapBlockPage(second, kSecondPageBytes),
-            internal::HeapPageCommit::Committed);
+  ASSERT_EQ(internal::CommitHeapBlockPage(first, kPageBytes), internal::HeapPageCommit::Committed);
+  ASSERT_EQ(internal::CommitHeapBlockPage(second, kPageBytes), internal::HeapPageCommit::Committed);
   EXPECT_NE(first, second);
-  EXPECT_EQ(std::bit_cast<std::uintptr_t>(first) % kFirstPageBytes, 0U);
-  EXPECT_EQ(std::bit_cast<std::uintptr_t>(second) % kSecondPageBytes, 0U);
-  const std::span first_bytes(static_cast<std::byte*>(first), kFirstPageBytes);
-  const std::span second_bytes(static_cast<std::byte*>(second), kSecondPageBytes);
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(first) % kPageBytes, 0U);
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(second) % kPageBytes, 0U);
+  const std::span first_bytes(static_cast<std::byte*>(first), kPageBytes);
+  const std::span second_bytes(static_cast<std::byte*>(second), kPageBytes);
   constexpr auto kFirstValue = std::byte{0x42};
   constexpr auto kSecondValue = std::byte{0x17};
   first_bytes.front() = kFirstValue;
   first_bytes.back() = kFirstValue;
   second_bytes.front() = kSecondValue;
   second_bytes.back() = kSecondValue;
+  EXPECT_EQ(first_bytes.front(), kFirstValue);
+  EXPECT_EQ(first_bytes.back(), kFirstValue);
   internal::ReleaseHeapBlockPage(first);
   EXPECT_EQ(second_bytes.front(), kSecondValue);
   EXPECT_EQ(second_bytes.back(), kSecondValue);
@@ -308,16 +307,16 @@ TEST(HeapAllocationTest, FailedGrowthPreservesArraySlotsStringAndCollectionState
   ASSERT_FALSE(inserted);
   EXPECT_EQ(inserted.error(), ExecutionStatus::OutOfMemory);
   EXPECT_EQ(heap.allocated_bytes(), bytes);
-  EXPECT_EQ(Heap::GetElement(elements, 0)->AsInteger(), 42);
-  EXPECT_EQ(Heap::ValueSlots(slots).front().AsInteger(), 42);
-  EXPECT_EQ(Heap::ValueSlots(slots).size(), 1U);
+  EXPECT_EQ(heap.GetElement(elements, 0)->AsInteger(), 42);
+  const auto retained_slots = Heap::ValueSlots(slots);
+  ASSERT_EQ(retained_slots.size(), 1U);
+  EXPECT_EQ(retained_slots.front().AsInteger(), kRetainedValue);
   EXPECT_EQ(Heap::CollectionLength(entries), 0U);
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
   ASSERT_TRUE(heap.ReserveArray(elements, 32));
   ASSERT_TRUE(heap.AppendString(text, "value"));
   ASSERT_TRUE(heap.InsertCollection(entries, Value::Integer(1)));
-  EXPECT_EQ(Heap::GetElement(elements, 0)->AsInteger(), 42);
-  EXPECT_EQ(Heap::ValueSlots(slots).front().AsInteger(), 42);
+  EXPECT_EQ(heap.GetElement(elements, 0)->AsInteger(), 42);
 }
 
 }  // namespace

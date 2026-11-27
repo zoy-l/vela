@@ -21,6 +21,7 @@ TEST(MemberTableTest, CanonicalReceiverWinsAcrossNominalLayoutsAndMoves) {
       .interfaces = {},
       .nominal = nominal,
       .field_declarations = {},
+      .value_slots = {},
   };
   const auto* first = isolate.CreateClassLayout(0, {}, options);
   const auto* second = isolate.CreateClassLayout(0, {}, options);

@@ -135,6 +135,31 @@ BENCHMARK(CheckRefinements)->Name("check/refinements")->Arg(8)->Arg(32)->Arg(128
 
 enum class BranchKind : std::uint8_t { Match, Switch };
 
+void CheckLogicalConditions(benchmark::State& state) {
+  std::string source = "func choose(value: bool): bool { return value";
+  for (std::int64_t index = 1; index < state.range(0); ++index) {
+    source += " && value";
+  }
+  source += "; }";
+  const frontend::SourceInput input{.path = "logical.vela", .text = source};
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+  if (!parsed.diagnostics.empty()) {
+    state.SkipWithError(frontend::DiagnosticsText(parsed.diagnostics));
+    return;
+  }
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    auto checked = frontend::TypeChecker().Check(parsed.program);
+    if (!checked.Succeeded()) {
+      state.SkipWithError(frontend::DiagnosticsText(checked.diagnostics));
+      return;
+    }
+    benchmark::DoNotOptimize(checked);
+  }
+}
+
+BENCHMARK(CheckLogicalConditions)->Name("check/logical_conditions")->Arg(256)->UseRealTime();
+
 void CheckBranchRefinements(benchmark::State& state, BranchKind kind) {
   std::string source = "func choose(selector: int";
   for (std::int64_t index = 0; index < state.range(0); ++index) {

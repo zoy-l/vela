@@ -125,9 +125,9 @@ func main(): Store {
   if (!rows.has_value()) {
     FAIL() << "Expected rows to have a value";
   }
-  const auto row = runtime::Heap::GetElement(*rows->AsObject(), 0);
+  const auto row = heap.GetElement(*rows->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
-  const auto element = runtime::Heap::GetElement(*row->AsObject(), 0);
+  const auto element = heap.GetElement(*row->AsObject(), 0);
   ASSERT_TRUE(element.has_value());
   EXPECT_EQ(element->AsString()->value(), "cd");
   value = runtime::Value::Null();

@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "base/declaration.h"
+#include "base/inline_layout.h"
 #include "base/json_decode.h"
 #include "base/native_program_mode.h"
 #include "base/source_location.h"
@@ -84,6 +85,7 @@ struct NativeClassDescription final {
   DeclarationId base_class;
   std::uint32_t constructor = kNoNativeIndex;
   NativeTable<NativeText> enum_members;
+  NativeTable<InlineSlotKind> value_slots;
 
   [[nodiscard]] std::uint32_t VirtualTarget(std::uint32_t selector) const noexcept {
     if (selector < first_selector) {
@@ -120,6 +122,8 @@ struct NativeSignatureDescription final {
   std::uint32_t has_result = 0;
   NativeTypeDescription narrowed_parameter;
   std::uint32_t has_narrowed_parameter = 0;
+  NativeTypeDescription false_narrowed_parameter;
+  std::uint32_t has_false_narrowed_parameter = 0;
 };
 
 struct NativeCallParameter final {

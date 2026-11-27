@@ -15,7 +15,7 @@ from tools.bindgen import fingerprints, generate, verify_manifest
 from tools.package import package_bindgen
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools, xcode_path
 from tools.test_support import (CommandTestCase, NATIVE_PACKAGE_AVAILABLE, compile_native_host,
-                                create_native_package)
+                                create_native_package, native_command)
 from tools.llvm import sdk_specification
 
 
@@ -47,24 +47,27 @@ class BindingCollectorTest(CommandTestCase):
                  "arguments": self.arguments}
         self.database.write_text(json.dumps([entry] * copies), encoding="utf-8", newline="\n")
 
-    def collect(self, source: str, *, code: int = 0,
-                extra: list[str] | None = None) -> subprocess.CompletedProcess:
+    def write_header(self, source: str) -> None:
         self.header.write_text('#pragma once\n#include <vela/bindings.h>\n' + source,
                                encoding="utf-8", newline="\n")
-        output_arguments = extra or []
-        if not any(argument.startswith("--output-directory=") for argument in output_arguments):
-            output_arguments = ["--output-directory=" + str(self.directory / "collected"),
-                                *output_arguments]
-        result = subprocess.run([
-            str(self.collector), "--module=app", "--database=" + str(self.database),
+
+    def collect(self, source: str, *, code: int = 0) -> subprocess.CompletedProcess:
+        self.write_header(source)
+        result = native_command(self, [
+            self.collector, "--module=app", "--database=" + str(self.database),
             "--source=" + str(self.source), "--header=" + str(self.header),
-            "--resource-dir=" + str(self.resource), *output_arguments],
-            cwd=self.directory, capture_output=True, text=True, encoding="utf-8", timeout=60,
-            check=False)
-        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+            "--resource-dir=" + str(self.resource), "--output-directory=" + str(self.directory / "collected")],
+            code, cwd=self.directory)
         if code:
             self.assertEqual(result.stdout, "", "failed collection must publish no model")
         return result
+
+    def check_generated_cpp(self, source: Path) -> None:
+        flags = (["/nologo", "/Zs", "/clang:-std=c++23"] if sys.platform == "win32"
+                 else ["-fsyntax-only", "-std=c++23"])
+        native_command(self, [self.compiler, *self.platform_arguments, *flags, "-I" + str(ROOT),
+                              "-I" + str(ROOT / "include"), "-I" + str(ROOT / "third_party/abseil-cpp"),
+                              source], cwd=self.directory)
 
     def test_collects_public_declarations_names_locations_and_exact_types(self) -> None:
         source = """#include <cstdint>
@@ -161,6 +164,18 @@ struct VELA_MODULE("app.Api") Api {
         members = json.loads(result.stdout)["classes"][0]["members"]
         self.assertEqual([member["name"] for member in members], ["Double", "Int"])
 
+    def test_null_host_values_preserve_their_language_type(self) -> None:
+        model = json.loads(self.collect("""#include <cstddef>
+class VELA_CLASS("app.Host") Host {
+ public:
+  std::nullptr_t Echo(std::nullptr_t value) noexcept;
+};
+""").stdout)
+        member, = model["classes"][0]["members"]
+        self.assertEqual(member["parameters"][0]["type"]["kind"], "null")
+        self.assertEqual(member["result"]["kind"], "null")
+        self.assertIn("Echo(value: null): null", model["products"]["app.vela"])
+
     def test_preserves_nested_local_contracts_and_generates_structured_types(self) -> None:
         source = """#include <cstdint>
 #include <optional>
@@ -174,8 +189,7 @@ class VELA_CLASS("app.Host") Host {
   vela::Local<Values> Echo(vela::Local<Values> values) noexcept;
   std::optional<vela::Local<Callback>> Select(std::optional<vela::Local<Callback>> callback) noexcept;
 };"""
-        output = self.directory / "generated"
-        model = json.loads(self.collect(source, extra=["--output-directory=" + str(output)]).stdout)
+        model = json.loads(self.collect(source).stdout)
         self.assertEqual(model["format_version"], 2)
         host, = model["classes"]
         members = {member["name"]: member for member in host["members"]}
@@ -242,35 +256,43 @@ class VELA_CLASS("app.Counter") Counter {
         generated = header.read_text(encoding="utf-8")
         self.assertIn("using Arguments = std::tuple<std::int64_t>", generated)
         self.assertNotIn("Get_hidden", generated)
+        manifest_path = self.check_script_echo(dependency, "Box", "object")
+        self.check_generated_cpp(manifest_path.parent / "app_bindings.cc")
+        dependency.write_text("export class Box<T> { value: T; }\n", encoding="utf-8", newline="\n")
+        with self.assertRaisesRegex(ValueError, "Stale binding input"):
+            verify_manifest(manifest_path)
+
+    def test_generated_script_header_round_trips_struct_kind_and_generic_arguments(self) -> None:
+        dependency = self.write("types.vela", "export struct Point<T> { x: T; y: T; }\n")
+        entry = self.write("api.vela", "import 'types.vela' as types;\n"
+                           "export func echo(value: types.Point<int>): types.Point<int> { return value; }\n")
+        header = self.directory / "script.h"
+        self.invoke("host-header", str(entry), "--namespace=script", "-o", str(header))
+        self.assertIn("ScriptTypeKind::Struct", header.read_text(encoding="utf-8"))
+        self.check_script_echo(dependency, "Point", "struct")
+
+    def check_script_echo(self, dependency: Path, declaration: str, kind: str) -> Path:
         self.arguments[1:1] = ["-I" + str(ROOT), "-I" + str(ROOT / "third_party/abseil-cpp")]
         self.write_database()
-        # Read the exact generated signature through the function type, without spelling tag names.
-        self.collect('''#include "script.h"
+        # Read the generated signature without depending on generated tag names.
+        self.write_header('''#include "script.h"
 template<class T> struct ResultOf;
 template<class T> struct ResultOf<vela::Entry<T(T)>> { using Type = T; };
-using Box = typename ResultOf<script::Entry_echo>::Type;
+using ScriptValue = typename ResultOf<script::Entry_echo>::Type;
 class VELA_CLASS("app.Service") Service final { public:
-  vela::Local<Box> Echo(vela::Local<Box> value) noexcept { return value; }
+  vela::Local<ScriptValue> Echo(vela::Local<ScriptValue> value) noexcept { return value; }
 };
 ''')
         manifest_path = generate(self.binding_config(), self.collector, self.resource)
         manifest = verify_manifest(manifest_path)
         shape = manifest["bindings"]["classes"][0]["members"][0]["result"]
-        self.assertEqual((Path(shape["module"]), shape["declaration"]), (dependency, "Box"))
+        self.assertEqual(shape["kind"], kind)
+        self.assertEqual((Path(shape["module"]), shape["declaration"]), (dependency, declaration))
         self.assertEqual(shape["arguments"][0]["kind"], "int")
         self.assertIn(str(dependency), manifest["inputs"])
-        self.assertIn("scriptDependency1.Box<int>", (manifest_path.parent / "app.vela").read_text())
-        standard = "/clang:-std=c++23" if sys.platform == "win32" else "-std=c++23"
-        flags = ["/nologo", "/Zs"] if sys.platform == "win32" else ["-fsyntax-only"]
-        compiled = subprocess.run([str(self.compiler), *self.platform_arguments, standard, *flags,
-                                   "-I" + str(ROOT), "-I" + str(ROOT / "include"),
-                                   "-I" + str(ROOT / "third_party/abseil-cpp"),
-                                   str(manifest_path.parent / "app_bindings.cc")],
-                                  capture_output=True, text=True, check=False)
-        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
-        dependency.write_text("export class Box<T> { value: T; }\n", encoding="utf-8", newline="\n")
-        with self.assertRaisesRegex(ValueError, "Stale binding input"):
-            verify_manifest(manifest_path)
+        self.assertIn(f"scriptDependency1.{declaration}<int>",
+                      (manifest_path.parent / "app.vela").read_text())
+        return manifest_path
 
     def test_host_header_rejects_private_public_dependencies_without_replacing_output(self) -> None:
         source = self.write("private.vela", "class Secret {} export func create(): Secret { return Secret(); }")
@@ -278,6 +300,22 @@ class VELA_CLASS("app.Service") Service final { public:
         rejected = self.invoke("host-header", str(source), "--namespace=script", "-o", str(output), code=65)
         self.assertIn("not exported", rejected.stderr)
         self.assertEqual(output.read_text(), "previous generation\n")
+
+    def test_rejects_script_type_kind_values_outside_the_declared_enum(self) -> None:
+        result = self.collect('''#include <vela/types.h>
+struct Tag {};
+namespace vela {
+template<> struct ScriptTypeTraits<Tag> {
+  static constexpr auto kKind = static_cast<ScriptTypeKind>(99);
+  static constexpr auto kModule = "types.vela";
+  static constexpr auto kName = "Point";
+};
+}
+class VELA_CLASS("app.Service") Service final { public:
+  vela::Local<vela::Object<Tag>> Echo(vela::Local<vela::Object<Tag>> value) noexcept;
+};
+''', code=1)
+        self.assertIn("ScriptTypeTraits.kKind is not a declared ScriptTypeKind", result.stderr)
 
     def test_rejects_unowned_results_and_nonstandard_stl_specializations(self) -> None:
         prefix = '#include <memory>\n#include <string>\n'
@@ -360,10 +398,8 @@ static_assert(sizeof(Counter) == sizeof(int));
 #endif
 """, encoding="utf-8", newline="\n")
         flags = ["/Zs", "/nologo"] if sys.platform == "win32" else ["-fsyntax-only"]
-        result = subprocess.run([str(self.compiler), *self.platform_arguments, *flags,
-                                 "-I" + str(ROOT / "include"),
-                                 str(self.source)], capture_output=True, text=True, check=False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        native_command(self, [self.compiler, *self.platform_arguments, *flags,
+                              "-I" + str(ROOT / "include"), self.source], cwd=self.directory)
 
     def binding_config(self, module: str = "app", *, dependencies: list[str] | None = None) -> Path:
         return self.write(module + ".json", json.dumps({
@@ -373,7 +409,7 @@ static_assert(sizeof(Counter) == sizeof(int));
             "dependencies": dependencies or []}))
 
     def test_publishes_checked_deterministic_dual_output_and_rejects_mixed_generation(self) -> None:
-        self.collect("""#include <cstdint>
+        self.write_header("""#include <cstdint>
 class VELA_CLASS("app.Counter") Counter final { public:
   explicit Counter(std::int64_t initial) noexcept;
   VELA_NAME("add") std::int64_t Add(std::int64_t delta) noexcept;
@@ -393,14 +429,7 @@ class VELA_CLASS("app.Counter") Counter final { public:
         generate(config, self.collector, self.resource)
         self.assertEqual(before, {path.name: (path.read_bytes(), path.stat().st_mtime_ns)
                                   for path in output.iterdir()})
-        standard = "/clang:-std=c++23" if sys.platform == "win32" else "-std=c++23"
-        compile_arguments = [str(self.compiler), *self.platform_arguments, standard, "-I" + str(ROOT),
-                             "-I" + str(ROOT / "include"),
-                             "-I" + str(ROOT / "third_party/abseil-cpp")]
-        compile_arguments += ["/nologo", "/Zs"] if sys.platform == "win32" else ["-fsyntax-only"]
-        compiled = subprocess.run([*compile_arguments, str(output / "app_bindings.cc")],
-                                  capture_output=True, text=True, check=False)
-        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        self.check_generated_cpp(output / "app_bindings.cc")
         script = output / "app.vela"
         self.invoke("check", str(script))
         self.invoke("fmt", "--check", str(script))
@@ -411,7 +440,8 @@ class VELA_CLASS("app.Counter") Counter final { public:
         original_cpp = generated_cpp.read_bytes()
         generated_cpp.write_bytes(original_cpp + b"// mixed\n")
         rejected = self.invoke("check", str(script), code=65)
-        self.assertIn("stale or mixed binding product", rejected.stderr)
+        self.assertIn("binding product fingerprint mismatch", rejected.stderr)
+        self.assertIn("app_bindings.cc", rejected.stderr)
         generated_cpp.write_bytes(original_cpp)
         (output / "app.vela").write_text("// broken generation\n", encoding="utf-8", newline="\n")
         with self.assertRaisesRegex(ValueError, "Stale or mixed"):
@@ -420,41 +450,33 @@ class VELA_CLASS("app.Counter") Counter final { public:
             generate(config, self.collector, self.resource, check=True)
 
     def test_generates_imports_and_traits_for_dependency_host_types(self) -> None:
-        self.collect('class VELA_CLASS("base.Counter") Counter {};')
-        base_manifest = generate(self.binding_config("base"), self.collector, self.resource)
-        other = self.write("other.h", self.header.read_text(encoding="utf-8"))
-        self.header.write_text('''#include <vela/bindings.h>
-#include "other.h"
-class VELA_CLASS("app.Service") Service { public:
-  void Accept(const Counter& counter) noexcept;
-};
-''', encoding="utf-8", newline="\n")
-        config = self.binding_config(dependencies=[str(base_manifest)])
-        # The dependency's source header is an input snapshot and must remain unchanged.
-        base_config = json.loads((self.directory / "base.json").read_text())
-        base_config["headers"] = [other.name]
+        other = self.write("other.h", '#pragma once\n#include <vela/bindings.h>\n'
+                           'class VELA_CLASS("base.Counter") Counter {};\n')
         base_source = self.write("base.cc", '#include "other.h"\n')
-        base_config["translation_unit"] = base_source.name
         database = self.write("base_commands.json", json.dumps([{
             "directory": str(self.directory), "file": str(base_source),
             "arguments": [*self.arguments[:-1], str(base_source)]}]))
-        base_config["compilation_database"] = database.name
-        self.write("base.json", json.dumps(base_config))
-        generate(self.directory / "base.json", self.collector, self.resource)
-        manifest = generate(config, self.collector, self.resource)
+        base_config = self.write("base.json", json.dumps({
+            "module": "base", "headers": [other.name], "translation_unit": base_source.name,
+            "compilation_database": database.name, "output": "generated/base"}))
+        base_manifest = generate(base_config, self.collector, self.resource)
+        self.write_header('''#include "other.h"
+class VELA_CLASS("app.Service") Service { public:
+  void Accept(const Counter& counter) noexcept;
+};
+''')
+        manifest = generate(self.binding_config(dependencies=[str(base_manifest)]), self.collector, self.resource)
         script = (manifest.parent / "app.vela").read_text()
         self.assertIn("nativeDependency0.Counter", script)
         self.assertIn("other.h", (base_manifest.parent / "base_bindings.h").read_text())
 
     def test_packaged_binding_command_uses_only_bundled_parser_resource_and_formatter(self) -> None:
-        self.collect('class VELA_CLASS("app.Counter") Counter { public: void Ping() noexcept; };')
+        self.write_header('class VELA_CLASS("app.Counter") Counter { public: void Ping() noexcept; };')
         package = self.directory / "package"
         package_bindgen(self.collector, package)
         config = self.binding_config()
-        result = subprocess.run([sys.executable, str(package / "bin/vela-bindgen.py"),
-                                 "--config", str(config)], cwd=self.directory, capture_output=True,
-                                text=True, encoding="utf-8", check=False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        native_command(self, [sys.executable, package / "bin/vela-bindgen.py", "--config", config],
+                       cwd=self.directory)
         manifest = self.directory / "generated/app/app.bindings.json"
         self.assertTrue(verify_manifest(manifest))
         parsed = json.loads(manifest.read_text())
@@ -479,7 +501,7 @@ class VELA_CLASS("app.Service") Service { public:
                 self.assertIn(diagnostic, self.collect(source, code=1).stderr)
 
     def test_registration_names_are_valid_for_cpp_keywords_and_reserved_identifier_spelling(self) -> None:
-        self.collect('class VELA_CLASS("app.Counter") Counter {};')
+        self.write_header('class VELA_CLASS("app.Counter") Counter {};')
         for module in ("namespace", "_Z_"):
             with self.subTest(module=module):
                 manifest = generate(self.binding_config(module), self.collector, self.resource)
@@ -518,11 +540,8 @@ class VELA_CLASS("app.Counter") Counter final {
         host_python = self.directory / "host_python"
         (host_python / "tools").mkdir(parents=True)
         (host_python / "tools" / "__init__.py").touch()
-        generated = subprocess.run([sys.executable, str(package / "bin/vela-bindgen.py"),
-                                    "--config", str(self.binding_config())], cwd=self.directory,
-                                   env=dict(os.environ, PYTHONPATH=str(host_python)),
-                                   capture_output=True, text=True, encoding="utf-8", check=False)
-        self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
+        native_command(self, [sys.executable, package / "bin/vela-bindgen.py", "--config", self.binding_config()],
+                       cwd=self.directory, env=dict(os.environ, PYTHONPATH=str(host_python)))
         manifest = self.directory / "generated/app/app.bindings.json"
         self.assertTrue(verify_manifest(manifest))
         script = self.write("exports.vela", """import 'generated/app/app';
@@ -535,11 +554,9 @@ export func retain(counter: Counter?): Counter? { return counter; }
             with self.subTest(kind=kind):
                 library = self.directory / ("image" + (".obj" if sys.platform == "win32" else ".o")
                                              if kind == "obj" else static_library_name("image"))
-                built = subprocess.run([str(compiler), "build", str(script), "--emit=" + kind,
-                                        "--export=create", "--export=update", "--export=retain",
-                                        "-o", str(library)], cwd=self.directory, capture_output=True,
-                                       text=True, encoding="utf-8", check=False)
-                self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+                native_command(self, [compiler, "build", script, "--emit=" + kind,
+                                      "--export=create", "--export=update", "--export=retain", "-o", library],
+                               cwd=self.directory)
                 metadata = json.loads(Path(str(library) + ".aot.json").read_text())
                 namespace = metadata["image"].removesuffix("_image")
                 header = Path(str(library) + ".h").read_text()
@@ -588,9 +605,7 @@ int main() {
                 standalone = execution_directory / executable.name
                 executable.replace(standalone)
                 environment = dict(os.environ, PATH="")
-                ran = subprocess.run([str(standalone)], cwd=execution_directory, env=environment,
-                                     capture_output=True, text=True, check=False)
-                self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+                native_command(self, [standalone], cwd=execution_directory, env=environment)
                 script.write_bytes(backup)
 
 

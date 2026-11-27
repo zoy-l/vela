@@ -197,6 +197,9 @@ class NativeDispatch final {
   [[nodiscard]] std::expected<Value, ExecutionStatus> LoadField(NativeExecution& execution,
                                                                 HeapObject& object,
                                                                 DeclarationId field);
+  [[nodiscard]] static std::expected<NativeStructField, ExecutionStatus> BorrowStructField(
+      HeapObject& object,
+      DeclarationId field) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> StoreField(HeapObject& object,
                                                                 DeclarationId field,
                                                                 Value value) noexcept;
@@ -240,9 +243,14 @@ class NativeDispatch final {
   std::uint64_t deoptimized_frames_ = 0;
 };
 
-extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
+extern "C" std::uint8_t vela_native_v33_load_global(NativeExecution* execution,
+                                                    NativeProgramState* origin,
                                                     std::uint32_t index,
                                                     NativeValue* result);
+extern "C" std::uint8_t vela_native_v33_borrow_struct_field(NativeExecution* execution,
+                                                            HeapObject* object,
+                                                            std::uint64_t field,
+                                                            NativeStructField* result);
 // 缓存数组由当前函数版本持有，借用期覆盖本次调用及恢复；提交只更新缓存内容。
 extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execution,
                                                           std::uint32_t function) noexcept;

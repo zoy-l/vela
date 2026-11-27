@@ -1,5 +1,7 @@
 #pragma once
 
+#include "base/inline_layout.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -10,6 +12,18 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+
+[[nodiscard]] Value LoadInlineSlot(InlineSlotKind kind,
+                                   std::span<const std::byte> storage) noexcept;
+void StoreInlineSlot(InlineSlotKind kind, std::span<std::byte> storage, Value value) noexcept;
+void StoreInlineElement(const ArrayLayout& layout,
+                        std::span<std::byte> storage,
+                        std::size_t index,
+                        Value value) noexcept;
+[[nodiscard]] bool IncludesInlineElement(const ArrayLayout& layout,
+                                         std::span<const std::byte> storage,
+                                         std::size_t start,
+                                         Value value) noexcept;
 
 template <class Visitor>
 decltype(auto) VisitElementType(const ArrayLayout& layout, const Visitor& visitor) {
@@ -56,6 +70,25 @@ void VisitReferenceStorage(const ArrayLayout& layout,
                            std::span<Byte> storage,
                            const Visitor& visitor) {
   if (!layout.HasReferences()) {
+    return;
+  }
+  if (layout.value_layout != nullptr) {
+    const auto& shape = layout.value_layout->value_layout();
+    const auto stride = layout.element_size();
+    for (std::size_t offset = 0; offset < storage.size(); offset += stride) {
+      const auto record = storage.subspan(offset, stride);
+      if (layout.element.nullable && record.front() == std::byte{}) {
+        continue;
+      }
+      const auto payload = record.subspan(shape.PayloadOffset(layout.element.nullable));
+      for (const auto& slot : shape.slots()) {
+        if (slot.kind == InlineSlotKind::Reference || slot.kind == InlineSlotKind::String ||
+            slot.kind == InlineSlotKind::Dynamic) {
+          const auto value = LoadInlineSlot(slot.kind, payload.subspan(slot.offset));
+          visitor(std::span(&value, 1));
+        }
+      }
+    }
     return;
   }
   VisitElementStorage(layout, storage, [&visitor]<class T>(std::span<T> elements) {
@@ -110,6 +143,10 @@ inline void StoreElementStorage(const ArrayLayout& layout,
                                 std::span<std::byte> storage,
                                 std::size_t index,
                                 Value value) noexcept {
+  if (layout.value_layout != nullptr) {
+    StoreInlineElement(layout, storage, index, value);
+    return;
+  }
   VisitElementStorage(layout, storage, [index, value]<class T>(std::span<T> elements) {
     elements.subspan(index).front() = ElementValue<T>(value);
   });

@@ -157,12 +157,16 @@ testing::AssertionResult CompletesWithInteger(runtime::Isolate& isolate,
              : testing::AssertionFailure() << "Future did not complete with a value";
 }
 
+testing::AssertionResult ReturnsInteger(const std::expected<runtime::Value, ExecutionStatus>& result,
+                                        std::int64_t expected) {
+  return result ? IsExpectedInteger(*result, expected)
+                : testing::AssertionFailure() << ExecutionStatusName(result.error());
+}
+
 testing::AssertionResult ReturnsInteger(const runtime::NativeNamedEntry& entry,
                                         std::int64_t expected,
                                         std::span<const runtime::Value> arguments) {
-  const auto result = entry.Invoke(arguments);
-  return result ? IsExpectedInteger(*result, expected)
-                : testing::AssertionFailure() << ExecutionStatusName(result.error());
+  return ReturnsInteger(entry.Invoke(arguments), expected);
 }
 
 testing::AssertionResult RequiresReload(Compiler& compiler,

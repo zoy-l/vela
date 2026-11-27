@@ -13,6 +13,7 @@
 #include "compiler/frontend/syntax/token.h"
 
 #include "compiler/frontend/typing/type_limits.h"
+#include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 
@@ -138,6 +139,9 @@ std::optional<TypeName> Parser::ParseTypeBody() {
     }
     result = std::move(*parenthesized);
     depth = last_type_depth_;
+  } else if (Match(TokenKind::Null)) {
+    result.name = kNullTypeName;
+    result.kind = TypeName::Kind::Named;
   } else if (Check(TokenKind::Identifier) || Check(TokenKind::Void)) {
     auto name = ParseQualifiedTypeName();
     if (!name) {

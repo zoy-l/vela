@@ -212,6 +212,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              wide_,
                                              word_,
                                              table_,
+                                             table_,
                                          }),
                                          std::array{
                                              offsetof(NativeClassDescription, name),
@@ -231,6 +232,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                              offsetof(NativeClassDescription, base_class),
                                              offsetof(NativeClassDescription, constructor),
                                              offsetof(NativeClassDescription, enum_members),
+                                             offsetof(NativeClassDescription, value_slots),
                                          });
   array_ = RecordType<NativeArrayDescription>("vela.array",
                                               std::to_array<llvm::Type*>({text_, type_, word_}),
@@ -254,7 +256,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeSignatureParameter, flags),
       });
   signature_ = RecordType<NativeSignatureDescription>(
-      "vela.signature", std::to_array<llvm::Type*>({text_, table_, type_, word_, type_, word_}),
+      "vela.signature",
+      std::to_array<llvm::Type*>({text_, table_, type_, word_, type_, word_, type_, word_}),
       std::array{
           offsetof(NativeSignatureDescription, name),
           offsetof(NativeSignatureDescription, parameters),
@@ -262,6 +265,8 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeSignatureDescription, has_result),
           offsetof(NativeSignatureDescription, narrowed_parameter),
           offsetof(NativeSignatureDescription, has_narrowed_parameter),
+          offsetof(NativeSignatureDescription, false_narrowed_parameter),
+          offsetof(NativeSignatureDescription, has_false_narrowed_parameter),
       });
   call_parameter_ = RecordType<NativeCallParameter>(
       "vela.call.parameter", std::to_array<llvm::Type*>({text_, word_, word_}),
@@ -598,6 +603,11 @@ llvm::Constant* ImageEmitter::Type(const NativeTypeDescription& type) {
 llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> classes) {
   std::vector<llvm::Constant*> constants;
   for (const auto& type : classes) {
+    std::vector<llvm::Constant*> slots;
+    auto* slot_type = llvm::Type::getInt8Ty(context_);
+    for (const auto slot : type.value_slots.values()) {
+      slots.push_back(llvm::ConstantInt::get(slot_type, static_cast<std::uint8_t>(slot)));
+    }
     std::vector<llvm::Constant*> fields;
     fields.reserve(type.fields.size);
     for (const auto& field : type.fields.values()) {
@@ -626,6 +636,7 @@ llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> cl
                                            Wide(type.base_class.value),
                                            Word(type.constructor),
                                            Texts(type.enum_members.values()),
+                                           Table(slot_type, slots),
                                        }));
   }
   return Table(class_, constants);
@@ -669,6 +680,8 @@ llvm::Constant* ImageEmitter::Signatures(std::span<const NativeSignatureDescript
                                                Word(type.has_result),
                                                Type(type.narrowed_parameter),
                                                Word(type.has_narrowed_parameter),
+                                               Type(type.false_narrowed_parameter),
+                                               Word(type.has_false_narrowed_parameter),
                                            }));
   }
   return Table(signature_, constants);

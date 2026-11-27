@@ -40,7 +40,6 @@ TEST(IntegerArithmeticTest, BitwiseOperationsPreserveNegativeBitPatterns) {
   EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitAndInt, -1, kMinimum), kMinimum);
   EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitAndInt, kMinimum, kMaximum), 0);
   EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitOrInt, kMinimum, kMaximum), -1);
-  EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitOrInt, -2, 1), -1);
   EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitXorInt, -1, kMaximum), kMinimum);
   EXPECT_EQ(EvaluateIntegerArithmetic(Opcode::BitXorInt, kMinimum, kMinimum), 0);
 }

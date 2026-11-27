@@ -26,9 +26,11 @@ llvm::json::Object SerializeSource(const Source& source) {
 std::string_view TypeName(const layout::Program& program, const layout::Type& type) {
   using Kind = layout::Type::Kind;
   switch (type.kind) {
+    case Kind::Null:
+    case Kind::Never:
     case Kind::Dynamic:
-    case Kind::Boolean:
-    case Kind::Integer:
+    case Kind::Bool:
+    case Kind::Int:
     case Kind::Double:
     case Kind::String:
     case Kind::CancellationToken:
@@ -39,22 +41,33 @@ std::string_view TypeName(const layout::Program& program, const layout::Type& ty
     case Kind::RegExpMatch:
     case Kind::Timer:
       return layout::ScalarTypeName(type.kind);
-    case Kind::Instance:
-      return program.classes[type.index].kind == layout::Class::Kind::Host ? "host" : "object";
+    case Kind::Class: {
+      const auto kind = program.classes[type.index].kind;
+      if (kind == layout::Class::Kind::Host) {
+        return "host";
+      }
+      return kind == layout::Class::Kind::Struct ? "struct" : "object";
+    }
     case Kind::Enum:
       return "enum";
     case Kind::Interface:
       return "interface";
     case Kind::Array:
       return "array";
-    case Kind::Collection:
-      return program.collections[type.index].value ? "map" : "set";
-    case Kind::Callable:
+    case Kind::Set:
+      return "set";
+    case Kind::Map:
+      return "map";
+    case Kind::Function:
       return "function";
     case Kind::Future:
       return "future";
     case Kind::Completer:
       return "completer";
+    case Kind::Invalid:
+    case Kind::Void:
+    case Kind::Parameter:
+      llvm_unreachable("non-concrete layout type");
   }
   llvm_unreachable("exhaustive type kind");
 }
@@ -101,7 +114,7 @@ llvm::json::Object SerializeShape(const layout::Program& program,
   };
   using Kind = layout::Type::Kind;
   switch (type->kind) {
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum: {
       const auto& nominal = program.classes[type->index];
       result["key"] = nominal.native_key.empty() ? nominal.name : nominal.native_key;
@@ -119,7 +132,8 @@ llvm::json::Object SerializeShape(const layout::Program& program,
     case Kind::Array:
       result["element"] = SerializeShape(program, program.arrays[type->index].element);
       break;
-    case Kind::Collection: {
+    case Kind::Set:
+    case Kind::Map: {
       const auto& collection = program.collections[type->index];
       result["key_type"] = SerializeShape(program, collection.key);
       if (collection.value) {
@@ -127,7 +141,7 @@ llvm::json::Object SerializeShape(const layout::Program& program,
       }
       break;
     }
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer: {
       const auto& signature = program.signatures[type->index];
@@ -192,7 +206,7 @@ bool Type::IsSameLogicalType(const Type& other) const {
 Type HostType(std::string_view key, Ownership ownership) {
   Type result{
       .layouts = {},
-      .value = layout::Type{.kind = layout::Type::Kind::Instance},
+      .value = layout::Type{.kind = layout::Type::Kind::Class},
       .ownership = ownership,
       .cpp = {},
   };
@@ -204,6 +218,7 @@ Type HostType(std::string_view key, Ownership ownership) {
       .reference_fields = {},
       .callable = {},
       .interfaces = {},
+      .value_slots = {},
   });
   return result;
 }

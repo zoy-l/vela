@@ -22,12 +22,12 @@ const layout::Program& NativeType::layouts() const noexcept {
 }
 
 bool NativeType::IsHost() const noexcept {
-  return type && type->kind == layout::Type::Kind::Instance &&
+  return type && type->kind == layout::Type::Kind::Class &&
          layouts().classes[type->index].kind == layout::Class::Kind::Host;
 }
 
 std::string_view NativeType::host_key() const noexcept {
-  if (!type || type->kind != layout::Type::Kind::Instance) {
+  if (!type || type->kind != layout::Type::Kind::Class) {
     return {};
   }
   const auto& nominal = layouts().classes[type->index];

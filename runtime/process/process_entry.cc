@@ -61,8 +61,7 @@ void InitializeProcessOutput() {
 }
 
 void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagnostic) {
-  const auto message = diagnostic.message.empty() ? ExecutionStatusName(diagnostic.status)
-                                                  : std::string_view(diagnostic.message);
+  const auto message = diagnostic.Message();
   if (diagnostic.stack_trace.empty()) {
     WriteError(output, {}, SourceLocation(), message);
   } else {

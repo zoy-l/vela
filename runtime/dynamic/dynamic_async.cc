@@ -23,7 +23,7 @@ namespace {
 using OperationResult = std::expected<void, ExecutionStatus>;
 
 bool IsThrowableType(const TypeConstraint& type) {
-  return !type.nullable && !type.dynamic && type.kind == ValueKind::Object &&
+  return !type.nullable && !type.IsDynamic() && type.kind == ValueKind::Object &&
          (type.interface != nullptr ||
           (type.nominal != nullptr && !type.nominal->IsEnum() && !type.nominal->IsCallable()));
 }
@@ -43,7 +43,7 @@ std::expected<const TypeSignature*, ExecutionStatus> Callback(Value value, std::
 
 bool HasCompatibleResult(const TypeSignature& callback, std::optional<TypeConstraint> expected) {
   const auto result = callback.FlattenedResult();
-  return result && expected ? (*result).dynamic || (*result).IsSubtypeOf(*expected)
+  return result && expected ? (*result).IsDynamic() || (*result).IsSubtypeOf(*expected)
                             : !result && !expected;
 }
 
@@ -67,7 +67,7 @@ OperationResult CheckFutureCallbacks(FutureCall& call, const TypeSignature& futu
   }
   if (operation == AsyncOperation::Then) {
     const auto callback = Callback(call.At(1), future.result ? 1U : 0U);
-    if (!callback || (future.result && !(*future.result).dynamic &&
+    if (!callback || (future.result && !(*future.result).IsDynamic() &&
                       !(*future.result).IsSubtypeOf((*callback)->parameters.front().type))) {
       return std::unexpected(ExecutionStatus::TypeError);
     }

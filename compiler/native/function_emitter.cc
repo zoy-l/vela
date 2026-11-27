@@ -16,6 +16,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "compiler/native/root_store_optimizer.h"
+#include "compiler/native/struct_values.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_symbols.h"
 
@@ -66,6 +67,18 @@ bool FunctionEmitter::IsLeafCall(std::optional<CallableTarget> target,
 
 bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
   const auto& instruction = source_.instructions.at(index);
+  if (instruction.opcode == Opcode::SetField && !instruction.inline_value &&
+      source_.value_types.at(instruction.lhs).value_layout != nullptr) {
+    return false;
+  }
+  if (ir::IsBuiltinCall(instruction, Builtin::ArrayPush) &&
+      source_.value_types.at(instruction.lhs + 1).value_layout != nullptr) {
+    const auto& element = ArrayElement(instruction);
+    if (element.kind != layout::Type::Kind::Class ||
+        program_.classes.at(element.index).value_layout == nullptr) {
+      return false;
+    }
+  }
   const auto target = CallTarget(index);
   if (!reflection_members_.empty()) {
     const auto* member = reflection_members_[index];
@@ -87,21 +100,37 @@ bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
           generated_[target->function].math_intrinsic != runtime::NativeFunction::Intrinsic::None);
 }
 
+bool FunctionEmitter::IsSynchronousTypedReturn(const ir::Instruction& instruction) const {
+  return instruction.opcode == Opcode::Return && !source_.is_async &&
+         (source_.value_types.at(instruction.dst).value_layout == nullptr ||
+          source_.return_type.value_layout != nullptr);
+}
+
 void FunctionEmitter::CacheRuntimeCalls() {
   runtime_calls_.resize(source_.instructions.size());
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto& instruction = source_.instructions[index];
     // 同步 typed return 只转换并写回结果；返回边界的 Poll 独立保留，
     // 不为不存在的运行时调用保存根和 AwaitingResult 检查点。
-    const auto synchronous_return = instruction.opcode == Opcode::Return && !source_.is_async;
-    runtime_calls_[index] = static_cast<std::uint8_t>(
-        kind_ != NativeEntryKind::HostLeaf && !synchronous_return &&
-        ir::AnalyzeEffects(instruction).MayCollectOnSuccess() && !HasInlineRuntimePath(index));
+    const auto synchronous_return = IsSynchronousTypedReturn(instruction);
+    runtime_calls_[index] =
+        static_cast<std::uint8_t>(kind_ != NativeEntryKind::HostLeaf && !synchronous_return &&
+                                  ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess() &&
+                                  !HasInlineRuntimePath(index));
   }
 }
 
 llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
   const auto& type = source_.value_types.at(reg);
+  if (reg == 0 && struct_receiver_ != nullptr) {
+    if (!accessing_struct_receiver_) {
+      accessing_struct_receiver_ = true;
+      CheckStatus(
+          ReadStructPlace(builder_, body_->getArg(0), struct_receiver_, struct_receiver_value_));
+      accessing_struct_receiver_ = false;
+    }
+    return builder_.CreateLoad(ValueType(module_.getContext(), type), struct_receiver_value_);
+  }
   if (IsRecovering()) {
     auto* value = builder_.CreateLoad(NativeRecordType(module_.getContext()), slots_.at(reg));
     return DecodeValue(builder_, value, type);
@@ -139,8 +168,16 @@ llvm::Value* FunctionEmitter::Reference(ir::RegisterId reg) {
 
 void FunctionEmitter::Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type) {
   const auto& target = source_.value_types.at(reg);
-  auto* converted = Convert(builder_, value, type, target);
-  builder_.CreateStore(IsRecovering() ? EncodeValue(builder_, converted, target) : converted,
+  auto* converted = ConvertValue(value, type, target);
+  if (reg == 0 && struct_receiver_ != nullptr) {
+    builder_.CreateStore(converted, struct_receiver_value_);
+    accessing_struct_receiver_ = true;
+    CheckStatus(
+        WriteStructPlace(builder_, body_->getArg(0), struct_receiver_, struct_receiver_value_));
+    accessing_struct_receiver_ = false;
+    return;
+  }
+  builder_.CreateStore(IsRecovering() ? EncodeChecked(converted, target) : converted,
                        slots_.at(reg));
   StoreFixedArrayStorage(reg, converted);
 }
@@ -359,8 +396,10 @@ void FunctionEmitter::Fail(llvm::Value* status) {
       SetPosition();
     }
     const auto& live = roots_.stores.at(instruction_index_);
-    for (std::size_t index = 0; index < live.size(); ++index) {
-      StoreRootValue(live.at(index), RootAddress(index));
+    std::size_t root_count = 0;
+    for (const auto reg : live) {
+      StoreRootValue(reg, RootAddress(root_count));
+      root_count += ManagedSlotCount(source_.value_types.at(reg));
     }
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
     if (leaf_entry_) {
@@ -368,14 +407,14 @@ void FunctionEmitter::Fail(llvm::Value* status) {
           .status = status,
           .position = builder_.getInt64(TracePosition()),
           .roots = roots,
-          .count = live.size(),
+          .count = root_count,
       }));
     } else {
       auto failure = module_.getOrInsertFunction(
           runtime::kNativeUnrootedFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
           builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
-      Finish(builder_.CreateCall(
-          failure, {body_->getArg(0), status, roots, builder_.getInt64(live.size())}));
+      Finish(builder_.CreateCall(failure,
+                                 {body_->getArg(0), status, roots, builder_.getInt64(root_count)}));
     }
     return;
   }
@@ -563,14 +602,14 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
       if (kind_ == NativeEntryKind::IntegerCallback) {
         auto* requests = LoadNativeRequests(builder_, body_->getArg(1));
         Check(builder_.CreateICmpEQ(requests, builder_.getInt8(0)), ExecutionStatus::InvalidEntry);
-        auto* value = Convert(builder_, Load(instruction.dst),
-                              source_.value_types.at(instruction.dst), source_.return_type);
+        auto* value = ConvertValue(Load(instruction.dst), source_.value_types.at(instruction.dst),
+                                   source_.return_type);
         ReturnIntegerCallback(value, Status(builder_, ExecutionStatus::Returned));
         break;
       }
       if (source_.return_type.kind != Kind::Void) {
-        auto* result = Convert(builder_, Load(instruction.dst),
-                               source_.value_types.at(instruction.dst), source_.return_type);
+        auto* result = ConvertValue(Load(instruction.dst), source_.value_types.at(instruction.dst),
+                                    source_.return_type);
         StoreMemory(result, Output(), MemoryRegion::Values);
       }
       if (kind_ == NativeEntryKind::HostLeaf) {
@@ -590,15 +629,40 @@ const NativeFrameLayout& FunctionEmitter::PlanFrame() {
     return *frame_plan_;
   }
   NativeFrameRequirements requirements{.recovery = HasRecovery()};
+  if (std::ranges::any_of(source_.value_types,
+                          [](const auto& type) { return type.value_layout != nullptr; })) {
+    erased_arguments_ =
+        (!source_.native_symbol.empty() &&
+         std::ranges::any_of(std::span(source_.value_types).first(source_.parameter_count),
+                             [](const auto& type) { return type.value_layout != nullptr; })) ||
+        std::ranges::any_of(source_.instructions, [&](const auto& instruction) {
+          return HasErasedArguments(instruction);
+        });
+    erased_root_count_ = static_cast<std::size_t>(erased_arguments_) +
+                         static_cast<std::size_t>(roots_.debug_values) +
+                         static_cast<std::size_t>(HasRecovery() || IsRecovering());
+  }
+  requirements.erased_root_count = erased_root_count_;
+  const auto include_result = [&](const SourceType& type) {
+    const auto bytes =
+        module_.getDataLayout().getTypeAllocSize(ValueType(module_.getContext(), type));
+    requirements.result_bytes =
+        std::max(requirements.result_bytes, static_cast<std::size_t>(bytes));
+  };
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto* member = reflection_members_.empty() ? nullptr : reflection_members_[index];
     const auto target = CallTarget(index);
+    if (target) {
+      include_result(program_.functions.at(target->function).return_type);
+    }
+    if (member != nullptr && member->kind == reflection::MemberKind::Method) {
+      include_result(program_.functions.at(member->target).return_type);
+    }
     const auto entry = target ? SelectCallEntry(*target, index).entry : CallEntry::Body;
     if (entry == CallEntry::Leaf || entry == CallEntry::ScalarField ||
         (member != nullptr && member->kind == reflection::MemberKind::Method &&
          generated_[member->target].leaf != nullptr)) {
       requirements.leaf_calls = true;
-      break;
     }
   }
   frame_plan_ = PlanNativeFrame(module_, escape_, roots_, temporary_count_, requirements, kind_,
@@ -722,6 +786,11 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   const auto& instruction = source_.instructions.at(index);
   instruction_index_ = index;
   builder_.SetInsertPoint(blocks_.at(index));
+  if (erased_arguments_ && HasErasedArguments(instruction)) {
+    builder_.CreateMemSet(arguments_, builder_.getInt8(0),
+                          temporary_count_ * sizeof(runtime::NativeValue),
+                          llvm::Align(alignof(runtime::NativeValue)));
+  }
   const auto safepoint = IsBoundaryPollRequired(index);
   boundary_ready_ = nullptr;
   if (safepoint && kind_ != NativeEntryKind::Leaf && kind_ != NativeEntryKind::HostLeaf &&
@@ -738,6 +807,11 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   if (!emitted) {
     return emitted;
   }
+  if (instruction.no_normal_return) {
+    // 宿主或间接调用可能违反不返回契约；把正常返回转换为执行错误，不能产生 LLVM 未定义行为。
+    Fail(Status(builder_, ExecutionStatus::InvalidEntry));
+    return {};
+  }
   if (instruction.completes_construction) {
     EndConstruction();
   }
@@ -749,10 +823,27 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
 }
 
 void FunctionEmitter::BindArguments() {
+  if (source_.struct_receiver) {
+    struct_receiver_ =
+        IsRecovering()
+            ? builder_.CreateLoad(builder_.getPtrTy(),
+                                  ByteAddress(body_->getArg(1),
+                                              offsetof(runtime::NativeCheckpoint, struct_receiver)))
+            : static_cast<llvm::Value*>(body_->getArg(1));
+    Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+    struct_receiver_value_ =
+        allocation.CreateAlloca(ValueType(module_.getContext(), source_.value_types.front()));
+    builder_.CreateStore(
+        llvm::Constant::getNullValue(ValueType(module_.getContext(), source_.value_types.front())),
+        struct_receiver_value_);
+  }
   if (kind_ == NativeEntryKind::Initial || kind_ == NativeEntryKind::ScalarField ||
       kind_ == NativeEntryKind::Borrowed || kind_ == NativeEntryKind::Leaf ||
       kind_ == NativeEntryKind::HostLeaf) {
     for (std::size_t index = 0; index < source_.parameter_count; ++index) {
+      if (index == 0 && source_.struct_receiver) {
+        continue;
+      }
       auto* value =
           kind_ == NativeEntryKind::Borrowed && index == 0
               ? llvm::ConstantPointerNull::get(builder_.getPtrTy())
@@ -855,6 +946,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   deferred_roots_ = CanDeferRoots();
   EmitFrameEntry();
   BindFrameStorage();
+  InitializeErasedRoots();
   InitializeCheckpoint();
   CacheImports();
   BorrowHostExecution();

@@ -9,6 +9,7 @@
 #include "base/path.h"
 #include "base/testing/directory.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/native_binding_source.h"
 #include "compiler/frontend/syntax/parser.h"
 
 namespace vela::frontend {
@@ -16,8 +17,18 @@ namespace {
 
 class SourceCaptureTest : public vela::test::DirectoryTest {};
 
+TEST_F(SourceCaptureTest, BindingManifestReportsJsonParseFailure) {
+  ASSERT_NO_FATAL_FAILURE(Write("generated.bindings.json", "{"));
+  const auto result =
+      VerifyNativeBindingSource(directory() / "generated.vela", "// Binding generation: token\n");
+  ASSERT_FALSE(result);
+  EXPECT_NE(result.error().find("invalid binding manifest:"), std::string::npos);
+  EXPECT_NE(result.error().find("at byte "), std::string::npos);
+}
+
 TEST_F(SourceCaptureTest, ExplicitImportsResolveIdenticallyInDiskAndCapturedMemoryGraphs) {
-  ASSERT_NO_FATAL_FAILURE(Write("main.vela", "import 'ui'; export func read(): int { return answer(); }"));
+  ASSERT_NO_FATAL_FAILURE(
+      Write("main.vela", "import 'ui'; export func read(): int { return answer(); }"));
   ASSERT_NO_FATAL_FAILURE(Write("generated.vela", "export func answer(): int { return 42; }"));
   const auto entry = PathText(directory() / "main.vela");
   const auto dependency = PathText(directory() / "generated.vela");
@@ -36,7 +47,8 @@ TEST_F(SourceCaptureTest, ExplicitImportsResolveIdenticallyInDiskAndCapturedMemo
   };
   const auto loaded = LoadSources(memory, entry, {}, imports);
   EXPECT_FALSE(HasErrors(loaded.diagnostics)) << DiagnosticsText(loaded.diagnostics);
-  EXPECT_EQ(ResolveImportPath(directory() / "nested/main.vela", "ui", imports), directory() / "generated.vela");
+  EXPECT_EQ(ResolveImportPath(directory() / "nested/main.vela", "ui", imports),
+            directory() / "generated.vela");
 }
 
 TEST_F(SourceCaptureTest, AcceptedGeneratedDependenciesRetainTheirVerifiedSnapshot) {
@@ -59,12 +71,12 @@ TEST_F(SourceCaptureTest, AcceptedGeneratedDependenciesRetainTheirVerifiedSnapsh
 
   const auto complete = CaptureSourceFiles(roots, candidate, {});
   ASSERT_EQ(complete.diagnostics.size(), 1U);
-  EXPECT_TRUE(complete.diagnostics.front().message.starts_with("missing binding manifest:"));
+  EXPECT_TRUE(complete.diagnostics.front().message.starts_with("cannot read binding manifest:"));
 
   const std::array overlays{SourceInput{.path = dependency, .text = generated->source->text}};
   const auto overridden = CaptureSourceFiles(roots, candidate, overlays, &accepted);
   ASSERT_EQ(overridden.diagnostics.size(), 1U);
-  EXPECT_TRUE(overridden.diagnostics.front().message.starts_with("missing binding manifest:"));
+  EXPECT_TRUE(overridden.diagnostics.front().message.starts_with("cannot read binding manifest:"));
 }
 
 TEST_F(SourceCaptureTest, PreparedRootsKeepMemoryOriginAndCaptureFileDependencies) {

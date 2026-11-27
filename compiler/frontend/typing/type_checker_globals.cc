@@ -48,7 +48,7 @@ TypeChecker::Type TypeChecker::ResolveGlobal(const std::string& name) {
   const auto actual =
       CheckGlobalInitializer(declaration, IsValid(global.type) ? &global.type : nullptr);
   if (declaration.type.kind == TypeName::Kind::Inferred) {
-    if (actual.kind == Type::Kind::Null || actual.kind == Type::Kind::Void) {
+    if (actual.kind == Type::Kind::Void) {
       AddDiagnostic(declaration.location, "global initializer requires an explicit value type");
     } else {
       global.type = actual;

@@ -33,6 +33,14 @@ std::size_t RecordLayouts(const ir::Program& program) {
       program.layouts.arrays, [](const auto& array) { return array.record_fields != 0; }));
 }
 
+void ExpectOrdinaryArrayStorage(std::string_view source) {
+  SCOPED_TRACE(source);
+  auto prepared = Prepare(source);
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  PackPrivateRecordArrays(prepared.program);
+  EXPECT_EQ(RecordLayouts(prepared.program), 0U);
+}
+
 TEST(RecordArrayTest, PacksModuleLocalArraysAndPreservesCheckedLogicalIndices) {
   const auto prepared = Prepare(std::string(kRecordSource) + R"(
 export func update(index: int): double {
@@ -73,11 +81,7 @@ TEST(RecordArrayTest, RejectsIdentityEscapeAndBorrowsAcrossCallsOrControlBoundar
       "points.clear(); return point.x; }",
   };
   for (const auto* reader : kReaders) {
-    SCOPED_TRACE(reader);
-    auto prepared = Prepare(std::string(kRecordSource) + reader);
-    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-    PackPrivateRecordArrays(prepared.program);
-    EXPECT_EQ(RecordLayouts(prepared.program), 0U);
+    ExpectOrdinaryArrayStorage(std::string(kRecordSource) + reader);
   }
 }
 
@@ -88,14 +92,10 @@ TEST(RecordArrayTest, RejectsSharedInsertionsAndPostInsertionAliases) {
       "const point = Point(x: 1.0, count: 1); points.push(point); return point.count;",
   };
   for (const auto* writer : kWriters) {
-    SCOPED_TRACE(writer);
-    auto prepared = Prepare(
+    ExpectOrdinaryArrayStorage(
         "class Point { x: double; count: int; } let points: Point[] = []; "
         "export func write(): int { " +
         std::string(writer) + " }");
-    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-    PackPrivateRecordArrays(prepared.program);
-    EXPECT_EQ(RecordLayouts(prepared.program), 0U);
   }
 }
 
@@ -113,11 +113,7 @@ TEST(RecordArrayTest, KeepsExportedGlobalsAndReferenceFieldsInOrdinaryStorage) {
       "export func append(): int { return Store.append(); }",
   };
   for (const auto* source : kSources) {
-    SCOPED_TRACE(source);
-    auto prepared = Prepare(source);
-    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
-    PackPrivateRecordArrays(prepared.program);
-    EXPECT_EQ(RecordLayouts(prepared.program), 0U);
+    ExpectOrdinaryArrayStorage(source);
   }
 }
 

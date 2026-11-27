@@ -21,7 +21,8 @@ TypeChecker::CheckStatus TypeChecker::CheckConstantLabel(const Expression& label
                                                          ConstantLabelKind kind) {
   const bool match = kind == ConstantLabelKind::Match;
   const auto actual = CheckExpression(label, &selector_type);
-  if (IsValid(actual) && !IsSameType(selector_type, actual)) {
+  if (IsValid(actual) && selector_type.kind != Type::Kind::Never &&
+      !IsSameType(selector_type, actual)) {
     AddDiagnostic(location, match ? "match pattern type must equal the selector type"
                                   : "case label type must match switch value type");
   }
@@ -41,8 +42,9 @@ TypeChecker::CheckStatus TypeChecker::CheckConstantLabel(const Expression& label
 
 StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type) {
   const auto type = CheckExpression(*statement.condition, nullptr);
-  if (type.nullable || (type.kind != Type::Kind::Int && type.kind != Type::Kind::Bool &&
-                        type.kind != Type::Kind::String && type.kind != Type::Kind::Enum)) {
+  if (type.nullable || (type.kind != Type::Kind::Never && type.kind != Type::Kind::Int &&
+                        type.kind != Type::Kind::Bool && type.kind != Type::Kind::String &&
+                        type.kind != Type::Kind::Enum)) {
     AddDiagnostic(statement.condition->location, "switch requires int, bool, string, or enum");
   }
   InvalidateAssignments(statement);
@@ -78,7 +80,8 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
     result.can_fall_through = result.can_fall_through || tail_falls_through;
     result.can_continue = result.can_continue || branch.can_continue;
   }
-  return result;
+  return ExpressionCanComplete(*statement.condition) ? result
+                                                     : StatementFlow{.can_fall_through = false};
 }
 
 }  // namespace vela::frontend

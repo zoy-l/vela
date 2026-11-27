@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -21,6 +22,10 @@ struct RegExpMatch;
 struct Timer;
 struct CancellationToken;
 struct Value;
+struct Never final {
+  Never() = delete;
+};
+struct Null;
 
 template <class T>
 struct Array;
@@ -43,7 +48,8 @@ struct Enum;
 template <class T>
 struct Host;
 
-enum class ScriptTypeKind : std::uint8_t { Class, Interface, Enum, Host };
+enum class ScriptTypeKind : std::uint8_t { Class, Interface, Enum, Host, Struct };
+// Existing 表示键已存在；Map 仍替换关联值，Set 保留已有成员。
 enum class Insertion : std::uint8_t { Inserted, Existing };
 enum class Removal : std::uint8_t { Removed, Missing };
 enum class WaitMode : std::uint8_t { AvailableWork, WaitForHost };
@@ -61,7 +67,8 @@ struct LogicalType {
       std::is_same_v<T, double> || std::is_same_v<T, String> || std::is_same_v<T, MutableString> ||
       std::is_same_v<T, ByteArray> || std::is_same_v<T, ByteData> || std::is_same_v<T, RegExp> ||
       std::is_same_v<T, RegExpMatch> || std::is_same_v<T, Timer> ||
-      std::is_same_v<T, CancellationToken> || std::is_same_v<T, Value>;
+      std::is_same_v<T, CancellationToken> || std::is_same_v<T, Value> ||
+      std::is_same_v<T, Never> || std::is_same_v<T, Null>;
 };
 
 template <class T>
@@ -118,6 +125,13 @@ struct HostValueType<void> {
   static constexpr bool kManaged = false;
 };
 template <>
+struct HostValueType<Never> : HostValueType<void> {};
+template <>
+struct HostValueType<Null> {
+  using Type = std::nullptr_t;
+  static constexpr bool kManaged = false;
+};
+template <>
 struct HostValueType<bool> {
   using Type = bool;
   static constexpr bool kManaged = false;
@@ -139,6 +153,10 @@ struct HostValueType<Nullable<T>> {
   using Payload = T;
   static constexpr bool kManaged = HostValueType<T>::kManaged;
 };
+template <>
+struct HostValueType<Nullable<Never>> : HostValueType<Null> {};
+template <>
+struct HostValueType<Nullable<Null>> : HostValueType<Null> {};
 template <class T>
 struct HostValueType<Nullable<Nullable<T>>> : HostValueType<Nullable<T>> {};
 

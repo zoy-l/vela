@@ -1,13 +1,16 @@
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 #include <vela/types.h>
 
 #include "base/callable.h"
 #include "base/layout_description.h"
+#include "base/type_kind.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_type.h"
@@ -94,6 +97,26 @@ TEST(NativeTypeTest, NestedContractsPreserveNullabilityNominalsAndCallablePayloa
   EXPECT_NE(first, nullable);
   EXPECT_NE(first.ContractKey(), nullable.ContractKey());
   EXPECT_EQ(nullable, NativeTypeOf<Nullable<Nullable<First>>>());
+}
+
+TEST(NativeTypeTest, NullableNeverUsesTheNullContract) {
+  const auto null_type = NativeTypeOf<Null>();
+  EXPECT_EQ(null_type, NativeTypeOf<Nullable<Never>>());
+  EXPECT_EQ(null_type.ContractKey(), NativeTypeOf<Nullable<Never>>().ContractKey());
+  EXPECT_NE(null_type, NativeTypeOf<Never>());
+  static_assert(std::is_same_v<HostValue<Null>, std::nullptr_t>);
+  static_assert(std::is_same_v<HostValue<Nullable<Never>>, std::nullptr_t>);
+}
+
+TEST(NativeTypeTest, SetAndMapHaveDistinctLanguageTypeIdentities) {
+  const auto set = NativeTypeOf<Set<std::int64_t>>();
+  const auto map = NativeTypeOf<Map<std::int64_t, std::int64_t>>();
+  ASSERT_TRUE(set.type);
+  ASSERT_TRUE(map.type);
+  EXPECT_EQ(set.type->kind, LanguageTypeKind::Set);
+  EXPECT_EQ(map.type->kind, LanguageTypeKind::Map);
+  EXPECT_NE(set.ContractKey(), map.ContractKey());
+  EXPECT_FALSE(layout::IsSameType(set.layouts(), *set.type, map.layouts(), *map.type));
 }
 
 TEST(NativeTypeTest, GraphIndicesAndDisplayNamesDoNotDefineContractIdentity) {

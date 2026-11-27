@@ -16,6 +16,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <vela/types.h>
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
@@ -77,6 +78,13 @@ class RootRange final {
   RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
+  // 借用固定步长记录中的 Value；所有值必须在挂根前初始化，存储保持到 Detach。
+  struct StridedValues final {
+    const void* data;
+    std::size_t count;
+    std::size_t stride;
+  };
+  void AttachStridedValues(Heap& heap, const StridedValues& values) noexcept;
   // 借用准备中的字段块；必须先 Detach 再释放或替换该块。
   void Attach(Heap& heap, const InstanceStorage& fields) noexcept;
   void Detach() noexcept;
@@ -84,11 +92,12 @@ class RootRange final {
  private:
   friend class Heap;
 
-  enum class Kind : std::uint8_t { Values, Strings, InstanceFields, Types };
+  enum class Kind : std::uint8_t { Values, Strings, InstanceFields, Types, StridedValues };
 
   Heap* heap_ = nullptr;
   const void* data_ = nullptr;
   std::size_t count_ = 0;
+  std::size_t stride_ = 0;
   RootRange* next_ = nullptr;
   RootRange** previous_link_ = nullptr;
   Kind kind_ = Kind::Values;
@@ -129,6 +138,8 @@ enum class ArrayAccessError : std::uint8_t {
   OutOfMemory,
 };
 
+[[nodiscard]] ExecutionStatus ArrayExecutionStatus(ArrayAccessError error);
+
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 
 [[nodiscard]] constexpr ExecutionStatus StringJoinStatus(StringJoinError error) noexcept {
@@ -158,8 +169,6 @@ class CollectionIterator final {
   std::span<const std::byte> values_;
   std::span<const std::uint32_t> links_;
 };
-enum class CollectionInsert : std::uint8_t { Inserted, Updated };
-enum class CollectionRemove : std::uint8_t { Removed, Missing };
 enum class SetOperation : std::uint8_t { Union, Intersection, Difference };
 
 struct ByteViewRange final {
@@ -256,7 +265,7 @@ class Heap final {
   [[nodiscard]] std::expected<HeapObject*, ExecutionStatus>
   CombineSets(const HeapObject& left, const HeapObject& right, SetOperation operation) noexcept;
   // 扩容可能触发 GC；原生调用者须在调用期间保根 object、key 和 value。
-  [[nodiscard]] std::expected<CollectionInsert, ExecutionStatus>
+  [[nodiscard]] std::expected<Insertion, ExecutionStatus>
   InsertCollection(HeapObject& object, Value key, Value value = Value::Null()) noexcept;
   // Typed IR 已保证对象是 Map 且键和值符合其固定布局。写入仍可能因扩容失败，
   // object、key 和 value 的保根要求与 InsertCollection 相同；动态输入使用受查接口。
@@ -288,9 +297,8 @@ class Heap final {
   [[nodiscard]] static std::expected<std::optional<Value>, ExecutionStatus> FindCollectionValue(
       const HeapObject& object,
       Value key) noexcept;
-  [[nodiscard]] static std::expected<CollectionRemove, ExecutionStatus> RemoveCollection(
-      HeapObject& object,
-      Value key) noexcept;
+  [[nodiscard]] static std::expected<Removal, ExecutionStatus> RemoveCollection(HeapObject& object,
+                                                                                Value key) noexcept;
   [[nodiscard]] static std::expected<void, ExecutionStatus> ClearCollection(
       HeapObject& object) noexcept;
   [[nodiscard]] static std::expected<std::uint32_t, ExecutionStatus> CollectionLength(
@@ -353,14 +361,13 @@ class Heap final {
   [[nodiscard]] std::expected<std::uint32_t, ArrayAccessError> PushRecordArray(
       HeapObject& array,
       HeapObject& value) noexcept;
-  [[nodiscard]] static std::expected<Value, ArrayAccessError> PopArray(HeapObject& array) noexcept;
+  [[nodiscard]] std::expected<Value, ArrayAccessError> PopArray(HeapObject& array) noexcept;
   // items 是独立的同类型数组；先完成全部分配，再一次性移动后缀并发布新长度。
   [[nodiscard]] std::expected<void, ArrayAccessError> ReplaceArrayRange(HeapObject& array,
                                                                         std::uint32_t start,
                                                                         std::uint32_t count,
                                                                         HeapObject& items) noexcept;
-  [[nodiscard]] static std::expected<Value, ArrayAccessError> ShiftArray(
-      HeapObject& array) noexcept;
+  [[nodiscard]] std::expected<Value, ArrayAccessError> ShiftArray(HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<void, ArrayAccessError> ClearArray(HeapObject& array) noexcept;
   [[nodiscard]] std::expected<HeapObject*, ArrayAccessError> SliceArray(HeapObject& array,
                                                                         std::uint32_t start,
@@ -390,6 +397,12 @@ class Heap final {
                                                      std::uint32_t index) noexcept;
   // 调用者的布局契约保证字段存在；返回值借用对象所属的堆。
   [[nodiscard]] static Value LoadField(const HeapObject& object, std::uint32_t index) noexcept;
+  // struct 使用逻辑字段编号，class 使用成员解析后的首物理槽。
+  // 内嵌值的读取返回独立副本，分配失败可恢复；普通字段直接返回其值。
+  [[nodiscard]] std::expected<Value, ExecutionStatus> ReadValueField(HeapObject& object,
+                                                                     std::uint32_t index) noexcept;
+  // 调用方已验证字段编号和字段类型；写入展开叶子并执行引用写屏障。
+  void WriteValueField(HeapObject& object, std::uint32_t index, Value value) noexcept;
   [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
   [[nodiscard]] static ObjectKind KindOf(const HeapObject& object) noexcept { return object.kind; }
   [[nodiscard]] static TypeConstraint TypeOf(Value value) noexcept;
@@ -417,9 +430,8 @@ class Heap final {
   // 所属线程发布的根没有 source 颜色；在 sweep 阶段必须同步完成新引用的扫描。
   void WriteRootBarrier(std::span<const Value> values) noexcept;
   void WriteRootBarrier(const Future& future) noexcept;
-  [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
-      const HeapObject& array,
-      std::uint32_t index) noexcept;
+  [[nodiscard]] std::expected<Value, ArrayAccessError> GetElement(HeapObject& array,
+                                                                  std::uint32_t index) noexcept;
   [[nodiscard]] std::expected<void, ArrayAccessError> SetElement(HeapObject& array,
                                                                  std::uint32_t index,
                                                                  Value value) noexcept;
@@ -565,17 +577,23 @@ class Heap final {
   [[nodiscard]] std::expected<void, ArrayAccessError> ReserveArrayStorage(
       HeapObject& array,
       std::size_t capacity) noexcept;
-  [[nodiscard]] static Value RemoveArrayStorage(HeapObject& array, std::uint32_t index) noexcept;
+  [[nodiscard]] std::expected<Value, ArrayAccessError> RemoveArrayStorage(
+      HeapObject& array,
+      std::uint32_t index) noexcept;
+  [[nodiscard]] std::expected<Value, ArrayAccessError>
+  ReadArrayElement(HeapObject& array, const ArrayLayout& layout, std::uint32_t index) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, ExecutionStatus> GrowCollection(HeapObject& object) noexcept;
   void StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value value) noexcept;
-  std::expected<CollectionInsert, ExecutionStatus> InsertCollectionHashed(HeapObject& object,
-                                                                          Value key,
-                                                                          std::size_t hash,
-                                                                          Value value) noexcept;
-  std::expected<CollectionInsert, ExecutionStatus>
-  InsertCollectionLocated(HeapObject& object, Value key, Value value, MapLookup lookup) noexcept;
+  std::expected<Insertion, ExecutionStatus> InsertCollectionHashed(HeapObject& object,
+                                                                   Value key,
+                                                                   std::size_t hash,
+                                                                   Value value) noexcept;
+  std::expected<Insertion, ExecutionStatus> InsertCollectionLocated(HeapObject& object,
+                                                                    Value key,
+                                                                    Value value,
+                                                                    MapLookup lookup) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;

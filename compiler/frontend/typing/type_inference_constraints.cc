@@ -17,7 +17,7 @@ void TypeInference::AddCandidate(const TypeParameterId& parameter,
                                  const TypeName& type,
                                  const std::string& key,
                                  Evidence evidence) {
-  if (type.name == kNullTypeName || HasUnspecifiedType(type)) {
+  if (HasUnspecifiedType(type)) {
     return;
   }
   auto& candidates = variables_.at(parameter).candidates;
@@ -44,7 +44,7 @@ void TypeInference::Bind(const TypeParameter& parameter,
   variable.fixed = variable.fixed || evidence == Evidence::Explicit;
   variable.changed = true;
   AddCandidate(parameter.identity, type, key, evidence);
-  // null 本身不确定类型；与其它输入共同出现时仅产生已有的可空合并候选。
+  // null 是独立类型；与其它输入共同出现时还需要可空合并候选。
   const bool new_null =
       !variable.has_null_input && relation == Relation::Input && type.name == kNullTypeName;
   variable.has_null_input = variable.has_null_input || new_null;

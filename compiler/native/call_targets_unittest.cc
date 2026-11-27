@@ -119,6 +119,19 @@ TEST(NativeCallPlanTest, ClosedVirtualTargetsRequireOneImplementationAcrossRecei
   EXPECT_TRUE(plan.direct_calls[0].empty());
 }
 
+TEST(NativeCallPlanTest, RepeatedStructMethodsRetainFullBodyDependencies) {
+  auto program = ScalarVirtualProgram(NativeProgramMode::Reloadable);
+  program.functions[0].instructions[1].opcode = Opcode::Call;
+  program.functions[0].instructions[1].index = 1;
+  program.functions[1].struct_receiver = true;
+  for (const auto debugging : {NativeDebugging::Safepoints, NativeDebugging::Instructions}) {
+    const auto plan = PlanNativeCalls(program, NativeCodeTier::Optimized, debugging);
+    const auto inlined = debugging == NativeDebugging::Safepoints;
+    EXPECT_EQ(plan.IsEntrySlotRequired({.caller = 0, .callee = 1}), !inlined);
+    EXPECT_EQ(plan.dependencies[0].size(), inlined ? 1U : 0U);
+  }
+}
+
 TEST(NativeCallPlanTest, ConstructorAndRepeatedEdgesMatchLeafEligibilityAndDebugging) {
   for (const auto parameters : {0U, 64U, 65U, 128U, 129U}) {
     for (const auto debugging : {

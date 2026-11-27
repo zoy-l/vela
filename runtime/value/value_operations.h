@@ -36,7 +36,8 @@ template <auto Last>
 [[nodiscard]] std::expected<Value, ExecutionStatus> ConcatenateValues(Heap& heap,
                                                                       Value left,
                                                                       Value right);
-[[nodiscard]] std::expected<Value, ExecutionStatus> ReadIndex(HeapObject& object,
+[[nodiscard]] std::expected<Value, ExecutionStatus> ReadIndex(Heap& heap,
+                                                              HeapObject& object,
                                                               std::int64_t index);
 [[nodiscard]] std::expected<void, ExecutionStatus> WriteIndex(Heap& heap,
                                                               HeapObject& object,

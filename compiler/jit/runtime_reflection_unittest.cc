@@ -20,7 +20,9 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/test_support/reflection_expectations.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"
@@ -96,16 +98,24 @@ class RuntimeReflectionTest : public ::testing::TestWithParam<NativeCodeTier> {
   runtime::Isolate& isolate() { return isolate_storage_; }
   runtime::NativeInstance& instance() { return *instance_storage_; }
   void ReleaseInstance() { instance_storage_.reset(); }
-  void ExpectAnswer() {
-    const auto result = test::Execute(instance(), "answer");
-    ASSERT_TRUE(result.Succeeded()) << result.message;
-    EXPECT_EQ(result.value.AsInteger(), 42);
-  }
+  void ExpectAnswer() { test::ExpectInteger(instance(), test::kExpectedAnswer, "answer"); }
 
  private:
   runtime::Isolate isolate_storage_{1};
   std::unique_ptr<runtime::NativeInstance> instance_storage_;
 };
+
+TEST_P(RuntimeReflectionTest, RejectsDynamicNonDescriptorArgument) {
+  Load(R"(
+export func answer(): int {
+  const value: dynamic = 7;
+  try { Reflect.typeInfo<int>().isAssignableFrom(value); }
+  catch (error: Error) { return error.code == 'InvalidCast' ? 42 : -1; }
+  return -2;
+}
+)");
+  ExpectAnswer();
+}
 
 TEST_P(RuntimeReflectionTest, ConstInstanceFieldWritesPreserveFailureControlFlow) {
   Load(R"(
@@ -122,6 +132,74 @@ export func answer(): int {
     completed++;
   } finally { completed++; }
   return object.value + completed;
+}
+)");
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, StructFieldsUseLogicalIndicesAndNestedSnapshots) {
+  Load(R"(
+struct Position { x: int; y: int; name: string; }
+[Reflect]
+struct Body { position: Position?; count: int; }
+export func answer(): int {
+  const original = Body(position: Position(x: 10, y: 20, name: 'original'), count: 1);
+  const boxed: dynamic = original;
+  const info = Reflect.typeOf(boxed);
+  if (info.kind != TypeKind.Struct || Reflect.typeInfo<Body?>().kind != TypeKind.Struct ||
+      Reflect.typeInfo<Body[]>().typeArguments[0].kind != TypeKind.Struct) { return -6; }
+  const position = info.findField('position');
+  const count = info.findField('count');
+  if (position == null || count == null) { return -1; }
+  const copy = position.getValue(boxed) as Position;
+  if (copy.x != 10 || copy.name != 'original') { return -2; }
+  for (let i = 0; i < 3; i++) {
+    position.setValue(boxed, Position(x: 40, y: 2, name: 'replacement'));
+    count.setValue(boxed, 2);
+    if (count.getValue(boxed) != 2) { return -3; }
+    const loaded = position.getValue(boxed) as Position;
+    if (loaded.x + loaded.y != 42) { return -4; }
+  }
+  position.setValue(boxed, null);
+  if (position.getValue(boxed) != null || original.count != 1) { return -5; }
+  return 42;
+}
+)");
+  ASSERT_FALSE(HasFatalFailure());
+  ExpectAnswer();
+}
+
+TEST_P(RuntimeReflectionTest, EmbeddedStructFieldsKeepReflectedPhysicalOffsetsAndSnapshots) {
+  Load(R"(
+struct Position { x: int; y: int; name: string; }
+[Reflect]
+class Body { position: Position?; count: int; }
+export func answer(): int {
+  const body = Body(position: Position(x: 10, y: 20, name: 'original'), count: 1);
+  const typedCount = Reflect.typeInfo<Body>().findField('count');
+  const typedPosition = Reflect.typeInfo<Body>().findField('position');
+  if (typedCount == null || typedPosition == null) { return -1; }
+  typedCount.setValue(body, 2);
+  if (body.count != 2 || typedCount.getValue(body) != 2) { return -2; }
+  const original = typedPosition.getValue(body) as Position;
+  const erased: dynamic = body;
+  const info = Reflect.typeOf(erased);
+  const position = info.findField('position');
+  const count = info.findField('count');
+  if (position == null || count == null) { return -3; }
+  for (let i = 0; i < 3; i++) {
+    position.setValue(erased, Position(x: 40, y: 2, name: 'replacement'));
+    count.setValue(erased, i);
+    if (count.getValue(erased) != i || body.count != i) { return -4; }
+    const loaded = position.getValue(erased) as Position;
+    if (loaded.x + loaded.y != 42 || body.position?.name != 'replacement') { return -5; }
+  }
+  position.setValue(erased, null);
+  if (position.getValue(erased) != null || body.position != null || original.x != 10) {
+    return -6;
+  }
+  return 42;
 }
 )");
   ASSERT_FALSE(HasFatalFailure());
@@ -975,7 +1053,8 @@ let bodies = 0;
 const expected = Error(message: 'original', code: 'Original');
 func next(): int { defaults++; return 10; }
 class Generated {
-  required: string?;
+  required: int;
+  nullable: string?;
   value: int = next();
   fail(): void { throw expected; }
   clear(): void { this.value = 0; }
@@ -994,24 +1073,27 @@ export func answer(): int {
   const explicitCtor: ConstructorInfo = foundExplicitCtor;
   try { ctor.invoke(CallArguments()); return -2; }
   catch (error: Error) { if (error.code != 'TypeError') { return -3; } }
-  try { ctor.invoke(CallArguments(items: [CallArgument(value: 2, name: 'required')])); return -4; }
+  try { ctor.invoke(CallArguments(items: [CallArgument(value: 42, name: 'required'),
+      CallArgument(value: 2, name: 'nullable')])); return -4; }
   catch (error: Error) { if (error.code != 'InvalidCast') { return -5; } }
   if (defaults != 0 || bodies != 0) { return -6; }
-  const createdObject = ctor.invoke(CallArguments(items: [CallArgument(value: null, name: 'required')]));
+  const createdObject = ctor.invoke(CallArguments(items: [CallArgument(value: 42, name: 'required'),
+      CallArgument(value: null, name: 'nullable')]));
   if (!(createdObject is Generated)) { return -16; }
   const object: Generated = createdObject;
   if (defaults != 1) { return -7; }
   const foundValue = info.findField('value');
   if (foundValue == null) { return -100; }
   const value: FieldInfo<Generated> = foundValue;
-  const required = info.findField('required');
-  if (required == null) { return -100; }
+  const foundNullable = info.findField('nullable');
+  if (foundNullable == null) { return -100; }
+  const nullable: FieldInfo<Generated> = foundNullable;
   const fail = info.findMethod('fail');
   if (fail == null) { return -100; }
   const foundClear = info.findMethod('clear');
   if (foundClear == null) { return -100; }
   const clear: MethodInfo<Generated> = foundClear;
-  if (required.getValue(object) != null || value.getValue(object) != 10) { return -9; }
+  if (nullable.getValue(object) != null || value.getValue(object) != 10) { return -9; }
   try { fail.invoke(object, CallArguments()); return -10; }
   catch (error: Error) { if (error != expected) { return -11; } }
   if (clear.invoke(object, CallArguments()) != null || value.getValue(object) != 0) { return -12; }
@@ -1021,6 +1103,8 @@ export func answer(): int {
   if (!(created is Explicit)) { return -15; }
   const actual = created;
   if (bodies != 1 || actual.value != 42 || defaults != 1) { return -15; }
+  const omitted = ctor.invoke(CallArguments(items: [CallArgument(value: 42, name: 'required')]));
+  if (!(omitted is Generated) || nullable.getValue(omitted) != null || defaults != 2) { return -17; }
   return 42;
 }
 )",
@@ -1029,6 +1113,7 @@ export func answer(): int {
                                  {
                                      test::SelectMember(SelectionKind::Constructor),
                                      test::SelectMember(SelectionKind::Field, "required"),
+                                     test::SelectMember(SelectionKind::Field, "nullable"),
                                      test::SelectMember(SelectionKind::Field, "value"),
                                      test::SelectMember(SelectionKind::Method, "fail"),
                                      test::SelectMember(SelectionKind::Method, "clear"),

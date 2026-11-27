@@ -24,7 +24,7 @@ bool HasScalarCallbackSignature(const ClassLayout* layout) {
   }
   const auto& argument = signature->parameters.front().type;
   const auto kind = argument.kind;
-  return !argument.nullable && !argument.dynamic && argument == *signature->result &&
+  return !argument.nullable && !argument.IsDynamic() && argument == *signature->result &&
          (kind == ValueKind::Integer || kind == ValueKind::Double || kind == ValueKind::Boolean);
 }
 

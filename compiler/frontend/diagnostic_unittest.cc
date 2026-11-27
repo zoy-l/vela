@@ -4,6 +4,7 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/test_support/checker_test_support.h"
 
@@ -30,7 +31,8 @@ TEST_P(SourceDiagnosticTest, PointsToTheResponsibleToken) {
       static_cast<std::uint32_t>(newline == std::string_view::npos ? offset + 1 : offset - newline);
   const auto checked = CheckTestSource(parameter.source);
   EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [&](const auto& diagnostic) -> bool {
-    return diagnostic.message.contains(parameter.message) && diagnostic.location.line == line &&
+    return diagnostic.severity == DiagnosticSeverity::Error &&
+           diagnostic.message.contains(parameter.message) && diagnostic.location.line == line &&
            diagnostic.location.column == column;
   }));
 }

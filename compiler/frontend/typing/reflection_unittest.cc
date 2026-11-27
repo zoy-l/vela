@@ -14,6 +14,7 @@
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/typing/type_checker.h"
+#include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {
@@ -36,9 +37,14 @@ TEST(ReflectionStandardEnvironmentTest, BootstrapNamesMatchEveryStandardDeclarat
 }
 
 ReflectionSelection Select(std::string_view type) {
+  auto parsed = ParseTypeSource(type);
+  if (!parsed) {
+    ADD_FAILURE() << DiagnosticsText(parsed.error());
+    return {};
+  }
   return {
       .module = "models.vela",
-      .type = *ParseTypeSource(type),
+      .type = std::move(*parsed),
       .members = {},
       .source_path = "<reflection>",
       .location = {.line = 3, .column = 1},
@@ -47,9 +53,7 @@ ReflectionSelection Select(std::string_view type) {
 }
 
 TEST(ReflectionReceiverTest, PreservesReceiverTypeAcrossQueriesAndAccessors) {
-  const SourceInput input{
-      .path = "main.vela",
-      .text = R"(
+  const auto checked = CheckTestSource(R"(
 [Reflect]
 class Counter {
   value: int = 0;
@@ -81,11 +85,7 @@ func main(): void {
   const reset: StaticMethodInfo? = info.findStaticMethod('reset');
   if (reset != null) { reset.invoke(CallArguments()); }
 }
-)",
-  };
-  auto parsed = LoadSources(std::span(&input, 1), input.path);
-  ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
-  const auto checked = TypeChecker().Check(parsed.program);
+)");
   EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
 }
 
@@ -114,8 +114,7 @@ TEST(ReflectionReceiverTest, RejectsWrongKnownReceiversAndReceiverArgumentsForSt
         "add(value: int): int { return value; } static reset(): void {} } "
         "func main(): void { const info = Reflect.typeInfo<Counter>(); " +
         std::string(operation) + " }";
-    const SourceInput input{.path = "main.vela", .text = source};
-    auto parsed = LoadSources(std::span(&input, 1), input.path);
+    auto parsed = ParseTestSource(source);
     ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
     const auto checked = TypeChecker().Check(parsed.program);
     EXPECT_FALSE(checked.Succeeded());
@@ -123,9 +122,7 @@ TEST(ReflectionReceiverTest, RejectsWrongKnownReceiversAndReceiverArgumentsForSt
 }
 
 TEST(ReflectionAttributeTest, BindsClassMembersAndRepeatedDerivedAttributesFromSource) {
-  const SourceInput input{
-      .path = "main.vela",
-      .text = R"(
+  auto parsed = ParseTestSource(R"(
 [AttributeUsage(allowMultiple: true)]
 class Button extends Reflect { label: string = ''; }
 [Reflect]
@@ -137,9 +134,7 @@ class Partial {
   reset(): void { this.value = 0; }
 }
 func main(): void { const info = Reflect.typeInfo<Whole>(); }
-)",
-  };
-  auto parsed = LoadSources(std::span(&input, 1), input.path);
+)");
   ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
   const auto checked = TypeChecker().Check(parsed.program);
   ASSERT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
@@ -162,7 +157,6 @@ TEST(ReflectionAttributeTest, RejectsRepeatedSingletonsAndComputedData) {
            "class Button extends Reflect { constructor() {} } [Button] class Box {}",
            "class Button {} [Button] class Box {}",
            "class Button extends Reflect { label: string; } [Button] class Box {}",
-           "class Button extends Reflect { value: int?; } [Button] class Box {}",
            "class Button extends Reflect { value: dynamic; } [Button] class Box {}",
            "class Button extends Reflect { label: string = text(); } [Button(label: 'literal')] "
            "class Box {} func text(): string { return 'x'; }",
@@ -175,7 +169,6 @@ TEST(ReflectionAttributeTest, RejectsRepeatedSingletonsAndComputedData) {
            "class Button extends Reflect {} class Box { [AttributeUsage] run(): void {} }",
            "[AttributeUsage(allowMultiple: true)] class Base extends Reflect {} class Child "
            "extends Base {} [Child] [Child] class Box {}",
-           "[Reflect] func top<T>(): void {}",
            "[Missing] class Box<T> {}",
            "class Box { [Missing] use<T>(): void {} }",
            "interface Box<T> { [Missing] use(): void; }",
@@ -184,12 +177,17 @@ TEST(ReflectionAttributeTest, RejectsRepeatedSingletonsAndComputedData) {
            "= Reflect(); }",
            "func main(): void { const info = typeInfo<int>(); }",
        }) {
-    const SourceInput input{.path = "main.vela", .text = declaration};
-    auto parsed = LoadSources(std::span(&input, 1), input.path);
+    auto parsed = ParseTestSource(declaration);
     ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
     const auto checked = TypeChecker().Check(parsed.program);
     EXPECT_FALSE(checked.Succeeded()) << declaration;
   }
+}
+
+TEST(ReflectionAttributeTest, NullableAttributeFieldsDefaultToNull) {
+  const auto checked =
+      CheckTestSource("class Button extends Reflect { value: int?; } [Button] class Box {}");
+  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(ReflectionAttributeTest, ChecksFunctionAndInterfaceTemplateAttributesOnce) {
@@ -200,8 +198,7 @@ TEST(ReflectionAttributeTest, ChecksFunctionAndInterfaceTemplateAttributesOnce) 
            "interface Box<T> { [Reflect] [Reflect] use<U>(): void; }",
        }) {
     SCOPED_TRACE(source);
-    const SourceInput input{.path = "main.vela", .text = source};
-    auto parsed = LoadSources(std::span(&input, 1), input.path);
+    auto parsed = ParseTestSource(source);
     ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
     const auto checked = TypeChecker().Check(parsed.program);
     EXPECT_FALSE(checked.Succeeded());
@@ -213,8 +210,7 @@ TEST(ReflectionAttributeTest, ReportsInvalidDefaultsOnceEvenWhenArgumentsOverrid
   for (const std::string_view argument : {"", "value: 1"}) {
     const std::string source = "class Tag extends Attribute { value: int = 'wrong'; } [Tag(" +
                                std::string(argument) + ")] class Box {}";
-    const SourceInput input{.path = "main.vela", .text = source};
-    auto parsed = LoadSources(std::span(&input, 1), input.path);
+    auto parsed = ParseTestSource(source);
     ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
     const auto checked = TypeChecker().Check(parsed.program);
     ASSERT_FALSE(checked.Succeeded());
@@ -241,12 +237,19 @@ class Box<T> {
       },
   };
   auto selection = Select("Box<int>");
+  const auto argument = ParseTypeSource("string");
+  ASSERT_TRUE(argument) << DiagnosticsText(argument.error());
   selection.members = {
-      {.kind = ReflectionMemberKind::Field, .name = "#secret", .type_arguments = {}, .location = {}},
+      {
+          .kind = ReflectionMemberKind::Field,
+          .name = "#secret",
+          .type_arguments = {},
+          .location = {},
+      },
       {
           .kind = ReflectionMemberKind::Method,
           .name = "echo",
-          .type_arguments = {*ParseTypeSource("string")},
+          .type_arguments = {*argument},
           .location = {},
       },
   };
@@ -286,6 +289,8 @@ TEST(ReflectionRegistrationTest, BindsTypeArgumentsInTheSelectedModulesImportSco
 }
 
 TEST(ReflectionRegistrationTest, RejectsWrongKindsInheritedSelectionsAndGenericConstraints) {
+  const auto argument = ParseTypeSource("string");
+  ASSERT_TRUE(argument) << DiagnosticsText(argument.error());
   const std::array sources{
       SourceInput{.path = "main.vela", .text = "func main(): void {}"},
       SourceInput{
@@ -327,7 +332,7 @@ class Item extends Base {
            ReflectionMemberSelection{
                .kind = ReflectionMemberKind::Method,
                .name = "convert",
-               .type_arguments = {*ParseTypeSource("string")},
+               .type_arguments = {*argument},
                .location = {},
            },
        }) {

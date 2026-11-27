@@ -310,8 +310,8 @@ Result Enumerate(Builtin builtin,
       return result;
     }
     RootRange match_root(*search.heap, &*result, 1, std::nullopt);
-    if (!search.heap->PushArray(*output.AsObject(), *result)) {
-      return Failure(ExecutionStatus::OutOfMemory);
+    if (const auto added = search.heap->PushArray(*output.AsObject(), *result); !added) {
+      return Failure(ArrayExecutionStatus(added.error()));
     }
     const auto offsets = std::span(pcre2_get_ovector_pointer(search.data), 2);
     const auto begin = offsets.front();
@@ -491,8 +491,8 @@ Result Snapshot(Builtin builtin,
   RootRange root(heap, &*output, 1, std::nullopt);
   const auto names = NameTable(match);
   const auto count = builtin == Builtin::RegExpMatchGroups ? indices.size() : names.count();
-  if (!heap.ReserveArray(*output->AsObject(), count)) {
-    return Failure(ExecutionStatus::OutOfMemory);
+  if (const auto reserved = heap.ReserveArray(*output->AsObject(), count); !reserved) {
+    return Failure(ArrayExecutionStatus(reserved.error()));
   }
   std::string_view previous;
   for (std::size_t index = 0; index < count; ++index) {
@@ -511,8 +511,8 @@ Result Snapshot(Builtin builtin,
       return value;
     }
     RootRange value_root(heap, &*value, 1, std::nullopt);
-    if (!heap.PushArray(*output->AsObject(), *value)) {
-      return Failure(ExecutionStatus::OutOfMemory);
+    if (const auto added = heap.PushArray(*output->AsObject(), *value); !added) {
+      return Failure(ArrayExecutionStatus(added.error()));
     }
   }
   return output;

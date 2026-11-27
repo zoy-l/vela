@@ -1,5 +1,6 @@
 #include "benchmarks/aot_benchmark_kernels.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -80,6 +81,29 @@ void VerifyNumericResults(runtime::NativeInstance& instance) {
   }
 }
 
+void VerifyBodyResults(runtime::NativeInstance& instance) {
+  constexpr std::array kKernels{
+      AotKernel::FlatStructFields,
+      AotKernel::FlatStructMethods,
+      AotKernel::ClassBodyMethods,
+  };
+  runtime::NativeExecution execution(instance);
+  for (const auto kernel : kKernels) {
+    const auto problem = std::ranges::find(kAotBenchmarkCases, kernel, &AotBenchmarkCase::kernel);
+    ASSERT_NE(problem, kAotBenchmarkCases.end());
+    SCOPED_TRACE(problem->name);
+    EXPECT_EQ(problem->size, kAotWorkloadSize);
+    const auto expected = CppFlatBodies(problem->size);
+    EXPECT_EQ(expected, problem->expected);
+    const auto function = instance.FindFunction(problem->name);
+    ASSERT_TRUE(function);
+    const auto result = runtime::InvokeNativeTarget(execution, *function, {});
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->IsInteger());
+    EXPECT_EQ(result->AsInteger(), expected);
+  }
+}
+
 TEST(AotBenchmarkTest, NumericManifestChecksumsMatchPreparedRuntimeData) {
   const auto first = PrepareNumericValues({.size = 8, .seed = kAotInputSeed});
   const std::vector<std::int64_t> expected{385, 236, 859, 254, 69, 224, 703, 274};
@@ -95,7 +119,7 @@ TEST(AotBenchmarkTest, NumericManifestChecksumsMatchPreparedRuntimeData) {
   }
 }
 
-TEST(AotBenchmarkTest, OfflineEntriesReadRepreparedDataAcrossCollections) {
+TEST(AotBenchmarkTest, OfflineWorkloadsMatchCpp) {
   runtime::Isolate isolate;
   ASSERT_TRUE(
       isolate.RegisterNative(runtime::NativeFunction::Bind<WorkloadSize>("benchmark.size")));
@@ -103,12 +127,13 @@ TEST(AotBenchmarkTest, OfflineEntriesReadRepreparedDataAcrossCollections) {
   const auto instance = runtime::NativeInstance::Instantiate(isolate, *kAotBenchmarkImage);
   ASSERT_TRUE(instance);
   VerifyNumericResults(**instance);
+  VerifyBodyResults(**instance);
 }
 
-class JitNumericBenchmarkTest : public testing::Test,
-                                public testing::WithParamInterface<NativeCodeTier> {};
+class JitAotWorkloadTest : public testing::Test,
+                           public testing::WithParamInterface<NativeCodeTier> {};
 
-TEST_P(JitNumericBenchmarkTest, ReloadableEntriesReadRepreparedDataAcrossCollections) {
+TEST_P(JitAotWorkloadTest, ReloadableWorkloadsMatchCpp) {
   runtime::Isolate registrations;
   ASSERT_TRUE(
       registrations.RegisterNative(runtime::NativeFunction::Bind<WorkloadSize>("benchmark.size")));
@@ -120,10 +145,11 @@ TEST_P(JitNumericBenchmarkTest, ReloadableEntriesReadRepreparedDataAcrossCollect
   auto instance =
       runtime::NativeInstance::Borrow(setup->isolate->native_dispatch().current_state());
   VerifyNumericResults(instance);
+  VerifyBodyResults(instance);
 }
 
 INSTANTIATE_TEST_SUITE_P(Tiers,
-                         JitNumericBenchmarkTest,
+                         JitAotWorkloadTest,
                          testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
 
 }  // namespace

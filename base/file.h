@@ -10,6 +10,7 @@
 
 namespace vela {
 
+// kExecutable 在 POSIX 上增加执行权限；Windows 没有对应的文件权限位。
 enum class FileMode : std::uint8_t { kRegular, kExecutable };
 
 [[nodiscard]] std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(

@@ -1,6 +1,7 @@
 #include "compiler/native/compile_options.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/struct_values.h"
 #include "runtime/native/native_symbols.h"
 
 #include <llvm/ADT/APInt.h>
@@ -128,7 +129,26 @@ void FunctionEmitter::CacheConstants() {
 }
 
 llvm::Value* FunctionEmitter::Encode(ir::RegisterId reg) {
-  return EncodeValue(builder_, Load(reg), source_.value_types.at(reg));
+  return EncodeChecked(Load(reg), source_.value_types.at(reg));
+}
+
+llvm::Value* FunctionEmitter::EncodeChecked(llvm::Value* value, const SourceType& type) {
+  if (type.value_layout == nullptr) {
+    return EncodeValue(builder_, value, type);
+  }
+  CheckStatus(BoxStructValue(builder_, program_, body_->getArg(0), value, type, result_));
+  return LoadMemory(NativeRecordType(module_.getContext()), result_, MemoryRegion::Values);
+}
+
+llvm::Value* FunctionEmitter::ConvertValue(llvm::Value* value,
+                                           const SourceType& source,
+                                           const SourceType& target) {
+  if (source.value_layout != nullptr && target.value_layout == nullptr &&
+      (target.kind == Kind::Dynamic || IsReferenceKind(target.kind))) {
+    auto* encoded = EncodeChecked(value, source);
+    return DecodeValue(builder_, encoded, target);
+  }
+  return Convert(builder_, value, source, target);
 }
 
 llvm::Value* FunctionEmitter::Pack(llvm::Value* encoded, std::size_t index) {
@@ -157,7 +177,8 @@ void FunctionEmitter::PackArguments(ir::RegisterId first,
 
 void FunctionEmitter::CompleteCall(llvm::Value* status, ir::RegisterId result) {
   CheckStatus(status);
-  if (source_.value_types.at(result).kind != Kind::Void) {
+  const auto kind = source_.value_types.at(result).kind;
+  if (kind != Kind::Void && kind != Kind::Never) {
     Unpack(result);
   }
 }
@@ -173,6 +194,16 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
 }
 
 void FunctionEmitter::StoreRootValue(ir::RegisterId reg, llvm::Value* address) {
+  const auto& type = source_.value_types.at(reg);
+  if (type.value_layout != nullptr) {
+    auto* value = Load(reg);
+    std::size_t root = 0;
+    ForEachStructReference(builder_, value, type, [&](const auto&, auto* encoded) {
+      StoreMemory(encoded, ByteAddress(address, root++ * sizeof(runtime::Value)),
+                  MemoryRegion::Roots);
+    });
+    return;
+  }
   auto stored = LoadStoredValue(reg);
   WriteStoredValue(RecordAddress(address, MemoryRegion::Roots), stored);
 }
@@ -197,7 +228,10 @@ void FunctionEmitter::ClearRoots(std::size_t index) {
   }
   for (const auto reg : clears) {
     const auto& slot = roots_.slots.at(reg);
-    ClearRoot(slot);
+    const auto count = ManagedSlotCount(source_.value_types.at(reg));
+    for (std::size_t offset = 0; offset < count; ++offset) {
+      ClearRoot(slot + offset);
+    }
   }
   if (ready != nullptr) {
     builder_.CreateBr(ready);
@@ -682,10 +716,10 @@ llvm::Value* FunctionEmitter::EmitTypeTest(const ir::Instruction& instruction) {
   switch (constraint.kind) {
     case layout::Type::Kind::Dynamic:
       return builder_.getTrue();
-    case layout::Type::Kind::Boolean:
+    case layout::Type::Kind::Bool:
       expected = NativeValueKind::Boolean;
       break;
-    case layout::Type::Kind::Integer:
+    case layout::Type::Kind::Int:
       expected = NativeValueKind::Integer;
       break;
     case layout::Type::Kind::Double:
@@ -729,6 +763,12 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     case Opcode::NewInstance: {
+      if (instruction.inline_value) {
+        const auto& type = source_.value_types.at(instruction.dst);
+        Store(instruction.dst, llvm::Constant::getNullValue(ValueType(module_.getContext(), type)),
+              type);
+        return {};
+      }
       if (!program_.classes.at(instruction.index).callable) {
         auto helper =
             module_.getOrInsertFunction(runtime::kNativeNewObjectSymbol, pointer, pointer, word);

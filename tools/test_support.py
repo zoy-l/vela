@@ -40,6 +40,21 @@ def create_native_package(executable: Path, destination: Path) -> dict[str, str]
                           Path(specification) if specification else None)
 
 
+def compile_native_c_object(test: unittest.TestCase, source: Path, include: Path) -> Path:
+    tools = toolchain_tools()
+    if sys.platform == "win32":
+        obj = source.with_suffix(".obj")
+        command = [tools["cxx"], "/nologo", "/MT", "/TC", "/W4", "/WX", "/c",
+                   source, "/I" + str(include), "/Fo" + str(obj)]
+    else:
+        obj = source.with_suffix(".o")
+        flags = ["-isysroot", str(tools["sysroot"])] if sys.platform == "darwin" else []
+        command = [tools["cc"], "-std=c17", "-Werror", "-c", *flags,
+                   source, "-I" + str(include), "-o", obj]
+    native_command(test, command, cwd=source.parent)
+    return obj
+
+
 def compile_native_host(test: unittest.TestCase, sources: list[Path], executable: Path,
                         libraries: list[Path], includes: Sequence[Path], *, cwd: Path) -> None:
     tools = toolchain_tools()
@@ -129,9 +144,9 @@ class CommandTestCase(unittest.TestCase):
         path.write_text(text, encoding="utf-8", newline="\n")
         return path
 
-    def invoke(self, *arguments: str, code: int = 0,
+    def invoke(self, *arguments: str | Path, code: int = 0, input: str = "",
                cwd: Path | None = None) -> subprocess.CompletedProcess:
-        result = subprocess.run([str(self.executable), *arguments], cwd=cwd or self.directory,
+        result = subprocess.run([self.executable, *arguments], input=input, cwd=cwd or self.directory,
                                 capture_output=True, text=True, encoding="utf-8", timeout=30,
                                 check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)

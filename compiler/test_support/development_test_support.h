@@ -25,10 +25,9 @@ class DevelopmentReplTest : public vela::test::DirectoryTest {
   void SetUp() override;
   void SetUp(runtime::NativeBindings bindings);
   void TearDown() override;
-  void LoadSession(runtime::NativeBindings bindings);
   void Execute(std::string_view input);
   [[nodiscard]] std::expected<DevelopmentResult, frontend::Diagnostics> Reset();
-  void ExpectReset(DevelopmentStatus status);
+  void ExpectAcceptedReset();
   [[nodiscard]] std::expected<DevelopmentResult, frontend::Diagnostics> UpdateFiles(
       DevelopmentOperation operation);
   [[nodiscard]] DevelopmentRepl& repl() const { return *repl_; }

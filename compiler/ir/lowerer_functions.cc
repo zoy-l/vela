@@ -15,7 +15,9 @@
 #include "base/callable.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 
 namespace vela::ir {
 
@@ -28,7 +30,7 @@ RegisterId Lowerer::LowerDefaultValue(const frontend::Expression& initializer,
   RecordValueType(result, type);
   const auto missing = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = supplied, .location = location});
-  const auto value = LowerConversion(input, type, location);
+  const auto value = LowerConversion(std::move(input), type, location);
   Emit({.opcode = Opcode::Move, .dst = result, .lhs = value.reg, .location = location});
   const auto done = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = location});
@@ -85,7 +87,8 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
                          ? std::string_view{}
                          : frontend::MakeFunctionType(callable_signature->parameters,
                                                       callable_signature->return_type,
-                                                      callable_signature->narrowed_parameter)
+                                                      callable_signature->narrowed_parameter,
+                                                      callable_signature->false_narrowed_parameter)
                                .name;
   const auto key = std::pair(target, shape);
   const auto existing = callable_classes_.find(key);
@@ -108,6 +111,13 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
             ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
                                        .name = kCaptureCellName,}
             : capture.type);
+    if ((mode == CallableMode::BoundMethod || mode == CallableMode::VirtualMethod) &&
+        capture.type.value_layout != nullptr) {
+      layout.field_types.back() = {
+          .kind = frontend::TypeDescriptor::Kind::Dynamic,
+          .name = frontend::kDynamicTypeName,
+      };
+    }
   }
   const auto layout_id = static_cast<ClassId>(program_.classes.size());
   program_.classes.push_back(std::move(layout));
@@ -209,15 +219,27 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   if (receiver && mode == CallableMode::BoundMethod) {
     current_function_->instructions.back().binding_receiver = plan.binding_receiver;
   }
+  const auto& capture_class = program_.classes[layout];
+  std::uint32_t offset = 0;
   for (std::size_t index = 0; index < captures.size(); ++index) {
-    const auto reg = receiver ? receiver->reg : binding_registers_.at(captures[index].binding);
+    auto reg = receiver ? receiver->reg : binding_registers_.at(captures[index].binding);
+    if (receiver && receiver->type.value_layout != nullptr) {
+      reg = LowerConversion(*receiver,
+                            {
+                                .kind = frontend::TypeDescriptor::Kind::Dynamic,
+                                .name = frontend::kDynamicTypeName,
+                            },
+                            expression.location)
+                .reg;
+    }
     Emit({
         .opcode = Opcode::SetField,
         .dst = object,
         .lhs = reg,
-        .index = static_cast<FieldId>(index),
+        .index = offset,
         .location = expression.location,
     });
+    offset += FieldSlotCount(capture_class.field_types[index]);
   }
   FinishNullSafe(null_jump, object, expression.location);
   return {.reg = object, .type = model_.expression_types.at(&expression)};
@@ -244,6 +266,8 @@ Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& exp
       .rhs = callable,
       .index = static_cast<std::uint32_t>(count),
       .location = expression.location,
+      .no_normal_return =
+          model_.expression_types.at(&expression).kind == frontend::TypeDescriptor::Kind::Never,
   });
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }

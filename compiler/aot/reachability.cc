@@ -40,6 +40,9 @@ void VisitSignatureTypes(Signature& signature, const Visit& visit) {
   if (signature.narrowed_parameter) {
     visit(*signature.narrowed_parameter);
   }
+  if (signature.false_narrowed_parameter) {
+    visit(*signature.false_narrowed_parameter);
+  }
 }
 
 enum class NodeKind : std::uint8_t {
@@ -306,7 +309,7 @@ void Reachability::VisitLayout(const layout::Type& type, TypeExposure exposure) 
         MarkDynamic();
       }
       break;
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum:
       Mark(NodeKind::Class, type.index, exposure);
       break;
@@ -316,10 +319,11 @@ void Reachability::VisitLayout(const layout::Type& type, TypeExposure exposure) 
     case Kind::Array:
       Mark(NodeKind::Array, type.index, exposure);
       break;
-    case Kind::Collection:
+    case Kind::Set:
+    case Kind::Map:
       Mark(NodeKind::Collection, type.index, exposure);
       break;
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer:
       Mark(NodeKind::Signature, type.index, exposure);
@@ -480,7 +484,7 @@ void VisitLayoutTypes(layout::Program& program, Visit visit) {
 
 void RemapClassReferences(ir::Program& program, std::span<const std::uint32_t> mapping) {
   VisitLayoutTypes(program.layouts, [&](layout::Type& type) {
-    if (type.kind == layout::Type::Kind::Instance || type.kind == layout::Type::Kind::Enum) {
+    if (type.kind == layout::Type::Kind::Class || type.kind == layout::Type::Kind::Enum) {
       type.index = mapping[type.index];
     }
   });
@@ -523,7 +527,7 @@ void Reachability::PruneClasses(ir::Program& program) const {
   // 公共/反射类型与全部结构约束保留原编号。只有既不可创建、也不参与任何类型契约的
   // 实现类才会删除；这些通常是已裁剪函数留下的闭包，不靠类名推断可达性。
   VisitLayoutTypes(program.layouts, [&](const layout::Type& type) {
-    if (type.kind == layout::Type::Kind::Instance || type.kind == layout::Type::Kind::Enum) {
+    if (type.kind == layout::Type::Kind::Class || type.kind == layout::Type::Kind::Enum) {
       mark(type.index);
     }
   });

@@ -11,13 +11,13 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "vela/types.h"
 
 namespace vela::runtime {
 namespace {
 
 class OrderedCollectionTest : public testing::Test {
  protected:
-  enum class EntryPass : std::uint8_t { Initial, Reinserted };
   static constexpr std::uint32_t kEntryCount = 512;
 
   void SetUp() override {
@@ -25,26 +25,26 @@ class OrderedCollectionTest : public testing::Test {
         .keys = {.element = {.kind = ValueKind::Integer}},
         .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
     });
-    values_.at(0) = Value::Object(isolate_.heap().AllocateCollection(*layout));
-    ASSERT_NE(values_.at(0).AsObject(), nullptr);
+    map_ = Value::Object(isolate_.heap().AllocateCollection(*layout));
+    ASSERT_NE(map_.AsObject(), nullptr);
   }
 
-  HeapObject& map() { return *values_.at(0).AsObject(); }
+  HeapObject& map() { return *map_.AsObject(); }
   Heap& heap() { return isolate_.heap(); }
 
-  void InsertEntries(EntryPass pass) {
-    const std::uint32_t stride = pass == EntryPass::Initial ? 1 : 2;
-    const std::int64_t offset = pass == EntryPass::Initial ? 1000 : 2000;
-    auto& heap = isolate_.heap();
-    for (std::uint32_t index = 0; index < kEntryCount; index += stride) {
-      ASSERT_EQ(heap.InsertCollection(map(), Value::Integer(index), Value::Integer(index + offset)),
-                CollectionInsert::Inserted);
-    }
+  void ExpectInteger(Value key, std::int64_t expected) {
+    const auto value = Heap::GetCollectionValue(map(), key);
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->AsInteger(), expected);
   }
 
-  void RemoveEvenEntries() {
-    for (std::uint32_t index = 0; index < kEntryCount; index += 2) {
-      ASSERT_EQ(Heap::RemoveCollection(map(), Value::Integer(index)), CollectionRemove::Removed);
+  void InsertEntries(std::uint32_t stride = 1) {
+    auto& heap = isolate_.heap();
+    auto& collection = map();
+    for (std::uint32_t index = 0; index < kEntryCount; index += stride) {
+      ASSERT_EQ(heap.InsertCollection(collection, Value::Integer(index),
+                                      Value::Integer(index + 1000)),
+                Insertion::Inserted);
     }
   }
 
@@ -52,29 +52,32 @@ class OrderedCollectionTest : public testing::Test {
     constexpr auto kHalfEntries = kEntryCount / 2;
     auto& heap = isolate_.heap();
     const auto* integers = isolate_.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
-    values_.at(1) = Value::Object(heap.AllocateArray(*integers, kEntryCount));
-    ASSERT_TRUE(heap.CopyCollection(map(), *values_.at(1).AsObject(), CollectionProjection::Keys));
+    const auto value = Value::Object(heap.AllocateArray(*integers, kEntryCount));
+    const RootRange roots(heap, &value, 1);
+    auto& snapshot = *value.AsObject();
+    ASSERT_TRUE(heap.CopyCollection(map(), snapshot, CollectionProjection::Keys));
     for (std::uint32_t index = 0; index < kHalfEntries; ++index) {
-      EXPECT_EQ(Heap::GetElement(*values_.at(1).AsObject(), index)->AsInteger(), (index * 2) + 1);
-      EXPECT_EQ(Heap::GetElement(*values_.at(1).AsObject(), index + kHalfEntries)->AsInteger(),
-                index * 2);
+      EXPECT_EQ(heap.GetElement(snapshot, index)->AsInteger(), (index * 2) + 1);
+      EXPECT_EQ(heap.GetElement(snapshot, index + kHalfEntries)->AsInteger(), index * 2);
     }
   }
 
  private:
   Isolate isolate_{1};
-  std::array<Value, 2> values_;
-  RootRange roots_{isolate_.heap(), values_.data(), values_.size()};
+  Value map_;
+  RootRange root_{isolate_.heap(), &map_, 1};
 };
 
 TEST_F(OrderedCollectionTest, PreservesOrderAcrossGrowthDeletionAndReinsertion) {
-  InsertEntries(EntryPass::Initial);
-  RemoveEvenEntries();
-  InsertEntries(EntryPass::Reinserted);
-  ASSERT_FALSE(HasFatalFailure());
-  ASSERT_EQ(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(42)),
-            CollectionInsert::Updated);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1))->AsInteger(), 42);
+  ASSERT_NO_FATAL_FAILURE(InsertEntries());
+  auto& collection = map();
+  for (std::uint32_t index = 0; index < kEntryCount; index += 2) {
+    ASSERT_EQ(Heap::RemoveCollection(collection, Value::Integer(index)), Removal::Removed);
+  }
+  ASSERT_NO_FATAL_FAILURE(InsertEntries(2));
+  ASSERT_EQ(heap().InsertCollection(collection, Value::Integer(1), Value::Integer(42)),
+            Insertion::Existing);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(Value::Integer(1), 42));
   VerifySnapshotOrder();
 }
 
@@ -116,8 +119,7 @@ TEST(OrderedStringMapTest, LocatedUpdatesPreserveEqualStringsNullableValuesAndGr
 }
 
 TEST_F(OrderedCollectionTest, IteratorRejectsGrowthBeforeReadingCachedStorage) {
-  InsertEntries(EntryPass::Initial);
-  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_NO_FATAL_FAILURE(InsertEntries());
   auto iterator = Heap::IterateCollection(map());
   ASSERT_TRUE(iterator);
   ASSERT_TRUE(heap().InsertCollection(map(), Value::Integer(kEntryCount), Value::Integer(42)));
@@ -129,7 +131,7 @@ TEST_F(OrderedCollectionTest, IteratorSeesValueUpdates) {
   auto iterator = Heap::IterateCollection(map());
   ASSERT_TRUE(iterator);
   ASSERT_EQ(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(42)),
-            CollectionInsert::Updated);
+            Insertion::Existing);
   const auto entry = iterator->Next();
   ASSERT_TRUE(entry);
   const auto current = entry.value();
@@ -142,26 +144,25 @@ TEST_F(OrderedCollectionTest, IteratorSeesValueUpdates) {
 }
 
 TEST_F(OrderedCollectionTest, TypedUpdatesUseCurrentKeysAfterDeletionClearGrowthAndGc) {
-  InsertEntries(EntryPass::Initial);
-  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_NO_FATAL_FAILURE(InsertEntries());
   const auto first = Value::Integer(1);
   const auto second = Value::Integer(2);
   EXPECT_EQ(Heap::LoadMapValue(map(), first).AsInteger(), 1001);
   ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(42)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 1001);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 42);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(first, 1001));
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(second, 42));
 
   EXPECT_EQ(Heap::LoadMapValue(map(), first).AsInteger(), 1001);
-  ASSERT_EQ(Heap::RemoveCollection(map(), first), CollectionRemove::Removed);
+  ASSERT_EQ(Heap::RemoveCollection(map(), first), Removal::Removed);
   ASSERT_TRUE(heap().StoreMapValue(map(), first, Value::Integer(50)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 50);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 42);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(first, 50));
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(second, 42));
 
   EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 42);
   ASSERT_TRUE(Heap::ClearCollection(map()));
   ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(60)));
   EXPECT_TRUE(Heap::GetCollectionValue(map(), first)->IsNull());
-  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 60);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(second, 60));
 
   EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 60);
   for (std::uint32_t index = 0; index < kEntryCount * 2; ++index) {
@@ -169,16 +170,16 @@ TEST_F(OrderedCollectionTest, TypedUpdatesUseCurrentKeysAfterDeletionClearGrowth
         heap().InsertCollection(map(), Value::Integer(index + 1000), Value::Integer(index)));
   }
   ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(70)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 70);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1000))->AsInteger(), 0);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(second, 70));
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(Value::Integer(1000), 0));
 
   EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 70);
   heap().Collect();
   ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(80)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 80);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(second, 80));
   EXPECT_TRUE(Heap::LoadMapValue(map(), first).IsNull());
   ASSERT_TRUE(heap().StoreMapValue(map(), first, Value::Integer(90)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 90);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(first, 90));
 }
 
 TEST_F(OrderedCollectionTest, IteratorRejectsStructuralChangesAfterEnd) {
@@ -196,43 +197,44 @@ TEST_F(OrderedCollectionTest, ClearsEntriesAndAllowsReuse) {
   ASSERT_TRUE(Heap::ClearCollection(map()));
   EXPECT_EQ(Heap::CollectionLength(map()), 0U);
   EXPECT_FALSE(*Heap::HasCollectionKey(map(), Value::Integer(1)));
-  EXPECT_EQ(Heap::RemoveCollection(map(), Value::Integer(1)), CollectionRemove::Missing);
+  EXPECT_EQ(Heap::RemoveCollection(map(), Value::Integer(1)), Removal::Missing);
   ASSERT_EQ(heap().InsertCollection(map(), Value::Integer(42), Value::Integer(42)),
-            CollectionInsert::Inserted);
+            Insertion::Inserted);
   EXPECT_EQ(Heap::CollectionLength(map()), 1U);
 }
 
 TEST_F(OrderedCollectionTest, ReusesDeletedBucketsAcrossRepeatedEmptyTransitions) {
-  InsertEntries(EntryPass::Initial);
-  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_NO_FATAL_FAILURE(InsertEntries());
   for (std::uint32_t index = 0; index < kEntryCount; ++index) {
-    ASSERT_EQ(Heap::RemoveCollection(map(), Value::Integer(index)), CollectionRemove::Removed);
+    ASSERT_EQ(Heap::RemoveCollection(map(), Value::Integer(index)), Removal::Removed);
   }
   for (std::uint32_t index = 0; index < kEntryCount * 4; ++index) {
     const auto key = Value::Integer(index);
     ASSERT_TRUE(heap().StoreMapValue(map(), key, Value::Integer(42)));
     EXPECT_EQ(Heap::LoadMapValue(map(), key).AsInteger(), 42);
-    ASSERT_EQ(Heap::RemoveCollection(map(), key), CollectionRemove::Removed);
+    ASSERT_EQ(Heap::RemoveCollection(map(), key), Removal::Removed);
     EXPECT_EQ(Heap::CollectionLength(map()), 0U);
     EXPECT_TRUE(Heap::LoadMapValue(map(), key).IsNull());
   }
   heap().Collect();
   ASSERT_TRUE(heap().StoreMapValue(map(), Value::Integer(1), Value::Integer(42)));
-  EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1))->AsInteger(), 42);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(Value::Integer(1), 42));
 }
 
 TEST_F(OrderedCollectionTest, RejectsWrongKeyTypesBeforeEmptyAndPopulatedLookups) {
-  const auto wrong = Value::Boolean(true);
-  EXPECT_EQ(Heap::HasCollectionKey(map(), wrong).error(), ExecutionStatus::TypeError);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), wrong).error(), ExecutionStatus::TypeError);
-  EXPECT_EQ(Heap::RemoveCollection(map(), wrong).error(), ExecutionStatus::TypeError);
+  auto& collection = map();
+  const auto check_wrong_key = [&collection] {
+    const auto wrong = Value::Boolean(true);
+    EXPECT_EQ(Heap::HasCollectionKey(collection, wrong).error(), ExecutionStatus::TypeError);
+    EXPECT_EQ(Heap::GetCollectionValue(collection, wrong).error(), ExecutionStatus::TypeError);
+    EXPECT_EQ(Heap::RemoveCollection(collection, wrong).error(), ExecutionStatus::TypeError);
+  };
+  check_wrong_key();
   const auto key = Value::Integer(1);
-  ASSERT_TRUE(heap().InsertCollection(map(), key, Value::Integer(42)));
-  EXPECT_EQ(Heap::HasCollectionKey(map(), wrong).error(), ExecutionStatus::TypeError);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), wrong).error(), ExecutionStatus::TypeError);
-  EXPECT_EQ(Heap::RemoveCollection(map(), wrong).error(), ExecutionStatus::TypeError);
-  EXPECT_EQ(Heap::CollectionLength(map()), 1U);
-  EXPECT_EQ(Heap::GetCollectionValue(map(), key)->AsInteger(), 42);
+  ASSERT_TRUE(heap().InsertCollection(collection, key, Value::Integer(42)));
+  check_wrong_key();
+  EXPECT_EQ(Heap::CollectionLength(collection), 1U);
+  ASSERT_NO_FATAL_FAILURE(ExpectInteger(key, 42));
 }
 
 TEST(CollectionTest, CanonicalizesNanAndSignedZeroKeyEquality) {
@@ -243,14 +245,14 @@ TEST(CollectionTest, CanonicalizesNanAndSignedZeroKeyEquality) {
   Value value = Value::Object(heap.AllocateCollection(*layout));
   RootRange root(heap, &value, 1);
   auto& set = *value.AsObject();
-  EXPECT_EQ(heap.InsertCollection(set, Value::Double(0.0)), CollectionInsert::Inserted);
-  EXPECT_EQ(heap.InsertCollection(set, Value::Double(-0.0)), CollectionInsert::Updated);
+  EXPECT_EQ(heap.InsertCollection(set, Value::Double(0.0)), Insertion::Inserted);
+  EXPECT_EQ(heap.InsertCollection(set, Value::Double(-0.0)), Insertion::Existing);
   const auto nan = std::numeric_limits<double>::quiet_NaN();
-  EXPECT_EQ(heap.InsertCollection(set, Value::Double(nan)), CollectionInsert::Inserted);
-  EXPECT_EQ(heap.InsertCollection(set, Value::Double(-nan)), CollectionInsert::Updated);
+  EXPECT_EQ(heap.InsertCollection(set, Value::Double(nan)), Insertion::Inserted);
+  EXPECT_EQ(heap.InsertCollection(set, Value::Double(-nan)), Insertion::Existing);
   EXPECT_EQ(Heap::CollectionLength(set), 2U);
   EXPECT_TRUE(*Heap::HasCollectionKey(set, Value::Double(nan)));
-  EXPECT_EQ(Heap::RemoveCollection(set, Value::Double(-0.0)), CollectionRemove::Removed);
+  EXPECT_EQ(Heap::RemoveCollection(set, Value::Double(-0.0)), Removal::Removed);
   EXPECT_FALSE(*Heap::HasCollectionKey(set, Value::Double(0.0)));
 }
 
@@ -270,13 +272,12 @@ TEST(CollectionTest, TracesLiveEntriesAndReclaimsRemovedCyclesAndBuffers) {
   values.at(2) = Value::String(heap.AllocateString("payload"));
   ASSERT_TRUE(heap.SetField(*values.at(1).AsObject(), 0, values.at(0)));
   ASSERT_TRUE(heap.InsertCollection(*values.at(0).AsObject(), values.at(1), values.at(2)));
-  auto key = values.at(1);
+  const auto key = values.at(1);
   values.at(1) = Value::Null();
   values.at(2) = Value::Null();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 3U);
-  ASSERT_EQ(Heap::RemoveCollection(*values.at(0).AsObject(), key), CollectionRemove::Removed);
-  key = Value::Null();
+  ASSERT_EQ(Heap::RemoveCollection(*values.at(0).AsObject(), key), Removal::Removed);
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 1U);
   values.at(0) = Value::Null();

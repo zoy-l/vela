@@ -60,7 +60,7 @@ FunctionFlow AnalyzeFunction(const ir::Function& function,
     const auto barrier =
         ir::IsBackJump(instruction, index) || instruction.opcode == Opcode::Return ||
         (instruction.opcode != Opcode::GetField && instruction.opcode != Opcode::SetField &&
-         ir::AnalyzeEffects(instruction).MayCollectOnSuccess());
+         ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess());
     flow.borrow_barriers.push_back(flow.borrow_barriers.back() + static_cast<std::size_t>(barrier));
   }
   return flow;
@@ -117,7 +117,7 @@ std::optional<RecordArray> FindRecordArray(const ir::Program& program, std::uint
   }
   const auto& element =
       program.layouts.arrays[program.layouts.array_types[allocation.index]].element;
-  if (element.kind != layout::Type::Kind::Instance || element.nullable ||
+  if (element.kind != layout::Type::Kind::Class || element.nullable ||
       !IsRecordClass(program.classes[element.index], program)) {
     return std::nullopt;
   }
@@ -279,7 +279,7 @@ bool IsReadOnlyBorrow(const ir::Function& function,
       }
     }
     return instruction.opcode == Opcode::Return ||
-           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+           !ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess();
   });
 }
 

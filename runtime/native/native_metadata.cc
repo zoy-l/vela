@@ -17,6 +17,9 @@ void NativeMetadataTracer::Mark(const ClassLayout* layout) {
   Mark(&layout->nominal_type());
   Mark(layout->callable_type());
   Mark(layout->code_identity());
+  for (const auto& field : layout->value_fields()) {
+    Mark(field.layout);
+  }
 }
 
 void NativeMetadataTracer::Mark(const NominalType* nominal) {
@@ -33,6 +36,7 @@ void NativeMetadataTracer::Mark(const NominalType* nominal) {
 void NativeMetadataTracer::Mark(const ArrayLayout* layout) {
   if (layout != nullptr && reached_.arrays.insert(layout).second) {
     Mark(layout->element);
+    Mark(layout->value_layout);
   }
 }
 
@@ -54,6 +58,12 @@ void NativeMetadataTracer::Mark(const TypeSignature* signature) {
   }
   if (signature->result) {
     Mark(*signature->result);
+  }
+  if (signature->narrowed_parameter) {
+    Mark(*signature->narrowed_parameter);
+  }
+  if (signature->false_narrowed_parameter) {
+    Mark(*signature->false_narrowed_parameter);
   }
 }
 

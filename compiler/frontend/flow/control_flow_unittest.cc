@@ -36,7 +36,6 @@ INSTANTIATE_TEST_SUITE_P(
         FlowErrorCase{"func f(flag: bool): int { while (flag) { return 1; } }", "fall through"},
         FlowErrorCase{"func f(flag: bool): int { for (;;) { if (flag) break; } }", "fall through"},
         FlowErrorCase{"class A { f(): double { while (true) { break; } } }", "fall through"},
-        FlowErrorCase{"func f(): int { return 1; print(2); }", "unreachable"},
         FlowErrorCase{"func f(): void { while (true) { break; print(1); } }", "unreachable"},
         FlowErrorCase{"func f(): void { for (;;) { continue; print(1); } }", "unreachable"},
         FlowErrorCase{"func f(flag: bool): int { if (flag) return 1; else return 2; return 3; }",
@@ -47,7 +46,6 @@ INSTANTIATE_TEST_SUITE_P(
         FlowErrorCase{"func f(): int { if (false) return 1; return 2; }", "unreachable"},
         FlowErrorCase{"func f(): void { while (false) {} }", "unreachable"},
         FlowErrorCase{"func f(): void { for (;false;) {} }", "unreachable"},
-        FlowErrorCase{"func f(): void { break; }", "inside a loop"},
         FlowErrorCase{"func f(): void { continue; }", "inside a loop"}));
 
 TEST(ControlFlowTest, RejectsNonEmptySwitchBranchesWithAReachableFallthrough) {

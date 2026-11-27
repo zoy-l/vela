@@ -1,4 +1,5 @@
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -44,8 +45,8 @@ TEST(NumericParseTest, Int64LimitsSignsAndRadices) {
       {.text = "-2A", .radix = Value::Integer(16), .expected = -42},
       {.text = "z", .radix = Value::Integer(36), .expected = 35},
   });
+  Heap heap;
   for (const auto& sample : samples) {
-    Heap heap;
     const std::array<Value, 2> arguments{
         Value::String(heap.AllocateString(sample.text)),
         sample.radix,
@@ -79,8 +80,8 @@ TEST(NumericParseTest, InvalidAndOverflowingIntegersAreNotTruncated) {
       "\xc2\xa0"
       "42",
   });
+  Heap heap;
   for (const auto text : inputs) {
-    Heap heap;
     const std::array<Value, 2> arguments{Value::String(heap.AllocateString(text)), Value::Null()};
     const auto result = ExecuteNumericParse(Builtin::IntParse, arguments);
     ASSERT_FALSE(result) << text;
@@ -93,6 +94,7 @@ TEST(NumericParseTest, InvalidAndOverflowingIntegersAreNotTruncated) {
 
 TEST(NumericParseTest, InvalidRadixIsAnErrorEvenForTryParse) {
   Heap heap;
+  const auto text = Value::String(heap.AllocateString(""));
   for (const auto radix : std::to_array<std::int64_t>({
            std::numeric_limits<std::int64_t>::min(),
            -1,
@@ -101,10 +103,7 @@ TEST(NumericParseTest, InvalidRadixIsAnErrorEvenForTryParse) {
            37,
            std::numeric_limits<std::int64_t>::max(),
        })) {
-    const std::array<Value, 2> arguments{
-        Value::String(heap.AllocateString("")),
-        Value::Integer(radix),
-    };
+    const std::array arguments{text, Value::Integer(radix)};
     const auto tried = ExecuteNumericParse(Builtin::IntTryParse, arguments);
     ASSERT_FALSE(tried);
     EXPECT_EQ(tried.error(), ExecutionStatus::InvalidRadix);
@@ -129,13 +128,14 @@ TEST(NumericParseTest, Binary64PrecisionSubnormalsSignedZeroAndNonFiniteValues) 
       {.text = "-0.0", .expected = -0.0},
       {.text = "-1e-9999", .expected = -0.0},
   });
+  Heap heap;
   for (const auto& sample : samples) {
-    Heap heap;
     const std::array<Value, 1> arguments{Value::String(heap.AllocateString(sample.text))};
     const auto result = ExecuteNumericParse(Builtin::DoubleParse, arguments);
     ASSERT_TRUE(result) << sample.text;
-    EXPECT_EQ(result->AsDouble(), sample.expected) << sample.text;
-    EXPECT_EQ(std::signbit(result->AsDouble()), std::signbit(sample.expected));
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(result->AsDouble()),
+              std::bit_cast<std::uint64_t>(sample.expected))
+        << sample.text;
   }
 }
 
@@ -172,8 +172,8 @@ TEST(NumericParseTest, DoublesRequireTheCompleteDecimalGrammar) {
       std::string_view("1\0", 2),
       "１２",
   });
+  Heap heap;
   for (const auto text : inputs) {
-    Heap heap;
     const std::array<Value, 1> arguments{Value::String(heap.AllocateString(text))};
     const auto parsed = ExecuteNumericParse(Builtin::DoubleParse, arguments);
     ASSERT_FALSE(parsed) << text;

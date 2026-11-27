@@ -96,7 +96,7 @@ class Parser final {
 
   std::optional<Enum> ParseEnum();
   std::optional<Program::Import> ParseImport();
-  enum class ClassKind : std::uint8_t { Script, Native };
+  enum class ClassKind : std::uint8_t { Script, Native, Value };
   std::optional<Class> ParseClassHeader(ClassKind kind);
   std::optional<Class> ParseClass(ClassKind kind = ClassKind::Script);
   std::optional<Interface> ParseInterface();

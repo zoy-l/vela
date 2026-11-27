@@ -38,7 +38,7 @@
       "name": "meta.import.vela",
       "begin": "\\b(import)\\b",
       "beginCaptures": { "1": { "name": "keyword.control.vela" } },
-      "end": ";|(?=^\\s*\\b(?:import|export|external|class|interface|enum|type|func|async|let|const)\\b)",
+      "end": ";|(?=^\\s*\\b(?:import|export|external|class|struct|interface|enum|type|func|async|let|const)\\b)",
       "patterns": [
         { "include": "#comments" },
         { "include": "#strings" },
@@ -54,12 +54,12 @@
     },
     "nominal-declaration": {
       "name": "meta.type.declaration.vela",
-      "begin": "\\b(class|interface)\\s+([A-Za-z_][A-Za-z_0-9]*)\\b",
+      "begin": "\\b(class|struct|interface)\\s+([A-Za-z_][A-Za-z_0-9]*)\\b",
       "beginCaptures": {
         "1": { "name": "storage.type.vela" },
         "2": { "name": "entity.name.type.vela" }
       },
-      "end": "(?<=\\})|(?=;|^\\s*\\b(?:import|export|external|class|interface|enum|type|func|let|const)\\b)",
+      "end": "(?<=\\})|(?=;|^\\s*\\b(?:import|export|external|class|struct|interface|enum|type|func|let|const)\\b)",
       "patterns": [
         { "include": "#comments" },
         { "include": "#strings" },
@@ -284,7 +284,7 @@
         { "name": "keyword.control.vela", "match": "\\b(?:if|else|while|for|in|switch|case|default|break|continue|return|match|try|catch|finally|throw|import|export|await)\\b" },
         { "include": "#modifiers" },
         { "name": "storage.type.function.vela", "match": "\\bfunc\\b" },
-        { "name": "storage.type.vela", "match": "\\b(?:class|interface|extends|implements|enum|type|constructor)\\b" },
+        { "name": "storage.type.vela", "match": "\\b(?:class|struct|interface|extends|implements|enum|type|constructor)\\b" },
         { "name": "variable.language.vela", "match": "\\b(?:this|super)\\b" },
         {
           "name": "meta.call.vela",

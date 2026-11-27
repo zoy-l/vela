@@ -194,7 +194,7 @@ bool TypeChecker::CanRepeatAttribute(const Type& type) {
 }
 
 void TypeChecker::CheckAttributeTarget(std::span<const Attribute> attributes,
-                                       Type type,
+                                       const Type& type,
                                        const void* target,
                                        const std::optional<ReflectionMemberBinding>& member) {
   absl::flat_hash_set<std::string_view> seen;

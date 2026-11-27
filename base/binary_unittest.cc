@@ -31,18 +31,25 @@ TEST(BinaryTest, RoundTripsFixedWidthsRecordsAndUtf8) {
   EXPECT_FALSE(reader.Read<std::uint8_t>());
 }
 
-TEST(BinaryTest, RejectsEveryTruncationAndCountsBeforeAllocation) {
+TEST(BinaryTest, RejectsTruncatedLengthsAndClaimsBeyondRemainingInput) {
   BinaryWriter writer;
-  constexpr std::uint32_t kLength = 20;
+  constexpr std::uint64_t kLength = 2;
   writer.Write(kLength);
-  for (std::size_t count = 0; count < writer.bytes().size(); ++count) {
-    BinaryReader reader(writer.bytes().first(count));
-    EXPECT_FALSE(reader.Read<std::uint32_t>());
+  writer.Write(std::uint16_t{0});
+  const auto bytes = writer.bytes();
+  for (std::size_t count = 0; count < sizeof(kLength); ++count) {
+    BinaryReader reader(bytes.first(count));
+    EXPECT_FALSE(reader.Read<std::uint64_t>()) << count;
   }
-  BinaryReader reader(writer.bytes());
-  EXPECT_FALSE(reader.Count(sizeof(std::uint32_t)));
-  BinaryReader text(writer.bytes());
-  EXPECT_FALSE(text.Text());
+  BinaryReader elements(bytes);
+  const auto count = elements.Count(sizeof(std::uint16_t));
+  ASSERT_FALSE(count);
+  EXPECT_EQ(count.error().offset, sizeof(kLength));
+
+  BinaryReader text(bytes.first(bytes.size() - 1));
+  const auto decoded = text.Text();
+  ASSERT_FALSE(decoded);
+  EXPECT_EQ(decoded.error().offset, sizeof(kLength));
 }
 
 TEST(BinaryTest, ReadsTheSameCountWidthAsWriters) {
@@ -52,8 +59,19 @@ TEST(BinaryTest, ReadsTheSameCountWidthAsWriters) {
   writer.Write(kValue);
   BinaryReader reader(writer.bytes());
   EXPECT_EQ(reader.Count(sizeof(std::uint32_t)), 1U);
-  EXPECT_EQ(reader.Read<std::uint32_t>(), 42U);
+  EXPECT_EQ(reader.Read<std::uint32_t>(), kValue);
   EXPECT_EQ(reader.remaining(), 0U);
+}
+
+TEST(BinaryTest, ReportsTheInvalidUtf8ByteOffset) {
+  BinaryWriter writer;
+  writer.Write(std::uint32_t{0});
+  writer.Write(std::string_view("ok\xff", 3));
+  BinaryReader reader(writer.bytes());
+  ASSERT_TRUE(reader.Read<std::uint32_t>());
+  const auto text = reader.Text();
+  ASSERT_FALSE(text);
+  EXPECT_EQ(text.error().offset, sizeof(std::uint32_t) + sizeof(std::uint64_t) + 2);
 }
 
 TEST(BinaryTest, ChecksummedPayloadKeepsItsWireFormatAndRejectsDamage) {
@@ -61,17 +79,18 @@ TEST(BinaryTest, ChecksummedPayloadKeepsItsWireFormatAndRejectsDamage) {
   const auto payload = std::as_bytes(std::span(kPayload));
   BinaryWriter writer;
   writer.WriteChecksummed(payload);
-  BinaryReader reader(writer.bytes());
+  const auto bytes = writer.bytes();
+  BinaryReader reader(bytes);
   const auto checksum = reader.Record<std::uint64_t, std::uint64_t>();
   ASSERT_TRUE(checksum);
   const auto expected = ContentFingerprint(payload);
   EXPECT_EQ(std::get<0>(*checksum), expected.low);
   EXPECT_EQ(std::get<1>(*checksum), expected.high);
-  for (std::size_t count = 0; count < writer.bytes().size(); ++count) {
-    BinaryReader truncated(writer.bytes().first(count));
-    EXPECT_FALSE(truncated.ChecksummedRemainder());
+  for (std::size_t count = 0; count < bytes.size(); ++count) {
+    BinaryReader truncated(bytes.first(count));
+    EXPECT_FALSE(truncated.ChecksummedRemainder()) << count;
   }
-  BinaryReader intact(writer.bytes());
+  BinaryReader intact(bytes);
   const auto decoded = intact.ChecksummedRemainder();
   ASSERT_TRUE(decoded);
   EXPECT_TRUE(std::ranges::equal(*decoded, payload));

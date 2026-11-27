@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "base/declaration.h"
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
@@ -60,6 +61,8 @@ std::expected<void, std::string> UpdateSource(Compiler& compiler,
 testing::AssertionResult CompletesWithInteger(runtime::Isolate& isolate,
                                               runtime::Value value,
                                               std::int64_t expected);
+testing::AssertionResult ReturnsInteger(const std::expected<runtime::Value, ExecutionStatus>& result,
+                                        std::int64_t expected);
 testing::AssertionResult ReturnsInteger(const runtime::NativeNamedEntry& entry,
                                         std::int64_t expected,
                                         std::span<const runtime::Value> arguments = {});

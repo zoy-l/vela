@@ -109,7 +109,7 @@ bool IsCandidate(const ClassIndex& classes, const ir::Function& function) {
         if (ir::IsBuiltinCall(instruction, Builtin::ArrayLength)) {
           return true;
         }
-        const auto effects = ir::AnalyzeEffects(instruction);
+        const auto effects = ir::AnalyzeEffects(function, instruction);
         return !effects.MayCollectOnSuccess() && !effects.reads_state && !effects.writes_state &&
                !effects.changes_control && !effects.may_suspend;
     }
@@ -227,7 +227,7 @@ void EmitHostWrapper(llvm::Module& module,
   const auto& parameter = source.value_types.front();
   const auto array =
       std::ranges::find(program.layouts.arrays, parameter.name, &layout::Array::name);
-  if (array != program.layouts.arrays.end() && array->element.kind == layout::Type::Kind::Integer &&
+  if (array != program.layouts.arrays.end() && array->element.kind == layout::Type::Kind::Int &&
       !array->element.nullable) {
     ready = builder.CreateAnd(ready, HasNonnegative31ArrayRange(builder, object));
   }

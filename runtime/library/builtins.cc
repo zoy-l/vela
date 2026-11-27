@@ -89,8 +89,8 @@ Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments,
   if (!text.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (!heap.AppendString(builder, text.AsString()->value())) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  if (const auto appended = heap.AppendString(builder, text.AsString()->value()); !appended) {
+    return std::unexpected(appended.error());
   }
   return Value::Null();
 }

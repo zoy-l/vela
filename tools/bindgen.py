@@ -107,7 +107,7 @@ def depfile_escape(path: Path) -> str:
 def format_cpp(text: str, formatter: Path, style: Path) -> bytes:
     result = subprocess.run([str(formatter), "--style=file:" + str(style)],
                             input=text, capture_output=True, text=True, encoding="utf-8", check=True)
-    return result.stdout.replace("\r\n", "\n").encode("utf-8")
+    return result.stdout.encode("utf-8")
 
 
 def fingerprints(generator: Path, paths: list[Path | str]) -> dict[str, str]:
@@ -126,7 +126,8 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     style = (style or ROOT / ".clang-format").resolve(strict=True)
     config_path = config_path.resolve(strict=True)
     config = configuration(config_path)
-    dependencies = [verify_manifest(path) for path in config["dependencies"]]
+    dependency_paths = config["dependencies"]
+    dependencies = [verify_manifest(path) for path in dependency_paths]
     module = config["module"]
     output = config["output"]
     manifest_path = output / f"{module}.bindings.json"
@@ -139,7 +140,7 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
                  *["--header=" + str(path) for path in config["headers"]],
                  *["--callback=" + name for name in config["callbacks"]],
                  *["--opaque=" + name for name in config["opaque"]],
-                 *["--dependency=" + str(path) for path in config["dependencies"]]]
+                 *["--dependency=" + str(path) for path in dependency_paths]]
     result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", check=False)
     if result.returncode:
         raise ValueError(result.stderr.strip() or "Binding collection failed")
@@ -156,11 +157,12 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     inputs.update({config_path, config["compilation_database"], config["translation_unit"],
                    generator, formatter, Path(__file__).resolve(), style})
     inputs.update(config["headers"])
-    inputs.update(config["dependencies"])
-    for path in config["dependencies"]:
+    inputs.update(dependency_paths)
+    for path in dependency_paths:
         dependency = verify_manifest(path)
         inputs.update(path.parent / name for name in dependency["products"])
-    input_hashes = {str(path): digest(path) for path in sorted(inputs)}
+    input_paths = sorted(inputs)
+    input_hashes = {str(path): digest(path) for path in input_paths}
     # This token couples the C++ translation unit to its traits header at compile time.
     token = hashlib.sha256(canonical({"inputs": input_hashes, "bindings": bindings,
                                       "products": products})).hexdigest()
@@ -174,44 +176,39 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     # Ninja 使用构建目录内的相对目标；编译数据库固定该目录，避免依赖调用者的 cwd。
     depfile_target = Path(os.path.relpath(manifest_path, config["compilation_database"].parent))
     encoded[f"{module}.d"] = (
-        depfile_escape(depfile_target) + ": " + " ".join(depfile_escape(path) for path in sorted(inputs))
+        depfile_escape(depfile_target) + ": " + " ".join(depfile_escape(path) for path in input_paths)
         + "\n").encode("utf-8")
-    with tempfile.TemporaryDirectory(prefix="vela-binding-fingerprints-") as temporary:
+    if not check:
+        output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".vela-bindgen-", dir=None if check else output) as temporary:
         stage = Path(temporary)
         for name, data in encoded.items():
             (stage / name).write_bytes(data)
         hashed = fingerprints(generator, [stage / name for name in encoded])
-        product_fingerprints = {name: hashed[str(stage / name)] for name in encoded}
-    manifest = {"format_version": FORMAT_VERSION, "bindings": bindings,
-                "binding_generation": token, "fingerprints": product_fingerprints,
-                "registration": namespace + "::Register",
-                "dependencies": [str(path) for path in config["dependencies"]],
-                "inputs": input_hashes,
-                "products": {name: hashlib.sha256(data).hexdigest() for name, data in encoded.items()}}
-    manifest["generation"] = hashlib.sha256(canonical(manifest)).hexdigest()
-    encoded[manifest_path.name] = (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2)
-                                   + "\n").encode("utf-8")
-    if check:
+        manifest = {
+            "format_version": FORMAT_VERSION, "bindings": bindings,
+            "binding_generation": token, "registration": namespace + "::Register",
+            "fingerprints": {name: hashed[str(stage / name)] for name in encoded},
+            "dependencies": [str(path) for path in dependency_paths],
+            "inputs": input_hashes,
+            "products": {name: hashlib.sha256(data).hexdigest() for name, data in encoded.items()},
+        }
+        manifest["generation"] = hashlib.sha256(canonical(manifest)).hexdigest()
+        manifest_data = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        # Stage the manifest before replacing any product and publish it last.
+        encoded[manifest_path.name] = manifest_data.encode("utf-8")
+        if not check:
+            (stage / manifest_path.name).write_bytes(encoded[manifest_path.name])
+            for name, expected in input_hashes.items():
+                if digest(Path(name)) != expected:
+                    raise ValueError(f"Binding input changed during generation: {name}")
         for name, data in encoded.items():
-            product = output / name
-            if not product.is_file() or product.read_bytes() != data:
-                raise ValueError(f"Binding output is missing or stale: {product}")
-        verify_manifest(manifest_path)
-        return manifest_path
-    output.mkdir(parents=True, exist_ok=True)
-    # Stage the whole generation before replacing any product. Publish the manifest last;
-    # consumers verify all product hashes and never trust a partially replaced generation.
-    with tempfile.TemporaryDirectory(prefix=".vela-bindgen-", dir=output) as temporary:
-        stage = Path(temporary)
-        for name, data in encoded.items():
-            (stage / name).write_bytes(data)
-        for name, expected in input_hashes.items():
-            if digest(Path(name)) != expected:
-                raise ValueError(f"Binding input changed during generation: {name}")
-        for name in encoded:
             destination = output / name
-            if not destination.is_file() or destination.read_bytes() != encoded[name]:
-                os.replace(stage / name, destination)
+            if destination.is_file() and destination.read_bytes() == data:
+                continue
+            if check:
+                raise ValueError(f"Binding output is missing or stale: {destination}")
+            os.replace(stage / name, destination)
     verify_manifest(manifest_path)
     return manifest_path
 

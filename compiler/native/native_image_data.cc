@@ -29,6 +29,7 @@
 #include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/layout_description.h"
 #include "runtime/native/host_callback.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native_build_identity.h"
@@ -202,6 +203,7 @@ runtime::NativeClassDescription NativeImageBuilder::Class(std::size_t index) {
       .base_class = source.base_class,
       .constructor = source.constructor,
       .enum_members = Texts(source.enum_members),
+      .value_slots = Copy(type.value_slots),
   };
 }
 
@@ -219,6 +221,7 @@ runtime::NativeSignatureDescription NativeImageBuilder::Signature(const layout::
   }
   const auto& result = source.result;
   const auto& narrowed = source.narrowed_parameter;
+  const auto& false_narrowed = source.false_narrowed_parameter;
   return {
       .name = Text(source.name),
       .parameters = Copy(parameters),
@@ -226,6 +229,8 @@ runtime::NativeSignatureDescription NativeImageBuilder::Signature(const layout::
       .has_result = static_cast<std::uint32_t>(result.has_value()),
       .narrowed_parameter = describe_optional(narrowed),
       .has_narrowed_parameter = static_cast<std::uint32_t>(narrowed.has_value()),
+      .false_narrowed_parameter = describe_optional(false_narrowed),
+      .has_false_narrowed_parameter = static_cast<std::uint32_t>(false_narrowed.has_value()),
   };
 }
 
@@ -570,6 +575,13 @@ void NativeImageBuilder::Reflection() {
   std::vector<runtime::NativeReflectionMember> reflection_members;
   for (const auto& order : members) {
     const auto& member = program_->reflection_members.at(std::get<2>(order));
+    auto target = member.target;
+    if (member.kind == reflection::MemberKind::Field && (member.flags & reflection::kStatic) == 0) {
+      const auto& owner = program_->classes[program_->layouts.types[member.declaring_type].index];
+      if (owner.kind != ir::Class::Kind::Struct) {
+        target = ir::PhysicalFieldOffset(owner, target);
+      }
+    }
     reflection_members.push_back({
         .declaration = member.declaration,
         .declaring_type = member.declaring_type,
@@ -577,7 +589,7 @@ void NativeImageBuilder::Reflection() {
         .kind = static_cast<std::uint32_t>(member.kind),
         .flags = member.flags,
         .type = member.type,
-        .target = member.target,
+        .target = target,
         .getter = member.getter,
         .setter = member.setter,
         .parameters = CallParameters(member.signature),

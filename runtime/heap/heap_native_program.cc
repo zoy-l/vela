@@ -196,6 +196,12 @@ void VisitNativeType(TypeConstraint type,
     if (signature->result) {
       append(*signature->result);
     }
+    if (signature->narrowed_parameter) {
+      append(*signature->narrowed_parameter);
+    }
+    if (signature->false_narrowed_parameter) {
+      append(*signature->false_narrowed_parameter);
+    }
     for (const auto& parameter : signature->parameters) {
       append(parameter.type);
     }

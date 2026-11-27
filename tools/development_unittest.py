@@ -43,12 +43,12 @@ class DevelopmentCommandTest(CommandTestCase):
             self.lines.put((name, line.rstrip("\r\n")))
 
     def wait(self, stream: str, pattern: str) -> str:
+        for index, (name, line) in enumerate(self.pending):
+            if name == stream and re.search(pattern, line):
+                self.pending.pop(index)
+                return line
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            for index, (name, line) in enumerate(self.pending):
-                if name == stream and re.search(pattern, line):
-                    self.pending.pop(index)
-                    return line
             try:
                 name, line = self.lines.get(timeout=max(0.01, deadline - time.monotonic()))
             except queue.Empty:
@@ -77,10 +77,10 @@ class DevelopmentCommandTest(CommandTestCase):
         self.process.stdout.close()
         self.process.stderr.close()
 
-    def test_file_hot_reload_keeps_state_and_explicit_reload_reexecutes_entry(self) -> None:
+    def test_relative_entry_hot_reload_keeps_state_and_explicit_reload_reexecutes_entry(self) -> None:
         self.write("let score = 10; func main(): void { score = 42; } "
                    "export func read(): int { return score; }")
-        self.start()
+        self.start(entry="main.vela")
         self.send(".call read")
         self.wait("out", "^42$")
         self.write("let score = 100; func main(): void { score = 999; } "
@@ -109,14 +109,6 @@ class DevelopmentCommandTest(CommandTestCase):
         self.wait("out", "^timer completed$")
         self.send(".call read")
         self.wait("out", "^42$")
-
-    def test_relative_entry_observes_saves_in_the_process_working_directory(self) -> None:
-        self.write("func main(): void {} export func read(): int { return 42; }")
-        self.start(entry="main.vela")
-        self.write("func main(): void {} export func read(): int { return 43; }")
-        self.wait("err", r"accepted \(run 1, revision 2\)")
-        self.send(".call read")
-        self.wait("out", "^43$")
 
     def test_reload_exits_an_old_infinite_frame_and_starts_the_new_entry(self) -> None:
         self.write("func main(): void { while (true) {} }")

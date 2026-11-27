@@ -90,7 +90,11 @@ void ForEachPropertyFunction(const MemberDefinition& member, const Visitor& visi
   }
 }
 
-[[nodiscard]] InstructionEffects AnalyzeEffects(const Instruction& instruction);
+[[nodiscard]] InstructionEffects AnalyzeEffects(const Function& function,
+                                                const Instruction& instruction);
+[[nodiscard]] InstructionEffects AnalyzeEffects(const Function& function,
+                                                const Instruction& instruction,
+                                                const RegisterAccess& access);
 void RemapJumpTargets(Function& function, std::span<const std::uint32_t> targets);
 
 [[nodiscard]] RegisterAccess AnalyzeRegisters(const Instruction& instruction,
@@ -133,13 +137,27 @@ void ForEachUse(const Instruction& instruction,
   for (std::uint32_t index = 0; index < access.argument_count; ++index) {
     visitor(instruction.lhs + index);
   }
+  if (instruction.struct_receiver) {
+    const auto& place = *instruction.struct_receiver;
+    if (place.kind != StructReceiver::Kind::Global) {
+      visitor(place.receiver);
+    }
+    if (place.kind == StructReceiver::Kind::Index) {
+      visitor(place.index);
+    }
+  }
 }
 
 struct BasicBlock final {
   std::size_t begin = 0;
   std::size_t end = 0;
   std::vector<std::size_t> successors;
+  std::size_t normal_successor_count = 0;
   std::vector<std::size_t> predecessors;
+
+  [[nodiscard]] std::span<const std::size_t> NormalSuccessors() const {
+    return std::span(successors).first(normal_successor_count);
+  }
 };
 
 struct FlowGraph final {

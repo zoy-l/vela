@@ -120,9 +120,8 @@ class Suite final : public TestBridge {
       std::vector<runtime::FutureTraceFrame> trace);
   std::expected<void, std::string> RegisterNode(const testing::TestRegistration& registration);
   std::expected<void, std::string> RegisterHook(const testing::TestRegistration& registration);
-  static std::expected<void, std::string> ReadMetadata(
-      Node& node,
-      const testing::TestRegistration& registration);
+  std::expected<void, std::string> ReadMetadata(Node& node,
+                                                const testing::TestRegistration& registration);
   std::expected<void, std::string> Select(Node& node,
                                           const std::string& prefix,
                                           const std::vector<std::string>& inherited_tags);

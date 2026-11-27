@@ -2,6 +2,14 @@ source_set("build_info") {
   sources = [ "build_info.h" ]
 }
 
+source_set("host_type_contract") {
+  sources = [ "host_type_contract.h" ]
+  public_deps = [
+    "//base",
+    "//include:bindings",
+  ]
+}
+
 generated_file("cache_build_identity") {
   outputs = [ "$target_gen_dir/cache_build_identity.h" ]
   contents = [
@@ -130,6 +138,7 @@ source_set("frontend") {
     "frontend/typing/type_checker_predicates.cc",
     "frontend/typing/type_checker_refinements.cc",
     "frontend/typing/type_checker_reflection.cc",
+    "frontend/typing/type_checker_structs.cc",
     "frontend/typing/type_checker_switch.cc",
     "frontend/typing/type_checker_types.cc",
     "frontend/typing/type_inference.cc",
@@ -205,6 +214,7 @@ executable("vela_ir_tests") {
   deps = [
     ":ir",
     ":preparation_test_support",
+    ":reflection_test_support",
     "//third_party:gtest_main",
   ]
 }
@@ -445,6 +455,9 @@ source_set("native") {
     "native/root_store_optimizer.cc",
     "native/root_store_optimizer.h",
     "native/scalar_emitter.cc",
+    "native/struct_place.cc",
+    "native/struct_values.cc",
+    "native/struct_values.h",
     "native/target_version_emitter.cc",
     "native/target_version_emitter.h",
   ]
@@ -456,7 +469,10 @@ source_set("native") {
     "//third_party:llvm",
   ]
   include_dirs = [ root_gen_dir ]
-  deps = [ "//runtime:native_build_identity" ]
+  deps = [
+    ":host_type_contract",
+    "//runtime:native_build_identity",
+  ]
 }
 
 source_set("jit") {
@@ -713,6 +729,7 @@ executable("vela_jit_tests") {
     "jit/test_support.h",
     "test_support/development_test_support.cc",
     "test_support/development_test_support.h",
+    "test_support/reflection_expectations.h",
   ]
   deps = [
     ":checkpoint_publication",
@@ -726,6 +743,7 @@ executable("vela_jit_tests") {
     "//compiler/bindgen:test_bindings",
     "//third_party:gtest_main",
   ]
+  data_deps = [ ":vela" ]
   if (target_os == "win") {
     sources += [ "jit/platform_support_unittest_win.cc" ]
   }
@@ -897,7 +915,7 @@ source_set("reflection_test_support") {
   sources = [ "test_support/reflection_test_support.h" ]
   public_deps = [
     ":frontend",
-    "//runtime",
+    "//third_party:gtest",
   ]
 }
 

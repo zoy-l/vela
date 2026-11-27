@@ -20,6 +20,7 @@ enum class TokenKind : std::uint8_t {
   StringMiddle,
   StringTail,
   Class,
+  Struct,
   Func,
   Async,
   Await,
@@ -159,6 +160,7 @@ enum class TokenRole : std::uint8_t {
     case TokenKind::Func:
     case TokenKind::Async:
     case TokenKind::Class:
+    case TokenKind::Struct:
     case TokenKind::Interface:
     case TokenKind::Enum:
     case TokenKind::Type:

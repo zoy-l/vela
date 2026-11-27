@@ -2,24 +2,32 @@
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/compiler.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <semaphore>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
+#include "base/binary.h"
 #include "base/path.h"
 #include "base/testing/directory.h"
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
+#include "compiler/ir/ir.h"
 #include "compiler/jit/compiler_protocol.h"
 #include "compiler/jit/test_support.h"
 #include "compiler/native/compile_options.h"
@@ -40,6 +48,179 @@ class ExternalCompilerTest : public vela::test::DirectoryTest {
 #endif
   }
 };
+
+TEST_F(ExternalCompilerTest, RejectsInvalidWireEnumsAtTheirByteOffset) {
+  BinaryWriter writer;
+  writer.Write(std::string_view("main"));
+  writer.Write(std::numeric_limits<std::uint8_t>::max());
+  const auto decoded = DecodeSourceConfiguration(writer.bytes());
+  ASSERT_FALSE(decoded);
+  EXPECT_EQ(decoded.error(), "byte 12: invalid binary enum");
+}
+
+TEST_F(ExternalCompilerTest, PreservesInvalidUtf8OffsetsThroughTheDecoder) {
+  BinaryWriter writer;
+  writer.Write(std::string_view("ok\xff", 3));
+  const auto decoded = DecodeSourceConfiguration(writer.bytes());
+  ASSERT_FALSE(decoded);
+  EXPECT_EQ(decoded.error(), "byte 10: binary text is not valid UTF-8");
+}
+
+TEST_F(ExternalCompilerTest, StructLayoutsSurviveTheCompilerProcessProtocol) {
+  SourceSession source("main.vela");
+  const auto prepared = test::PrepareText(source, R"(
+struct Position { x: double; y: double; }
+struct Body { position: Position?; label: string; }
+export func copy(value: Body): Body { return value; }
+)");
+  ASSERT_TRUE(prepared);
+  const auto encoded = EncodeProgram(*prepared->snapshot().program);
+  const auto decoded = DecodeProgram(encoded);
+  ASSERT_TRUE(decoded) << decoded.error();
+  EXPECT_EQ(encoded, EncodeProgram(*decoded));
+  const auto body = std::ranges::find(decoded->classes, "Body", &ir::Class::name);
+  ASSERT_NE(body, decoded->classes.end());
+  ASSERT_NE(body->value_layout, nullptr);
+  EXPECT_EQ(body->kind, ir::Class::Kind::Struct);
+  EXPECT_EQ(body->value_layout->offsets, (std::vector<std::uint32_t>{0, 3}));
+  EXPECT_EQ(body->value_layout->slots.size(), 4U);
+  const auto copy = std::ranges::find(decoded->functions, "copy", &ir::Function::name);
+  ASSERT_NE(copy, decoded->functions.end());
+  ASSERT_NE(copy->return_type.value_layout, nullptr);
+  EXPECT_EQ(copy->return_type.value_layout, body->value_layout);
+  const auto& shape = *copy->return_type.value_layout;
+  ASSERT_EQ(shape.fields.size(), 2U);
+  EXPECT_TRUE(shape.fields.front().nullable);
+  ASSERT_NE(shape.fields.front().value_layout, nullptr);
+  EXPECT_EQ(shape.fields.front().value_layout->slots.size(), 2U);
+  EXPECT_EQ(copy->value_types.front().value_layout->slots.size(), 4U);
+  EXPECT_EQ(copy->value_types.front().value_layout, body->value_layout);
+  const auto position = std::ranges::find(decoded->classes, "Position", &ir::Class::name);
+  ASSERT_NE(position, decoded->classes.end());
+  EXPECT_EQ(shape.fields.front().value_layout, position->value_layout);
+
+  auto independent = *decoded;
+  const auto copy_index = static_cast<std::size_t>(copy - decoded->functions.begin());
+  auto& independent_function = independent.functions[copy_index];
+  independent_function.return_type.value_layout =
+      std::make_shared<frontend::StructLayout>(*copy->return_type.value_layout);
+  EXPECT_EQ(EncodeFunction(*copy), EncodeFunction(independent_function));
+  EXPECT_EQ(EncodeCompilationEnvironment(*decoded), EncodeCompilationEnvironment(independent));
+}
+
+TEST_F(ExternalCompilerTest, BorrowedStructReceiversSurviveCopiesAndCompilerProcessProtocol) {
+  SourceSession source("main.vela");
+  const auto prepared = test::PrepareText(source, R"(
+struct Counter { value: int; advance(): void { this.value++; } }
+export func main(): int { let value = Counter(value: 41); value.advance(); return value.value; }
+)");
+  ASSERT_TRUE(prepared);
+  const auto& original = *prepared->snapshot().program;
+  const auto decoded = DecodeProgram(EncodeProgram(original));
+  ASSERT_TRUE(decoded) << decoded.error();
+  bool borrowed = false;
+  for (std::size_t index = 0; index < original.functions.size(); ++index) {
+    const auto& instructions = original.functions[index].instructions;
+    for (std::size_t instruction = 0; instruction < instructions.size(); ++instruction) {
+      const auto& value = instructions[instruction];
+      if (value.struct_receiver == nullptr) {
+        continue;
+      }
+      borrowed = true;
+      const auto copy = value;
+      EXPECT_EQ(copy.struct_receiver, value.struct_receiver);
+      const auto& restored = decoded->functions[index].instructions[instruction].struct_receiver;
+      ASSERT_NE(restored, nullptr);
+      EXPECT_EQ(restored->kind, value.struct_receiver->kind);
+      EXPECT_EQ(restored->receiver, value.struct_receiver->receiver);
+      EXPECT_EQ(restored->type.value_layout->slots.size(),
+                value.struct_receiver->type.value_layout->slots.size());
+    }
+  }
+  ASSERT_TRUE(borrowed);
+  auto compiler = Compiler::CreateExternal({.executable = Executable(), .cache = directory()});
+  ASSERT_TRUE(compiler) << frontend::DiagnosticsText(compiler.error());
+  auto code = (*compiler)->Compile(*decoded, {.optimization = NativeOptimization::Release});
+  ASSERT_TRUE(code) << frontend::DiagnosticsText(code.error());
+  runtime::Isolate isolate;
+  ASSERT_TRUE(test::PublishImage(isolate, code->image));
+  const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
+  ASSERT_TRUE(main);
+  EXPECT_TRUE(test::ReturnsInteger(*main, 42));
+}
+
+TEST_F(ExternalCompilerTest, RejectsCyclicAndForwardStructLayoutReferences) {
+  ir::Program program;
+  program.classes.emplace_back();
+  auto& owner = program.classes.front();
+  const auto absent = EncodeProgram(program);
+  owner.value_layout = std::make_shared<frontend::StructLayout>();
+  auto encoded = EncodeProgram(program);
+  const auto present = std::ranges::mismatch(encoded, absent);
+  ASSERT_NE(present.in1, encoded.end());
+  // 第一个差异是布局的 presence 标志，后面紧跟其首次定义编号。
+  const auto layout_offset =
+      static_cast<std::size_t>(present.in1 - encoded.begin()) + sizeof(std::uint8_t);
+  ASSERT_LE(layout_offset + sizeof(std::uint32_t), encoded.size());
+  encoded[layout_offset] = std::byte{1};
+  const auto forward = DecodeProgram(encoded);
+  ASSERT_FALSE(forward);
+  EXPECT_NE(forward.error().find("invalid struct layout reference"), std::string::npos);
+
+  owner.value_layout->fields.push_back({.name = {}, .value_layout = owner.value_layout});
+  encoded = EncodeProgram(program);
+  owner.value_layout->fields.clear();
+  const auto cyclic = DecodeProgram(encoded);
+  ASSERT_FALSE(cyclic);
+  EXPECT_NE(cyclic.error().find("cyclic struct layout reference"), std::string::npos);
+  encoded.pop_back();
+  EXPECT_FALSE(DecodeProgram(encoded));
+}
+
+TEST_F(ExternalCompilerTest, PredicateBranchesAndNeverCallsSurviveTheCompilerProtocol) {
+  SourceSession source("main.vela");
+  const auto prepared = test::PrepareText(source, R"(
+func isMissing(value: int?): bool { return value == null; }
+func fail(): never { throw Error(message: 'missing'); }
+func read(value: int?): int {
+  const missing = isMissing;
+  if (missing(value)) fail();
+  return value;
+}
+export func main(): int {
+  try { return read(null); }
+  catch (error: Error) { return read(42); }
+}
+)");
+  ASSERT_TRUE(prepared);
+  const auto decoded = DecodeProgram(EncodeProgram(*prepared->snapshot().program));
+  ASSERT_TRUE(decoded) << decoded.error();
+  EXPECT_TRUE(std::ranges::any_of(decoded->layouts.signatures, [](const auto& signature) {
+    return signature.narrowed_parameter && signature.false_narrowed_parameter;
+  }));
+  const auto original = std::ranges::find_if(decoded->functions, [](const auto& function) {
+    return std::ranges::any_of(function.instructions, [](const auto& instruction) {
+      return instruction.no_normal_return;
+    });
+  });
+  ASSERT_NE(original, decoded->functions.end());
+  auto changed = *original;
+  const auto instruction = std::ranges::find_if(
+      changed.instructions, [](const auto& item) { return item.no_normal_return; });
+  instruction->no_normal_return = false;
+  EXPECT_NE(EncodeFunction(*original), EncodeFunction(changed));
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    auto compiler = Compiler::CreateExternal({.executable = Executable(), .cache = directory()});
+    ASSERT_TRUE(compiler) << frontend::DiagnosticsText(compiler.error());
+    auto code = (*compiler)->Compile(*decoded, {.optimization = NativeOptimization::Release});
+    ASSERT_TRUE(code) << frontend::DiagnosticsText(code.error());
+    runtime::Isolate isolate;
+    ASSERT_TRUE(test::PublishImage(isolate, code->image));
+    const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
+    ASSERT_TRUE(main);
+    ASSERT_TRUE(test::ReturnsInteger(*main, 42));
+  }
+}
 
 TEST_F(ExternalCompilerTest, CacheSurvivesProcessRestartAndReloadKeepsStateAndCapturedCode) {
   SourceSession source("main.vela");

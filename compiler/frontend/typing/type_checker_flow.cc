@@ -1,23 +1,31 @@
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_checker.h"
 
+#include <algorithm>
+
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
 
 namespace vela::frontend {
-namespace {
 
-ConditionTruth EvaluateCondition(const Expression& expression) {
+ConditionTruth TypeChecker::EvaluateCondition(const Expression& expression) const {
   using Truth = ConditionTruth;
   if (expression.kind == Expression::Kind::BooleanLiteral) {
     return expression.boolean_value ? Truth::AlwaysTrue : Truth::AlwaysFalse;
   }
-  if (expression.kind == Expression::Kind::Unary && expression.operation == TokenKind::Bang) {
-    return NegateConditionTruth(EvaluateCondition(*expression.operand));
-  }
-  if (expression.kind != Expression::Kind::Binary ||
-      (expression.operation != TokenKind::AndAnd && expression.operation != TokenKind::OrOr)) {
+  const bool negated =
+      expression.kind == Expression::Kind::Unary && expression.operation == TokenKind::Bang;
+  const bool logical =
+      expression.kind == Expression::Kind::Binary &&
+      (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr);
+  if (!negated && !logical) {
     return Truth::Unknown;
+  }
+  if (const auto cached = expression_flows_.find(&expression); cached != expression_flows_.end()) {
+    return cached->second.condition;
+  }
+  if (negated) {
+    return NegateConditionTruth(EvaluateCondition(*expression.operand));
   }
   const auto left = EvaluateCondition(*expression.left);
   const auto right = EvaluateCondition(*expression.right);
@@ -33,7 +41,84 @@ ConditionTruth EvaluateCondition(const Expression& expression) {
   return left == Truth::AlwaysFalse ? right : Truth::Unknown;
 }
 
-}  // namespace
+bool TypeChecker::ExpressionCanComplete(const Expression& expression) const {
+  if (const auto cached = expression_flows_.find(&expression); cached != expression_flows_.end()) {
+    return cached->second.can_complete;
+  }
+  const auto found = facts_.expression_types.find(&expression);
+  if (found != facts_.expression_types.end() && found->second.kind == Type::Kind::Never) {
+    return false;
+  }
+  const auto completes = [this](const auto& child) { return ExpressionCanComplete(*child); };
+  switch (expression.kind) {
+    case Expression::Kind::Call:
+      if (!completes(expression.callee)) {
+        return false;
+      }
+      // 空安全调用可在不求值实参的情况下完成。
+      if (expression.callee->null_safe) {
+        return true;
+      }
+      return std::ranges::all_of(expression.arguments,
+                                 [&](const auto& argument) { return completes(argument.value); });
+    case Expression::Kind::Binary:
+      return BinaryExpressionCanComplete(expression);
+    case Expression::Kind::Conditional: {
+      if (!completes(expression.operand)) {
+        return false;
+      }
+      const auto truth = EvaluateCondition(*expression.operand);
+      return (truth != ConditionTruth::AlwaysFalse && completes(expression.left)) ||
+             (truth != ConditionTruth::AlwaysTrue && completes(expression.right));
+    }
+    case Expression::Kind::Match:
+      if (!completes(expression.operand)) {
+        return false;
+      }
+      return std::ranges::any_of(expression.arms,
+                                 [&](const auto& arm) { return completes(arm.value); });
+    case Expression::Kind::Unary:
+    case Expression::Kind::TypeTest:
+    case Expression::Kind::TypeCast:
+    case Expression::Kind::Await:
+      return completes(expression.operand);
+    case Expression::Kind::Member:
+      return completes(expression.object);
+    case Expression::Kind::Index:
+      return completes(expression.object) && completes(expression.index);
+    case Expression::Kind::CompoundAssignment:
+      return completes(expression.left) && completes(expression.right);
+    case Expression::Kind::StringInterpolation:
+    case Expression::Kind::ArrayLiteral:
+      return std::ranges::all_of(expression.elements, completes);
+    case Expression::Kind::MapLiteral:
+      // 编辑器检查未完成的源码时，entry 的缺失键值在诊断后仍保留在 AST 中。
+      return std::ranges::all_of(expression.entries, [&](const auto& entry) {
+        return (entry.key == nullptr || completes(entry.key)) &&
+               (entry.value == nullptr || completes(entry.value));
+      });
+    default:
+      return true;
+  }
+}
+
+bool TypeChecker::BinaryExpressionCanComplete(const Expression& expression) const {
+  if (!ExpressionCanComplete(*expression.left)) {
+    return false;
+  }
+  const auto operation = expression.operation;
+  if (operation == TokenKind::AndAnd || operation == TokenKind::OrOr ||
+      operation == TokenKind::QuestionQuestion) {
+    const auto truth = EvaluateCondition(*expression.left);
+    const auto requires_right =
+        (operation == TokenKind::AndAnd && truth == ConditionTruth::AlwaysTrue) ||
+        (operation == TokenKind::OrOr && truth == ConditionTruth::AlwaysFalse) ||
+        (operation == TokenKind::QuestionQuestion &&
+         expression.left->kind == Expression::Kind::NullLiteral);
+    return !requires_right || ExpressionCanComplete(*expression.right);
+  }
+  return ExpressionCanComplete(*expression.right);
+}
 
 StatementFlow TypeChecker::MergeBranches(StatementFlow left, StatementFlow right) {
   return {
@@ -48,6 +133,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
   switch (statement.kind) {
     case Statement::Kind::VariableDeclaration:
       CheckVariableDeclaration(statement);
+      flow.can_fall_through = ExpressionCanComplete(*statement.expression);
       break;
     case Statement::Kind::Return:
       CheckReturn(statement, return_type);
@@ -56,7 +142,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
     case Statement::Kind::Throw: {
       auto type = CheckExpression(*statement.expression, nullptr);
       type = ParameterCapability(type, statement.expression->location);
-      if (!IsThrowable(type)) {
+      if (type.kind != Type::Kind::Never && !IsThrowable(type)) {
         AddDiagnostic(statement.location, "throw requires a non-null class or interface value");
       }
       flow.can_fall_through = false;
@@ -67,6 +153,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       break;
     case Statement::Kind::Expression:
       CheckExpression(*statement.expression, nullptr);
+      flow.can_fall_through = ExpressionCanComplete(*statement.expression);
       break;
     case Statement::Kind::Block:
       flow = CheckBlock(statement, return_type);
@@ -157,16 +244,14 @@ StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& retur
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
   } else {
     flow = MergeBranches(then_flow, else_flow);
-    if (!then_flow.can_fall_through) {
-      refinements_.Apply(else_facts);
-    } else if (!else_flow.can_fall_through) {
-      refinements_.Apply(then_facts);
-    } else {
-      refinements_.Intersect(then_facts, else_facts);
-      refinements_.Apply(then_facts);
-    }
+    refinements_.MergeAlternatives(
+        then_facts, else_facts,
+        {.first = then_flow.can_fall_through, .second = else_flow.can_fall_through});
   }
   flow.condition = condition;
+  if (!ExpressionCanComplete(*statement.condition)) {
+    flow = {.can_fall_through = false};
+  }
   return flow;
 }
 
@@ -190,7 +275,8 @@ StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& re
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
   const auto condition = EvaluateCondition(*statement.condition);
-  return CheckLoopExit(statement, condition, body);
+  return ExpressionCanComplete(*statement.condition) ? CheckLoopExit(statement, condition, body)
+                                                     : StatementFlow{.can_fall_through = false};
 }
 
 StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& return_type) {
@@ -198,8 +284,9 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
     return CheckForEach(statement, return_type);
   }
   BeginScope();
+  bool can_enter_loop = true;
   if (statement.initializer) {
-    CheckStatement(*statement.initializer, return_type);
+    can_enter_loop = CheckStatement(*statement.initializer, return_type).can_fall_through;
   }
   LoopAssignments assignments(statement);
   if (!refinements_.IsEmpty()) {
@@ -209,6 +296,7 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
   if (statement.condition) {
     const auto condition_type = CheckExpression(*statement.condition, nullptr);
     CheckBooleanOperand(*statement.condition, condition_type, "for condition must be bool");
+    can_enter_loop = can_enter_loop && ExpressionCanComplete(*statement.condition);
     condition = EvaluateCondition(*statement.condition);
   }
   const auto before = refinements_.BeginBranch();
@@ -238,7 +326,8 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
   EndScope();
-  return CheckLoopExit(statement, condition, body);
+  const auto exit = CheckLoopExit(statement, condition, body);
+  return can_enter_loop ? exit : StatementFlow{.can_fall_through = false};
 }
 
 StatementFlow TypeChecker::CheckLoopExit(const Statement& statement,
@@ -264,7 +353,9 @@ StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& 
   const auto before = refinements_.BeginBranch();
   Type element;
   const auto collection = NonNullable(iterable);
-  if (iterable.kind == Type::Kind::Array) {
+  if (iterable.kind == Type::Kind::Never) {
+    element = iterable;
+  } else if (iterable.kind == Type::Kind::Array) {
     element = array_elements_.at(collection.name);
   } else if (iterable.kind == Type::Kind::Set || iterable.kind == Type::Kind::Map) {
     element = generic_arguments_.at(collection.name).front();
@@ -281,7 +372,7 @@ StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& 
     InvalidateAssignments(assignments.Body());
   }
   EndScope();
-  return {};
+  return {.can_fall_through = ExpressionCanComplete(*statement.iterable)};
 }
 
 }  // namespace vela::frontend

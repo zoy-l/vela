@@ -309,7 +309,6 @@ export async func calculate(operation: int): Future<int> {
 """
 
 HOST_TESTS = r'''
-extern "C" std::uint8_t COMPOSITION_ENTRY(NativeExecution*, const NativeValue*, std::uint64_t, NativeValue*);
 extern "C" const NativeImage* COMPOSITION_IMAGE() noexcept;
 std::int64_t composition_effects = 0;
 void RecordComposition(NativeContext&, std::int64_t value) noexcept { composition_effects += value; }

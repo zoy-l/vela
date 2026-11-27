@@ -57,7 +57,6 @@ source_set("runtime") {
     "//include/vela/runtime.h",
     "//include/vela/strings.h",
     "//include/vela/type.h",
-    "//include/vela/types.h",
     "async/async_state.cc",
     "async/async_state.h",
     "async/cancellation_token.cc",

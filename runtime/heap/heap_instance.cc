@@ -1,3 +1,4 @@
+#include "base/inline_layout.h"
 #include "runtime/heap/heap.h"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "base/declaration.h"
@@ -30,6 +32,10 @@ std::size_t InstanceFieldBytes(std::uint32_t count) noexcept {
 std::optional<std::uint32_t> ClassLayout::FieldIndex(DeclarationId field) const noexcept {
   const auto found = field_indices_.find(field);
   return found == field_indices_.end() ? std::nullopt : std::optional(found->second);
+}
+
+void ClassLayout::BindValueFields(std::vector<ValueField> fields) {
+  value_fields_ = std::move(fields);
 }
 
 std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept {
@@ -123,6 +129,75 @@ std::optional<Value> Heap::GetField(const HeapObject& object, std::uint32_t inde
 
 Value Heap::LoadField(const HeapObject& object, std::uint32_t index) noexcept {
   return FieldStorage::Load(ObjectFieldStorage(object), object.layout->field_count(), index);
+}
+
+std::expected<Value, ExecutionStatus> Heap::ReadValueField(HeapObject& object,
+                                                           std::uint32_t index) noexcept {
+  if (object.layout->value_fields().empty()) {
+    return LoadField(object, index);
+  }
+  const auto& field = object.layout->value_fields()[index];
+  auto offset = field.offset;
+  if (field.layout == nullptr) {
+    return LoadField(object, offset);
+  }
+  if (field.nullable && !LoadField(object, offset++).AsBoolean()) {
+    return Value::Null();
+  }
+  const auto source = Value::Object(&object);
+  const RootRange root(*this, &source, 1, std::nullopt);
+  auto* copy = AllocateInstance(*field.layout);
+  if (copy == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto count = field.layout->field_count();
+  const auto storage = ObjectFieldStorage(*copy);
+  for (std::uint32_t slot = 0; slot < count; ++slot) {
+    FieldStorage::Store(storage, count, slot, LoadField(object, offset + slot));
+  }
+  return Value::Object(copy);
+}
+
+void Heap::WriteValueField(HeapObject& object, std::uint32_t index, Value value) noexcept {
+  if (object.layout->value_fields().empty()) {
+    std::ignore = SetField(object, index, value);
+    return;
+  }
+  const auto& field = object.layout->value_fields()[index];
+  auto offset = field.offset;
+  if (field.layout == nullptr) {
+    std::ignore = SetField(object, offset, value);
+    return;
+  }
+  if (field.nullable) {
+    std::ignore = SetField(object, offset++, Value::Boolean(!value.IsNull()));
+  }
+  const auto slots = field.layout->value_layout().slots();
+  if (!object.layout->IsStruct() && slots.empty() && !field.nullable) {
+    std::ignore = SetField(object, offset, Value::Boolean(true));
+  }
+  for (std::uint32_t slot = 0; slot < slots.size(); ++slot) {
+    auto leaf = Value::Null();
+    if (!value.IsNull()) {
+      leaf = LoadField(*value.AsObject(), slot);
+    } else {
+      // 缺失的嵌套值与 native 聚合的零载荷保持同一规范表示。
+      switch (slots[slot].kind) {
+        case InlineSlotKind::Boolean:
+          leaf = Value::Boolean(false);
+          break;
+        case InlineSlotKind::Integer:
+          leaf = Value::Integer(0);
+          break;
+        case InlineSlotKind::Double:
+          leaf = Value::Double(0.0);
+          break;
+        default:
+          break;
+      }
+    }
+    std::ignore = SetField(object, offset + slot, leaf);
+  }
 }
 
 std::expected<void, ExecutionStatus> Heap::SetField(HeapObject& object,

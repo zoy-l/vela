@@ -122,7 +122,6 @@ INSTANTIATE_TEST_SUITE_P(
         "func main(): void { const f = (x: int) => { if (x > 0) { return x; } }; }",
         "func main(): void { const f = (x: int) => { if (x > 0) { return 1; } return 1.5; }; }",
         "func main(): void { const f = (x: int) => { if (x > 0) { return; } return 1; }; }",
-        "func main(): void { const f = () => null; }",
         "func main(): void { const f: () => int = () => null; }",
         "func main(): void { [1, 2].sort((a, b) => a < b); }",
         "func main(): void { [1, 2].map(x => {}); }",

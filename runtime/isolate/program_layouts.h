@@ -13,6 +13,9 @@ namespace vela::runtime {
 
 class Isolate;
 
+// 编译布局的名义类型在封闭和可重载程序中必须一致。
+[[nodiscard]] NominalKind ClassNominalKind(const layout::Class& description) noexcept;
+
 struct ProgramLayouts final {
   std::vector<ClassLayout*> classes;
   std::vector<const ArrayLayout*> arrays;

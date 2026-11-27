@@ -127,7 +127,6 @@ INSTANTIATE_TEST_SUITE_P(
                     "const value: double = 1; func main(): void {}",
                     "const first = second; const second = first; func main(): void {}",
                     "const operation: (int) => int = (x: int): int => later; const later = x;",
-                    "const value = null; func main(): void {}",
                     "func main(): void {} const value = main();",
                     "const f = (x: int): int => x; func main(): int { return f(x: 1); }",
                     "const value = 1; class value {}"));

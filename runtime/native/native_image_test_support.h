@@ -18,6 +18,13 @@ inline NativeText Text(std::string_view value) {
   return {.data = value.data(), .size = value.size()};
 }
 
+inline NativeImage EmptyImage() {
+  NativeImage image;
+  image.abi_identity = Text(NativeRuntimeAbiIdentity());
+  image.target = Text(NativeTargetIdentity());
+  return image;
+}
+
 template <class T, std::size_t Size>
 NativeTable<T> Table(const std::array<T, Size>& values) {
   return {.data = values.data(), .size = values.size()};

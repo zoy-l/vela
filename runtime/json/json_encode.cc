@@ -21,6 +21,7 @@
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
+#include "vela/types.h"
 
 namespace vela::runtime {
 
@@ -55,7 +56,8 @@ struct JsonEncodeFrame final {
 
 JsonEncoder::JsonEncoder(Isolate& isolate, Value input)
     : heap_(&isolate.heap()),
-      active_type_(isolate.CreateCollectionLayout({.keys = {.element = {.dynamic = true}}})),
+      active_type_(isolate.CreateCollectionLayout(
+          {.keys = {.element = {.category = TypeConstraint::Category::Dynamic}}})),
       values_{input, Value::Null(), Value::Null()},
       roots_(*heap_, values_.data(), values_.size(), std::nullopt),
       frames_(*heap_) {}
@@ -171,7 +173,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value,
   if (!inserted) {
     return std::unexpected(OomError(Allocation::Traversal));
   }
-  if (*inserted == CollectionInsert::Updated) {
+  if (*inserted == Insertion::Existing) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "cyclic JSON value"));
   }
   const auto frame = frames_.Acquire(frame_, value, kind);
@@ -309,7 +311,11 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceArray() {
       return written;
     }
   }
-  values_.at(kPending) = *Heap::GetElement(object, frame.index++);
+  const auto element = heap_->GetElement(object, frame.index++);
+  if (!element) {
+    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "array value allocation failed"));
+  }
+  values_.at(kPending) = *element;
   pending_ = true;
   return CheckElement();
 }

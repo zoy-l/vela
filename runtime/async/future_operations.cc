@@ -7,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -82,13 +81,11 @@ void CompleteFutureError(Isolate& isolate,
                          const FutureDiagnostic& diagnostic) {
   const auto status = diagnostic.status;
   if (payload.IsNull() && status != ExecutionStatus::ExecutionStopped) {
-    payload = CreateError(
-                  isolate.heap(), isolate.error_layout(),
-                  {
-                      .message = diagnostic.message.empty() ? ExecutionStatusName(status)
-                                                            : std::string_view(diagnostic.message),
-                      .code = ExecutionStatusCode(status),
-                  })
+    payload = CreateError(isolate.heap(), isolate.error_layout(),
+                          {
+                              .message = diagnostic.Message(),
+                              .code = ExecutionStatusCode(status),
+                          })
                   .value_or(Value::Null());
   }
   std::ignore = future.CompleteError(payload, diagnostic);

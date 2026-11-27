@@ -28,10 +28,7 @@ TEST(Utf8Test, EncodesKnownScalarBoundaryVectors) {
   for (const auto& sample : samples) {
     std::string text;
     AppendUtf8(sample.point, text);
-    EXPECT_EQ(text, sample.bytes);
-    const auto decoded = DecodeUtf8Prefix(text);
-    EXPECT_EQ(decoded.value, sample.point);
-    EXPECT_EQ(decoded.width, sample.bytes.size());
+    EXPECT_EQ(text, sample.bytes) << sample.point;
   }
 }
 
@@ -66,15 +63,14 @@ TEST(Utf8Test, PrefixValidationKeepsByteOffsetsAndStopsBeforeTheNextPoint) {
     ASSERT_FALSE(prefix);
     EXPECT_EQ(prefix.error(), offset);
     if (!text.empty()) {
-      EXPECT_EQ(InvalidUtf8Offset(std::string("ok") + std::string(text)), offset + 2);
+      EXPECT_EQ(InvalidUtf8Offset(std::string("ok").append(text)), offset + 2);
     }
   }
   const auto prefix = ReadUtf8Prefix("\xc2\xa2\xff");
   ASSERT_TRUE(prefix);
   EXPECT_EQ(prefix->value, 0xa2U);
   EXPECT_EQ(prefix->width, 2U);
-  const auto empty = InvalidUtf8Offset("");
-  EXPECT_FALSE(empty);
+  EXPECT_FALSE(InvalidUtf8Offset(""));
 }
 
 }  // namespace

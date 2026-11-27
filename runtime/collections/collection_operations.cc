@@ -9,6 +9,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "vela/types.h"
 
 namespace vela::runtime {
 namespace {
@@ -69,7 +70,7 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
       if (!inserted) {
         return std::unexpected(inserted.error());
       }
-      return builtin == Builtin::SetAdd ? Value::Boolean(*inserted == CollectionInsert::Inserted)
+      return builtin == Builtin::SetAdd ? Value::Boolean(*inserted == Insertion::Inserted)
                                         : Value::Null();
     }
     case Builtin::CollectionHas: {
@@ -87,7 +88,7 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
       if (!removed) {
         return std::unexpected(removed.error());
       }
-      return Value::Boolean(*removed == CollectionRemove::Removed);
+      return Value::Boolean(*removed == Removal::Removed);
     }
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues: {

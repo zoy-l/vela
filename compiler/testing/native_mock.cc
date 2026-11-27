@@ -125,7 +125,7 @@ bool IsResponseCompatible(const NativeInstance& instance,
     return false;
   }
   const auto& returned = response->types.subspan(*response_result).front();
-  return returned.dynamic || returned.IsSubtypeOf(contract.types.subspan(*result).front());
+  return returned.IsDynamic() || returned.IsSubtypeOf(contract.types.subspan(*result).front());
 }
 
 std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
@@ -217,9 +217,13 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
     if (!kind || !Heap::IsThrowable(value)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    if (auto* bridge = runtime::HostData::Find<TestBridge>(isolate)) {
-      bridge->RegisterMockFailure(Heap::ClassOf(*value.AsObject())->nominal_type(), *kind);
+    auto* bridge = runtime::HostData::Find<TestBridge>(isolate);
+    if (bridge == nullptr) {
+      return std::unexpected(execution.HandleFailure(
+          ExecutionStatus::TypeError,
+          "sdk:mock failure registration requires a test execution session"));
     }
+    bridge->RegisterMockFailure(Heap::ClassOf(*value.AsObject())->nominal_type(), *kind);
     return Value::Null();
   }
   if (operation == MockOperation::IsThrowable) {

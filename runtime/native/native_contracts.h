@@ -27,7 +27,7 @@ struct NativeContractViolation final {
                                     const NativeTypeDescription& left,
                                     const NativeImage& right_image,
                                     const NativeTypeDescription& right);
-[[nodiscard]] std::expected<void, std::string> CheckNativeCallContract(
+[[nodiscard]] std::expected<void, NativeContractViolation> CheckNativeCallContract(
     const NativeImage& previous_image,
     const NativeFunctionDescription& previous,
     const NativeImage& candidate_image,

@@ -31,7 +31,7 @@ struct NativeControlState;
 struct CodeIdentity;
 struct NativeProgramState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 32;
+inline constexpr std::uint32_t kNativeAbiVersion = 34;
 inline constexpr std::size_t kNativeFrameAlignment = 16;
 inline constexpr unsigned kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
@@ -87,6 +87,8 @@ enum class NativeValueKind : std::uint8_t {
   Double,
   Object,
   String,
+  // 仅命名同步 struct 方法的内部接收者；不进入 Value、GC 根或宿主参数。
+  StructPlace,
 };
 
 // 仅跨宿主包装边界使用；编译单元内部的参数和局部值保持类型化。
@@ -98,6 +100,12 @@ struct NativeValue final {
   std::uint32_t reserved_word = 0;
 };
 static_assert(sizeof(NativeValue) == kNativeValueBytes);
+
+// 仅在本次原生访问内借用，调用者在下一次安全点前消费；对象字段迁移会使其失效。
+struct NativeStructField final {
+  std::byte* payloads = nullptr;
+  std::byte* kinds = nullptr;
+};
 
 struct NativeFrameSize final {
   std::size_t root_count = 0;
@@ -284,6 +292,11 @@ extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
                                            std::uint64_t count,
                                            RootRange* range) noexcept;
 extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept;
+extern "C" void vela_native_v1_roots_attach(NativeExecution* execution,
+                                            const void* values,
+                                            std::uint64_t count,
+                                            std::uint64_t stride,
+                                            RootRange* range) noexcept;
 // 无成功路径安全点的叶函数在失败时临时登记活动根和逻辑帧。
 // position 的高 32 位是函数编号，低 32 位是指令编号，与宿主字节序无关。
 extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,

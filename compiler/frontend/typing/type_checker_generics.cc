@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -107,7 +108,7 @@ const TypeChecker::Type* TypeChecker::ResolveParameterBound(const TypeParameterI
     parameter.resolved = true;
     if (const auto& bound = parameter.declaration->bound) {
       const auto type = ResolveType(*bound, VoidTypePolicy::Allowed);
-      if (type.kind == Type::Kind::Void || type.kind == Type::Kind::Null) {
+      if (type.kind == Type::Kind::Void) {
         AddDiagnostic(bound->location, "generic bound must be a value type");
       } else if (type.kind == Type::Kind::Dynamic) {
         AddDiagnostic(bound->location,
@@ -387,6 +388,7 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
 void TypeChecker::CheckDefinitions(Program& program) {
   // 模板事实与具体声明事实分开记录；具体特化仍由各自的函数体检查产生执行事实。
   auto concrete = std::exchange(facts_, {});
+  auto concrete_flows = std::exchange(expression_flows_, {});
   auto concrete_values = std::exchange(function_value_ids_, {});
   checking_definitions_ = true;
   auto& templates = program.templates;
@@ -446,6 +448,7 @@ void TypeChecker::CheckDefinitions(Program& program) {
   }
   definitions_ = std::exchange(facts_, {});
   facts_ = std::move(concrete);
+  expression_flows_ = std::move(concrete_flows);
   function_value_ids_ = std::move(concrete_values);
   checking_definitions_ = false;
   attribute_bindings_.clear();
@@ -554,6 +557,8 @@ void TypeChecker::RegisterSpecializations() {
         .kind = Type::Kind::Class,
         .name = InternTypeName(source.name),
         .is_abstract = specializer_->IsAbstractClass(index),
+        .value_layout =
+            source.kind == Class::Kind::Value ? std::make_shared<StructLayout>() : nullptr,
     };
     types_.try_emplace(source.name, type);
     ClassInfo info;

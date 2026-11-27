@@ -29,6 +29,20 @@ namespace {
 
 using OperationResult = std::expected<void, ExecutionStatus>;
 
+std::expected<FutureCallback, ExecutionStatus> ResolveCallback(const FutureCallbacks& callbacks,
+                                                               Value callable,
+                                                               std::uint32_t minimum,
+                                                               std::uint32_t maximum) {
+  auto resolved = callbacks.resolve(callable);
+  if (!resolved) {
+    return std::unexpected(resolved.error());
+  }
+  if (resolved->arity < minimum || resolved->arity > maximum) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return resolved;
+}
+
 // timer/微任务拥有一份稳定值序列及其根，析构根后才释放被借用的容器。
 class RootedValues final {
  public:
@@ -90,7 +104,7 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
     const auto values = Heap::ValueSlots(*storage_.AsObject());
     const auto source = values.front();
     for (std::uint32_t index = 0; index < count_; ++index) {
-      const auto item = *Heap::GetElement(*source.AsObject(), index);
+      const auto item = *isolate_->heap().GetElement(*source.AsObject(), index);
       auto* future = Heap::GetFuture(*item.AsObject());
       const auto self = shared_from_this();
       future->ObserveResult(
@@ -232,9 +246,9 @@ OperationResult ScheduleTimeout(const Continuation& context,
   const auto callback = call.At(2);
   std::optional<FutureCallback> replacement;
   if (!callback.IsNull()) {
-    auto resolved = callbacks.resolve(callback);
-    if (!resolved || resolved->arity != 0) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    auto resolved = ResolveCallback(callbacks, callback, 0, 0);
+    if (!resolved) {
+      return std::unexpected(resolved.error());
     }
     replacement = std::move(*resolved);
   }
@@ -276,9 +290,9 @@ OperationResult ScheduleTimeout(const Continuation& context,
 OperationResult ObserveCompletion(const Continuation& context,
                                   const FutureCall& call,
                                   const FutureCallbacks& callbacks) {
-  auto action = callbacks.resolve(call.At(1));
-  if (!action || action->arity != 0) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  auto action = ResolveCallback(callbacks, call.At(1), 0, 0);
+  if (!action) {
+    return std::unexpected(action.error());
   }
   context->source->ObserveResult(
       [context, action = std::move(*action)](const FutureResult& input) {
@@ -320,16 +334,16 @@ OperationResult ObserveCallbacks(const Continuation& context,
   std::optional<FutureCallback> value_callback;
   std::optional<FutureCallback> error_callback;
   if (operation == AsyncOperation::Then) {
-    auto resolved = callbacks.resolve(on_value);
-    if (!resolved || resolved->arity > 1) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    auto resolved = ResolveCallback(callbacks, on_value, 0, 1);
+    if (!resolved) {
+      return std::unexpected(resolved.error());
     }
     value_callback = std::move(*resolved);
   }
   if (!on_error.IsNull()) {
-    auto resolved = callbacks.resolve(on_error);
-    if (!resolved || resolved->arity != 1) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    auto resolved = ResolveCallback(callbacks, on_error, 1, 1);
+    if (!resolved) {
+      return std::unexpected(resolved.error());
     }
     error_callback = std::move(*resolved);
   }
@@ -369,9 +383,9 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto callable = argument(delayed ? 1 : 0);
-  auto callback = callbacks.resolve(callable);
-  if (!callback || callback->arity != 0) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  auto callback = ResolveCallback(callbacks, callable, 0, 0);
+  if (!callback) {
+    return std::unexpected(callback.error());
   }
   auto references = std::make_shared<std::vector<Value>>(1, callable);
   references->insert(references->end(), call.retained.begin(), call.retained.end());
@@ -425,8 +439,11 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   for (std::uint32_t index = 0; index < *length; ++index) {
-    const auto value = Heap::GetElement(*first.AsObject(), index);
-    if (!value || !value->IsObject() || Heap::GetFuture(*value->AsObject()) == nullptr) {
+    const auto value = heap.GetElement(*first.AsObject(), index);
+    if (!value) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    if (!value->IsObject() || Heap::GetFuture(*value->AsObject()) == nullptr) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }
@@ -438,9 +455,10 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
     }
     const auto cleanup = argument(2);
     if (!cleanup.IsNull()) {
-      auto resolved = callbacks.resolve(cleanup);
-      if (!resolved || resolved->arity != (layout != nullptr ? 1U : 0U)) {
-        return std::unexpected(ExecutionStatus::TypeError);
+      const auto arity = layout != nullptr ? 1U : 0U;
+      auto resolved = ResolveCallback(callbacks, cleanup, arity, arity);
+      if (!resolved) {
+        return std::unexpected(resolved.error());
       }
       cleanup_callback = std::move(*resolved);
     }

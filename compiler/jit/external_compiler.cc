@@ -176,11 +176,24 @@ std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Compiler::Create
   const auto abi = reader.Text();
   const auto target = reader.Text();
   const auto layout = reader.Text();
-  if (!build || !abi || !target || !layout || reader.remaining() != 0 ||
-      *build != kCompilerBuildIdentity || *abi != runtime::NativeRuntimeAbiIdentity() ||
+  for (const auto* field : {&build, &abi, &target, &layout}) {
+    if (!*field) {
+      const auto& error = field->error();
+      return std::unexpected(CompilationDiagnostic(
+          "invalid compiler hello at byte " + std::to_string(error.offset) + ": " + error.message));
+    }
+  }
+  if (reader.remaining() != 0) {
+    return std::unexpected(CompilationDiagnostic("invalid compiler hello: trailing bytes"));
+  }
+  if (*build != kCompilerBuildIdentity || *abi != runtime::NativeRuntimeAbiIdentity() ||
       *target != runtime::NativeTargetIdentity()) {
     return std::unexpected(CompilationDiagnostic(
-        "compiler process and runtime must use the same SDK build and target"));
+        "compiler process and runtime must use the same SDK build and target; received build=" +
+        std::string(*build) + ", ABI=" + std::string(*abi) + ", target=" + std::string(*target) +
+        "; expected build=" + std::string(kCompilerBuildIdentity) +
+        ", ABI=" + std::string(runtime::NativeRuntimeAbiIdentity()) +
+        ", target=" + std::string(runtime::NativeTargetIdentity())));
   }
   auto data_layout = llvm::DataLayout::parse(*layout);
   if (!data_layout) {

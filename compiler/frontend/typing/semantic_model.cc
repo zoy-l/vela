@@ -14,6 +14,7 @@
 #include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_name.h"
+#include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 
@@ -67,7 +68,7 @@ void FunctionDescriptor::AddParameter(std::string name,
     optional_parameters.insert(name);
   }
   parameter_indices.emplace(name, static_cast<std::uint32_t>(parameters.size()));
-  parameters.push_back({.name = std::move(name), .type = type});
+  parameters.push_back({.name = std::move(name), .type = std::move(type)});
 }
 
 TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
@@ -82,6 +83,9 @@ TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
 }
 
 TypeDescriptor MakeNullableType(TypeDescriptor type) {
+  if (type.kind == TypeDescriptor::Kind::Never || type.kind == TypeDescriptor::Kind::Null) {
+    return {.kind = TypeDescriptor::Kind::Null, .name = kNullTypeName};
+  }
   if (!type.nullable && type.kind != TypeDescriptor::Kind::Dynamic) {
     type.nullable = true;
     const std::string name = type.kind == TypeDescriptor::Kind::Function
@@ -102,7 +106,8 @@ std::string_view NonNullableTypeName(const TypeDescriptor& type) noexcept {
 
 TypeDescriptor MakeFunctionType(std::span<const FunctionDescriptor::Parameter> parameters,
                                 const TypeDescriptor& return_type,
-                                std::optional<TypeDescriptor> narrowed_parameter) {
+                                std::optional<TypeDescriptor> narrowed_parameter,
+                                std::optional<TypeDescriptor> false_narrowed_parameter) {
   std::string name = "(";
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     name += index == 0 ? "" : ", ";
@@ -113,6 +118,11 @@ TypeDescriptor MakeFunctionType(std::span<const FunctionDescriptor::Parameter> p
   if (narrowed_parameter) {
     name += " [0 is ";
     name += narrowed_parameter->name;
+    name += ']';
+  }
+  if (false_narrowed_parameter) {
+    name += " [0 false is ";
+    name += false_narrowed_parameter->name;
     name += ']';
   }
   return {

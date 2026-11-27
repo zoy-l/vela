@@ -14,6 +14,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/test_support/development_test_support.h"
+#include "compiler/test_support/reflection_expectations.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"

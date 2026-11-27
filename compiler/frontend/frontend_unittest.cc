@@ -31,11 +31,7 @@ func build(): App {
 }
 )";
   const CheckResult result = CheckTestSource(valid_source);
-  for (const Diagnostic& diagnostic : result.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
-                  << diagnostic.message;
-  }
-  EXPECT_TRUE(result.Succeeded());
+  EXPECT_TRUE(result.diagnostics.empty()) << DiagnosticsText(result.diagnostics);
 }
 
 TEST(FrontendTest, RejectsUnknownEnumMember) {
@@ -54,7 +50,6 @@ func build(): Theme {
 )";
   const CheckResult result = CheckTestSource(invalid_source);
   EXPECT_FALSE(result.Succeeded());
-  EXPECT_FALSE(result.diagnostics.empty());
 }
 
 TEST(FrontendTest, RejectsRemovedResultBuiltins) {
@@ -65,9 +60,7 @@ TEST(FrontendTest, RejectsRemovedResultBuiltins) {
   });
   for (const auto source : kSources) {
     SCOPED_TRACE(source);
-    const auto result = CheckTestSource(source);
-    EXPECT_FALSE(result.Succeeded());
-    EXPECT_FALSE(result.diagnostics.empty());
+    EXPECT_FALSE(CheckTestSource(source).Succeeded());
   }
 }
 
@@ -115,9 +108,7 @@ async func main(): Future<int> {
 }
 )";
   const CheckResult result = CheckTestSource(source);
-  EXPECT_TRUE(result.Succeeded()) << (result.diagnostics.empty()
-                                          ? ""
-                                          : result.diagnostics.front().message);
+  EXPECT_TRUE(result.Succeeded()) << DiagnosticsText(result.diagnostics);
 }
 
 TEST(FrontendTest, RejectsAwaitOutsideAsyncFunction) {
@@ -178,10 +169,7 @@ func main(): int {
 }
 )";
   const auto checked = CheckTestSource(source);
-  for (const auto& diagnostic : checked.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  EXPECT_TRUE(checked.Succeeded());
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
 }
 
 TEST(FrontendTest, RejectsImplicitDoubleConversionsAtEveryBoundary) {

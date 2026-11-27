@@ -1,4 +1,5 @@
 #include "base/layout_description.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/native/function_emitter.h"
 #include "runtime/native/native_symbols.h"
 
@@ -19,6 +20,7 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
+#include "compiler/native/struct_values.h"
 #include "runtime/library/standard_library.h"
 #include "runtime/native/native_function.h"
 
@@ -275,9 +277,74 @@ void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
   Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
 }
 
+llvm::Value* FunctionEmitter::CompareInlineValues(llvm::Value* left,
+                                                  llvm::Value* right,
+                                                  const SourceType& type) {
+  if (type.nullable && type.kind != Kind::Dynamic) {
+    auto* left_present = IsPresent(builder_, left, type);
+    auto* right_present = IsPresent(builder_, right, type);
+    auto* both_present = builder_.CreateAnd(left_present, right_present);
+    auto* same_presence = builder_.CreateICmpEQ(left_present, right_present);
+    auto* absent = builder_.GetInsertBlock();
+    auto* compare = llvm::BasicBlock::Create(module_.getContext(), "value.compare", body_);
+    auto* done = llvm::BasicBlock::Create(module_.getContext(), "value.compared", body_);
+    builder_.CreateCondBr(both_present, compare, done);
+    builder_.SetInsertPoint(compare);
+    auto required = type;
+    required.nullable = false;
+    auto* equal = CompareInlineValues(PayloadOf(builder_, left, type),
+                                      PayloadOf(builder_, right, type), required);
+    auto* compared = builder_.GetInsertBlock();
+    builder_.CreateBr(done);
+    builder_.SetInsertPoint(done);
+    auto* result = builder_.CreatePHI(builder_.getInt1Ty(), 2);
+    result->addIncoming(same_presence, absent);
+    result->addIncoming(equal, compared);
+    return result;
+  }
+  if (type.value_layout != nullptr) {
+    llvm::Value* equal = builder_.getTrue();
+    const auto& fields = type.value_layout->fields;
+    for (unsigned field = 0; field < fields.size(); ++field) {
+      auto* same =
+          CompareInlineValues(ExtractStructField(builder_, left, type, field),
+                              ExtractStructField(builder_, right, type, field), fields[field]);
+      equal = builder_.CreateAnd(equal, same);
+    }
+    return equal;
+  }
+  if (IsScalar(type)) {
+    if (type.kind == Kind::Null || type.kind == Kind::Void) {
+      return builder_.getTrue();
+    }
+    return type.kind == Kind::Double ? builder_.CreateFCmpOEQ(left, right)
+                                     : builder_.CreateICmpEQ(left, right);
+  }
+  auto* first = Pack(EncodeValue(builder_, left, type), 0);
+  auto* second = Pack(EncodeValue(builder_, right, type), 1);
+  return ComparePackedValues(first, second);
+}
+
+llvm::Value* FunctionEmitter::ComparePackedValues(llvm::Value* left, llvm::Value* right) {
+  auto equal = module_.getOrInsertFunction(runtime::kNativeEqualSymbol, builder_.getInt8Ty(),
+                                           builder_.getPtrTy(), builder_.getPtrTy());
+  return builder_.CreateICmpNE(builder_.CreateCall(equal, {left, right}), builder_.getInt8(0));
+}
+
 void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   const auto& left_type = source_.value_types.at(instruction.lhs);
   const auto& right_type = source_.value_types.at(instruction.rhs);
+  if (left_type.value_layout != nullptr && right_type.value_layout != nullptr &&
+      frontend::NonNullableTypeName(left_type) == frontend::NonNullableTypeName(right_type)) {
+    auto common = left_type;
+    common.nullable = left_type.nullable || right_type.nullable;
+    auto* left = ConvertValue(Load(instruction.lhs), left_type, common);
+    auto* right = ConvertValue(Load(instruction.rhs), right_type, common);
+    auto* equal = CompareInlineValues(left, right, common);
+    auto* result = instruction.opcode == Opcode::EqualValue ? equal : builder_.CreateNot(equal);
+    Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
+    return;
+  }
   if (left_type.kind == Kind::Null || right_type.kind == Kind::Null) {
     const auto reg = left_type.kind == Kind::Null ? instruction.rhs : instruction.lhs;
     auto* present = IsPresent(builder_, Load(reg), source_.value_types.at(reg));
@@ -294,12 +361,9 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
     return;
   }
   if (!IsScalar(left_type) || !IsScalar(right_type)) {
-    auto equal = module_.getOrInsertFunction(runtime::kNativeEqualSymbol, builder_.getInt8Ty(),
-                                             builder_.getPtrTy(), builder_.getPtrTy());
     auto* left = Pack(Encode(instruction.lhs), 0);
     auto* right = Pack(Encode(instruction.rhs), 1);
-    auto* result =
-        builder_.CreateICmpNE(builder_.CreateCall(equal, {left, right}), builder_.getInt8(0));
+    auto* result = ComparePackedValues(left, right);
     if (instruction.opcode == Opcode::NotEqualValue) {
       result = builder_.CreateNot(result);
     }

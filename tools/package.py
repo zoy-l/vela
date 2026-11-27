@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterator
 import hashlib
 import json
 import os
@@ -16,7 +15,9 @@ import subprocess
 import sys
 import tempfile
 
-from tools.config import BUILD_VARIANTS, MACOS_DEPLOYMENT_TARGET, ROOT, configure, executable_name, static_library_name, toolchain_tools
+from tools.build import build, describe_targets, target_closure
+from tools.config import (BUILD_VARIANTS, MACOS_DEPLOYMENT_TARGET, ROOT, executable_name,
+                          static_library_name, toolchain_tools)
 from tools.llvm import sdk_directory, sdk_specification
 from tools.clang_sdk import resource_directory as clang_resource_directory
 
@@ -33,8 +34,7 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def copy_file(source: Path, package: Path, relative: str, role: str, source_name: str,
-              license_name: str) -> dict:
+def copy_file(source: Path, package: Path, relative: str) -> Path:
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts or path == Path("."):
         raise RuntimeError(f"Packaged file requires a package-relative destination: {relative}")
@@ -43,28 +43,14 @@ def copy_file(source: Path, package: Path, relative: str, role: str, source_name
     shutil.copy2(source, destination)
     # 缓存中的只读属性不属于发行契约；新包拥有自己的文件并允许更新及删除。
     destination.chmod(destination.stat().st_mode | stat.S_IWUSR)
+    return destination
+
+
+def copy_audited_file(source: Path, package: Path, relative: str, role: str,
+                      source_name: str, license_name: str) -> dict:
+    destination = copy_file(source, package, relative)
     return {"path": "{package}/" + relative, "sha256": digest(destination), "role": role,
             "source": source_name, "license": license_name, "redistribution": "bundled"}
-
-
-def describe_targets(output: Path) -> dict:
-    described = command([toolchain_tools()["gn"], "desc", output, "//*", "--format=json"],
-                        directory=ROOT)
-    return json.loads(described.stdout)
-
-
-def target_closure(targets: dict, root: str) -> Iterator[dict]:
-    pending = [root]
-    visited = set()
-    while pending:
-        label = pending.pop()
-        if label in visited:
-            continue
-        visited.add(label)
-        target = targets[label]
-        pending.extend(target.get("deps", []))
-        pending.extend(target.get("public_deps", []))
-        yield target
 
 
 def sdk_headers(targets: dict, root: str) -> list[Path]:
@@ -82,12 +68,12 @@ def package_headers(targets: dict, root: str, package: Path) -> None:
     headers = sdk_headers(targets, root)
     for path in headers:
         relative = path if path.parts[0] == "include" else Path("include") / path
-        copy_file(ROOT / path, package, relative.as_posix(), "header", "Vela", "MIT")
+        copy_file(ROOT / path, package, relative.as_posix())
     abseil = ROOT / "third_party/abseil-cpp"
     for path in (abseil / "absl").rglob("*"):
         if path.is_file() and path.suffix in {".h", ".inc"}:
             relative = (Path("include") / path.relative_to(abseil)).as_posix()
-            copy_file(path, package, relative, "header", "Abseil", "Apache-2.0")
+            copy_file(path, package, relative)
 
 
 def package_licenses(package: Path) -> None:
@@ -102,7 +88,7 @@ def package_licenses(package: Path) -> None:
         "zlib": ROOT / "third_party/zlib/LICENSE",
         "zstd": ROOT / "third_party/zstd/LICENSE",
     }.items():
-        copy_file(path, package, "share/vela/licenses/" + name + ".txt", "license", name, "included")
+        copy_file(path, package, "share/vela/licenses/" + name + ".txt")
 
 
 def load_support_specification(path: Path, target: str) -> dict:
@@ -178,13 +164,9 @@ def package_bindgen(executable: Path, package: Path) -> str:
     for path in resource.rglob("*"):
         if path.is_file():
             inputs[paths["resource_dir"] + "/" + path.relative_to(resource).as_posix()] = path
-    for relative, source in inputs.items():
-        owner = ("Vela" if source == executable or source.is_relative_to(ROOT / "tools")
-                 or source == ROOT / ".clang-format" else "LLVM")
-        license_name = "MIT" if owner == "Vela" else "Apache-2.0 WITH LLVM-exception"
-        copy_file(source, package, relative, "bindgen", owner, license_name)
-    manifest = {"format_version": 1, **paths,
-                "files": {name: digest(package / name) for name in inputs}}
+    files = {relative: digest(copy_file(source, package, relative))
+             for relative, source in inputs.items()}
+    manifest = {"format_version": 1, **paths, "files": files}
     (package / "share/vela/bindgen.json").write_text(json.dumps(manifest, indent=2) + "\n",
                                                    encoding="utf-8", newline="\n")
     return entry
@@ -306,8 +288,8 @@ def macos_support(runtime: Path, package: Path) -> tuple[dict, dict[str, str]]:
                 if not path.is_relative_to(llvm_root) or path.suffix != ".a":
                     raise RuntimeError(f"Undeclared macOS linker input: {value}")
                 relative = "lib/clang/" + path.name
-                files.append(copy_file(path, package, relative, "link", "LLVM",
-                                       "Apache-2.0 WITH LLVM-exception"))
+                files.append(copy_audited_file(path, package, relative, "link", "LLVM",
+                                               "Apache-2.0 WITH LLVM-exception"))
                 arguments.append("{package}/" + relative)
             else:
                 arguments.append(value)
@@ -353,8 +335,8 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             tools = toolchain_tools()
             if support_spec is not None:
                 support = load_support_specification(support_spec, target)
-                for bundled in support.pop("bundled_files", []):
-                    support["files"].append(copy_file(
+                for bundled in support.pop("bundled_files"):
+                    support["files"].append(copy_audited_file(
                         support_spec.parent / bundled["source_path"], destination, bundled["destination"],
                         "link", bundled["source"], bundled["license"]))
                 environment = {}
@@ -375,7 +357,8 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                     (runtime, runtime_relative, "runtime", "Vela and third-party runtime", "share/vela/licenses"),
                     (tools["archiver"], archiver, "archive", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception"),
                     (tools["linker"], linker, "link", "project Clang toolchain", "Apache-2.0 WITH LLVM-exception")):
-                files.append(copy_file(source, destination, relative, role, owner, license_name))
+                files.append(copy_audited_file(source, destination, relative, role, owner,
+                                               license_name))
             package_headers(describe_targets(executable.parent), "//runtime:vela_runtime", destination)
             package_bindgen(executable.parent / executable_name("vela_bindgen"), destination)
             package_licenses(destination)
@@ -399,12 +382,8 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("destination", type=Path)
     parser.add_argument("--support-spec", type=Path)
     parsed = parser.parse_args(arguments)
-    output = configure(parsed.variant)
-    runtime_name = static_library_name("vela_runtime")
-    runtime = output / "obj/runtime" / runtime_name
-    subprocess.run([str(toolchain_tools()["ninja"]), "-C", str(output),
-                    executable_name("vela"), executable_name("vela_bindgen"),
-                    "obj/runtime/" + runtime_name], check=True)
+    output = build(parsed.variant, "default")
+    runtime = output / "obj/runtime" / static_library_name("vela_runtime")
     environment = create_package(output / executable_name("vela"), runtime,
                                  parsed.destination, parsed.support_spec)
     print(f"Created {parsed.destination.resolve()}")

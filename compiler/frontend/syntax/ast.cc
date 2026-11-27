@@ -21,6 +21,28 @@
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
+
+void InitializeNullableDefault(const TypeName& type, std::unique_ptr<Expression>& initializer) {
+  if (type.kind == TypeName::Kind::Nullable && initializer == nullptr) {
+    initializer = std::make_unique<Expression>();
+    initializer->kind = Expression::Kind::NullLiteral;
+    initializer->location = type.location;
+  }
+}
+
+Function::ParameterDefault Function::DefaultFor(const Parameter& parameter) const {
+  const auto* initializer = parameter.initializer.get();
+  if (initializer == nullptr || is_getter || is_setter) {
+    return ParameterDefault::Required;
+  }
+  if (native_symbol.empty() && !intrinsic && !intrinsic_operation) {
+    return ParameterDefault::Expression;
+  }
+  // native 与 intrinsic 不运行脚本默认表达式；可空参数仍由调用端补齐 null。
+  return initializer->kind == Expression::Kind::NullLiteral ? ParameterDefault::Null
+                                                            : ParameterDefault::Required;
+}
+
 namespace {
 
 bool ContainsSuperCall(const Expression* expression) {
@@ -185,7 +207,8 @@ bool SubstitutesNullableElement(const TypeName& type, const TypeSubstitutions& s
 
 bool IsNullableTypeName(const TypeName& type) {
   return type.kind == TypeName::Kind::Nullable ||
-         (type.kind == TypeName::Kind::Named && type.name == kDynamicTypeName);
+         (type.kind == TypeName::Kind::Named &&
+          (type.name == kDynamicTypeName || type.name == kNullTypeName));
 }
 
 TypeName ParameterTypeName(const TypeParameter& parameter, SourceLocation location) {

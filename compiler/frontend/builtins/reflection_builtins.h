@@ -45,7 +45,7 @@ class MethodAttributeMatch<T extends Attribute> {
 enum TypeKind {
   Void, Null, Dynamic, Bool, Int, Double, String, MutableString, Array, Set, Map, Function,
   Class, Interface, Enum, Future, Completer, Timer, CancellationToken, ByteArray, ByteData,
-  RegExp, RegExpMatch
+  RegExp, RegExpMatch, Struct, Never
 }
 enum MemberKind { Field, Property, Method, Getter, Setter, Constructor, EnumMember }
 enum MemberVisibility { Public, Private }

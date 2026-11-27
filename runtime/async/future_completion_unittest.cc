@@ -4,10 +4,13 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <thread>
 #include <utility>
 
 #include <gtest/gtest.h>
+
+#include "base/execution_status.h"
 
 #include "runtime/isolate/isolate.h"
 #include "runtime/testing/thread_destruction_test_support.h"
@@ -18,12 +21,13 @@ namespace {
 
 constexpr std::int64_t kCompletionValue = 42;
 
-TEST(FutureCompletionEndpointTest, PublishesOnOwnerThread) {
+TEST(FutureCompletionEndpointTest, IdlePumpReturnsAndWaitingPumpPublishesOnOwnerThread) {
   Isolate isolate(1);
   auto& scheduler = isolate.scheduler();
   auto completer = scheduler.CreateHostCompleter();
   auto future = completer.future();
   future.AttachHeap(isolate.heap());
+  EXPECT_EQ(scheduler.PumpUntil(future), FuturePumpResult::Idle);
   auto endpoint = std::move(completer).Detach();
   const auto owner = std::this_thread::get_id();
   std::thread::id notified_on;
@@ -50,6 +54,20 @@ TEST(FutureCompletionEndpointTest, CompletesOnlyOnce) {
   EXPECT_EQ(duplicate.error(), FutureCompletionError::AlreadyCompleted);
 }
 
+TEST(FutureCompletionEndpointTest, InvalidTextRetainsItsFailureDiagnostic) {
+  Isolate isolate;
+  auto& scheduler = isolate.scheduler();
+  auto completer = scheduler.CreateHostCompleter();
+  auto future = completer.future();
+  future.AttachHeap(isolate.heap());
+  auto endpoint = std::move(completer).Detach();
+  ASSERT_TRUE(endpoint.CompleteText(std::string(1, '\xff')));
+  ASSERT_EQ(scheduler.PumpUntil(future), FuturePumpResult::Completed);
+  ASSERT_EQ(future.state(), FutureState::Failed);
+  EXPECT_EQ(future.result().diagnostic.status, ExecutionStatus::TypeError);
+  EXPECT_EQ(future.result().diagnostic.message, ExecutionStatusName(ExecutionStatus::TypeError));
+}
+
 TEST(FutureCompletionEndpointTest, LastHostHandleReleasesProducerAndPendingReferencesOnOwner) {
   FutureScheduler scheduler;
   std::thread::id released_on;
@@ -65,8 +83,8 @@ TEST(FutureCompletionEndpointTest, LastHostHandleReleasesProducerAndPendingRefer
   EXPECT_EQ(scheduler.PumpOne(FuturePumpMode::WaitForHost), FuturePumpStep::Idle);
 }
 
-TEST(FutureCompletionEndpointTest, EndpointOutlivesIsolateAndRejectsLateCompletion) {
-  FutureCompletionEndpoint endpoint;
+TEST(FutureCompletionEndpointTest, StaleEndpointReleasesCallbacksAndCannotCompleteNewRun) {
+  FutureCompletionEndpoint stale;
   std::weak_ptr<int> retained;
   {
     Isolate isolate(1);
@@ -74,19 +92,27 @@ TEST(FutureCompletionEndpointTest, EndpointOutlivesIsolateAndRejectsLateCompleti
     auto marker = std::make_shared<int>(0);
     retained = marker;
     completer.future().ObserveResult([marker](const FutureResult&) { ++*marker; });
-    endpoint = std::move(completer).Detach();
+    stale = std::move(completer).Detach();
   }
   EXPECT_TRUE(retained.expired());
-  std::atomic_bool closed = false;
-  std::thread host([endpoint, &closed] {
-    const auto completion = endpoint.Complete(Value::Integer(kCompletionValue));
-    closed = !completion && completion.error() == FutureCompletionError::Closed;
+  Isolate isolate;
+  auto completer = isolate.scheduler().CreateHostCompleter();
+  auto future = completer.future();
+  const auto endpoint = std::move(completer).Detach();
+  std::thread host([stale] {
+    const auto completion = stale.Complete(Value::Integer(kCompletionValue));
+    ASSERT_FALSE(completion);
+    EXPECT_EQ(completion.error(), FutureCompletionError::Closed);
   });
   host.join();
-  EXPECT_TRUE(closed);
-  const auto failure = endpoint.CompleteError(Value::Null());
+  const auto failure = stale.CompleteError(Value::Null());
   ASSERT_FALSE(failure);
   EXPECT_EQ(failure.error(), FutureCompletionError::Closed);
+  EXPECT_EQ(future.state(), FutureState::Pending);
+  ASSERT_TRUE(endpoint.Complete(Value::Integer(kCompletionValue)));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
+  ASSERT_EQ(future.state(), FutureState::Succeeded);
+  EXPECT_EQ(future.result().value.AsInteger(), kCompletionValue);
 }
 
 TEST(FutureCompletionEndpointTest, ShutdownDiscardsQueuedCompletionAndTimers) {
@@ -131,26 +157,6 @@ TEST(FutureCompletionEndpointTest, ConcurrentShutdownAndCompletionHaveNoLateCall
     EXPECT_TRUE(valid);
     EXPECT_FALSE(called);
   }
-}
-
-TEST(FutureCompletionEndpointTest, OldEndpointCannotCompleteNewRun) {
-  FutureCompletionEndpoint old_endpoint;
-  {
-    Isolate isolate;
-    old_endpoint = isolate.scheduler().CreateHostCompleter().Detach();
-  }
-  Isolate isolate;
-  auto completer = isolate.scheduler().CreateHostCompleter();
-  auto future = completer.future();
-  const auto endpoint = std::move(completer).Detach();
-  const auto stale = old_endpoint.Complete(Value::Integer(kCompletionValue));
-  ASSERT_FALSE(stale);
-  EXPECT_EQ(stale.error(), FutureCompletionError::Closed);
-  EXPECT_EQ(future.state(), FutureState::Pending);
-  ASSERT_TRUE(endpoint.Complete(Value::Integer(kCompletionValue)));
-  ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
-  ASSERT_EQ(future.state(), FutureState::Succeeded);
-  EXPECT_EQ(future.result().value.AsInteger(), kCompletionValue);
 }
 
 }  // namespace

@@ -1,6 +1,5 @@
 #include "compiler/native/array_analysis.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -47,21 +46,11 @@ export func sum(value: int, choose: bool): int {
 )");
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
-  const auto found = std::ranges::find(program.functions, "sum", &ir::Function::name);
-  ASSERT_NE(found, program.functions.end());
-  const auto& function = *found;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  const auto& bits =
-      facts.generic.at(static_cast<std::size_t>(found - program.functions.begin())).element_bits;
-  ASSERT_FALSE(bits.empty());
-  std::size_t reads = 0;
-  for (const auto& instruction : function.instructions) {
-    if (instruction.opcode == Opcode::GetIndex) {
-      constexpr std::uint64_t kByteMask = 255;
-      EXPECT_EQ(bits.at(instruction.lhs), kByteMask);
-      ++reads;
-    }
-  }
+  const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+    constexpr std::uint64_t kByteMask = 255;
+    EXPECT_EQ(result.element_bits.at(reg), kByteMask);
+  });
   EXPECT_GT(reads, 0U);
 }
 
@@ -110,20 +99,10 @@ export func sum(value: int): int {
     const auto prepared = ir::test::Prepare(source);
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto& program = prepared.program;
-    const auto found = std::ranges::find(program.functions, "sum", &ir::Function::name);
-    ASSERT_NE(found, program.functions.end());
-    const auto& function = *found;
     const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-    const auto& bits =
-        facts.generic.at(static_cast<std::size_t>(found - program.functions.begin())).element_bits;
-    ASSERT_FALSE(bits.empty());
-    std::size_t reads = 0;
-    for (const auto& instruction : function.instructions) {
-      if (instruction.opcode == Opcode::GetIndex) {
-        EXPECT_EQ(bits.at(instruction.lhs), std::numeric_limits<std::uint64_t>::max());
-        ++reads;
-      }
-    }
+    const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+      EXPECT_EQ(result.element_bits.at(reg), std::numeric_limits<std::uint64_t>::max());
+    });
     EXPECT_GT(reads, 0U);
   }
 }
@@ -202,9 +181,10 @@ export func sum(): int {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+  const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
     EXPECT_EQ(result.element_bits.at(reg), 7U);
   });
+  EXPECT_GT(reads, 0U);
 }
 
 TEST(ArrayAnalysisTest, UnknownGlobalWritesPropagateThroughArrayCopies) {
@@ -218,9 +198,10 @@ export func sum(): int {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-  VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+  const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
     EXPECT_EQ(result.element_bits.at(reg), std::numeric_limits<std::uint64_t>::max());
   });
+  EXPECT_GT(reads, 0U);
 }
 
 TEST(ArrayStorageAnalysisTest, KeepsFreshSnapshotsAndSwappedScratchBuffersFixedUnderElementWrites) {
@@ -267,9 +248,10 @@ TEST(ArrayStorageAnalysisTest,
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const auto& program = prepared.program;
     const auto facts = AnalyzeArrayAccess(program, ArrayAnalysisMode::FixedStorage);
-    VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
+    const auto reads = VisitArrayReads(program, facts, [](const auto& result, ir::RegisterId reg) {
       EXPECT_EQ(result.fixed_storage[reg], 0);
     });
+    EXPECT_GT(reads, 0U);
   }
 }
 

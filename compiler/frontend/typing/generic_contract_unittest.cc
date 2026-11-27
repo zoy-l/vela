@@ -3,6 +3,7 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
@@ -12,11 +13,7 @@ class GenericDefinitionTest : public testing::TestWithParam<std::string_view> {}
 
 TEST_P(GenericDefinitionTest, ChecksUnusedDefinitionsByTheirDeclaredCapabilities) {
   const auto result = CheckTestSource(GetParam());
-  for (const auto& diagnostic : result.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
-                  << diagnostic.message;
-  }
-  EXPECT_TRUE(result.Succeeded());
+  EXPECT_TRUE(result.diagnostics.empty()) << DiagnosticsText(result.diagnostics);
 }
 
 INSTANTIATE_TEST_SUITE_P(

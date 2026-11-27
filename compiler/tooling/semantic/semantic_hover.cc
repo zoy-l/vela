@@ -21,6 +21,7 @@ std::string SemanticIndex::HoverSignature(const Completion& completion,
       signature = "(method) " + owner + '.' + signature + completion.detail;
       break;
     case CompletionKind::Class:
+    case CompletionKind::Struct:
       signature = completion.detail;
       break;
     case CompletionKind::Interface:

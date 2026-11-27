@@ -155,7 +155,7 @@ export func round(value: double): double { return Math.round(value); }
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();
     ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-    const auto compiled = CompileText(**compiler, kSource, tier, test::IRPreservation::Preserve);
+    const auto compiled = CompileText(**compiler, kSource, tier);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     runtime::Isolate isolate(1);
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
@@ -520,13 +520,7 @@ export func failure(): string {
          }) {
       const auto result = entry->Invoke(std::array{runtime::Value::Double(value)});
       ASSERT_TRUE(result);
-      const auto actual = result->AsDouble();
-      if (std::isnan(value)) {
-        EXPECT_TRUE(std::isnan(actual));
-      } else {
-        EXPECT_EQ(std::bit_cast<std::uint64_t>(actual),
-                  std::bit_cast<std::uint64_t>(std::sqrt(value)));
-      }
+      ExpectSameDouble(result->AsDouble(), std::sqrt(value));
     }
     const auto failure = isolate.native_dispatch().FindEntry("main.vela", "failure");
     ASSERT_TRUE(failure);
@@ -898,25 +892,6 @@ export func answer(): int {
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
     ASSERT_TRUE(entry);
     ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
-  }
-}
-
-TEST(JitCompilerTest, GenericMethodsAndInterfaceSelectorsExecuteInBothNativeTiers) {
-  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
-    for (const auto source : {
-             ::vela::compiler::test::kGenericMethodsSource,
-             ::vela::compiler::test::kWrappedGenericMethodValuesSource,
-         }) {
-      auto compiler = Compiler::Create();
-      ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-      const auto compiled = CompileText(**compiler, std::string(source), tier);
-      ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-      runtime::Isolate isolate(1);
-      ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
-      const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
-      ASSERT_TRUE(entry);
-      ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
-    }
   }
 }
 
@@ -1425,11 +1400,13 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   EXPECT_EQ(current->AsInteger(), 43);
 }
 
-class JitLanguageTest
-    : public testing::TestWithParam<std::tuple<std::string_view, NativeCodeTier>> {};
+enum class LanguageResultKind : std::uint8_t { Integer, Future };
+
+class JitLanguageTest : public testing::TestWithParam<
+                            std::tuple<std::string_view, NativeCodeTier, LanguageResultKind>> {};
 
 TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
-  const auto [source, tier] = GetParam();
+  const auto [source, tier, result_kind] = GetParam();
   SCOPED_TRACE(source);
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
@@ -1439,22 +1416,13 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(entry);
-  const auto result = entry->Invoke({});
-  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
-  const auto root_storage = runtime::HostRoot::Create(isolate, *result);
-  ASSERT_TRUE(root_storage);
-  const auto& root = *root_storage;
-  auto value = root.value();
-  if (value.IsObject()) {
-    auto* future = runtime::Heap::GetFuture(*value.AsObject());
-    ASSERT_NE(future, nullptr);
-    ASSERT_EQ(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost),
-              runtime::FuturePumpResult::Completed);
-    ASSERT_EQ(future->state(), runtime::FutureState::Succeeded);
-    value = future->result().value;
+  if (result_kind == LanguageResultKind::Future) {
+    const auto result = entry->Invoke({});
+    ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+    EXPECT_TRUE(test::CompletesWithInteger(isolate, *result, 42));
+  } else {
+    EXPECT_TRUE(test::ReturnsInteger(*entry, 42));
   }
-  ASSERT_TRUE(value.IsInteger());
-  EXPECT_EQ(value.AsInteger(), 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1467,10 +1435,10 @@ export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += 
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
                          ::vela::compiler::test::kRecursiveStringGcSource,
-                         ::vela::compiler::test::kGenericAsyncMethodsSource,
+                         ::vela::compiler::test::kGenericMethodsSource,
+                         ::vela::compiler::test::kWrappedGenericMethodValuesSource,
                          ::vela::compiler::test::kUnicodeConstructionSource,
                          ::vela::compiler::test::kMapLiteralSource,
-                         ::vela::compiler::test::kMapLiteralAsyncSource,
                          ::vela::compiler::test::kMapLiteralInitializationSource,
                          R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }
@@ -1533,20 +1501,29 @@ export func main(): int { const root: dynamic = JSON.parse('{"items":[40,2]}');
                          R"(
 export func main(): int { const found = RegExp('(?<digits>[0-9]+)').firstMatch('😀42');
   if (found != null) { return int.parse(found.namedGroup('digits') ?? '0'); } return 0; }
-)",
-                         R"(
+)"),
+                     testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized),
+                     testing::Values(LanguageResultKind::Integer)));
+
+INSTANTIATE_TEST_SUITE_P(
+    AsyncSemantics,
+    JitLanguageTest,
+    testing::Combine(testing::Values(::vela::compiler::test::kGenericAsyncMethodsSource,
+                                     ::vela::compiler::test::kMapLiteralAsyncSource,
+                                     R"(
 export async func main(): Future<int> {
   const values = await Future.wait([Future.value(20), Future.delayed(1, (): int => 22)]);
   return values[0] + values[1]; }
 )",
-                         R"(
+                                     R"(
 class Failure { value: int; }
 async func failed(): Future<int> { await sleep(1); throw Failure(value: 40); }
 export async func main(): Future<int> { let value = 0;
   try { value = await failed(); } catch (error: Failure) { value = error.value; }
   finally { value += 2; } return value; }
 )"),
-                     testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized)));
+                     testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized),
+                     testing::Values(LanguageResultKind::Future)));
 
 std::binary_semaphore& StopSignal() {
   static std::binary_semaphore signal{0};

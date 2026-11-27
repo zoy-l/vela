@@ -88,12 +88,11 @@ class FormatLintTest(unittest.TestCase):
     def format(self) -> None:
         subprocess.run([str(self.tools["clang_format"]), "-i", str(self.source)], check=True)
 
-    def lint(self, *, fix: bool = False) -> subprocess.CompletedProcess:
+    def lint_fix(self) -> subprocess.CompletedProcess:
         command = [str(self.tools["clang_tidy"]), str(self.source),
-                   f"--config-file={ROOT / '.clang-tidy'}", "--warnings-as-errors=*", "--quiet"]
-        if fix:
-            command.extend(["--fix", "--format-style=file"])
-        return subprocess.run([*command, "--", "-std=c++23"], capture_output=True,
+                   f"--config-file={ROOT / '.clang-tidy'}", "--warnings-as-errors=*", "--quiet",
+                   "--fix", "--format-style=file", "--", "-std=c++23"]
+        return subprocess.run(command, capture_output=True,
                               text=True, encoding="utf-8", check=False)
 
     def compile(self) -> None:
@@ -107,9 +106,7 @@ class FormatLintTest(unittest.TestCase):
     def assert_stable(self) -> None:
         self.format()
         formatted = self.source.read_bytes()
-        result = self.lint()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = self.lint(fix=True)
+        result = self.lint_fix()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.format()
         self.assertEqual(self.source.read_bytes(), formatted)
@@ -130,7 +127,7 @@ Descriptor MakeDescriptor() {
           .receiver = true};
 }
 """, encoding="utf-8", newline="\n")
-        result = self.lint(fix=True)
+        result = self.lint_fix()
         self.assertIn("readability-trailing-comma", result.stdout + result.stderr)
         self.assert_stable()
 
@@ -139,7 +136,7 @@ Descriptor MakeDescriptor() {
 struct Result { int value = 0; Payload payload = {}; };
 Result MakeResult() { return {.value = 1, .payload = {}}; }
 """, encoding="utf-8", newline="\n")
-        result = self.lint(fix=True)
+        result = self.lint_fix()
         self.assertIn("readability-redundant-member-init", result.stdout + result.stderr)
         self.assert_stable()
 

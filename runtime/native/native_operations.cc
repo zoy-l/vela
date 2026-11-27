@@ -12,7 +12,6 @@
 #include "base/byte_access.h"
 #include "base/execution_status.h"
 #include "base/regexp.h"
-#include "runtime/collections/array_operations.h"
 #include "runtime/collections/byte_operations.h"
 #include "runtime/dynamic/dynamic_value.h"
 #include "runtime/heap/heap.h"

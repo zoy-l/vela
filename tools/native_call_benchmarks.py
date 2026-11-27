@@ -32,6 +32,7 @@ DECLARATIONS = """external func hostEmpty(): void = 'callbench.empty';
 external func hostInteger(value: int): int = 'callbench.integer';
 external func hostDouble(value: double): double = 'callbench.double';
 external func hostStringBorrow(text: string): int = 'callbench.string_borrow';
+external func hostBoolean(value: bool): bool = 'callbench.boolean';
 """
 
 
@@ -41,16 +42,13 @@ def generate(compiler: Path, output: Path) -> None:
     cases = []
     exports = []
     for name, kind, result, native, control, text in WORKLOADS:
-        if kind == "Boolean":
-            # Append the new binding after the original kernels so their function indices stay stable.
-            definitions.append("external func hostBoolean(value: bool): bool = 'callbench.boolean';")
+        zero = "0.0" if result == "double" else "0"
         for count in BATCH_SIZES:
             names = []
             for path, body in (("native", native), ("control", control)):
                 entry = f"{path}_{name}_{count}"
                 names.append(entry)
                 exports.append(entry)
-                zero = "0.0" if result == "double" else "0"
                 definitions.append(f"export func {entry}(): {result} {{ let sum = {zero}; "
                                    f"for (let index = 0; index < {count}; index++) {{ {body} }} "
                                    "return sum; }\n")

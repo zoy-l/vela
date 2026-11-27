@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "base/array_algorithm.h"
 #include "base/async_operation.h"
 #include "base/builtin.h"
@@ -82,6 +84,8 @@ class Lowerer final {
   [[nodiscard]] MethodCallTarget ResolveMethodCall(const frontend::Expression& member,
                                                    const std::string& key) const;
   [[nodiscard]] LoweredValue LowerMemberReceiver(const frontend::Expression& member);
+  [[nodiscard]] LoweredValue LowerMutableMemberReceiver(const frontend::Expression& member,
+                                                        std::optional<StructReceiver>& place);
   [[nodiscard]] const frontend::ClassDescriptor& MemberClass(
       const frontend::Expression& member,
       const frontend::TypeDescriptor& receiver) const;
@@ -169,6 +173,8 @@ class Lowerer final {
                                                       frontend::SourceLocation location);
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] bool NeedsConstructorInitialization(const frontend::ClassDescriptor& owner);
+  [[nodiscard]] bool IsReloadableClass(const frontend::ClassDescriptor& owner) const;
+  [[nodiscard]] static bool CanSkipStructInitialization(const frontend::ClassDescriptor& owner);
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   struct ConstructorFieldMask final {
     std::uint32_t index;
@@ -275,7 +281,8 @@ class Lowerer final {
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,
-                                         const LoweredValue& object);
+                                         const LoweredValue& object,
+                                         const StructReceiver* place = nullptr);
   [[nodiscard]] LoweredValue LowerIndex(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerDynamicCall(const frontend::Expression& expression);
@@ -358,7 +365,7 @@ class Lowerer final {
   void PopScope();
   void DeclareLocal(std::string_view name,
                     RegisterId reg,
-                    frontend::TypeDescriptor type,
+                    const frontend::TypeDescriptor& type,
                     frontend::SourceLocation location,
                     const void* declaration = nullptr);
 
@@ -369,7 +376,11 @@ class Lowerer final {
   void BeginControl(ControlTargets::Kind kind);
   void BindContinues(std::uint32_t target);
   void FinishControl(std::optional<std::size_t> exit_jump);
-  std::optional<std::size_t> LowerLoopCondition(const frontend::Statement& statement);
+  struct LoopCondition final {
+    std::optional<std::size_t> exit_jump;
+    bool completes = true;
+  };
+  LoopCondition LowerLoopCondition(const frontend::Statement& statement);
   std::size_t BeginNullSafe(RegisterId receiver, frontend::SourceLocation location);
   void FinishNullSafe(std::optional<std::size_t> null_jump,
                       RegisterId result,
@@ -520,15 +531,23 @@ class Lowerer final {
     std::uint32_t slot = 0;
     MethodCallTarget method;
     RegisterId index = 0;
+    std::unique_ptr<MutationTarget> parent;
   };
+  enum class MutationAccess : std::uint8_t { Read, Write };
   [[nodiscard]] MutationTarget LowerMutationTarget(const frontend::Expression& target);
+  [[nodiscard]] MutationTarget LowerMemberMutationTarget(const frontend::Expression& target,
+                                                         MutationAccess access);
+  [[nodiscard]] StructReceiver DescribeStructReceiver(const MutationTarget& target);
+  [[nodiscard]] LoweredValue ReadMutationTarget(const MutationTarget& target,
+                                                frontend::SourceLocation location);
   void StoreMutationTarget(const MutationTarget& destination,
                            RegisterId value,
                            frontend::SourceLocation location);
   void EmitSetterCall(MethodCallTarget target,
                       const LoweredValue& receiver,
                       RegisterId value,
-                      frontend::SourceLocation location);
+                      frontend::SourceLocation location,
+                      const StructReceiver* place = nullptr);
   [[nodiscard]] static Opcode SelectEqualityOpcode(const frontend::TypeDescriptor& type);
 
   [[nodiscard]] bool HasAssignments(const frontend::Expression& expression);
@@ -549,12 +568,16 @@ class Lowerer final {
     const auto alternate_jump = current_function_->instructions.size();
     Emit({.opcode = jump_opcode, .lhs = condition, .location = location});
     const auto initial = first();
-    Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
+    if (initial.type.kind != frontend::TypeDescriptor::Kind::Never) {
+      Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
+    }
     const auto end_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = location});
     BindJump(alternate_jump);
     const auto alternative = second();
-    Emit({.opcode = Opcode::Move, .dst = result, .lhs = alternative.reg, .location = location});
+    if (alternative.type.kind != frontend::TypeDescriptor::Kind::Never) {
+      Emit({.opcode = Opcode::Move, .dst = result, .lhs = alternative.reg, .location = location});
+    }
     BindJump(end_jump);
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
@@ -572,7 +595,8 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function,
                                std::uint32_t function_id,
                                const LoweredValue* receiver,
-                               Opcode opcode = Opcode::Call);
+                               Opcode opcode = Opcode::Call,
+                               const StructReceiver* place = nullptr);
   LoweredValue LowerLogical(const frontend::Expression& expression);
 
   const frontend::Program& source_;
@@ -602,6 +626,7 @@ class Lowerer final {
   std::vector<CallValueType> call_value_types_;
   Function* current_function_ = nullptr;
   const frontend::Class* current_owner_ = nullptr;
+  bool returns_constructed_value_ = false;
   std::vector<LocalMap> scopes_;
   std::vector<ControlTargets> controls_;
   std::vector<Finally> finalizers_;

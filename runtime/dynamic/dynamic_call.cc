@@ -86,24 +86,28 @@ struct ArgumentBinding final {
   }
 };
 
-std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
-                                               absl::FunctionRef<Value(std::uint32_t)> argument,
-                                               const BoundArguments& bound,
-                                               const ArrayLayout& type) {
-  for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
-    if (!Heap::IsValueOfType(argument(bound.rest_start + item), type.element)) {
-      return std::unexpected(ExecutionStatus::InvalidCast);
-    }
-  }
+std::expected<Value, ExecutionStatus> PackRest(
+    Heap& heap,
+    absl::FunctionRef<std::expected<Value, ExecutionStatus>(std::uint32_t)> argument,
+    const BoundArguments& bound,
+    const ArrayLayout& type) {
   auto* array = heap.AllocateArray(type, bound.rest_count);
   if (array == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
+  const auto result = Value::Object(array);
+  const RootRange roots(heap, &result, 1, std::nullopt);
   for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
     const auto value = argument(bound.rest_start + item);
-    std::ignore = heap.SetElement(*array, item, UnboxDynamicValue(value, type.element));
+    if (!value) {
+      return value;
+    }
+    if (!Heap::IsValueOfType(*value, type.element)) {
+      return std::unexpected(ExecutionStatus::InvalidCast);
+    }
+    std::ignore = heap.SetElement(*array, item, UnboxDynamicValue(*value, type.element));
   }
-  return Value::Object(array);
+  return result;
 }
 
 std::expected<void, ExecutionStatus> CheckRequiredArguments(const CallSignature& signature,
@@ -150,12 +154,13 @@ std::expected<BoundArguments, ExecutionStatus> BindArguments(const CallSignature
   return bound;
 }
 
-std::expected<Value, ExecutionStatus> ReadArgument(Heap& heap,
-                                                   const CallSignature& signature,
-                                                   std::span<const TypeConstraint> types,
-                                                   absl::FunctionRef<Value(std::uint32_t)> argument,
-                                                   const BoundArguments& bound,
-                                                   std::size_t index) {
+std::expected<Value, ExecutionStatus> ReadArgument(
+    Heap& heap,
+    const CallSignature& signature,
+    std::span<const TypeConstraint> types,
+    absl::FunctionRef<std::expected<Value, ExecutionStatus>(std::uint32_t)> argument,
+    const BoundArguments& bound,
+    std::size_t index) {
   const auto& parameter = signature.parameters[bound.skipped + index];
   const auto& type = types[parameter.type];
   if (parameter.rest) {
@@ -166,18 +171,22 @@ std::expected<Value, ExecutionStatus> ReadArgument(Heap& heap,
     return Value::Null();
   }
   const auto value = argument(source);
-  return Heap::IsValueOfType(value, type)
-             ? std::expected<Value, ExecutionStatus>(UnboxDynamicValue(value, type))
+  if (!value) {
+    return value;
+  }
+  return Heap::IsValueOfType(*value, type)
+             ? std::expected<Value, ExecutionStatus>(UnboxDynamicValue(*value, type))
              : std::unexpected(ExecutionStatus::InvalidCast);
 }
 
 }  // namespace
 
 std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
+    Heap& heap,
     const CallSignature& signature,
     const ResolvedCallable& callable,
     const HeapObject& arguments,
-    const HeapObject* names,
+    HeapObject* names,
     DynamicCallStyle style) {
   const auto count = Heap::ArrayLength(arguments);
   const auto hidden = callable.implicit ? 1U : 0U;
@@ -196,9 +205,12 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
         if (names == nullptr) {
           return std::string_view{};
         }
-        const auto value = *Heap::GetElement(*names, index);
-        return value.IsString()
-                   ? std::expected<std::string_view, ExecutionStatus>(value.AsString()->value())
+        const auto value = heap.GetElement(*names, index);
+        if (!value) {
+          return std::unexpected(ArrayExecutionStatus(value.error()));
+        }
+        return value->IsString()
+                   ? std::expected<std::string_view, ExecutionStatus>(value->AsString()->value())
                    : std::unexpected(ExecutionStatus::TypeError);
       });
 }
@@ -220,11 +232,14 @@ std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
 std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
                                                           const CallSignature& signature,
                                                           std::span<const TypeConstraint> types,
-                                                          const HeapObject& arguments,
+                                                          HeapObject& arguments,
                                                           const BoundArguments& bound,
                                                           std::size_t index) {
   return ReadArgument(
-      heap, signature, types, [&](auto source) { return *Heap::GetElement(arguments, source); },
+      heap, signature, types,
+      [&](auto source) {
+        return heap.GetElement(arguments, source).transform_error(ArrayExecutionStatus);
+      },
       bound, index);
 }
 
@@ -235,7 +250,9 @@ std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
                                                           const BoundArguments& bound,
                                                           std::size_t index) {
   return ReadArgument(
-      heap, signature, types, [&](auto source) { return arguments[source]; }, bound, index);
+      heap, signature, types,
+      [&](auto source) -> std::expected<Value, ExecutionStatus> { return arguments[source]; },
+      bound, index);
 }
 
 }  // namespace vela::runtime

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -67,15 +66,7 @@ TEST(HandleScopeTest, PersistenceSharesOneRootAndLocalizationSurvivesReset) {
   auto& heap = isolate.heap();
   const auto baseline = heap.allocated_bytes();
   Persistent<String> saved;
-  {
-    HandleScope scope(isolate);
-    const auto local = HandleAccess::Root<String>(
-        scope, runtime::Value::String(heap.AllocateString("persistent")));
-    ASSERT_TRUE(local);
-    auto persisted = local->Persist();
-    ASSERT_TRUE(persisted);
-    saved = std::move(*persisted);
-  }
+  ASSERT_NO_FATAL_FAILURE(PersistString(isolate, "persistent", saved));
   heap.Collect();
   const auto rooted_bytes = heap.allocated_bytes();
   auto copy = saved;
@@ -179,23 +170,6 @@ TEST(HandleScopeTest, LocalizedRootCanBeBorrowedAgainAfterOriginalScopeExits) {
   EXPECT_TRUE(isolate.TryStop());
 }
 
-TEST(HandleScopeTest, OuterScopeOwnsTransferredLocalAfterInnerScopeEnds) {
-  runtime::Isolate isolate(1);
-  HandleScope outer(isolate);
-  std::optional<Local<String>> transferred;
-  {
-    HandleScope inner(isolate);
-    const auto source = HandleAccess::Root<String>(
-        inner, runtime::Value::String(isolate.heap().AllocateString("escaped")));
-    ASSERT_TRUE(source);
-    const auto destination = HandleAccess::Root<String>(outer, HandleAccess::Read(*source));
-    ASSERT_TRUE(destination);
-    transferred = *destination;
-  }
-  isolate.heap().Collect();
-  EXPECT_EQ(HandleAccess::Read(*transferred).AsString()->value(), "escaped");
-}
-
 TEST(HandleScopeTest, FailedPersistenceAndGrowthKeepExistingRootsIntact) {
   runtime::Isolate isolate(1);
   auto& heap = isolate.heap();
@@ -253,26 +227,27 @@ TEST(HandleScopeTest, IndependentlyReleasedScopesDoNotRetainEachOthersValues) {
 }
 
 TEST(HandleScopeTest, OuterScopeCanGrowPastInnerSegmentsAndKeepTransferredLocals) {
+  constexpr std::array<std::string_view, 3> kTexts{"first", "second", "third"};
+  constexpr std::size_t kCopiesPerRound = 40;
   runtime::Isolate isolate(1);
   auto& heap = isolate.heap();
   HandleScope outer(isolate);
-  std::vector<Local<String>> kept;
-  for (std::size_t round = 0; round < 3; ++round) {
+  std::vector<std::pair<Local<String>, std::string_view>> kept;
+  for (const auto text : kTexts) {
     HandleScope inner(isolate);
-    const auto source = HandleAccess::Root<String>(
-        inner, runtime::Value::String(heap.AllocateString("transferred")));
+    const auto source =
+        HandleAccess::Root<String>(inner, runtime::Value::String(heap.AllocateString(text)));
     ASSERT_TRUE(source);
-    constexpr std::size_t kCopiesPerRound = 40;
     for (std::size_t index = 0; index < kCopiesPerRound; ++index) {
       const auto copied = HandleAccess::Root<String>(outer, HandleAccess::Read(*source));
       ASSERT_TRUE(copied);
-      kept.push_back(*copied);
+      kept.emplace_back(*copied, text);
     }
   }
   heap.Collect();
-  EXPECT_EQ(heap.object_count(), 3U);
-  for (const auto& local : kept) {
-    EXPECT_EQ(HandleAccess::Read(local).AsString()->value(), "transferred");
+  EXPECT_EQ(heap.object_count(), kTexts.size());
+  for (const auto& [local, text] : kept) {
+    EXPECT_EQ(HandleAccess::Read(local).AsString()->value(), text);
   }
 }
 
@@ -318,10 +293,11 @@ TEST(HandleScopeTest, PublishingDuringIncrementalMarkRetainsTheCompleteObjectGra
     auto* text = heap.AllocateString("child");
     ASSERT_NE(text, nullptr);
     const auto value = runtime::Value::String(text);
-    const runtime::RootRange temporary(heap, &value, 1);
+    runtime::RootRange temporary(heap, &value, 1);
     auto* object = heap.AllocateInstance(*layout, std::span(&value, 1));
     ASSERT_NE(object, nullptr);
     heap.FinishCollection();
+    temporary.Detach();
     heap.StartCollection();
     const auto rooted = HandleAccess::Root<Value>(scope, runtime::Value::Object(object));
     ASSERT_TRUE(rooted);

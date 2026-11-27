@@ -62,6 +62,7 @@ llvm::Error DefineRuntimeSymbols(CodeLinker& jit) {
   bind(runtime::kNativeFrameStorageSymbol, &runtime::vela_native_v1_frame_storage);
   bind(runtime::kNativeFrameReleaseSymbol, &runtime::vela_native_v1_frame_release);
   bind(runtime::kNativeRootsEnterSymbol, &runtime::vela_native_v1_roots_enter);
+  bind(runtime::kNativeRootsAttachSymbol, &runtime::vela_native_v1_roots_attach);
   bind(runtime::kNativeRootsExitSymbol, &runtime::vela_native_v1_roots_exit);
   bind(runtime::kNativeLeafFailureSymbol, &runtime::vela_native_v2_leaf_failure);
   bind(runtime::kNativeFailureSymbol, &runtime::vela_native_v1_failure);
@@ -84,9 +85,10 @@ llvm::Error DefineRuntimeSymbols(CodeLinker& jit) {
   bind(runtime::kNativeCallDeclarationSymbol, &runtime::vela_native_v3_call_declaration);
   bind(runtime::kNativeCallVirtualV3Symbol, &runtime::vela_native_v3_call_virtual);
   bind(runtime::kNativeCaptureReceiverSymbol, &runtime::vela_native_v3_capture_receiver);
-  bind(runtime::kNativeLoadGlobalSymbol, &runtime::vela_native_v10_load_global);
+  bind(runtime::kNativeLoadGlobalSymbol, &runtime::vela_native_v33_load_global);
   bind(runtime::kNativeStoreGlobalSymbol, &runtime::vela_native_v10_store_global);
   bind(runtime::kNativeLoadFieldSymbol, &runtime::vela_native_v3_load_field);
+  bind(runtime::kNativeBorrowStructFieldSymbol, &runtime::vela_native_v33_borrow_struct_field);
   bind(runtime::kNativeFieldCachesSymbol, &runtime::vela_native_v10_field_caches);
   bind(runtime::kNativeIntegerTextLengthSymbol, &runtime::vela_native_v1_integer_text_length);
   bind(runtime::kNativeDoubleTextLengthSymbol, &runtime::vela_native_v1_double_text_length);

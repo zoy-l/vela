@@ -7,22 +7,23 @@
 #include <limits>
 #include <queue>
 #include <span>
-#include <utility>
+#include <tuple>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/register_set.h"
-#include "compiler/native/native_values.h"
+#include "compiler/native/struct_values.h"
 
 namespace vela::compiler::native {
 namespace {
 
 bool HasManagedValue(const ir::Function& function, ir::RegisterId reg) {
-  const auto kind = function.value_types.at(reg).kind;
-  return kind == Kind::Dynamic || IsReferenceKind(kind);
+  return ManagedSlotCount(function.value_types.at(reg)) != 0;
 }
 
 void PropagateCopies(std::span<const std::vector<ir::RegisterId>> copies,
@@ -118,7 +119,9 @@ struct RootLifetime final {
   }
 };
 
-void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetimes) {
+void AssignRootSlots(NativeRootPlan& plan,
+                     const ir::Function& function,
+                     std::span<const RootLifetime> lifetimes) {
   ir::RegisterSet candidates(lifetimes.size());
   for (const auto& stores : plan.stores) {
     for (const auto reg : stores) {
@@ -134,24 +137,30 @@ void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetim
   std::ranges::sort(ordered, [](const auto& left, const auto& right) {
     return left.begin != right.begin ? left.begin < right.begin : left.reg < right.reg;
   });
-  using SlotEnd = std::pair<std::size_t, std::size_t>;
+  using SlotEnd = std::tuple<std::size_t, std::size_t, std::size_t>;
   std::priority_queue<SlotEnd, std::vector<SlotEnd>, std::greater<>> active;
-  std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>> available;
+  absl::flat_hash_map<std::size_t,
+                      std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>>>
+      free_spans;
   for (const auto& lifetime : ordered) {
     // 同一指令的输入、输出和清空点共用边界，不能因成功路径上的定义而覆盖异常活跃值。
-    while (!active.empty() && active.top().first < lifetime.begin) {
-      available.push(active.top().second);
+    while (!active.empty() && std::get<0>(active.top()) < lifetime.begin) {
+      const auto [end, slot, width] = active.top();
+      free_spans[width].push(slot);
       active.pop();
     }
+    const auto width = ManagedSlotCount(function.value_types.at(lifetime.reg));
+    auto& available = free_spans[width];
     std::size_t slot = 0;
     if (available.empty()) {
-      slot = plan.count++;
+      slot = plan.count;
+      plan.count += width;
     } else {
       slot = available.top();
       available.pop();
     }
     plan.slots.emplace(lifetime.reg, slot);
-    active.emplace(lifetime.end, slot);
+    active.emplace(lifetime.end, slot, width);
   }
   for (auto& clears : plan.clears) {
     std::erase_if(clears, [&](ir::RegisterId reg) { return !plan.slots.contains(reg); });
@@ -161,7 +170,8 @@ void AssignRootSlots(NativeRootPlan& plan, std::span<const RootLifetime> lifetim
 void AssignImportRoots(NativeRootPlan& plan, const ir::Function& function) {
   for (ir::RegisterId reg = 0; reg < function.parameter_count; ++reg) {
     if (HasManagedValue(function, reg)) {
-      plan.slots.emplace(reg, plan.count++);
+      plan.slots.emplace(reg, plan.count);
+      plan.count += ManagedSlotCount(function.value_types.at(reg));
     }
   }
 }
@@ -178,7 +188,7 @@ void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function, NativeDe
         instruction.opcode == Opcode::Return) {
       plan.safepoints.at(index) |= kNativeSafepointBoundary;
     }
-    if (ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
+    if (ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess()) {
       plan.safepoints.at(index) |= kNativeSafepointBeforeRuntime;
       if (index + 1 < instructions.size()) {
         plan.safepoints.at(index + 1) |= kNativeSafepointAfterRuntime;
@@ -294,7 +304,7 @@ void RecordLiveRoots(NativeRootPlan& plan,
   auto& stores = plan.stores[index];
   auto& clears = plan.clears[index];
   const auto safepoint =
-      plan.safepoints[index] != 0 || ir::AnalyzeEffects(instruction).MayCollect();
+      plan.safepoints[index] != 0 || ir::AnalyzeEffects(function, instruction).MayCollect();
   const auto& after = liveness.after.get();
   liveness.before.get().ForEach([&](ir::RegisterId reg) {
     if (!HasManagedValue(function, reg) || instance_roots[reg] != 0) {
@@ -366,7 +376,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
                       instance_roots, lifetimes);
     }
   }
-  AssignRootSlots(plan, lifetimes);
+  AssignRootSlots(plan, function, lifetimes);
   plan.count = std::max(plan.count, recovery.minimum_root_count);
   PlanRematerialization(plan, function, functions);
   return plan;

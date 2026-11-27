@@ -1,5 +1,6 @@
 #include "compiler/testing/suite.h"
 
+#include <chrono>
 #include <memory>
 #include <ostream>
 #include <sstream>
@@ -9,15 +10,13 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/testing/result.h"
+#include "compiler/testing/settings.h"
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/modules/source_loader.h"
-#include "compiler/jit/compiler.h"
-#include "compiler/jit/source_compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
 namespace vela::testing {
@@ -26,27 +25,12 @@ namespace {
 SuiteResult Execute(std::string_view source, std::ostream& output, SuiteOptions options = {}) {
   runtime::Isolate isolate(1);
   isolate.SetOutput(output);
-  const frontend::SourceInput input{.path = "suite.vela", .text = source};
-  auto compiler = compiler::jit::Compiler::Create();
-  EXPECT_TRUE(compiler) << frontend::DiagnosticsText(compiler.error());
-  if (!compiler) {
-    return {};
-  }
-  const auto compiled =
-      compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
-  for (const auto& diagnostic : compiled.diagnostics) {
-    EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
-        << diagnostic.source_path << ':' << diagnostic.location.line << ' ' << diagnostic.message;
-  }
+  const auto compiled = compiler::test::CompileSource(source, isolate);
   if (!compiled.Succeeded()) {
+    ADD_FAILURE() << frontend::DiagnosticsText(compiled.diagnostics);
     return {};
   }
-  auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-  EXPECT_TRUE(instance);
-  if (!instance) {
-    return {};
-  }
-  Suite suite(**instance, std::move(options));
+  Suite suite(*compiled.instance, std::move(options));
   return suite.Run();
 }
 
@@ -118,6 +102,19 @@ func main(): void {
   EXPECT_EQ(first.errors.at(2).message, "first cleanup");
   EXPECT_EQ(first.errors.at(3).message, "static cleanup");
   EXPECT_EQ(output.str(), "after body\n");
+}
+
+TEST(ScriptSuiteTest, RejectsUnrepresentableSuiteLoadTimeout) {
+  std::ostringstream output;
+  SuiteOptions options;
+  options.settings.suite_load_timeout = {
+      .kind = TimeoutKind::Duration,
+      .duration = std::chrono::milliseconds::max(),
+  };
+  const auto result = Execute("func main(): void {}", output, std::move(options));
+  ASSERT_EQ(result.errors.size(), 1U);
+  EXPECT_EQ(result.errors.front().phase, TestPhase::Registration);
+  EXPECT_EQ(result.errors.front().message, "timeout duration is not representable");
 }
 
 TEST(ScriptSuiteTest, FiltersBeforeHooksAndListsWithoutExecutingBodies) {
@@ -398,11 +395,8 @@ TEST(ScriptSuiteTest, ClosingSuiteReleasesTimersFramesRootsAndHostEndpoints) {
   completer.future().ObserveResult([marker](const runtime::FutureResult&) { ++*marker; });
   const auto endpoint = std::move(completer).Detach();
   marker.reset();
-  std::ostringstream output;
   {
-    auto compiler = compiler::jit::Compiler::Create();
-    ASSERT_TRUE(compiler);
-    const auto compiled = compiler::jit::CompileSource(**compiler, R"(
+    const auto compiled = compiler::test::CompileSource(R"(
 import 'sdk:test';
 async func background(): Future<void> { await sleep(100000); fail('closed'); }
 func main(): void {
@@ -410,22 +404,19 @@ func main(): void {
     background();
     Timer.periodic(100000, () => { fail('closed timer'); });
   });
-})");
-    ASSERT_TRUE(compiled.Succeeded());
-    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
-    ASSERT_TRUE(instance);
-    {
-      Suite suite(**instance, {});
-      const auto result = suite.Run();
-      ASSERT_EQ(result.tests.size(), 1U);
-      EXPECT_EQ(result.tests.front().status, TestStatus::Passed);
-      EXPECT_TRUE(lifetime.expired());
-      const auto completed = endpoint.Complete(runtime::Value::Null());
-      ASSERT_FALSE(completed);
-      EXPECT_EQ(completed.error(), runtime::FutureCompletionError::Closed);
-      EXPECT_EQ(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork),
-                runtime::FuturePumpStep::Idle);
-    }
+})",
+                                                        isolate);
+    ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
+    Suite suite(*compiled.instance, {});
+    const auto result = suite.Run();
+    ASSERT_EQ(result.tests.size(), 1U);
+    EXPECT_EQ(result.tests.front().status, TestStatus::Passed);
+    EXPECT_TRUE(lifetime.expired());
+    const auto completed = endpoint.Complete(runtime::Value::Null());
+    ASSERT_FALSE(completed);
+    EXPECT_EQ(completed.error(), runtime::FutureCompletionError::Closed);
+    EXPECT_EQ(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork),
+              runtime::FuturePumpStep::Idle);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();

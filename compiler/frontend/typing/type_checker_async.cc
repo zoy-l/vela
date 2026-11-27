@@ -111,7 +111,7 @@ std::optional<TypeChecker::Type> TypeChecker::CheckOptionalAsyncCallback(
   if (value.kind == Expression::Kind::NullLiteral) {
     return std::nullopt;
   }
-  const auto type = CheckAsyncCallback(value, parameters, CallbackPresence::Optional, contract);
+  auto type = CheckAsyncCallback(value, parameters, CallbackPresence::Optional, contract);
   if (!IsValid(type)) {
     return std::nullopt;
   }
@@ -325,7 +325,7 @@ TypeChecker::Type TypeChecker::CheckAsyncConstruction(const Expression& expressi
     type = types_.at(kCancellationTokenTypeName);
   }
   FunctionInfo signature;
-  signature.return_type = type;
+  signature.return_type = std::move(type);
   return RegisterAsyncCall(expression, {.operation = operation, .signature = std::move(signature)});
 }
 

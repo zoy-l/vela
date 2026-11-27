@@ -185,7 +185,8 @@ void Documentation::ClassDeclaration(const frontend::Class& declaration) {
   if (!native_key.empty()) {
     output_ << "external ";
   }
-  output_ << "class " << declaration.name;
+  output_ << (declaration.kind == frontend::Class::Kind::Value ? "struct " : "class ")
+          << declaration.name;
   if (!native_key.empty()) {
     output_ << " = '" << native_key << '\'';
   }

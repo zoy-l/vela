@@ -19,7 +19,7 @@ MemberTable::MemberTable(std::span<const TypeConstraint> types,
     : members_(std::move(members)) {
   for (std::size_t index = 0; index < types.size(); ++index) {
     const auto& type = types[index];
-    if (!type.nullable && !type.dynamic && !type.callable) {
+    if (!type.nullable && !type.IsDynamic() && !type.callable) {
       receiver_indices_.try_emplace(Key(type), static_cast<std::uint32_t>(index));
     }
   }
@@ -28,7 +28,7 @@ MemberTable::MemberTable(std::span<const TypeConstraint> types,
     member_indices_.try_emplace(std::pair(member.receiver_type, std::string_view(member.name)),
                                 index);
     const auto& type = types[member.receiver_type];
-    if (type.nominal != nullptr && !type.nullable && !type.dynamic && !type.callable &&
+    if (type.nominal != nullptr && !type.nullable && !type.IsDynamic() && !type.callable &&
         receiver_indices_.at(Key(type)) == member.receiver_type) {
       nominal_members_.try_emplace(std::pair(type.nominal, std::string_view(member.name)), index);
     }

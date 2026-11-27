@@ -9,33 +9,14 @@
 #include <vector>
 
 #include "base/callable.h"
+#include "base/inline_layout.h"
+#include "base/type_kind.h"
 
 namespace vela::layout {
 
 // 编译产物只保存值形状与表内编号；实例化时才建立 Isolate 内的指针关系。
 struct Type final {
-  enum class Kind : std::uint8_t {
-    Dynamic,
-    Boolean,
-    Integer,
-    Double,
-    String,
-    MutableString,
-    ByteArray,
-    ByteData,
-    RegExp,
-    RegExpMatch,
-    Instance,
-    Enum,
-    Interface,
-    Array,
-    Collection,
-    Callable,
-    Future,
-    Completer,
-    Timer,
-    CancellationToken,
-  };
+  using Kind = LanguageTypeKind;
   Kind kind = Kind::Dynamic;
   bool nullable = false;
   // kind 决定引用 classes、interfaces、arrays、collections 或 signatures 表。
@@ -65,6 +46,7 @@ struct Signature final {
   std::vector<Parameter> parameters;
   std::optional<Type> result = std::nullopt;
   std::optional<Type> narrowed_parameter = std::nullopt;
+  std::optional<Type> false_narrowed_parameter = std::nullopt;
 };
 
 struct Class final {
@@ -76,6 +58,7 @@ struct Class final {
     Host,
     Metadata,
     ReflectionIdentity,
+    Struct,
   };
   std::string name;
   std::string native_key;
@@ -86,6 +69,7 @@ struct Class final {
   std::optional<CallableTarget> callable;
   std::vector<std::uint32_t> interfaces;
   std::optional<std::uint32_t> callable_type = std::nullopt;
+  std::vector<InlineSlotKind> value_slots;
 };
 
 // 源声明事实供公共头和绑定声明生成使用。原生映像只需要规范化后的名义键。

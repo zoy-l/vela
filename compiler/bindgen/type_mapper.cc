@@ -24,9 +24,13 @@
 
 #include "base/layout_description.h"
 #include "compiler/bindgen/model.h"
+#include "compiler/host_type_contract.h"
+#include "vela/types.h"
 
 namespace vela::bindgen {
 namespace {
+
+using compiler::host_types::CppType;
 
 clang::QualType IntegerType(const clang::ASTContext& context) {
   switch (context.getTargetInfo().getInt64Type()) {
@@ -42,12 +46,15 @@ clang::QualType IntegerType(const clang::ASTContext& context) {
 std::optional<layout::Type::Kind> ScalarKind(clang::QualType type,
                                              const clang::ASTContext& context) {
   using Kind = layout::Type::Kind;
+  if (type->isNullPtrType()) {
+    return Kind::Null;
+  }
   if (type->isBooleanType()) {
-    return Kind::Boolean;
+    return Kind::Bool;
   }
   const auto integer = IntegerType(context);
   if (!integer.isNull() && clang::ASTContext::hasSameType(type, integer)) {
-    return Kind::Integer;
+    return Kind::Int;
   }
   return clang::ASTContext::hasSameType(type, context.DoubleTy) ? std::optional(Kind::Double)
                                                                 : std::nullopt;
@@ -141,8 +148,7 @@ Type Leaf(layout::Type::Kind kind) {
   return {.layouts = {}, .value = layout::Type{.kind = kind}, .cpp = {}};
 }
 
-const clang::ClassTemplateSpecializationDecl* VelaTemplate(clang::QualType type,
-                                                           std::string_view name) {
+const clang::ClassTemplateSpecializationDecl* VelaTemplate(clang::QualType type, CppType kind) {
   const auto* record = type->getAsCXXRecordDecl();
   const auto* specialization =
       llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(record);
@@ -151,9 +157,11 @@ const clang::ClassTemplateSpecializationDecl* VelaTemplate(clang::QualType type,
   }
   const auto* declaration = specialization->getSpecializedTemplate();
   const auto* owner = llvm::dyn_cast<clang::NamespaceDecl>(declaration->getDeclContext());
-  constexpr std::string_view kNamespacePrefix = "vela::";
-  return declaration->getName() == llvm::StringRef(name).drop_front(kNamespacePrefix.size()) &&
-                 owner != nullptr && owner->getName() == "vela" &&
+  const auto name = compiler::host_types::CppTypeName(kind);
+  return declaration->getName() == llvm::StringRef(name).drop_front(
+                                       compiler::host_types::kNamespacePrefix.size()) &&
+                 owner != nullptr &&
+                 owner->getName() == llvm::StringRef(compiler::host_types::kNamespace) &&
                  owner->getParent()->isTranslationUnit()
              ? specialization
              : nullptr;
@@ -185,7 +193,8 @@ const clang::CXXRecordDecl* ScriptTraits(const clang::ClassTemplateSpecializatio
                                          clang::ASTContext& context) {
   const auto tag = Argument(wrapper, 0);
   auto* scope = wrapper.getSpecializedTemplate()->getDeclContext();
-  const auto name = context.DeclarationNames.getIdentifier(&context.Idents.get("ScriptTypeTraits"));
+  const auto name = context.DeclarationNames.getIdentifier(
+      &context.Idents.get(llvm::StringRef(compiler::host_types::kScriptTraitsName)));
   for (auto* declaration : scope->lookup(name)) {
     auto* primary = llvm::dyn_cast<clang::ClassTemplateDecl>(declaration);
     if (primary == nullptr) {
@@ -233,38 +242,41 @@ ScriptTraitsInfo ReadScriptTraits(const clang::CXXRecordDecl& traits) {
   ScriptTraitsInfo result;
   for (const auto* declaration : traits.decls()) {
     if (const auto* alias = llvm::dyn_cast<clang::TypeAliasDecl>(declaration);
-        alias != nullptr && alias->getName() == "Arguments") {
+        alias != nullptr &&
+        alias->getName() == llvm::StringRef(compiler::host_types::kScriptArgumentsMember)) {
       result.arguments = alias;
     }
     const auto* variable = llvm::dyn_cast<clang::VarDecl>(declaration);
     if (variable == nullptr) {
       continue;
     }
-    if (variable->getName() == "kKind") {
+    const auto name = variable->getName();
+    if (name == llvm::StringRef(compiler::host_types::kScriptKindMember)) {
       result.kind = variable;
-    } else if (variable->getName() == "kName") {
+    } else if (name == llvm::StringRef(compiler::host_types::kScriptNameMember)) {
       result.name = variable;
-    } else if (variable->getName() == "kNativeKey") {
+    } else if (name == llvm::StringRef(compiler::host_types::kScriptNativeKeyMember)) {
       result.native_key = variable;
-    } else if (variable->getName() == "kModule") {
+    } else if (name == llvm::StringRef(compiler::host_types::kScriptModuleMember)) {
       result.module = variable;
     }
   }
   return result;
 }
 
-std::expected<std::string, std::string> ScriptKind(const clang::VarDecl* kind,
-                                                   clang::ASTContext& context) {
+std::expected<ScriptTypeKind, std::string> ScriptKind(const clang::VarDecl* kind,
+                                                      clang::ASTContext& context) {
   const auto* enumeration = kind == nullptr ? nullptr : kind->getType()->getAs<clang::EnumType>();
   clang::Expr::EvalResult evaluated;
   if (enumeration == nullptr || !kind->isConstexpr() || kind->getAnyInitializer() == nullptr ||
-      enumeration->getDecl()->getQualifiedNameAsString() != "vela::ScriptTypeKind" ||
+      enumeration->getDecl()->getQualifiedNameAsString() !=
+          compiler::host_types::kScriptKindTypeName ||
       !kind->getAnyInitializer()->EvaluateAsInt(evaluated, context)) {
     return std::unexpected("ScriptTypeTraits.kKind must be a constant ScriptTypeKind");
   }
   for (const auto* value : enumeration->getDecl()->enumerators()) {
     if (value->getInitVal() == evaluated.Val.getInt()) {
-      return value->getNameAsString();
+      return static_cast<ScriptTypeKind>(value->getInitVal().getLimitedValue());
     }
   }
   return std::unexpected("ScriptTypeTraits.kKind is not a declared ScriptTypeKind");
@@ -297,6 +309,7 @@ std::expected<void, std::string> ImportNominalArguments(const clang::TypeAliasDe
 }
 
 MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
+                         CppType wrapper_kind,
                          clang::ASTContext& context,
                          const HostTypes& hosts) {
   const auto tag = Argument(wrapper, 0);
@@ -313,15 +326,11 @@ MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
   if (!qualified || qualified->empty() || !name->isConstexpr()) {
     return Unsupported(tag, context, "ScriptTypeTraits.kName requires a constant declaration name");
   }
-  const bool is_enum = *type_kind == "Enum";
-  const auto wrapper_name = wrapper.getSpecializedTemplate()->getName();
-  const bool enum_wrapper = wrapper_name == "Enum";
-  const bool host_wrapper = wrapper_name == "Host";
-  if (is_enum != enum_wrapper || (*type_kind == "Host") != host_wrapper ||
-      (!is_enum && *type_kind != "Class" && *type_kind != "Interface" && *type_kind != "Host")) {
+  const auto& layout_kind = compiler::host_types::LayoutFor(*type_kind);
+  if (wrapper_kind != compiler::host_types::ScriptWrapper(*type_kind)) {
     return Unsupported(tag, context, "Object/Enum/Host must match ScriptTypeTraits.kKind");
   }
-  if (host_wrapper) {
+  if (*type_kind == ScriptTypeKind::Host) {
     const auto key =
         native_key == nullptr ? std::nullopt : ConstantText(native_key->getAnyInitializer());
     if (!key || key->empty() || !native_key->isConstexpr()) {
@@ -343,7 +352,7 @@ MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
   }
   const auto identity = layout::NominalKey(result.layouts, nominal);
   result.layouts.nominals.emplace(identity, std::move(nominal));
-  if (*type_kind == "Interface") {
+  if (*type_kind == ScriptTypeKind::Interface) {
     result.value = layout::Type{
         .kind = layout::Type::Kind::Interface,
         .index = static_cast<std::uint32_t>(result.layouts.interfaces.size()),
@@ -351,17 +360,18 @@ MappedType ScriptNominal(const clang::ClassTemplateSpecializationDecl& wrapper,
     result.layouts.interfaces.push_back(identity);
   } else {
     result.value = layout::Type{
-        .kind = is_enum ? layout::Type::Kind::Enum : layout::Type::Kind::Instance,
+        .kind = layout_kind.type,
         .index = static_cast<std::uint32_t>(result.layouts.classes.size()),
     };
     result.layouts.classes.push_back({
         .name = identity,
         .native_key = {},
         .native_contract = {},
-        .kind = is_enum ? layout::Class::Kind::Enum : layout::Class::Kind::Instance,
+        .kind = layout_kind.nominal,
         .reference_fields = {},
         .callable = {},
         .interfaces = {},
+        .value_slots = {},
     });
   }
   return result;
@@ -398,7 +408,7 @@ MappedType LogicalSignature(const clang::FunctionProtoType& function,
         layout::ImportType(result.layouts, mapped_result->layouts, *mapped_result->value);
   }
   result.value = layout::Type{
-      .kind = layout::Type::Kind::Callable,
+      .kind = layout::Type::Kind::Function,
       .index = static_cast<std::uint32_t>(result.layouts.signatures.size()),
   };
   result.layouts.signatures.push_back(std::move(signature));
@@ -407,18 +417,18 @@ MappedType LogicalSignature(const clang::FunctionProtoType& function,
 
 MappedType MapLogicalContainer(clang::QualType type,
                                const clang::ClassTemplateSpecializationDecl& container,
+                               CppType container_kind,
                                layout::Type::Kind kind,
                                clang::ASTContext& context,
                                const HostTypes& hosts) {
   using Kind = layout::Type::Kind;
   const auto* declaration = container.getSpecializedTemplate();
-  const auto qualified = declaration->getQualifiedNameAsString();
   auto element = LogicalType(Argument(container, 0), context, hosts);
   const bool async = kind == Kind::Future || kind == Kind::Completer;
   std::string path = declaration->getNameAsString();
   if (async) {
     path += ".payload";
-  } else if (qualified == "vela::Map") {
+  } else if (container_kind == CppType::Map) {
     path += ".key";
   } else {
     path += ".element";
@@ -452,9 +462,9 @@ MappedType MapLogicalContainer(clang::QualType type,
         .index = static_cast<std::uint32_t>(result.layouts.arrays.size()),
     };
     result.layouts.arrays.push_back({.name = {}, .element = *imported});
-  } else if (kind == Kind::Collection) {
+  } else if (kind == Kind::Set || kind == Kind::Map) {
     layout::Collection collection{.name = {}, .key = *imported};
-    if (qualified == "vela::Map") {
+    if (container_kind == CppType::Map) {
       auto value = LogicalType(Argument(container, 1), context, hosts);
       if (!value) {
         return At(std::move(value), "Map.value");
@@ -477,19 +487,19 @@ MappedType LogicalContainer(clang::QualType type,
                             clang::ASTContext& context,
                             const HostTypes& hosts) {
   using Kind = layout::Type::Kind;
-  constexpr auto kContainers = std::to_array<std::pair<std::string_view, Kind>>({
-      {"vela::Array", Kind::Array},
-      {"vela::Map", Kind::Collection},
-      {"vela::Set", Kind::Collection},
-      {"vela::Future", Kind::Future},
-      {"vela::Completer", Kind::Completer},
+  constexpr auto kContainers = std::to_array<std::pair<CppType, Kind>>({
+      {CppType::Array, Kind::Array},
+      {CppType::Map, Kind::Map},
+      {CppType::Set, Kind::Set},
+      {CppType::Future, Kind::Future},
+      {CppType::Completer, Kind::Completer},
   });
   for (const auto& [qualified, kind] : kContainers) {
     const auto* container = VelaTemplate(type, qualified);
     if (container == nullptr) {
       continue;
     }
-    return MapLogicalContainer(type, *container, kind, context, hosts);
+    return MapLogicalContainer(type, *container, qualified, kind, context, hosts);
   }
   return Unsupported(type, context);
 }
@@ -506,7 +516,9 @@ MappedType LogicalNullable(clang::QualType type,
   if (!result->value) {
     return At(Unsupported(type, context, "void cannot be nullable"), "Nullable.value");
   }
-  if (result->value->kind != Kind::Dynamic) {
+  if (result->value->kind == Kind::Never) {
+    result->value->kind = Kind::Null;
+  } else if (result->value->kind != Kind::Dynamic && result->value->kind != Kind::Null) {
     result->value->nullable = true;
   }
   return result;
@@ -527,37 +539,40 @@ MappedType LogicalType(clang::QualType type, clang::ASTContext& context, const H
   if (record == nullptr) {
     return Unsupported(type, context);
   }
-  constexpr auto kLeaves = std::to_array<std::pair<std::string_view, Kind>>({
-      {"vela::String", Kind::String},
-      {"vela::MutableString", Kind::MutableString},
-      {"vela::ByteArray", Kind::ByteArray},
-      {"vela::ByteData", Kind::ByteData},
-      {"vela::RegExp", Kind::RegExp},
-      {"vela::RegExpMatch", Kind::RegExpMatch},
-      {"vela::Timer", Kind::Timer},
-      {"vela::CancellationToken", Kind::CancellationToken},
-      {"vela::Value", Kind::Dynamic},
+  constexpr auto kLeaves = std::to_array<std::pair<CppType, Kind>>({
+      {CppType::String, Kind::String},
+      {CppType::MutableString, Kind::MutableString},
+      {CppType::ByteArray, Kind::ByteArray},
+      {CppType::ByteData, Kind::ByteData},
+      {CppType::RegExp, Kind::RegExp},
+      {CppType::RegExpMatch, Kind::RegExpMatch},
+      {CppType::Timer, Kind::Timer},
+      {CppType::CancellationToken, Kind::CancellationToken},
+      {CppType::Value, Kind::Dynamic},
+      {CppType::Never, Kind::Never},
+      {CppType::Null, Kind::Null},
   });
   const auto name = record->getQualifiedNameAsString();
   for (const auto& [qualified, kind] : kLeaves) {
-    if (name == qualified) {
+    if (name == compiler::host_types::CppTypeName(qualified)) {
       return Leaf(kind);
     }
   }
-  if (const auto* host = VelaTemplate(type, "vela::Host")) {
+  if (const auto* host = VelaTemplate(type, CppType::Host)) {
     const auto native = HostType(Argument(*host, 0), Ownership::Local, hosts);
-    return At(native ? MappedType(*native) : ScriptNominal(*host, context, hosts), "Host.value");
+    return At(native ? MappedType(*native) : ScriptNominal(*host, CppType::Host, context, hosts),
+              "Host.value");
   }
-  if (const auto* object = VelaTemplate(type, "vela::Object")) {
-    return At(ScriptNominal(*object, context, hosts), "Object.tag");
+  if (const auto* object = VelaTemplate(type, CppType::Object)) {
+    return At(ScriptNominal(*object, CppType::Object, context, hosts), "Object.tag");
   }
-  if (const auto* enumeration = VelaTemplate(type, "vela::Enum")) {
-    return At(ScriptNominal(*enumeration, context, hosts), "Enum.tag");
+  if (const auto* enumeration = VelaTemplate(type, CppType::Enum)) {
+    return At(ScriptNominal(*enumeration, CppType::Enum, context, hosts), "Enum.tag");
   }
-  if (const auto* nullable = VelaTemplate(type, "vela::Nullable")) {
+  if (const auto* nullable = VelaTemplate(type, CppType::Nullable)) {
     return LogicalNullable(type, *nullable, context, hosts);
   }
-  if (const auto* function = VelaTemplate(type, "vela::Function")) {
+  if (const auto* function = VelaTemplate(type, CppType::Function)) {
     const auto signature = Argument(*function, 0);
     const auto* prototype =
         signature.isNull() ? nullptr : signature->getAs<clang::FunctionProtoType>();
@@ -610,13 +625,14 @@ MappedType MapCanonical(clang::QualType type,
                         clang::ASTContext& context,
                         const HostTypes& hosts) {
   using Kind = layout::Type::Kind;
-  if (const auto* local = VelaTemplate(type, "vela::Local")) {
+  if (const auto* local = VelaTemplate(type, CppType::Local)) {
     auto result = LogicalType(Argument(*local, 0), context, hosts);
     if (!result) {
       return At(std::move(result), "Local.value");
     }
-    if (!result->value || result->value->nullable || result->value->kind == Kind::Boolean ||
-        result->value->kind == Kind::Integer || result->value->kind == Kind::Double) {
+    if (!result->value || result->value->nullable || result->value->kind == Kind::Null ||
+        result->value->kind == Kind::Never || result->value->kind == Kind::Bool ||
+        result->value->kind == Kind::Int || result->value->kind == Kind::Double) {
       return Unsupported(type, context, "Local requires a nonnullable managed logical type");
     }
     result->ownership = Ownership::Local;
@@ -625,9 +641,12 @@ MappedType MapCanonical(clang::QualType type,
   if (const auto* optional = StandardTemplate(type, "optional")) {
     const auto payload = Argument(*optional, 0);
     if (!payload.isNull() &&
-        (VelaTemplate(payload, "vela::Local") != nullptr || ScalarKind(payload, context))) {
+        (VelaTemplate(payload, CppType::Local) != nullptr || ScalarKind(payload, context))) {
       auto result = MapCanonical(payload, position, context, hosts);
       if (result && result->value) {
+        if (result->value->kind == Kind::Null) {
+          return Unsupported(type, context, "null is already nullable");
+        }
         result->value->nullable = result->value->kind != Kind::Dynamic;
       }
       return At(std::move(result), "optional.value");

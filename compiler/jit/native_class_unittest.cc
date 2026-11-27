@@ -19,6 +19,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/test_support/reflection_expectations.h"
 #include "compiler/test_support/reflection_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"

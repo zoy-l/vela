@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,8 +13,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/async_operation.h"
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
+#include "runtime/async/future_composition.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
@@ -33,18 +36,20 @@ void Drain(FutureScheduler& scheduler) {
   }
 }
 
-int ObserveFailureWithHandler() {
-  FutureScheduler scheduler;
-  int unhandled = 0;
-  scheduler.SetUnhandledErrorHandler([&](const Future&, Value) { ++unhandled; });
-  auto completer = scheduler.CreateHostCompleter();
-  completer.future().ObserveResult([](const FutureResult&) {});
-  const auto completion = completer.CompleteError(Value::Integer(kErrorValue));
-  if (!completion) {
-    return unhandled;
-  }
-  static_cast<void>(scheduler.PumpOne());
-  return unhandled;
+void ExpectAdoptionFailure(FutureScheduler& scheduler,
+                           Future& future,
+                           Value source,
+                           FutureCompletionError immediate_error,
+                           ExecutionStatus posted_status) {
+  const auto immediate = future.Complete(source);
+  ASSERT_FALSE(immediate);
+  EXPECT_EQ(immediate.error(), immediate_error);
+  std::thread host([&] { EXPECT_TRUE(future.Complete(source)); });
+  host.join();
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  const auto& result = future.result();
+  ASSERT_EQ(result.state, FutureState::Failed);
+  EXPECT_EQ(result.diagnostic.status, posted_status);
 }
 
 TEST(FutureTest, CompletionNotifiesObserversAsMicrotasksInRegistrationOrder) {
@@ -63,10 +68,20 @@ TEST(FutureTest, CompletionNotifiesObserversAsMicrotasksInRegistrationOrder) {
   EXPECT_EQ(notifications, (std::vector<int>{1, 2}));
 }
 
-TEST(FutureTest, ValueFactoryCreatesCompletedFuture) {
-  const Future future = Future::Value(Value::Integer(9));
-  ASSERT_EQ(future.state(), FutureState::Succeeded);
-  EXPECT_EQ(future.result().value.AsInteger(), 9);
+TEST(FutureTest, ComputationPropagatesCallbackResolutionFailure) {
+  Isolate isolate;
+  const std::array arguments{Value::Null()};
+  const FutureCallbacks callbacks{
+      .resolve = [](Value) -> std::expected<FutureCallback, ExecutionStatus> {
+        return std::unexpected(ExecutionStatus::InvalidIsolate);
+      },
+  };
+  FutureCall call;
+  call.operation = AsyncOperation::Microtask;
+  call.values = arguments;
+  const auto result = ExecuteFutureOperation(isolate, call, callbacks);
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error(), ExecutionStatus::InvalidIsolate);
 }
 
 TEST(FutureTest, ValueFactoryReportsForeignAdoptionAsInvalidIsolate) {
@@ -97,7 +112,14 @@ TEST(FutureTest, ReportsUnhandledErrorOnlyOnceAfterLateObservation) {
 }
 
 TEST(FutureTest, ObservedFailureDoesNotReportAsUnhandled) {
-  EXPECT_EQ(ObserveFailureWithHandler(), 0);
+  FutureScheduler scheduler;
+  int unhandled = 0;
+  scheduler.SetUnhandledErrorHandler([&](const Future&, Value) { ++unhandled; });
+  auto completer = scheduler.CreateHostCompleter();
+  completer.future().ObserveResult([](const FutureResult&) {});
+  ASSERT_TRUE(completer.CompleteError(Value::Integer(kErrorValue)));
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  EXPECT_EQ(unhandled, 0);
 }
 
 TEST(FutureTest, DirectResultObservationDoesNotQueueAnEmptyListener) {
@@ -112,41 +134,19 @@ TEST(FutureTest, DirectResultObservationDoesNotQueueAnEmptyListener) {
   EXPECT_EQ(future.result().value.AsInteger(), kErrorValue);
 }
 
-TEST(FutureTest, TimerCancellationAndPeriodicRescheduling) {
+TEST(FutureTest, PeriodicTimerReschedulesUntilItCancelsItself) {
   FutureScheduler scheduler;
   int calls = 0;
-  auto cancelled = scheduler.After(std::chrono::milliseconds(0), [&] { ++calls; });
-  cancelled.Cancel();
-  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
-
-  static_cast<void>(scheduler.Periodic(std::chrono::milliseconds(1), [&] { ++calls; }));
-  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
-  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
-  EXPECT_EQ(calls, 2);
-}
-
-TEST(FutureTest, TimerCancellationRemovesRootAndMiddleEventsAndAllowsSelfCancellation) {
-  constexpr int kPeriodic = 5;
-  FutureScheduler scheduler;
-  std::vector<int> calls;
-  auto first = scheduler.After(std::chrono::milliseconds(0), [&] { calls.push_back(1); });
-  auto second = scheduler.After(std::chrono::milliseconds(0), [&] { calls.push_back(2); });
-  static_cast<void>(scheduler.After(std::chrono::milliseconds(0), [&] { calls.push_back(3); }));
-  static_cast<void>(scheduler.After(std::chrono::milliseconds(0), [&] { calls.push_back(4); }));
-  second.Cancel();
-  first.Cancel();
-  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
-  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
-  EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
-  EXPECT_EQ(calls, (std::vector<int>{3, 4}));
   Timer periodic;
   periodic = scheduler.Periodic(std::chrono::milliseconds(1), [&] {
-    calls.push_back(kPeriodic);
-    periodic.Cancel();
+    if (++calls == 2) {
+      periodic.Cancel();
+    }
   });
   ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
-  EXPECT_EQ(calls, (std::vector<int>{3, 4, kPeriodic}));
+  EXPECT_EQ(calls, 2);
 }
 
 TEST(FutureTest, TimerCancellationPreservesRemainingInsertionOrderAcrossHeapRepairs) {
@@ -211,57 +211,38 @@ TEST(FutureTest, ClosingRunCanRetireAnOutsideEndpointCapturedByAQueuedTask) {
   EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
 }
 
-TEST(FutureTest, CancellationTokenRunsCallbacksOnce) {
-  CancellationToken token;
-  int calls = 0;
-  token.Observe([&] { ++calls; });
-  token.Cancel();
-  token.Cancel();
-  EXPECT_TRUE(token.IsCancelled());
-  EXPECT_EQ(calls, 1);
-}
-
 TEST(FutureTest, CrossThreadCompletionOnlyPublishesOnOwnerThread) {
   FutureScheduler scheduler;
   auto completer = scheduler.CreateHostCompleter();
+  auto future = completer.future();
   const auto owner = std::this_thread::get_id();
   std::thread::id notified_thread;
-  bool notified = false;
   Value observed = Value::Null();
-  completer.future().ObserveResult([&](const FutureResult& result) {
+  future.ObserveResult([&](const FutureResult& result) {
     notified_thread = std::this_thread::get_id();
     observed = result.value;
-    notified = true;
   });
-  std::atomic_bool accepted{false};
-  std::thread producer(
-      [&] { accepted = completer.Complete(Value::Integer(kExpectedValue)).has_value(); });
+  std::thread producer([&] { EXPECT_TRUE(completer.Complete(Value::Integer(kExpectedValue))); });
   producer.join();
-  ASSERT_TRUE(accepted.load());
-  EXPECT_EQ(completer.future().state(), FutureState::Pending);
-  EXPECT_FALSE(notified);
-  Drain(scheduler);
-  EXPECT_TRUE(notified);
+  EXPECT_EQ(future.state(), FutureState::Pending);
+  EXPECT_EQ(notified_thread, std::thread::id{});
+  ASSERT_EQ(scheduler.PumpUntil(future), FuturePumpResult::Completed);
+  ASSERT_EQ(future.state(), FutureState::Succeeded);
+  ASSERT_TRUE(observed.IsInteger());
   EXPECT_EQ(observed.AsInteger(), kExpectedValue);
   EXPECT_EQ(notified_thread, owner);
 }
 
 TEST(FutureTest, ConcurrentProducersKeepPerProducerFifo) {
-  constexpr int kProducers = 8;
-  constexpr int kMessages = 128;
   FutureScheduler scheduler;
-  auto producer = scheduler.CreateHostCompleter();
-  std::array<int, kProducers> next{};
+  std::array<int, kThreadCount> next{};
   std::vector<std::thread> workers;
-  workers.reserve(kProducers);
-  int notifications = 0;
-  bool in_order = true;
-  for (int thread = 0; thread < kProducers; ++thread) {
-    workers.emplace_back([&, thread] {
-      for (int index = 0; index < kMessages; ++index) {
-        scheduler.PostMicrotask([&, thread, index] {
-          in_order = (next[static_cast<std::size_t>(thread)]++ == index) && in_order;
-          ++notifications;
+  workers.reserve(next.size());
+  for (std::size_t producer = 0; producer < next.size(); ++producer) {
+    workers.emplace_back([&, producer] {
+      for (int index = 0; index < kMessagesPerThread; ++index) {
+        scheduler.PostMicrotask([&, producer, index] {
+          EXPECT_EQ(next[producer]++, index) << "producer " << producer;
         });
       }
     });
@@ -269,10 +250,10 @@ TEST(FutureTest, ConcurrentProducersKeepPerProducerFifo) {
   for (auto& worker : workers) {
     worker.join();
   }
-  ASSERT_TRUE(producer.Complete(Value::Null()));
   Drain(scheduler);
-  EXPECT_EQ(notifications, kProducers * kMessages);
-  EXPECT_TRUE(in_order);
+  for (const auto delivered : next) {
+    EXPECT_EQ(delivered, kMessagesPerThread);
+  }
 }
 
 TEST(FutureTest, ConcurrentCompletionHasOneWinner) {
@@ -323,6 +304,8 @@ TEST(FutureTest, CancelledTimerReleasesCallbackImmediately) {
 
 TEST(FutureTest, ConcurrentCancellationObserversRunExactlyOnce) {
   CancellationToken token;
+  int registered_calls = 0;
+  token.Observe([&] { ++registered_calls; });
   std::atomic_int called{0};
   std::vector<std::thread> observers;
   observers.reserve(kThreadCount);
@@ -338,6 +321,8 @@ TEST(FutureTest, ConcurrentCancellationObserversRunExactlyOnce) {
     observer.join();
   }
   token.Cancel();
+  EXPECT_TRUE(token.IsCancelled());
+  EXPECT_EQ(registered_calls, 1);
   EXPECT_EQ(called.load(), kThreadCount * kMessagesPerThread);
 }
 
@@ -380,16 +365,14 @@ TEST(FutureTest, BindingRejectsDifferentIsolate) {
 TEST(FutureTest, BindingSchedulesUnboundNativeCompletion) {
   Isolate first;
   auto future = Future::Value(Value::Integer(kExpectedValue));
+  ASSERT_EQ(future.state(), FutureState::Succeeded);
+  EXPECT_EQ(future.result().value.AsInteger(), kExpectedValue);
   ASSERT_TRUE(future.Bind(first.scheduler(), first.heap()));
-  bool notified = false;
   Value observed = Value::Null();
-  future.ObserveResult([&](const FutureResult& result) {
-    observed = result.value;
-    notified = true;
-  });
-  EXPECT_FALSE(notified);
+  future.ObserveResult([&](const FutureResult& result) { observed = result.value; });
+  EXPECT_TRUE(observed.IsNull());
   ASSERT_EQ(first.scheduler().PumpOne(), FuturePumpStep::Executed);
-  EXPECT_TRUE(notified);
+  ASSERT_TRUE(observed.IsInteger());
   EXPECT_EQ(observed.AsInteger(), kExpectedValue);
 }
 
@@ -411,6 +394,7 @@ TEST(FutureTest, ObserversBorrowOneCompletion) {
   ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
   future.ObserveResult([&](const FutureResult& result) { late = &result; });
   ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
+  ASSERT_NE(first, nullptr);
   EXPECT_EQ(first, second);
   EXPECT_EQ(first, late);
 }
@@ -533,24 +517,6 @@ TEST(FutureTest, DroppingNonfinalHostHandleDoesNotPostAnEmptyEvent) {
   EXPECT_EQ(scheduler.PumpOne(), FuturePumpStep::Idle);
 }
 
-TEST(FutureTest, HostProducerAllowsIdlePumpAndBlockingPumpToHaveDifferentBehavior) {
-  FutureScheduler scheduler;
-  auto producer = scheduler.CreateHostCompleter();
-  auto root = producer.future();
-  EXPECT_EQ(scheduler.PumpUntil(root), FuturePumpResult::Idle);
-  std::atomic_bool accepted = false;
-  std::thread host(
-      [&] { accepted = producer.Complete(Value::Integer(kExpectedValue)).has_value(); });
-  const auto completed = scheduler.PumpUntil(root, FuturePumpMode::WaitForHost);
-  host.join();
-  EXPECT_TRUE(accepted.load());
-  EXPECT_EQ(completed, FuturePumpResult::Completed);
-  ASSERT_EQ(root.state(), FutureState::Succeeded);
-  const auto result = root.result().value;
-  ASSERT_TRUE(result.IsInteger());
-  EXPECT_EQ(result.AsInteger(), kExpectedValue);
-}
-
 TEST(FutureTest, FinalHostHandleDestroysPendingCallbacksOnOwnerThread) {
   FutureScheduler scheduler;
   std::thread::id destroyed_on;
@@ -571,17 +537,8 @@ TEST(FutureTest, PostedSelfAdoptionFailsOnOwnerThreadWithTheSameReason) {
   Future future(&isolate.scheduler());
   const auto value = Value::Object(heap.AllocateFuture(future));
   RootRange root(heap, &value, 1);
-  const auto immediate = future.Complete(value);
-  ASSERT_FALSE(immediate);
-  EXPECT_EQ(immediate.error(), FutureCompletionError::SelfAdoption);
-  std::atomic_bool accepted = false;
-  std::thread host([&] { accepted = future.Complete(value).has_value(); });
-  host.join();
-  ASSERT_TRUE(accepted.load());
-  ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
-  const auto diagnostic = future.error_diagnostic();
-  ASSERT_TRUE(diagnostic.has_value());
-  EXPECT_EQ(diagnostic.value_or(FutureDiagnostic{}).status, ExecutionStatus::FutureSelfAdoption);
+  ExpectAdoptionFailure(isolate.scheduler(), future, value, FutureCompletionError::SelfAdoption,
+                        ExecutionStatus::FutureSelfAdoption);
 }
 
 TEST(FutureTest, PostedForeignAdoptionReportsInvalidIsolate) {
@@ -591,17 +548,8 @@ TEST(FutureTest, PostedForeignAdoptionReportsInvalidIsolate) {
   future.AttachHeap(isolate.heap());
   const auto source = Value::Object(other.heap().AllocateFuture(Future(&other.scheduler())));
   RootRange root(other.heap(), &source, 1);
-  const auto immediate = future.Complete(source);
-  ASSERT_FALSE(immediate);
-  EXPECT_EQ(immediate.error(), FutureCompletionError::DifferentIsolate);
-  std::atomic_bool accepted = false;
-  std::thread host([&] { accepted = future.Complete(source).has_value(); });
-  host.join();
-  ASSERT_TRUE(accepted.load());
-  ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
-  const auto diagnostic = future.error_diagnostic();
-  ASSERT_TRUE(diagnostic.has_value());
-  EXPECT_EQ(diagnostic.value_or(FutureDiagnostic{}).status, ExecutionStatus::InvalidIsolate);
+  ExpectAdoptionFailure(isolate.scheduler(), future, source,
+                        FutureCompletionError::DifferentIsolate, ExecutionStatus::InvalidIsolate);
 }
 
 TEST(FutureTest, UnboundReentrantObserversKeepSynchronousNotificationOrder) {

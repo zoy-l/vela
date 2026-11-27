@@ -12,6 +12,17 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+
+NominalKind ClassNominalKind(const layout::Class& description) noexcept {
+  if (description.kind == layout::Class::Kind::Enum) {
+    return NominalKind::Enum;
+  }
+  if (description.kind == layout::Class::Kind::Struct) {
+    return NominalKind::Struct;
+  }
+  return description.callable ? NominalKind::Callable : NominalKind::Class;
+}
+
 namespace {
 
 class LayoutInstantiation final {
@@ -55,12 +66,16 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
   TypeConstraint result{.kind = ValueKind::Object, .nullable = type.nullable};
   using Kind = layout::Type::Kind;
   switch (type.kind) {
+    case Kind::Null:
+      return {.nullable = true};
+    case Kind::Never:
+      return {.category = TypeConstraint::Category::Never};
     case Kind::Dynamic:
-      return {.dynamic = true};
-    case Kind::Boolean:
+      return {.category = TypeConstraint::Category::Dynamic};
+    case Kind::Bool:
       result.kind = ValueKind::Boolean;
       break;
-    case Kind::Integer:
+    case Kind::Int:
       result.kind = ValueKind::Integer;
       break;
     case Kind::Double:
@@ -84,7 +99,7 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
     case Kind::RegExpMatch:
       result.object_kind = ObjectKind::RegExpMatch;
       break;
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum: {
       const auto* layout = classes_[type.index];
       result.nominal = &layout->nominal_type();
@@ -100,11 +115,12 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       result.object_kind = ObjectKind::Array;
       result.array = Array(type.index);
       break;
-    case Kind::Collection:
+    case Kind::Set:
+    case Kind::Map:
       result.object_kind = ObjectKind::Collection;
       result.collection = Collection(type.index);
       break;
-    case Kind::Callable:
+    case Kind::Function:
       result.callable = true;
       result.signature = Signature(type.index);
       break;
@@ -122,6 +138,10 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
     case Kind::CancellationToken:
       result.object_kind = ObjectKind::CancellationToken;
       break;
+    case Kind::Invalid:
+    case Kind::Void:
+    case Kind::Parameter:
+      std::unreachable();
   }
   return result;
 }
@@ -146,6 +166,12 @@ const ArrayLayout* LayoutInstantiation::Array(std::uint32_t index) {
   } else {
     auto layout = Element(description.element);
     layout.record_fields = description.record_fields;
+    if (description.element.kind == layout::Type::Kind::Class) {
+      const auto* element_class = classes_[description.element.index];
+      if (element_class->IsStruct()) {
+        layout.value_layout = element_class;
+      }
+    }
     stored = isolate_->CreateArrayLayout(layout);
     cache_->arrays.emplace(description.name, stored);
   }
@@ -199,6 +225,9 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
   if (description.narrowed_parameter) {
     result.narrowed_parameter = Constraint(*description.narrowed_parameter);
   }
+  if (description.false_narrowed_parameter) {
+    result.false_narrowed_parameter = Constraint(*description.false_narrowed_parameter);
+  }
   stored = isolate_->CreateTypeSignature(std::move(result));
   if (!description.name.empty()) {
     cache_->signatures.emplace(description.name, stored);
@@ -229,7 +258,14 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
       class_options_.empty() ? ClassLayoutOptions{} : class_options_.subspan(index).front();
   options.callable = description.callable;
   options.interfaces = std::move(interfaces);
-  options.is_enum = description.kind == layout::Class::Kind::Enum;
+  if (options.nominal == nullptr) {
+    options.nominal = isolate_->CreateNominalType({
+        .kind = ClassNominalKind(description),
+        .interfaces = std::move(options.interfaces),
+        .declaration = {},
+    });
+  }
+  options.value_slots = description.value_slots;
   options.is_metadata = description.kind == layout::Class::Kind::Metadata ||
                         description.kind == layout::Class::Kind::ReflectionIdentity;
   options.reflection_identity = description.kind == layout::Class::Kind::ReflectionIdentity;

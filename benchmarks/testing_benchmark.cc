@@ -161,7 +161,7 @@ std::expected<std::vector<std::string>, std::string> PopulateSuiteCache(
                                        .imports = {},
                                    });
     if (!populated.Succeeded()) {
-      return std::unexpected("cannot compile SDK cache inputs");
+      return std::unexpected(frontend::DiagnosticsText(populated.diagnostics));
     }
   }
   return paths;

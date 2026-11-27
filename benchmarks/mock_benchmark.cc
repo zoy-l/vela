@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -100,16 +101,18 @@ std::expected<void, std::string> Execute(runtime::NativeInstance& instance, std:
   };
   testing::Suite suite(instance, std::move(options));
   const auto result = suite.Run();
+  const auto failure = [](std::string message, std::span<const testing::TestError> errors) {
+    for (const auto& error : errors) {
+      message += "\n" + error.message;
+    }
+    return std::unexpected(std::move(message));
+  };
   if (result.exit_code != 0 || !result.errors.empty() || result.tests.size() != 1) {
-    return std::unexpected("mock benchmark failed to load or select its test");
+    return failure("mock benchmark failed to load or select its test", result.errors);
   }
   const auto& test = result.tests.front();
   if (test.status != testing::TestStatus::Passed) {
-    std::string message = test.name;
-    for (const auto& failure : test.errors) {
-      message += "\n" + failure.message;
-    }
-    return std::unexpected(message);
+    return failure(test.name, test.errors);
   }
   return {};
 }
@@ -154,8 +157,12 @@ void CompilationTime(benchmark::State& state, Compilation mode) {
       return;
     }
     const auto instance = runtime::NativeInstance::Instantiate(isolate, populated.code.image);
-    if (!instance || !Execute(**instance, "configured")) {
-      state.SkipWithError("cannot prepare generated mock compilation benchmark");
+    if (!instance) {
+      state.SkipWithError(instance.error().message);
+      return;
+    }
+    if (const auto executed = Execute(**instance, "configured"); !executed) {
+      state.SkipWithError(executed.error());
       return;
     }
   }
@@ -192,7 +199,7 @@ void ExecutionTime(benchmark::State& state, std::string_view name, std::int64_t 
   }
   const auto compiled = compiler::jit::CompileFile(**compiler, project.source());
   if (!compiled.Succeeded()) {
-    state.SkipWithError("cannot compile mock workload");
+    state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
     return;
   }
   const auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);

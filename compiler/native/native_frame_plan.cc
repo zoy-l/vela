@@ -16,6 +16,7 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_deoptimization.h"
 #include "runtime/value/value.h"
@@ -61,7 +62,7 @@ std::size_t PlanTemporaryCount(const ir::Function& source,
   if (!source.native_symbol.empty()) {
     for (std::size_t index = 0; index < source.parameter_count; ++index) {
       const auto& type = source.value_types.at(index);
-      if (type.kind == Kind::Dynamic || HasValidity(type)) {
+      if (type.kind == Kind::Dynamic || HasValidity(type) || type.value_layout != nullptr) {
         scratch_count = std::max(scratch_count, index + 1);
       }
     }
@@ -71,10 +72,13 @@ std::size_t PlanTemporaryCount(const ir::Function& source,
       scratch_count = std::max(scratch_count, saved.size() + 1);
     }
   }
+  const auto needs_erased_arguments = program.native_mode == NativeProgramMode::Reloadable ||
+                                      std::ranges::any_of(source.value_types, [](const auto& type) {
+                                        return type.value_layout != nullptr;
+                                      });
   for (const auto& instruction : source.instructions) {
     scratch_count = std::max(scratch_count, TemporaryArgumentCount(instruction));
-    if (program.native_mode == NativeProgramMode::Reloadable &&
-        instruction.opcode == Opcode::Call) {
+    if (instruction.opcode == Opcode::Call && needs_erased_arguments) {
       scratch_count = std::max(
           scratch_count,
           static_cast<std::size_t>(program.functions.at(instruction.index).parameter_count));
@@ -94,6 +98,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   const auto has_checkpoints = !escape.checkpoints.empty();
   const auto reference_count = has_checkpoints ? escape.reference_count : 0;
   const auto virtual_state_bytes = has_checkpoints ? sizeof(runtime::NativeVirtualState) : 0;
+  const auto erased_root_bytes = requirements.erased_root_count * sizeof(runtime::RootRange);
   auto& context = module.getContext();
   std::vector<llvm::Type*> fields;
   constexpr std::size_t kAuxiliaryFields = 7;
@@ -120,7 +125,11 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   // 不应因检查点或暂存参数较大而全部退化为堆中的寄存器文件。
   const auto temporary_field = static_cast<unsigned>(fields.size());
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), temporary_count));
-  fields.push_back(NativeRecordType(context));
+  const auto result_bytes = std::max(requirements.result_bytes, sizeof(runtime::NativeValue));
+  auto* result_storage =
+      llvm::ArrayType::get(llvm::Type::getInt64Ty(context),
+                           (result_bytes + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
+  fields.push_back(result_storage);
   auto* debug_storage =
       roots.debug_values
           ? llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
@@ -142,12 +151,12 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
     fields.push_back(llvm::ArrayType::get(llvm::PointerType::getUnqual(context), reference_count));
     fields.push_back(llvm::ArrayType::get(llvm::Type::getInt8Ty(context), virtual_state_bytes));
   }
+  const auto root_bytes = (roots.count * sizeof(runtime::Value)) + erased_root_bytes;
   if (kind == NativeEntryKind::RecoverInitial || kind == NativeEntryKind::RecoverResume) {
     auto* type = llvm::StructType::get(context, recovery_fields);
     return NativeFrameLayout{
         .type = type,
-        .bytes =
-            module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
+        .bytes = module.getDataLayout().getTypeAllocSize(type) + root_bytes,
         .local_fields = {},
         .leaf_result_field = std::nullopt,
         .auxiliary_field = std::nullopt,
@@ -162,7 +171,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   std::optional<unsigned> leaf_result_field;
   if (requirements.leaf_calls) {
     leaf_result_field = static_cast<unsigned>(fields.size());
-    fields.push_back(NativeRecordType(context));
+    fields.push_back(result_storage);
   }
   std::optional<unsigned> auxiliary_field;
   if (auxiliary_bytes != 0) {
@@ -177,8 +186,7 @@ NativeFrameLayout PlanNativeFrame(llvm::Module& module,
   auto* type = llvm::StructType::get(context, fields);
   return NativeFrameLayout{
       .type = type,
-      .bytes =
-          module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
+      .bytes = module.getDataLayout().getTypeAllocSize(type) + root_bytes,
       .local_fields = std::move(local_fields),
       .temporary_field = temporary_field,
       .leaf_result_field = leaf_result_field,

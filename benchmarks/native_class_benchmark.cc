@@ -270,7 +270,11 @@ void RecordEntryMetrics(benchmark::State& state, const Prepared& prepared, std::
   state.counters["entry_root_stores"] = static_cast<double>(entry.root_stores);
 }
 
-void ReportHeapRetention(benchmark::State& state, runtime::Heap& heap, std::size_t baseline) {
+void ReportHeapLifetime(benchmark::State& state,
+                        runtime::Heap& heap,
+                        std::size_t baseline,
+                        NativeClassHost::Counts before,
+                        NativeClassHost::Counts after) {
   // 先结束计时期间的增量轮次，再以当前根启动完整回收，排除旧标记留下的浮动垃圾。
   heap.FinishCollection();
   heap.Collect();
@@ -279,6 +283,12 @@ void ReportHeapRetention(benchmark::State& state, runtime::Heap& heap, std::size
       static_cast<double>(retained) - static_cast<double>(baseline);
   if (retained != baseline) {
     state.SkipWithError("native class benchmark retained heap storage after full GC");
+  }
+  const auto destroyed = NativeClassHost::AllocationCounts().destroyed - before.destroyed;
+  state.counters["destroyed_per_iteration"] =
+      static_cast<double>(destroyed) / static_cast<double>(state.iterations());
+  if (destroyed != after.constructed - before.constructed) {
+    state.SkipWithError("native class benchmark retained a constructed object after full GC");
   }
 }
 
@@ -306,8 +316,12 @@ void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
   if (prepared.source) {
     auto& dispatch = isolate.native_dispatch();
     auto publication = dispatch.Prepare(0, prepared.image);
-    if (!publication || !dispatch.Publish(std::move(*publication))) {
-      state.SkipWithError("native class benchmark publication failed");
+    if (!publication) {
+      state.SkipWithError(publication.error().message);
+      return;
+    }
+    if (const auto published = dispatch.Publish(std::move(*publication)); !published) {
+      state.SkipWithError(published.error().message);
       return;
     }
     auto selected = dispatch.FindEntry(kWorkloadPath, name);
@@ -342,7 +356,7 @@ void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
     receiver = runtime::InvokeNativeTarget(*execution, *get_receiver, {});
   }
   if (!receiver) {
-    state.SkipWithError("native class benchmark receiver initialization failed");
+    state.SkipWithError(std::string(ExecutionStatusName(receiver.error())));
     return;
   }
   auto* object = static_cast<NativeClassHost*>(runtime::HostObjectPointer(*receiver->AsObject()));
@@ -390,12 +404,7 @@ void Script(benchmark::State& state, Case problem, Mode mode, Path path) {
       static_cast<double>(finished.constructed - counts.constructed) / iterations;
   state.counters["peak_live_bytes"] = static_cast<double>(allocations.peak_live_bytes);
   state.counters["shared_owner_delta"] = static_cast<double>(repeated.use_count() - owners);
-  ReportHeapRetention(state, heap, baseline);
-  const auto destroyed = NativeClassHost::AllocationCounts().destroyed - counts.destroyed;
-  state.counters["destroyed_per_iteration"] = static_cast<double>(destroyed) / iterations;
-  if (destroyed != finished.constructed - counts.constructed) {
-    state.SkipWithError("native class benchmark retained a constructed object after full GC");
-  }
+  ReportHeapLifetime(state, heap, baseline, counts, finished);
   state.SetItemsProcessed(state.iterations() * problem.count);
 }
 

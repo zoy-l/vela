@@ -25,6 +25,29 @@ namespace {
 
 class TypedJSONProgramTest : public testing::TestWithParam<std::string_view> {};
 
+TEST(StructJsonTest, DecodesNestedValuesAndEncodesFlatArraysThroughMethods) {
+  test::ExpectRunAnswer(R"(
+struct Position { x: int; y: int; }
+struct Body {
+  position: Position?;
+  name: string;
+  toJson(): Map<string, dynamic> {
+    const result = Map<string, dynamic>();
+    const position = this.position;
+    result.set('value', position == null ? 0 : position.x + position.y);
+    result.set('name', this.name);
+    return result;
+  }
+}
+func main(): int {
+  const bodies = JSON.parse<Body[]>('[{"position":{"x":40,"y":2},"name":"body"}]');
+  const position = bodies[0].position;
+  if (position == null || position.x + position.y != 42) { return -1; }
+  return JSON.stringify(bodies) == '[{"value":42,"name":"body"}]' ? 42 : 0;
+}
+)");
+}
+
 TEST_P(TypedJSONProgramTest, ExecutesAndReleasesSessionStateWithGC) {
   test::ExpectReleasedAnswer(GetParam());
 }
@@ -226,7 +249,8 @@ func main(): int {
 func main(): int {
   const absent = JSON.safeParse<User>('{}');
   const present = JSON.parse<User>('{"name":null,"age":null}');
-  return absent.error.code == 'missing_field' && present.name == null && present.age == null ? 42 : 0;
+  return absent.success && absent.value.name == null && absent.value.age == 42 &&
+      present.name == null && present.age == null ? 42 : 0;
 })",
         R"(func source(): string { throw Error(message: 'source', code: 'SourceError'); }
 func main(): int {
@@ -278,9 +302,11 @@ func main(): int {
   const array = JSON.safeParse<int[]?>('false');
   const field = JSON.safeParse<Value?>('{"value":42}');
   const missing = JSON.safeParse<Value?>('{}');
+  const omitted = missing.success ? missing.value : null;
   const present = JSON.parse<Value?>('{"value":null}');
   return scalar.error.expected == 'int?' && array.error.expected == 'int[]?' &&
-      field.error.expected == 'string?' && missing.error.expected == 'string?' &&
+      field.error.expected == 'string?' && missing.success && omitted != null &&
+      omitted.value == null &&
       present != null && present.value == null ? 42 : 0;
 })",
         R"(class Json { static read(): int { return 42; } }

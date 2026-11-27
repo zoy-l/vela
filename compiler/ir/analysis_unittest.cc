@@ -224,6 +224,34 @@ TEST(AnalysisTest, AwaitHasASeparateResumeBlockWithoutAnExceptionHandler) {
   EXPECT_TRUE(liveness.front().live_out.Has(1));
 }
 
+TEST(AnalysisTest, NormalAndExceptionalEdgesRemainDistinctWhenTheyShareATarget) {
+  Function function;
+  function.register_count = 2;
+  function.handlers = {{.target = 1}};
+  function.instructions = {
+      {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 1, .location = {}, .handler = 0},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}},
+  };
+  const auto graph = BuildFlowGraph(function);
+  ASSERT_EQ(graph.blocks.size(), 2U);
+  const auto& first = graph.blocks.front();
+  EXPECT_EQ(first.successors, (std::vector<std::size_t>{1, 1}));
+  ASSERT_EQ(first.NormalSuccessors().size(), 1U);
+  EXPECT_EQ(first.NormalSuccessors().front(), 1U);
+
+  function.instructions.front() = {
+      .opcode = Opcode::CallIndirect,
+      .rhs = 1,
+      .location = {},
+      .handler = 0,
+      .no_normal_return = true,
+  };
+  const auto terminated = BuildFlowGraph(function);
+  ASSERT_EQ(terminated.blocks.size(), 2U);
+  EXPECT_EQ(terminated.blocks.front().successors, (std::vector<std::size_t>{1}));
+  EXPECT_TRUE(terminated.blocks.front().NormalSuccessors().empty());
+}
+
 TEST(AnalysisTest, AnUnreachableFinalizerDoesNotLeaveExceptionTargetsPastTheCode) {
   constexpr std::int64_t kUnreachableResult = 42;
   Function function;

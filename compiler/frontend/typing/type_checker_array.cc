@@ -23,16 +23,16 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithmResult(ArrayAlgorithm algorith
                                                          SourceLocation location,
                                                          const Type& callback_result) {
   if (algorithm == ArrayAlgorithm::Map) {
-    if (!IsValid(callback_result) || callback_result.kind == Type::Kind::Void ||
-        callback_result.kind == Type::Kind::Null) {
+    if (!IsValid(callback_result) || callback_result.kind == Type::Kind::Void) {
       AddDiagnostic(location, "map callback must return a value with a concrete type");
       return InvalidType();
     }
     return ArrayType(callback_result);
   }
   if (algorithm == ArrayAlgorithm::Sort) {
-    if (callback_result.nullable ||
-        (callback_result.kind != Type::Kind::Int && callback_result.kind != Type::Kind::Double)) {
+    if (callback_result.kind != Type::Kind::Never &&
+        (callback_result.nullable ||
+         (callback_result.kind != Type::Kind::Int && callback_result.kind != Type::Kind::Double))) {
       AddDiagnostic(location, "sort comparator must return int or double");
     }
     return method_result;

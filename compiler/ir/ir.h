@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -35,6 +36,17 @@ struct Construction final {
   bool generated = true;
 };
 
+struct StructReceiver final {
+  enum class Kind : std::uint8_t { Local, Global, Field, Index };
+  Kind kind = Kind::Local;
+  RegisterId receiver = 0;
+  RegisterId index = 0;
+  std::uint32_t slot = 0;
+  std::optional<DeclarationId> declaration;
+  frontend::TypeDescriptor type;
+  std::vector<std::uint32_t> fields;
+};
+
 struct Instruction final {
   Opcode opcode = Opcode::LoadNull;
   RegisterId dst = 0;
@@ -52,6 +64,11 @@ struct Instruction final {
   std::optional<std::uint32_t> reflection_member = std::nullopt;
   std::optional<Construction> construction = std::nullopt;
   bool completes_construction = false;
+  bool no_normal_return = false;
+  // NewInstance/GetField/SetField 对 struct 寄存器操作内联值，不访问堆对象身份。
+  bool inline_value = false;
+  // 稀少的借用调用独立持有不可变位置描述，普通指令不承担其完整存储成本。
+  std::shared_ptr<const StructReceiver> struct_receiver = nullptr;
 };
 
 struct Class final {
@@ -71,9 +88,12 @@ struct Class final {
     Host,
     Metadata,
     ReflectionIdentity,
+    Struct,
   };
   std::string name;
   std::vector<frontend::TypeDescriptor> field_types;
+  // 值布局由语义检查唯一生成；逻辑字段与扁平槽的对应关系贯穿全部原生后端。
+  std::shared_ptr<frontend::StructLayout> value_layout = nullptr;
   std::optional<CallableTarget> callable;
   std::vector<std::uint32_t> interfaces;
   std::vector<std::uint32_t> dispatch_targets;
@@ -106,6 +126,8 @@ struct Function final {
   bool is_async = false;
   bool is_exported = false;
   bool is_generated_constructor = false;
+  // 同步值方法借用接收位置；构造和异步状态机分别拥有自己的值。
+  bool struct_receiver = false;
   frontend::Visibility visibility = frontend::Visibility::Public;
   std::optional<CallSignature> signature = std::nullopt;
   FunctionIdentity identity;

@@ -69,6 +69,9 @@ void TypeChecker::CheckMatchResult(const Expression& expression,
                                    const Type* expected,
                                    Type& result) {
   const auto arm_type = CheckExpression(expression, IsValid(result) ? &result : nullptr);
+  if (!ExpressionCanComplete(expression)) {
+    return;
+  }
   const bool unresolved_return = result.kind == Type::Kind::Function &&
                                  !IsValid(function_types_.at(NonNullable(result).name).return_type);
   if (!IsValid(result) || unresolved_return) {
@@ -119,6 +122,7 @@ TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression,
   const auto selector = preparing ? PrepareInferenceExpression(*expression.operand)
                                   : CheckExpression(*expression.operand, nullptr);
   std::optional<RefinementDelta> exits;
+  bool has_normal_exit = false;
   MatchCoverage coverage;
   Type result = expected == nullptr ? InvalidType() : *expected;
   for (std::size_t index = 0; index < expression.arms.size(); ++index) {
@@ -135,6 +139,10 @@ TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression,
     }
     EndScope();
     auto changes = refinements_.Capture(branch);
+    if (!preparing && !ExpressionCanComplete(*arm.value)) {
+      continue;
+    }
+    has_normal_exit = true;
     if (exits) {
       refinements_.Intersect(*exits, changes);
     } else {
@@ -150,6 +158,8 @@ TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression,
   }
   if (preparing) {
     prepared_matches_.emplace(&expression, std::move(prepared));
+  } else if (!has_normal_exit && !expression.arms.empty()) {
+    return {.kind = Type::Kind::Never, .name = kNeverTypeName};
   }
   return result;
 }

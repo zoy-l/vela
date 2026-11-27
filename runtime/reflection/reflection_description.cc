@@ -8,6 +8,7 @@
 
 #include "base/execution_status.h"
 #include "base/reflection.h"
+#include "base/type_kind.h"
 #include "runtime/native/native_image.h"
 #include "runtime/reflection/reflection_index.h"
 #include "runtime/value/object.h"
@@ -23,7 +24,10 @@ reflection::TypeKind ReflectedKind(ReflectedType type) noexcept {
   if (type.is_void) {
     return TypeKind::Void;
   }
-  if (constraint.dynamic) {
+  if (constraint.IsNever()) {
+    return TypeKind::Never;
+  }
+  if (constraint.IsDynamic()) {
     return TypeKind::Dynamic;
   }
   switch (constraint.kind) {
@@ -46,8 +50,13 @@ reflection::TypeKind ReflectedKind(ReflectedType type) noexcept {
   if (constraint.interface != nullptr) {
     return TypeKind::Interface;
   }
-  if (constraint.nominal != nullptr && constraint.nominal->IsEnum()) {
-    return TypeKind::Enum;
+  if (const auto* nominal = constraint.nominal) {
+    if (nominal->IsEnum()) {
+      return TypeKind::Enum;
+    }
+    if (nominal->IsStruct()) {
+      return TypeKind::Struct;
+    }
   }
   switch (constraint.object_kind) {
     case ObjectKind::Array:
@@ -103,31 +112,33 @@ std::expected<ReflectedTypeDescription, ExecutionStatus> DescribeReflectedType(
     TypeDescriptionDetail detail) {
   const auto kind = ReflectedKind(type);
   constexpr auto kNames = std::to_array<std::string_view>({
-      "void",
-      "Null",
-      "dynamic",
-      "bool",
-      "int",
-      "double",
-      "string",
-      "MutableString",
+      BuiltinTypeName(vela::LanguageTypeKind::Void),
+      BuiltinTypeName(vela::LanguageTypeKind::Null),
+      BuiltinTypeName(vela::LanguageTypeKind::Dynamic),
+      BuiltinTypeName(vela::LanguageTypeKind::Bool),
+      BuiltinTypeName(vela::LanguageTypeKind::Int),
+      BuiltinTypeName(vela::LanguageTypeKind::Double),
+      BuiltinTypeName(vela::LanguageTypeKind::String),
+      BuiltinTypeName(vela::LanguageTypeKind::MutableString),
       "Array",
-      "Set",
-      "Map",
+      BuiltinTypeName(vela::LanguageTypeKind::Set),
+      BuiltinTypeName(vela::LanguageTypeKind::Map),
       "Function",
       "Class",
       "Interface",
       "Enum",
-      "Future",
-      "Completer",
-      "Timer",
-      "CancellationToken",
-      "ByteArray",
-      "ByteData",
-      "RegExp",
-      "RegExpMatch",
+      BuiltinTypeName(vela::LanguageTypeKind::Future),
+      BuiltinTypeName(vela::LanguageTypeKind::Completer),
+      BuiltinTypeName(vela::LanguageTypeKind::Timer),
+      BuiltinTypeName(vela::LanguageTypeKind::CancellationToken),
+      BuiltinTypeName(vela::LanguageTypeKind::ByteArray),
+      BuiltinTypeName(vela::LanguageTypeKind::ByteData),
+      BuiltinTypeName(vela::LanguageTypeKind::RegExp),
+      BuiltinTypeName(vela::LanguageTypeKind::RegExpMatch),
+      "Struct",
+      BuiltinTypeName(vela::LanguageTypeKind::Never),
   });
-  static_assert(kNames.size() == static_cast<std::size_t>(reflection::TypeKind::RegExpMatch) + 1);
+  static_assert(kNames.size() == static_cast<std::size_t>(reflection::TypeKind::Never) + 1);
   const auto& constraint = type.constraint;
   const auto is_nominal = constraint.nominal != nullptr || constraint.interface != nullptr;
   ReflectedTypeDescription result{

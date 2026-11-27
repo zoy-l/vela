@@ -15,8 +15,7 @@
 namespace vela::frontend {
 namespace {
 
-TEST(NativeClassTest, PreservesNativeIdentityAndBoundMemberKeys) {
-  auto lexed = Lexer(R"(
+constexpr std::string_view kCounterDeclaration = R"(
 export external class Counter = 'app.Counter' {
   constructor(initial: int);
   add(delta: int): int;
@@ -24,10 +23,10 @@ export external class Counter = 'app.Counter' {
   get value(): int;
   set value(amount: int): void;
 }
-)")
-                   .Tokenize();
-  ASSERT_TRUE(lexed.diagnostics.empty());
-  const auto parsed = Parser(lexed.tokens).Parse();
+)";
+
+TEST(NativeClassTest, PreservesNativeIdentityAndBoundMemberKeys) {
+  const auto parsed = ParseSource(kCounterDeclaration);
   ASSERT_TRUE(parsed.diagnostics.empty()) << DiagnosticsText(parsed.diagnostics);
   ASSERT_EQ(parsed.program.classes.size(), 1U);
   const auto& type = parsed.program.classes.front();
@@ -45,17 +44,7 @@ export external class Counter = 'app.Counter' {
 
 TEST(NativeClassTest, ChecksImportedConstructorsPropertiesBoundMethodsAndNominalTypes) {
   constexpr auto kSources = std::to_array<SourceInput>({
-      {
-          .path = "native.vela",
-          .text = R"(
-export external class Counter = 'app.Counter' {
-  constructor(initial: int);
-  add(delta: int): int;
-  static Create(): Counter?;
-  get value(): int;
-  set value(amount: int): void;
-})",
-      },
+      {.path = "native.vela", .text = kCounterDeclaration},
       {
           .path = "main.vela",
           .text = R"(

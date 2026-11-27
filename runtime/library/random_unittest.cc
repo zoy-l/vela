@@ -13,6 +13,7 @@ constexpr std::uint64_t kSeed = 123;
 
 TEST(RandomTest, MatchesXoroshiro128PlusPlusReferenceSequenceAfterSplitMixSeeding) {
   Random random(kSeed);
+  Random same_seed(kSeed);
   constexpr auto expected = std::to_array<std::uint64_t>({
       0x66594270542d9ee8,
       0x9b7b6288acb53cb8,
@@ -21,10 +22,12 @@ TEST(RandomTest, MatchesXoroshiro128PlusPlusReferenceSequenceAfterSplitMixSeedin
       0xc4eec1f605c9e5fc,
   });
   for (const auto value : expected) {
-    EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(value >> 11U) * 0x1.0p-53);
+    const auto sample = random.NextDouble();
+    EXPECT_EQ(sample, static_cast<double>(value >> 11U) * 0x1.0p-53);
+    EXPECT_EQ(sample, same_seed.NextDouble());
   }
   random.Seed(kSeed);
-  EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11U) * 0x1.0p-53);
+  EXPECT_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11U) * 0x1.0p-53);
 }
 
 class BoundedRandomTest : public testing::TestWithParam<std::int64_t> {};
@@ -46,13 +49,11 @@ INSTANTIATE_TEST_SUITE_P(Bounds,
                                          std::int64_t{7},
                                          std::numeric_limits<std::int64_t>::max()));
 
-TEST(RandomTest, RepeatedSeedsAreDeterministicAndDoubleUsesHalfOpenUnitInterval) {
-  Random first(kSeed);
-  Random second(kSeed);
+TEST(RandomTest, DoubleUsesHalfOpenUnitInterval) {
+  Random random(kSeed);
   constexpr int kIterations = 1000;
   for (int index = 0; index < kIterations; ++index) {
-    const auto value = first.NextDouble();
-    EXPECT_EQ(value, second.NextDouble());
+    const auto value = random.NextDouble();
     EXPECT_GE(value, 0.0);
     EXPECT_LT(value, 1.0);
   }

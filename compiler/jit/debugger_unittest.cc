@@ -32,6 +32,23 @@
 namespace vela::compiler::jit {
 namespace {
 
+constexpr std::int64_t kStructAnswer = 42;
+constexpr std::string_view kReloadStructCounter = R"(
+struct Counter {
+  value: int;
+  text: string;
+  advance(): void {
+    this.value++;
+    checkpoint();
+    this.text = 'kept'.toUpperCase();
+    this.value++;
+  }
+}
+func checkpoint(): void {}
+)";
+constexpr std::string_view kReloadStructHolder =
+    "const holder = Holder(before: 10, counter: Counter(value: 1, text: ''), after: 20);\n";
+
 struct DebugFrameSnapshot final {
   FunctionIdentity identity;
   std::string name;
@@ -178,6 +195,137 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
 struct JitSourceLineTest : public JitDebuggerTest {
   void SetUp() override { Initialize(native::NativeDebugging::SourceLines); }
 };
+
+TEST_P(JitDebuggerTest, StructSnapshotsSurviveCollectionAtEveryInstruction) {
+  Initialize(native::NativeDebugging::Instructions);
+  Load(R"(
+struct NamedValue { text: string; value: int; }
+func add(first: dynamic, second: dynamic): int {
+  const garbage = 'temporary'.toUpperCase();
+  return (first.value as int) + (second.value as int);
+}
+export func caller(): int {
+  let first = NamedValue(text: 'first'.toUpperCase(), value: 20);
+  const second = NamedValue(text: 'second'.toUpperCase(), value: 22);
+  first.value++;
+  return add(first, second) - 1;
+}
+)");
+  const auto result = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), 42);
+}
+
+TEST_P(JitDebuggerTest, ReloadRestoresStructValuesAndReferenceLeavesWithoutReplay) {
+  const std::string common = R"(
+struct Position { x: int; y: int; }
+struct Body { position: Position; text: string; }
+func checkpoint(): void {}
+)";
+  Load(common + R"(
+export func caller(): int {
+  let body = Body(position: Position(x: 20, y: 21), text: 'a'.toUpperCase());
+  body.position.x++;
+  checkpoint();
+  return body.position.x + body.position.y + body.text.length - 1;
+}
+)");
+  PublishDuringCaller(common + "export func caller(): int { return 0; }", kStructAnswer);
+}
+
+TEST_P(JitDebuggerTest, StructMethodsKeepNewReferenceLeavesRootedAtEveryInstruction) {
+  Initialize(native::NativeDebugging::Instructions);
+  Load(R"(
+struct Counter {
+  value: int;
+  text: string;
+  advance(observe: () => void): void {
+    this.text = 'kept'.toUpperCase();
+    this.value++;
+    observe();
+    this.value++;
+  }
+}
+
+struct Pair { counter: Counter; other: int; }
+export func caller(): int {
+  let local = Counter(value: 1, text: '');
+  local.advance(() => {});
+  let pair = Pair(counter: local, other: 0);
+  pair.counter.advance(() => { pair.other = pair.counter.value; });
+  const items: Pair?[] = [pair];
+  items[0]?.counter?.advance(() => {
+    for (let i = 0; i < 8; i++) { items.push(null); }
+  });
+  const first = items[0] as Pair;
+  if (local.value != 3 || pair.counter.value != 5 || first.counter.value != 7) { return -1; }
+  return first.counter.text == 'KEPT' && pair.other == 4 ? 42 : -2;
+}
+)");
+  const auto result = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), 42);
+}
+
+TEST_P(JitDebuggerTest, InlinedStructMethodPublicationPreservesActiveWritesAndUpdatesNextCall) {
+  const std::string caller =
+      "export func caller(): int { const values = [Counter(value: 0)]; "
+      "for (let i = 0; i < 4; i++) { values[0].advance(); } return values[0].value; }";
+  Load("struct Counter { value: int; advance(): void { this.value += 1; } } " + caller);
+  auto candidate =
+      Prepare("struct Counter { value: int; advance(): void { this.value += 2; } } " + caller);
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.top_frame().name().ends_with(".advance") && publication.HasPending()) {
+      publication.PublishPending();
+    }
+  };
+  const auto result = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), 7);
+  EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+  const auto current = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(current);
+  EXPECT_EQ(current->AsInteger(), 8);
+  ExpectDeoptimization();
+}
+
+TEST_P(JitDebuggerTest, ReloadInsideStructFieldMethodResolvesMigratedStorage) {
+  const std::string common = std::string(kReloadStructCounter) + std::string(kReloadStructHolder) + R"(export func caller(): int {
+  holder.counter.advance();
+  return holder.counter.text == 'KEPT' ? holder.before + holder.after + holder.counter.value + 9 : -1;
+}
+)";
+  Load("class Holder { before: int; counter: Counter; after: int; }" + common);
+  PublishDuringCaller("class Holder { after: int; counter: Counter; before: int; }" + common,
+                      kStructAnswer);
+}
+
+TEST_P(JitDebuggerTest, ReloadInsideStructMethodPreservesCallerLocationsAndMigratedFields) {
+  const std::string value(kReloadStructCounter);
+  const std::string entries = "\n" + std::string(kReloadStructHolder) + R"(export func caller(): int {
+  if (holder.counter.value != 1) { return -3; }
+  let local = Counter(value: 10, text: '');
+  local.advance();
+  holder.counter.advance();
+  if (local.value != 12 || local.text != 'KEPT') { return -1; }
+  if (holder.counter.value != 3 || holder.counter.text != 'KEPT') { return -2; }
+  return holder.before + holder.after + local.value;
+}
+)";
+  Load(value + "class Holder { before: int; counter: Counter; after: int; }" + entries);
+  auto replacement = entries;
+  constexpr std::string_view original_return = "return holder.before + holder.after + local.value;";
+  const auto result = replacement.find(original_return);
+  ASSERT_NE(result, std::string::npos);
+  replacement.replace(result, original_return.size(),
+                      "return holder.before + holder.after + local.value + 1;");
+  PublishDuringCaller(
+      value + "class Holder { after: int; counter: Counter; before: int; }" + replacement,
+      kStructAnswer);
+}
 
 TEST_P(JitSourceLineTest, ReloadAtAnArithmeticSourceLineRestoresVirtualFieldsWithoutReplay) {
   Load(
@@ -437,8 +585,11 @@ TEST_P(JitDebuggerTest, ArrayGrowthReloadsStorageAndResumesAfterTheCompletedAppe
   const auto length = runtime::Heap::ArrayLength(*array.value().AsObject());
   ASSERT_TRUE(length);
   ASSERT_EQ(*length, *capacity + 2);
-  EXPECT_EQ(runtime::Heap::GetElement(*array.value().AsObject(), *capacity)->AsInteger(), 40);
-  EXPECT_EQ(runtime::Heap::GetElement(*array.value().AsObject(), *capacity + 1)->AsInteger(), 2);
+  EXPECT_EQ(
+      session_->isolate().heap().GetElement(*array.value().AsObject(), *capacity)->AsInteger(), 40);
+  EXPECT_EQ(
+      session_->isolate().heap().GetElement(*array.value().AsObject(), *capacity + 1)->AsInteger(),
+      2);
 }
 
 TEST_P(JitDebuggerTest, PausedInitializerConsumesControlCommandsBeforeItCanPublish) {
@@ -857,6 +1008,28 @@ TEST_P(JitDebuggerTest, VirtualInstancesParticipateInRequiredFieldConflictChecks
   ASSERT_TRUE(value) << ExecutionStatusName(value.error());
   EXPECT_EQ(value->AsInteger(), 42);
   ExpectRejected(published, DevelopmentStatus::RequiresReload);
+}
+
+TEST_P(JitDebuggerTest, MaterializationExpandsEmbeddedStructLeavesBeforeMigration) {
+  const std::string common =
+      "struct Position { x: int; y: int; text: string; } func checkpoint(): void {} ";
+  Load(
+      common +
+      "class Box { position: Position; read(): int { return this.position.x + this.position.y; } } "
+      "export func caller(): int { const box = Box(position: Position(x: 20, y: 20, "
+      "text: 'o' + 'k')); checkpoint(); return box.position.text == 'ok' ? box.read() : 0; }");
+  auto candidate =
+      Prepare(common +
+              "class Box { position: Position; added: int = 2; "
+              "read(): int { return this.position.x + this.position.y + this.added; } } "
+              "export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  StageAtCheckpoint(publication, std::move(*candidate));
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_EQ(value->AsInteger(), 42);
+  ExpectMaterialized(publication.result(), 1);
 }
 
 TEST_P(JitDebuggerTest, MaterializationPreservesSharedChildrenAndCyclesAcrossReload) {

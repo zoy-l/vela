@@ -1,5 +1,75 @@
 import 'spectral_norm.vela' as spectral;
 
+struct Vec2 { x: double; y: double; }
+struct FlatBody {
+  position: Vec2;
+  velocity: Vec2;
+  step(dt: double): void {
+    this.position.x += this.velocity.x * dt;
+    this.position.y += this.velocity.y * dt;
+  }
+}
+class ClassBody {
+  position: Vec2;
+  velocity: Vec2;
+  step(dt: double): void {
+    this.position.x += this.velocity.x * dt;
+    this.position.y += this.velocity.y * dt;
+  }
+}
+
+export func flatStructFields(): int {
+  const bodies: FlatBody[] = [];
+  bodies.reserve(count);
+  for (let i = 0; i < count; i++) {
+    bodies.push(FlatBody(position: Vec2(x: i.toDouble(), y: (i * 2).toDouble()),
+                         velocity: Vec2(x: 1.0, y: 2.0)));
+  }
+  const size = bodies.length;
+  for (let frame = 0; frame < 16; frame++) {
+    for (let i = 0; i < size; i++) {
+      const velocity = bodies[i].velocity;
+      bodies[i].position.x += velocity.x * 0.5;
+      bodies[i].position.y += velocity.y * 0.5;
+    }
+  }
+  let sum = 0.0;
+  for (const body in bodies) { sum += body.position.x + body.position.y; }
+  return sum.toInt();
+}
+
+export func flatStructMethods(): int {
+  const bodies: FlatBody[] = [];
+  bodies.reserve(count);
+  for (let i = 0; i < count; i++) {
+    bodies.push(FlatBody(position: Vec2(x: i.toDouble(), y: (i * 2).toDouble()),
+                         velocity: Vec2(x: 1.0, y: 2.0)));
+  }
+  const size = bodies.length;
+  for (let frame = 0; frame < 16; frame++) {
+    for (let i = 0; i < size; i++) { bodies[i].step(0.5); }
+  }
+  let sum = 0.0;
+  for (const body in bodies) { sum += body.position.x + body.position.y; }
+  return sum.toInt();
+}
+
+export func classBodyMethods(): int {
+  const bodies: ClassBody[] = [];
+  bodies.reserve(count);
+  for (let i = 0; i < count; i++) {
+    bodies.push(ClassBody(position: Vec2(x: i.toDouble(), y: (i * 2).toDouble()),
+                          velocity: Vec2(x: 1.0, y: 2.0)));
+  }
+  const size = bodies.length;
+  for (let frame = 0; frame < 16; frame++) {
+    for (let i = 0; i < size; i++) { bodies[i].step(0.5); }
+  }
+  let sum = 0.0;
+  for (const body in bodies) { sum += body.position.x + body.position.y; }
+  return sum.toInt();
+}
+
 external func workloadSize(): int = 'benchmark.size';
 
 external func hostStep(value: int): int = 'benchmark.step';

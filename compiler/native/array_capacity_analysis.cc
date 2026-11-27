@@ -138,7 +138,7 @@ class CapacityAnalysis final {
         push = index;
         continue;
       }
-      const auto effects = ir::AnalyzeEffects(instruction);
+      const auto effects = ir::AnalyzeEffects(*function_, instruction);
       if (effects.MayCollectOnSuccess() || effects.writes_state ||
           (effects.changes_control &&
            (!IsJumpOpcode(instruction.opcode) || ir::IsBackJump(instruction, index) ||
@@ -168,7 +168,7 @@ class CapacityAnalysis final {
       const auto reserve = ir::IsBuiltinCall(instruction, Builtin::ArrayReserve) &&
                            register_flow_.origins[instruction.lhs] == array;
       reserved = reserved || (reserve && register_flow_.origins[instruction.lhs + 1] == loop.bound);
-      const auto effects = ir::AnalyzeEffects(instruction);
+      const auto effects = ir::AnalyzeEffects(*function_, instruction);
       if (!reserve && (effects.MayCollectOnSuccess() || effects.writes_state)) {
         return false;
       }

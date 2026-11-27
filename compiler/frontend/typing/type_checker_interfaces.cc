@@ -72,8 +72,9 @@ bool TypeChecker::IsMatchingGenericSignature(const Function& implementation,
     actual.AddParameter(
         parameter.name,
         ResolveType(SubstituteTypeName(parameter.type, substitutions), VoidTypePolicy::Forbidden));
-    actual.parameters.back().has_default = parameter.initializer != nullptr;
-    if (parameter.initializer) {
+    const auto default_kind = implementation.DefaultFor(parameter);
+    actual.parameters.back().has_default = default_kind == Function::ParameterDefault::Expression;
+    if (default_kind != Function::ParameterDefault::Required) {
       actual.optional_parameters.insert(parameter.name);
     }
   }

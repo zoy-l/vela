@@ -18,6 +18,7 @@ class methods omit `func`, and fields use `name: Type`. Locals use `let` or
 `const`, require an initializer, and may infer their exact type from that value.
 Parameters, return types, and class fields require annotations. `const` prevents
 rebinding; mutation of an object's fields or array elements remains allowed.
+Const struct bindings reject direct field writes; method calls use a defensive copy.
 String contexts format primitive values and null automatically; other type
 boundaries remain strict. There are no legacy prefix declarations. Function
 types contain parameter types only, such as `(int, int) => int`; typed arrow
@@ -33,6 +34,7 @@ The initial class model is deliberately smaller than C++:
 
 - `class` declares a nominal object layout with statically known fields and
   methods;
+- `struct` declares a value type with nested inline fields and contiguous array elements;
 - classes support single inheritance, explicit `super` constructor chaining,
   `override` method replacement, and runtime dispatch through multiple interfaces;
 - a class construction expression has no `new` keyword;
@@ -71,10 +73,11 @@ func buildApp(): CupertinoApp {
 }
 ```
 
-The surface syntax resembles a data constructor, but construction still has a
-precise runtime contract. The first runtime representation uses an opaque
-isolate-owned heap reference and a class layout descriptor. A later `struct` feature can add
-inline value semantics without changing the constructor grammar.
+Construction uses the same grammar for classes and structs. Classes have reference semantics
+and an Isolate-owned heap representation. Structs copy their fields by value and embed inline
+in containing values, objects and arrays. Erased values and host handles use boxed snapshots.
+See [struct values and inline layout](core_language.md#struct-values-and-inline-layout) for
+mutation, GC and hot reload contracts.
 
 ## Compilation pipeline
 

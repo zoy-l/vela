@@ -48,6 +48,7 @@ struct NativeCheckpoint final {
   NativeVirtualState* materialization = nullptr;
   // 原帧和恢复帧共用构造计数；任一退出路径排空后清零，避免重复结束初始化。
   std::uint32_t* construction_depth = nullptr;
+  void* struct_receiver = nullptr;
 };
 
 extern "C" std::uint8_t vela_native_v4_can_optimize(const NativeExecution* execution,

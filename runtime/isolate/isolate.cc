@@ -59,7 +59,8 @@ std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name)
 }
 
 Isolate::Isolate(std::size_t gc_threshold, GcScheduling scheduling) noexcept
-    : dynamic_array_layout_(CreateArrayLayout({.element = {.dynamic = true}})),
+    : dynamic_array_layout_(
+          CreateArrayLayout({.element = {.category = TypeConstraint::Category::Dynamic}})),
       string_array_layout_(CreateArrayLayout({.element = {.kind = ValueKind::String}})),
       dynamic_map_layout_(CreateCollectionLayout({
           .keys = {.element = {.kind = ValueKind::String}},
@@ -122,8 +123,10 @@ void Isolate::SetOutput(std::ostream& output) noexcept {
 ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
                                         std::span<const std::uint32_t> reference_fields,
                                         ClassLayoutOptions options) {
-  if ((options.is_enum || options.is_metadata) && options.nominal != nullptr &&
-      options.nominal->fixed_layout_ != nullptr) {
+  const auto* supplied_nominal = options.nominal;
+  if (supplied_nominal != nullptr &&
+      (supplied_nominal->IsEnum() || supplied_nominal->IsStruct() || options.is_metadata) &&
+      supplied_nominal->fixed_layout_ != nullptr) {
     if (native_layout_transactions_ == 0) {
       native_metadata_.classes.erase(options.nominal->fixed_layout_);
     }
@@ -142,19 +145,14 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   result->callable_ = options.callable;
   auto* nominal = options.nominal;
   if (nominal == nullptr) {
-    auto kind = NominalKind::Class;
-    if (options.is_enum) {
-      kind = NominalKind::Enum;
-    } else if (options.callable) {
-      kind = NominalKind::Callable;
-    }
     nominal = CreateNominalType({
-        .kind = kind,
+        .kind = options.callable ? NominalKind::Callable : NominalKind::Class,
         .interfaces = std::move(options.interfaces),
         .declaration = {},
     });
   }
   result->nominal_ = nominal;
+  result->value_layout_ = InlineLayout(options.value_slots);
   result->storage_ = options.storage;
   result->is_metadata_ = options.is_metadata;
   result->reflection_identity_ = options.reflection_identity;

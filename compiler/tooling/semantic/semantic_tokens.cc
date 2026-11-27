@@ -16,6 +16,8 @@ std::optional<SemanticTokenKind> TokenKindFor(CompletionKind kind) {
   switch (kind) {
     case CompletionKind::Class:
       return SemanticTokenKind::Class;
+    case CompletionKind::Struct:
+      return SemanticTokenKind::Struct;
     case CompletionKind::Interface:
       return SemanticTokenKind::Interface;
     case CompletionKind::Enum:

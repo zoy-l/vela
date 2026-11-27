@@ -21,13 +21,16 @@
 #include "base/layout_description.h"
 #include "base/native_binding.h"
 #include "base/path.h"
+#include "base/type_kind.h"
 #include "compiler/bindgen/model.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/typing/checker.h"
+#include "compiler/host_type_contract.h"
 #include "compiler/tooling/format/formatter.h"
+#include "vela/types.h"
 
 namespace vela::bindgen {
 namespace {
@@ -85,14 +88,16 @@ frontend::TypeName ScriptType(const layout::Program& program,
       .parameter = {},
   };
   if (!type) {
-    result.name = "void";
+    result.name = BuiltinTypeName(LanguageTypeKind::Void);
     return result;
   }
   using Kind = layout::Type::Kind;
   switch (type->kind) {
+    case Kind::Null:
+    case Kind::Never:
     case Kind::Dynamic:
-    case Kind::Boolean:
-    case Kind::Integer:
+    case Kind::Bool:
+    case Kind::Int:
     case Kind::Double:
     case Kind::String:
     case Kind::MutableString:
@@ -104,7 +109,7 @@ frontend::TypeName ScriptType(const layout::Program& program,
     case Kind::CancellationToken:
       result.name = layout::ScalarTypeName(type->kind);
       break;
-    case Kind::Instance:
+    case Kind::Class:
     case Kind::Enum: {
       const auto& nominal = program.classes.at(type->index);
       if (nominal.kind == layout::Class::Kind::Host) {
@@ -122,32 +127,37 @@ frontend::TypeName ScriptType(const layout::Program& program,
       result.arguments.push_back(
           ScriptType(program, program.arrays.at(type->index).element, names));
       break;
-    case Kind::Collection: {
+    case Kind::Set:
+    case Kind::Map: {
       const auto& collection = program.collections.at(type->index);
       result.kind = frontend::TypeName::Kind::Generic;
-      result.name = collection.value ? "Map" : "Set";
+      result.name = BuiltinTypeName(type->kind);
       result.arguments.push_back(ScriptType(program, collection.key, names));
       if (collection.value) {
         result.arguments.push_back(ScriptType(program, collection.value, names));
       }
       break;
     }
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer: {
       const auto& signature = program.signatures.at(type->index);
-      if (type->kind == Kind::Callable) {
+      if (type->kind == Kind::Function) {
         result.kind = frontend::TypeName::Kind::Function;
         for (const auto& parameter : signature.parameters) {
           result.arguments.push_back(ScriptType(program, parameter.type, names));
         }
       } else {
         result.kind = frontend::TypeName::Kind::Generic;
-        result.name = type->kind == Kind::Future ? "Future" : "Completer";
+        result.name = BuiltinTypeName(type->kind);
       }
       result.arguments.push_back(ScriptType(program, signature.result, names));
       break;
     }
+    case Kind::Invalid:
+    case Kind::Void:
+    case Kind::Parameter:
+      std::unreachable();
   }
   if (type->nullable) {
     result = {
@@ -395,12 +405,16 @@ std::string EmitHeader(const Module& module, const std::set<std::string>& header
     if (type.enumerators.empty()) {
       continue;
     }
-    output << "template <> struct ScriptTypeTraits<::" << type.cpp << "> {\n"
-           << "static constexpr auto kKind = ScriptTypeKind::Enum;\n"
-           << "static constexpr std::string_view kModule = "
-           << Quote(module.source, '"') << ";\n"
-           << "static constexpr std::string_view kName = " << Quote(type.name, '"') << ";\n"
-           << "using Arguments = std::tuple<>; };\n";
+    output << "template <> struct " << compiler::host_types::kScriptTraitsName << "<::" << type.cpp
+           << "> {\n"
+           << "static constexpr auto " << compiler::host_types::kScriptKindMember << " = "
+           << compiler::host_types::kScriptKindTypeName
+           << "::" << compiler::host_types::ScriptKindName(ScriptTypeKind::Enum) << ";\n"
+           << "static constexpr std::string_view " << compiler::host_types::kScriptModuleMember
+           << " = " << Quote(module.source, '"') << ";\n"
+           << "static constexpr std::string_view " << compiler::host_types::kScriptNameMember
+           << " = " << Quote(type.name, '"') << ";\n"
+           << "using " << compiler::host_types::kScriptArgumentsMember << " = std::tuple<>; };\n";
   }
   output << "}\nnamespace vela::bindings {\n";
   for (const auto& type : module.classes) {
@@ -513,7 +527,7 @@ std::string EmitCpp(const Module& module) {
       const auto target = "NativeThunk" + std::to_string(index++);
       output << "}, .function = runtime::NativeFunction::Bind<"
              << (member.kind == MemberKind::Static && !member.implementation ? target + "Target"
-                                                                               : "&" + target)
+                                                                             : "&" + target)
              << ">(" << Quote(member.key, '"') << ")});\n";
     }
     output << "auto type = runtime::NativeClass::Define<::" << type.cpp

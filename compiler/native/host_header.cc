@@ -20,10 +20,14 @@
 #include "base/declaration.h"
 #include "base/layout_description.h"
 #include "base/member.h"
+#include "compiler/host_type_contract.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler::native {
 namespace {
+
+using host_types::CppType;
+using host_types::CppTypeName;
 
 std::string Tag(std::string_view name, std::string_view name_space) {
   return std::string(name_space) + "::Type_" + HostIdentifier(name) + "Tag";
@@ -122,7 +126,7 @@ std::optional<layout::Type> MemberType(const ir::Program& program, const MemberD
   if (member.kind == MemberKind::Method) {
     const auto& callable = program.layouts.classes.at(member.target);
     if (callable.callable_type) {
-      return layout::Type{.kind = layout::Type::Kind::Callable, .index = *callable.callable_type};
+      return layout::Type{.kind = layout::Type::Kind::Function, .index = *callable.callable_type};
     }
   }
   if (member.kind == MemberKind::Property && member.target != kInvalidFunctionTarget) {
@@ -150,7 +154,8 @@ std::expected<void, std::string> EmitConstructor(std::ostringstream& output,
     const auto parameter = HostLogicalType(
         program.layouts, program.layouts.types.at(signature.parameters[index].type), name_space);
     if (!parameter) {
-      return std::unexpected(parameter.error());
+      return std::unexpected("constructor " + constructor.name + ", parameter " +
+                             signature.parameters[index].name + ": " + parameter.error());
     }
     parameters.push_back(*parameter);
   }
@@ -224,7 +229,7 @@ std::expected<void, std::string> EmitMember(std::ostringstream& output,
   if (write_type) {
     const auto value = HostLogicalType(program.layouts, *write_type, name_space);
     if (!value) {
-      return std::unexpected(value.error());
+      return std::unexpected("member " + member.name + " setter: " + value.error());
     }
     output << "  static vela::Result<void> Set_" << HostIdentifier(member.name)
            << "(const vela::Type<" << logical
@@ -257,7 +262,7 @@ std::expected<void, std::string> EmitMembers(std::ostringstream& output,
              << ">& type, vela::HandleScope& scope) { return type.Member(scope, " << Literal(member)
              << "); }\n";
     }
-  } else if (receiver.kind == layout::Type::Kind::Instance) {
+  } else if (receiver.kind == layout::Type::Kind::Class) {
     const auto constructor = program.classes.at(receiver.index).constructor;
     if (constructor != kInvalidFunctionTarget) {
       auto emitted =
@@ -339,14 +344,15 @@ std::expected<std::string, std::string> CollectionLogicalType(const layout::Prog
   const auto& collection = program.collections.at(type.index);
   auto key = HostLogicalType(program, collection.key, name_space);
   if (!key) {
-    return std::unexpected(key.error());
+    return std::unexpected("collection key: " + key.error());
   }
   if (!collection.value) {
-    return "vela::Set<" + *key + '>';
+    return std::string(CppTypeName(CppType::Set)) + '<' + *key + '>';
   }
   auto value = HostLogicalType(program, *collection.value, name_space);
-  return value ? std::expected<std::string, std::string>("vela::Map<" + *key + ", " + *value + '>')
-               : std::unexpected(value.error());
+  return value ? std::expected<std::string, std::string>(std::string(CppTypeName(CppType::Map)) +
+                                                         '<' + *key + ", " + *value + '>')
+               : std::unexpected("collection value: " + value.error());
 }
 std::expected<std::string, std::string> SignatureLogicalType(const layout::Program& program,
                                                              layout::Type type,
@@ -356,13 +362,13 @@ std::expected<std::string, std::string> SignatureLogicalType(const layout::Progr
   auto result = signature.result ? HostLogicalType(program, *signature.result, name_space)
                                  : std::expected<std::string, std::string>("void");
   if (!result) {
-    return std::unexpected(result.error());
+    return std::unexpected("signature result: " + result.error());
   }
-  if (type.kind != Kind::Callable) {
-    return std::string(type.kind == Kind::Future ? "vela::Future<" : "vela::Completer<") + *result +
-           '>';
+  if (type.kind != Kind::Function) {
+    const auto wrapper = type.kind == Kind::Future ? CppType::Future : CppType::Completer;
+    return std::string(CppTypeName(wrapper)) + '<' + *result + '>';
   }
-  *result = "vela::Function<" + *result + '(';
+  *result = std::string(CppTypeName(CppType::Function)) + '<' + *result + '(';
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
     const auto& parameter = signature.parameters[index];
     if (parameter.rest) {
@@ -371,7 +377,8 @@ std::expected<std::string, std::string> SignatureLogicalType(const layout::Progr
     }
     const auto argument = HostLogicalType(program, parameter.type, name_space);
     if (!argument) {
-      return std::unexpected(argument.error());
+      return std::unexpected("signature argument[" + std::to_string(index) +
+                             "]: " + argument.error());
     }
     *result += (index == 0 ? "" : ", ") + *argument;
   }
@@ -385,7 +392,7 @@ std::vector<ExportedNominal> ExportedNominals(const ir::Program& program) {
     const auto& name = program.layouts.classes.at(index).name;
     const layout::Type logical_type{
         .kind = type.kind == ir::Class::Kind::Enum ? layout::Type::Kind::Enum
-                                                   : layout::Type::Kind::Instance,
+                                                   : layout::Type::Kind::Class,
         .index = static_cast<std::uint32_t>(index),
     };
     // 公开模板在实现内部的特化不一定能作为宿主类型；实际公共签名仍逐项诊断私有参数。
@@ -428,20 +435,19 @@ std::expected<void, std::string> EmitNominalTraits(std::ostringstream& output,
                                                    const ir::Program& program,
                                                    std::string_view name_space,
                                                    std::string_view name,
-                                                   layout::Type::Kind kind,
+                                                   const layout::Type& type,
                                                    std::string_view native_key) {
   const auto& nominal = program.layouts.nominals.find(name)->second;
-  std::string_view kind_name = native_key.empty() ? "Class" : "Host";
-  if (kind == layout::Type::Kind::Enum) {
-    kind_name = "Enum";
-  } else if (kind == layout::Type::Kind::Interface) {
-    kind_name = "Interface";
-  }
-  output << "template <> struct ScriptTypeTraits<" << Tag(name, name_space)
-         << "> final { static constexpr auto kKind = ScriptTypeKind::" << kind_name
-         << "; static constexpr std::string_view kModule = " << Literal(nominal.module)
-         << "; static constexpr std::string_view kName = " << Literal(nominal.name)
-         << "; using Arguments = std::tuple<";
+  const auto kind = host_types::ScriptTypeFor(program.layouts, type);
+  output << "template <> struct " << compiler::host_types::kScriptTraitsName << '<'
+         << Tag(name, name_space) << "> final { static constexpr auto "
+         << compiler::host_types::kScriptKindMember << " = "
+         << compiler::host_types::kScriptKindTypeName
+         << "::" << compiler::host_types::ScriptKindName(kind)
+         << "; static constexpr std::string_view " << compiler::host_types::kScriptModuleMember
+         << " = " << Literal(nominal.module) << "; static constexpr std::string_view "
+         << compiler::host_types::kScriptNameMember << " = " << Literal(nominal.name) << "; using "
+         << compiler::host_types::kScriptArgumentsMember << " = std::tuple<";
   for (std::size_t index = 0; index < nominal.arguments.size(); ++index) {
     const auto argument = HostLogicalType(program.layouts, nominal.arguments[index], name_space);
     if (!argument) {
@@ -452,7 +458,8 @@ std::expected<void, std::string> EmitNominalTraits(std::ostringstream& output,
   }
   output << ">;";
   if (!native_key.empty()) {
-    output << " static constexpr std::string_view kNativeKey = " << Literal(native_key) << ';';
+    output << " static constexpr std::string_view " << compiler::host_types::kScriptNativeKeyMember
+           << " = " << Literal(native_key) << ';';
   }
   output << " };\n";
   return {};
@@ -463,8 +470,8 @@ std::expected<void, std::string> EmitTypeTraits(std::ostringstream& output,
                                                 std::string_view name_space,
                                                 std::span<const ExportedNominal> nominals) {
   for (const auto& nominal : nominals) {
-    const auto emitted = EmitNominalTraits(output, program, name_space, nominal.name,
-                                           nominal.type.kind, nominal.native_key);
+    const auto emitted = EmitNominalTraits(output, program, name_space, nominal.name, nominal.type,
+                                           nominal.native_key);
     if (!emitted) {
       return std::unexpected(emitted.error());
     }
@@ -527,35 +534,40 @@ std::expected<std::string, std::string> HostLogicalType(const layout::Program& p
   if (type.nullable && type.kind != Kind::Dynamic) {
     type.nullable = false;
     const auto required = HostLogicalType(program, type, name_space);
-    return required ? std::expected<std::string, std::string>("vela::Nullable<" + *required + '>')
+    return required ? std::expected<std::string, std::string>(
+                          std::string(CppTypeName(CppType::Nullable)) + '<' + *required + '>')
                     : std::unexpected(required.error());
   }
   switch (type.kind) {
+    case Kind::Null:
+      return std::string(CppTypeName(CppType::Null));
+    case Kind::Never:
+      return std::string(CppTypeName(CppType::Never));
     case Kind::Dynamic:
-      return "vela::Value";
-    case Kind::Boolean:
+      return std::string(CppTypeName(CppType::Value));
+    case Kind::Bool:
       return "bool";
-    case Kind::Integer:
+    case Kind::Int:
       return "std::int64_t";
     case Kind::Double:
       return "double";
     case Kind::String:
-      return "vela::String";
+      return std::string(CppTypeName(CppType::String));
     case Kind::MutableString:
-      return "vela::MutableString";
+      return std::string(CppTypeName(CppType::MutableString));
     case Kind::ByteArray:
-      return "vela::ByteArray";
+      return std::string(CppTypeName(CppType::ByteArray));
     case Kind::ByteData:
-      return "vela::ByteData";
+      return std::string(CppTypeName(CppType::ByteData));
     case Kind::RegExp:
-      return "vela::RegExp";
+      return std::string(CppTypeName(CppType::RegExp));
     case Kind::RegExpMatch:
-      return "vela::RegExpMatch";
+      return std::string(CppTypeName(CppType::RegExpMatch));
     case Kind::Timer:
-      return "vela::Timer";
+      return std::string(CppTypeName(CppType::Timer));
     case Kind::CancellationToken:
-      return "vela::CancellationToken";
-    case Kind::Instance:
+      return std::string(CppTypeName(CppType::CancellationToken));
+    case Kind::Class:
     case Kind::Enum: {
       const auto& nominal = program.classes.at(type.index);
       if (!IsExported(program, nominal.name)) {
@@ -570,13 +582,8 @@ std::expected<std::string, std::string> HostLogicalType(const layout::Program& p
                                  "]: " + argument.error());
         }
       }
-      std::string_view wrapper = "Object";
-      if (type.kind == Kind::Enum) {
-        wrapper = "Enum";
-      } else if (nominal.kind == layout::Class::Kind::Host) {
-        wrapper = "Host";
-      }
-      return "vela::" + std::string(wrapper) + '<' + Tag(nominal.name, name_space) + '>';
+      const auto wrapper = host_types::ScriptWrapper(host_types::ScriptTypeFor(program, type));
+      return std::string(CppTypeName(wrapper)) + '<' + Tag(nominal.name, name_space) + '>';
     }
     case Kind::Interface: {
       const auto& name = program.interfaces.at(type.index);
@@ -592,20 +599,26 @@ std::expected<std::string, std::string> HostLogicalType(const layout::Program& p
                                  "]: " + argument.error());
         }
       }
-      return "vela::Object<" + Tag(name, name_space) + '>';
+      return std::string(CppTypeName(CppType::Object)) + '<' + Tag(name, name_space) + '>';
     }
     case Kind::Array: {
       const auto element =
           HostLogicalType(program, program.arrays.at(type.index).element, name_space);
-      return element ? std::expected<std::string, std::string>("vela::Array<" + *element + '>')
+      return element ? std::expected<std::string, std::string>(
+                           std::string(CppTypeName(CppType::Array)) + '<' + *element + '>')
                      : std::unexpected(element.error());
     }
-    case Kind::Collection:
+    case Kind::Set:
+    case Kind::Map:
       return CollectionLogicalType(program, type, name_space);
-    case Kind::Callable:
+    case Kind::Function:
     case Kind::Future:
     case Kind::Completer:
       return SignatureLogicalType(program, type, name_space);
+    case Kind::Invalid:
+    case Kind::Void:
+    case Kind::Parameter:
+      std::unreachable();
   }
   std::unreachable();
 }

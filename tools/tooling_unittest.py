@@ -119,7 +119,7 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], [".", "(", ","])
                 self.assertNotIn("signatureHelpProvider", capabilities)
                 self.assertEqual(capabilities['semanticTokensProvider']['legend'], {
-                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter', 'enumMember'],
+                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter', 'enumMember', 'struct'],
                     'tokenModifiers': ['declaration', 'defaultLibrary']})
                 self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])

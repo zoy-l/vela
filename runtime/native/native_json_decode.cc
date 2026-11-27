@@ -18,7 +18,6 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/json_decode.h"
-#include "runtime/collections/array_operations.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/native_buffer.h"
 #include "runtime/isolate/isolate.h"

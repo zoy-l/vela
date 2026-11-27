@@ -196,7 +196,7 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
   const auto uri = requested->uri;
   const auto position = ReadTextPosition(GetJsonField(call.params, protocol::kPosition));
   if (!position) {
-    Error(call.identity, kInvalidParams, "symbol query requires a document URI and position");
+    Error(call.identity, kInvalidParams, position.error());
     return;
   }
   const auto& opened = *requested->document;

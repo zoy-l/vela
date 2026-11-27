@@ -86,8 +86,10 @@ struct ValueCodec {
 template <class T>
   requires std::is_arithmetic_v<T>
 struct ValueCodec<T> {
-  using Logical = std::conditional_t<std::is_same_v<T, bool>, bool,
-      std::conditional_t<std::is_floating_point_v<T>, double, std::int64_t>>;
+  using Logical =
+      std::conditional_t<std::is_same_v<T, bool>,
+                         bool,
+                         std::conditional_t<std::is_floating_point_v<T>, double, std::int64_t>>;
   using Argument = Logical;
   using Output = Logical;
   static Result<T> Decode(runtime::NativeContext& /*context*/, Logical value) {
@@ -121,8 +123,12 @@ struct ValueCodec<std::string> {
   using Logical = String;
   using Argument = std::string_view;
   using Output = std::string;
-  static Result<std::string> Decode(runtime::NativeContext& /*context*/, Argument value) { return std::string(value); }
-  static Result<Output> Encode(runtime::NativeContext& /*context*/, std::string value) { return value; }
+  static Result<std::string> Decode(runtime::NativeContext& /*context*/, Argument value) {
+    return std::string(value);
+  }
+  static Result<Output> Encode(runtime::NativeContext& /*context*/, std::string value) {
+    return value;
+  }
   static Result<Local<String>> ToLogical(runtime::NativeContext& context, std::string_view value) {
     return CreateString(context.handles(), value);
   }
@@ -130,7 +136,9 @@ struct ValueCodec<std::string> {
 
 template <>
 struct ValueCodec<std::string_view> : ValueCodec<std::string> {
-  static Result<std::string_view> Decode(runtime::NativeContext& /*context*/, Argument value) { return value; }
+  static Result<std::string_view> Decode(runtime::NativeContext& /*context*/, Argument value) {
+    return value;
+  }
 };
 
 template <class T>
@@ -212,7 +220,8 @@ struct ValueCodec<std::vector<T, Allocator>> {
     }
     return *result;
   }
-  static Result<Output> ToLogical(runtime::NativeContext& context, std::vector<T, Allocator> values) {
+  static Result<Output> ToLogical(runtime::NativeContext& context,
+                                  std::vector<T, Allocator> values) {
     return Encode(context, std::move(values));
   }
 };
@@ -228,7 +237,8 @@ struct ValueCodec<T> {
   using Argument = Local<Logical>;
   using Output = Argument;
   static Result<T> Decode(runtime::NativeContext& /*context*/, Argument input) {
-    const auto ordinal = runtime::EnumOrdinal(*vela::internal::HandleAccess::Read(input).AsObject());
+    const auto ordinal =
+        runtime::EnumOrdinal(*vela::internal::HandleAccess::Read(input).AsObject());
     return EnumValues<T>::values[static_cast<std::size_t>(ordinal)].second;
   }
   static Result<Output> Encode(runtime::NativeContext& context, T input) {
@@ -241,9 +251,13 @@ struct ValueCodec<T> {
         return type->Member(context.handles(), name);
       }
     }
-    return std::unexpected(ValueError("Native enum has no corresponding Vela member"));
+    return std::unexpected(ValueError("Native enum " + std::string(ScriptTypeTraits<T>::kName) +
+                                      " value " + std::to_string(std::to_underlying(input)) +
+                                      " has no corresponding Vela member"));
   }
-  static Result<Output> ToLogical(runtime::NativeContext& context, T value) { return Encode(context, value); }
+  static Result<Output> ToLogical(runtime::NativeContext& context, T value) {
+    return Encode(context, value);
+  }
 };
 
 }  // namespace vela::bindings

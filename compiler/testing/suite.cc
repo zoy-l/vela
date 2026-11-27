@@ -59,7 +59,8 @@ bool IsSuiteMain(const runtime::NativeInstance& instance, std::uint32_t index) {
          !type.signature->result;
 }
 
-std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts,
+std::optional<Difference> CopyDifference(runtime::Heap& heap,
+                                         const runtime::MemberTable& layouts,
                                          runtime::Value value) {
   if (value.IsNull()) {
     return std::nullopt;
@@ -94,7 +95,7 @@ std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts,
     target->children.resize(count + (count < *length ? 1U : 0U));
     for (std::size_t index = 0; index < count; ++index) {
       pending.emplace_back(
-          *runtime::Heap::GetElement(*children.AsObject(), static_cast<std::uint32_t>(index)),
+          *heap.GetElement(*children.AsObject(), static_cast<std::uint32_t>(index)),
           &target->children.at(index));
     }
     if (count < *length) {
@@ -104,7 +105,8 @@ std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts,
   return result;
 }
 
-std::expected<std::vector<std::string>, std::string> ReadTags(runtime::Value value) {
+std::expected<std::vector<std::string>, std::string> ReadTags(runtime::Heap& heap,
+                                                              runtime::Value value) {
   if (value.IsNull()) {
     return std::vector<std::string>();
   }
@@ -121,7 +123,11 @@ std::expected<std::vector<std::string>, std::string> ReadTags(runtime::Value val
   std::vector<std::string> tags;
   tags.reserve(*length);
   for (std::uint32_t index = 0; index < *length; ++index) {
-    const auto element = *runtime::Heap::GetElement(*value.AsObject(), index);
+    const auto read = heap.GetElement(*value.AsObject(), index);
+    if (!read) {
+      return std::unexpected("tags array value allocation failed");
+    }
+    const auto element = *read;
     if (!element.IsString()) {
       return std::unexpected("tags array elements must be strings");
     }
@@ -147,6 +153,25 @@ constexpr std::size_t kSetUp = 0;
 constexpr std::size_t kTearDown = 1;
 constexpr std::size_t kSetUpAll = 2;
 constexpr std::size_t kTearDownAll = 3;
+
+std::size_t HookIndex(TestOperation operation) {
+  switch (operation) {
+    case TestOperation::SetUp:
+      return kSetUp;
+    case TestOperation::TearDown:
+      return kTearDown;
+    case TestOperation::SetUpAll:
+      return kSetUpAll;
+    case TestOperation::TearDownAll:
+      return kTearDownAll;
+    case TestOperation::Test:
+    case TestOperation::EnterGroup:
+    case TestOperation::ExitGroup:
+    case TestOperation::AddTearDown:
+      std::unreachable();
+  }
+  std::unreachable();
+}
 
 }  // namespace
 
@@ -195,7 +220,7 @@ std::expected<Suite::Callback, std::string> Suite::Capture(
 std::expected<void, std::string> Suite::ReadMetadata(
     Node& node,
     const testing::TestRegistration& registration) {
-  auto tags = ReadTags(registration.tags);
+  auto tags = ReadTags(isolate_->heap(), registration.tags);
   if (!tags) {
     return std::unexpected(tags.error());
   }
@@ -267,8 +292,7 @@ std::expected<void, std::string> Suite::RegisterHook(
     scope->cleanup.push_back(std::move(*callback));
     return {};
   }
-  const auto index = static_cast<std::size_t>(registration.operation) -
-                     static_cast<std::size_t>(testing::TestOperation::SetUp);
+  const auto index = HookIndex(registration.operation);
   registration_scope_->hooks.at(index).push_back(std::move(*callback));
   return {};
 }
@@ -435,8 +459,8 @@ TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phas
     error.message = output.str();
   }
   const auto& layouts = instance_->members();
-  error.difference =
-      CopyDifference(layouts, layouts.ReadPublicField(result.value, test_fields::kDifference));
+  error.difference = CopyDifference(
+      isolate_->heap(), layouts, layouts.ReadPublicField(result.value, test_fields::kDifference));
   if (error.difference) {
     error.category = test_fields::kFailureType;
   }
@@ -648,6 +672,10 @@ SuiteResult Suite::Run() {
     load_timeout = std::max(std::chrono::milliseconds(0),
                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                 *options_.load_deadline - root_.heartbeat));
+  }
+  if (!load_timeout) {
+    RegistrationError("RegistrationError", load_timeout.error());
+    return Finish();
   }
   const auto registered = Await(runtime::ExecuteNativeFunction(*instance_, *main), *load_timeout,
                                 root_, TestPhase::Registration);

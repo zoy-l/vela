@@ -74,22 +74,28 @@ void Lowerer::FinishControl(std::optional<std::size_t> exit_jump) {
   controls_.pop_back();
 }
 
-std::optional<std::size_t> Lowerer::LowerLoopCondition(const frontend::Statement& statement) {
+Lowerer::LoopCondition Lowerer::LowerLoopCondition(const frontend::Statement& statement) {
   if (!statement.condition) {
-    return std::nullopt;
+    return {};
   }
   const auto condition = LowerExpression(*statement.condition);
+  if (model_.non_completing_expressions.contains(statement.condition.get())) {
+    return {.exit_jump = std::nullopt, .completes = false};
+  }
   if (model_.control_flow.at(&statement).condition == frontend::ConditionTruth::Unknown) {
     const auto exit_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
-    return exit_jump;
+    return {.exit_jump = exit_jump};
   }
-  return std::nullopt;
+  return {};
 }
 
 void Lowerer::LowerWhile(const frontend::Statement& statement) {
   const auto loop_start = current_function_->instructions.size();
-  const auto exit_jump = LowerLoopCondition(statement);
+  const auto condition = LowerLoopCondition(statement);
+  if (!condition.completes) {
+    return;
+  }
   BeginControl(ControlTargets::Kind::Loop);
   LowerScopedStatement(*statement.then_branch);
   BindContinues(static_cast<std::uint32_t>(loop_start));
@@ -100,16 +106,24 @@ void Lowerer::LowerWhile(const frontend::Statement& statement) {
         .location = statement.location,
     });
   }
-  FinishControl(exit_jump);
+  FinishControl(condition.exit_jump);
 }
 
 void Lowerer::LowerFor(const frontend::Statement& statement) {
   PushScope();
   if (statement.initializer) {
     LowerStatement(*statement.initializer);
+    if (!model_.control_flow.at(statement.initializer.get()).can_fall_through) {
+      PopScope();
+      return;
+    }
   }
   const auto loop_start = current_function_->instructions.size();
-  const auto exit_jump = LowerLoopCondition(statement);
+  const auto condition = LowerLoopCondition(statement);
+  if (!condition.completes) {
+    PopScope();
+    return;
+  }
   BeginControl(ControlTargets::Kind::Loop);
   LowerScopedStatement(*statement.then_branch);
   const auto increment_target = static_cast<std::uint32_t>(current_function_->instructions.size());
@@ -125,13 +139,17 @@ void Lowerer::LowerFor(const frontend::Statement& statement) {
         .location = statement.location,
     });
   }
-  FinishControl(exit_jump);
+  FinishControl(condition.exit_jump);
   PopScope();
 }
 
 void Lowerer::LowerForEach(const frontend::Statement& statement) {
   PushScope();
   const auto iterable = LowerExpression(*statement.iterable);
+  if (model_.non_completing_expressions.contains(statement.iterable.get())) {
+    PopScope();
+    return;
+  }
   const auto kind = iterable.type.kind;
   const bool is_array = kind == frontend::TypeDescriptor::Kind::Array;
   RegisterId values_array = iterable.reg;

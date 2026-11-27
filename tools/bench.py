@@ -18,7 +18,7 @@ from tools.native_class_benchmark_report import native_class_comparison_report
 from tools.reflection_benchmark_report import reflection_comparison_report
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
-from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
+from tools.config import BUILD_VARIANTS, ROOT, executable_name
 
 
 @dataclass(frozen=True)
@@ -101,10 +101,10 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 
 def run(parsed: argparse.Namespace) -> None:
-    build(parsed.variant, "benchmarks")
+    output = build(parsed.variant, "benchmarks")
     mode = REPORT_MODES.get(parsed.report_mode)
     name = mode.executable if mode else "vela_benchmarks"
-    executable = output_directory(parsed.variant) / executable_name(name)
+    executable = output / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
     if mode:
         report = (parsed.report or ROOT / "out" / "benchmarks" / mode.filename).resolve()

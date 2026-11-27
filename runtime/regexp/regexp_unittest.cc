@@ -47,11 +47,11 @@ class RegExpTest : public testing::Test {
   }
 
   Heap& heap() { return heap_; }
-  std::array<Value, 4>& roots() { return roots_; }
+  std::array<Value, 3>& roots() { return roots_; }
 
  private:
   Heap heap_{1};
-  std::array<Value, 4> roots_{};
+  std::array<Value, 3> roots_{};
   RootRange root_{heap_, roots_.data(), roots_.size()};
 };
 
@@ -111,9 +111,9 @@ TEST_F(RegExpTest, EmptyMatchesAdvanceOneUnicodeScalarAndIncludeTheEndBoundary) 
   roots().at(2) = *matched;
   auto& array = *matched->AsObject();
   ASSERT_EQ(Heap::ArrayLength(array), 3U);
-  const auto middle = Heap::GetElement(array, 1).value();
+  const auto middle = heap().GetElement(array, 1).value();
   EXPECT_EQ(Call(Builtin::RegExpMatchStart, {middle})->AsInteger(), 1);
-  const auto end = Heap::GetElement(array, 2).value();
+  const auto end = heap().GetElement(array, 2).value();
   EXPECT_EQ(Call(Builtin::RegExpMatchStart, {end})->AsInteger(), 2);
 }
 
@@ -137,20 +137,18 @@ struct LimitCase final {
 
 class RegExpLimitTest : public RegExpTest, public testing::WithParamInterface<LimitCase> {};
 
-void ExpectLimit(const std::expected<Value, RegExpFailure>& result, std::string_view message) {
-  ASSERT_FALSE(result);
-  EXPECT_EQ(result.error().status, ExecutionStatus::RegExpLimitError);
-  EXPECT_NE(result.error().message.find(message), std::string::npos);
-}
-
 TEST_P(RegExpLimitTest, LimitsAreRecoverableAndReleaseOperationMemory) {
-  Compile(GetParam().source);
+  const auto& sample = GetParam();
+  Compile(sample.source);
   Input(std::string(kAmbiguousInputLength, 'a') + '!');
   heap().Collect();
   const auto bytes = heap().allocated_bytes();
   for (int attempt = 0; attempt < 2; ++attempt) {
     const auto result = Call(Builtin::RegExpHasMatch, {roots().at(0), roots().at(1)});
-    ExpectLimit(result, GetParam().message);
+    ASSERT_FALSE(result);
+    const auto& error = result.error();
+    EXPECT_EQ(error.status, ExecutionStatus::RegExpLimitError);
+    EXPECT_NE(error.message.find(sample.message), std::string::npos);
     EXPECT_EQ(heap().allocated_bytes(), bytes);
   }
   Compile("a");

@@ -53,7 +53,8 @@ DevelopmentResult Apply(DevelopmentSession& session,
 
 void ExpectInteger(const std::expected<runtime::Value, ExecutionStatus>& result,
                    std::int64_t value) {
-  ASSERT_TRUE(result);
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  ASSERT_TRUE(result->IsInteger());
   EXPECT_EQ(result->AsInteger(), value);
 }
 
@@ -94,13 +95,14 @@ TEST(DevelopmentSessionTest, LoadDoesNotRunEntryAndHotReloadPreservesInitialized
                       "export func read(): int { return score; }",
                       DevelopmentOperation::Load);
   ASSERT_EQ(result.status, DevelopmentStatus::Accepted) << result.message;
-  EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 10);
+  constexpr std::int64_t kInitialScore = 10;
+  ExpectInteger(session.Invoke("main.vela", "read"), kInitialScore);
   ASSERT_TRUE(session.RunEntry());
   result = Apply(session,
                  "let score = 100; func main(): void { score = 99; } "
                  "export func read(): int { return score + 1; }");
   ASSERT_EQ(result.status, DevelopmentStatus::Accepted) << result.message;
-  EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 43);
+  ExpectInteger(session.Invoke("main.vela", "read"), kAnswer + 1);
   EXPECT_EQ(session.snapshot()->revision, 2U);
   EXPECT_EQ(session.isolate().native_dispatch().revision(), 2U);
 }
@@ -288,7 +290,7 @@ TEST(DevelopmentSessionTest, LoadAddsIndependentModulesAndTheirExportedEntrypoin
   ASSERT_TRUE(candidate);
   ASSERT_EQ(session.Submit(std::move(*candidate)).status, DevelopmentStatus::WaitingForSafepoint);
   ASSERT_EQ(session.Pump().status, DevelopmentStatus::Accepted);
-  EXPECT_EQ(session.Invoke("plugin.vela", "answer")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("plugin.vela", "answer"), kAnswer);
 }
 
 TEST(DevelopmentSessionTest, StalePreparedCandidatesRecompileAgainstTheLatestCommittedSource) {
@@ -309,7 +311,7 @@ TEST(DevelopmentSessionTest, StalePreparedCandidatesRecompileAgainstTheLatestCom
   const auto result = session.Pump();
   ASSERT_EQ(result.status, DevelopmentStatus::Accepted) << result.message;
   EXPECT_EQ(result.revision, 3U);
-  EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("main.vela", "answer"), kAnswer);
 }
 
 TEST(DevelopmentSessionTest, WaitingRequestsCanBeCancelledWithoutChangingEitherBaseline) {
@@ -318,6 +320,7 @@ TEST(DevelopmentSessionTest, WaitingRequestsCanBeCancelledWithoutChangingEitherB
   auto& session = **created;
   ASSERT_EQ(Apply(session, "export func answer(): int { return 42; }").status,
             DevelopmentStatus::Accepted);
+  EXPECT_EQ(session.Cancel(), std::unexpected(DevelopmentCancelError::NoPendingRequest));
   ++session.isolate().native_control().state().host_borrows;
   auto candidate = session.Prepare(Edit(session, "export func answer(): int { return 100; }"),
                                    DevelopmentOperation::HotReload);
@@ -325,10 +328,11 @@ TEST(DevelopmentSessionTest, WaitingRequestsCanBeCancelledWithoutChangingEitherB
   ASSERT_EQ(session.Submit(std::move(*candidate)).status, DevelopmentStatus::WaitingForSafepoint);
   EXPECT_EQ(session.Pump().status, DevelopmentStatus::WaitingForSafepoint);
   ASSERT_TRUE(session.Cancel());
+  EXPECT_EQ(session.Cancel(), std::unexpected(DevelopmentCancelError::NoPendingRequest));
   --session.isolate().native_control().state().host_borrows;
   EXPECT_EQ(session.Pump().status, DevelopmentStatus::Cancelled);
   EXPECT_EQ(session.snapshot()->revision, 1U);
-  EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("main.vela", "answer"), kAnswer);
 }
 
 TEST(DevelopmentSessionTest, RefreshFailureReportsACommittedVersionAndDoesNotRollbackState) {
@@ -345,7 +349,7 @@ TEST(DevelopmentSessionTest, RefreshFailureReportsACommittedVersionAndDoesNotRol
   EXPECT_EQ(result.execution, ExecutionStatus::TypeError);
   EXPECT_EQ(result.revision, 2U);
   EXPECT_EQ(notifications, 2U);
-  EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("main.vela", "answer"), kAnswer);
 }
 
 TEST(DevelopmentSessionTest, ReloadWaitsForExternalRootsAndThenReexecutesEntryInANewRun) {
@@ -357,8 +361,9 @@ TEST(DevelopmentSessionTest, ReloadWaitsForExternalRootsAndThenReexecutesEntryIn
           .status,
       DevelopmentStatus::Accepted);
   std::optional<runtime::HostRoot> root;
-  auto retained =
-      runtime::HostRoot::Create(session.isolate(), *session.Invoke("main.vela", "make"));
+  const auto made = session.Invoke("main.vela", "make");
+  ASSERT_TRUE(made);
+  auto retained = runtime::HostRoot::Create(session.isolate(), *made);
   ASSERT_TRUE(retained);
   root = std::move(*retained);
   auto* previous = &session.isolate();
@@ -377,7 +382,8 @@ TEST(DevelopmentSessionTest, ReloadWaitsForExternalRootsAndThenReexecutesEntryIn
   EXPECT_NE(&session.isolate(), previous);
   EXPECT_EQ(result.generation, 2U);
   EXPECT_EQ(result.revision, 1U);
-  EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 101);
+  constexpr std::int64_t kUpdatedValue = 101;
+  ExpectInteger(session.Invoke("main.vela", "read"), kUpdatedValue);
 }
 
 struct DevelopmentHostState final {
@@ -426,7 +432,7 @@ TEST(DevelopmentSessionTest,
   EXPECT_EQ(HostState().finally_calls, 0U);
   EXPECT_EQ(session.result().status, DevelopmentStatus::Accepted);
   EXPECT_EQ(session.generation(), 2U);
-  EXPECT_EQ(session.Invoke("main.vela", "read")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("main.vela", "read"), kAnswer);
 }
 
 TEST(DevelopmentSessionTest, EntryFailureKeepsTheNewRunInstalledAndOldStateDiscarded) {
@@ -442,7 +448,7 @@ TEST(DevelopmentSessionTest, EntryFailureKeepsTheNewRunInstalledAndOldStateDisca
   EXPECT_EQ(result.status, DevelopmentStatus::EntryFailed);
   EXPECT_EQ(result.execution, ExecutionStatus::Thrown);
   EXPECT_EQ(session.generation(), 2U);
-  EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);
+  ExpectInteger(session.Invoke("main.vela", "answer"), kAnswer);
 }
 
 Result<Local<vela::Future<std::int64_t>>> StartRequest(runtime::NativeContext& context) noexcept {
@@ -528,8 +534,10 @@ TEST(DevelopmentSessionTest, NewlyRequiredGenericSpecializationsRecompileWithinT
                   "export func invoke(value: () => int): int { return value(); }")
                 .status,
             DevelopmentStatus::Accepted);
+  const auto callback_storage_value = session.Invoke("main.vela", "factory");
+  ASSERT_TRUE(callback_storage_value) << ExecutionStatusName(callback_storage_value.error());
   const auto callback_storage =
-      runtime::HostRoot::Create(session.isolate(), *session.Invoke("main.vela", "factory"));
+      runtime::HostRoot::Create(session.isolate(), *callback_storage_value);
   ASSERT_TRUE(callback_storage);
   const auto& callback = *callback_storage;
   auto candidate =

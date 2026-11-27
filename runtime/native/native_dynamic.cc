@@ -69,12 +69,13 @@ std::expected<Value, ExecutionStatus> CreatePlan(
 
 std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
                                                     const ResolvedCallable& callable,
-                                                    const HeapObject& arguments,
-                                                    const HeapObject* names,
+                                                    HeapObject& arguments,
+                                                    HeapObject* names,
                                                     DynamicCallStyle style) {
   const auto& instance = execution.instance();
   const auto& signature = instance.call_signature(callable.function);
-  const auto bound = BindDynamicArguments(signature, callable, arguments, names, style);
+  const auto bound = BindDynamicArguments(execution.isolate().heap(), signature, callable,
+                                          arguments, names, style);
   if (!bound) {
     return std::unexpected(bound.error());
   }
@@ -84,8 +85,8 @@ std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
 
 std::expected<Value, ExecutionStatus> InvokeFunction(NativeExecution& execution,
                                                      Value function,
-                                                     const HeapObject& arguments,
-                                                     const HeapObject* names) {
+                                                     HeapObject& arguments,
+                                                     HeapObject* names) {
   const auto callable = ResolveNativeCallable(execution.instance(), function);
   if (!callable) {
     return std::unexpected(callable.error());
@@ -180,8 +181,8 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
 
 std::expected<Value, ExecutionStatus> MethodCall(NativeExecution& execution,
                                                  Value plan_value,
-                                                 const HeapObject& arguments,
-                                                 const HeapObject* names) {
+                                                 HeapObject& arguments,
+                                                 HeapObject* names) {
   const auto plan = ReadDynamicCallPlan(plan_value);
   const auto& method = plan.method;
   if (method) {
@@ -220,14 +221,15 @@ std::expected<Value, ExecutionStatus> ReadNativeField(NativeExecution& execution
                                                       const TypeConstraint& type) {
   auto& object = *receiver.AsObject();
   const auto* layout = Heap::ClassOf(object);
+  auto& heap = execution.isolate().heap();
   const auto loaded =
       layout->storage() == ClassStorage::Reloadable
           ? execution.instance().dispatch()->LoadField(execution, object, declaration)
-          : std::expected<Value, ExecutionStatus>(Heap::LoadField(object, field));
+          : heap.ReadValueField(object, field);
   if (!loaded) {
     return std::unexpected(loaded.error());
   }
-  return BoxDynamicValue(execution.isolate().heap(), *loaded, type);
+  return BoxDynamicValue(heap, *loaded, type);
 }
 
 std::expected<Value, ExecutionStatus> WriteNativeField(NativeExecution& execution,
@@ -247,9 +249,8 @@ std::expected<Value, ExecutionStatus> WriteNativeField(NativeExecution& executio
     return stored ? std::expected<Value, ExecutionStatus>(original)
                   : std::unexpected(stored.error());
   }
-  return execution.isolate().heap().SetField(object, field, value).transform([original] {
-    return original;
-  });
+  execution.isolate().heap().WriteValueField(object, field, value);
+  return original;
 }
 
 std::expected<Value, ExecutionStatus> ReadNativeMember(NativeExecution& execution,

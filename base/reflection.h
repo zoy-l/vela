@@ -44,6 +44,8 @@ enum class TypeKind : std::uint8_t {
   ByteData,
   RegExp,
   RegExpMatch,
+  Struct,
+  Never,
 };
 
 enum class MemberKind : std::uint8_t {
@@ -63,7 +65,7 @@ enum class MemberKind : std::uint8_t {
 
 enum class MemberScope : std::uint8_t { Declared, IncludeInherited };
 enum class MemberStorage : std::uint8_t { Instance, Static, All };
-enum class Visibility : std::uint8_t { Public, Private };
+using ::vela::Visibility;
 enum class VisibilityFilter : std::uint8_t { Public, Private, All };
 
 struct MemberQuery final {

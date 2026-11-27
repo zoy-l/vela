@@ -3,31 +3,35 @@
 #include <array>
 #include <string_view>
 
+#include "base/type_kind.h"
+
 namespace vela::frontend {
 
-inline constexpr std::string_view kNullTypeName = "null";
-inline constexpr std::string_view kVoidTypeName = "void";
-inline constexpr std::string_view kDynamicTypeName = "dynamic";
-inline constexpr std::string_view kBoolTypeName = "bool";
-inline constexpr std::string_view kIntTypeName = "int";
-inline constexpr std::string_view kDoubleTypeName = "double";
-inline constexpr std::string_view kStringTypeName = "string";
+inline constexpr auto kNullTypeName = BuiltinTypeName(LanguageTypeKind::Null);
+inline constexpr auto kVoidTypeName = BuiltinTypeName(LanguageTypeKind::Void);
+inline constexpr auto kNeverTypeName = BuiltinTypeName(LanguageTypeKind::Never);
+inline constexpr auto kDynamicTypeName = BuiltinTypeName(LanguageTypeKind::Dynamic);
+inline constexpr auto kBoolTypeName = BuiltinTypeName(LanguageTypeKind::Bool);
+inline constexpr auto kIntTypeName = BuiltinTypeName(LanguageTypeKind::Int);
+inline constexpr auto kDoubleTypeName = BuiltinTypeName(LanguageTypeKind::Double);
+inline constexpr auto kStringTypeName = BuiltinTypeName(LanguageTypeKind::String);
 inline constexpr std::string_view kIntArrayTypeName = "int[]";
 inline constexpr std::string_view kStringArrayTypeName = "string[]";
 inline constexpr std::string_view kNullableStringTypeName = "string?";
-inline constexpr std::string_view kMutableStringTypeName = "String";
-inline constexpr std::string_view kByteArrayTypeName = "ByteArray";
-inline constexpr std::string_view kByteDataTypeName = "ByteData";
-inline constexpr std::string_view kRegExpTypeName = "RegExp";
-inline constexpr std::string_view kRegExpMatchTypeName = "RegExpMatch";
+inline constexpr auto kMutableStringTypeName = BuiltinTypeName(LanguageTypeKind::MutableString);
+inline constexpr auto kByteArrayTypeName = BuiltinTypeName(LanguageTypeKind::ByteArray);
+inline constexpr auto kByteDataTypeName = BuiltinTypeName(LanguageTypeKind::ByteData);
+inline constexpr auto kRegExpTypeName = BuiltinTypeName(LanguageTypeKind::RegExp);
+inline constexpr auto kRegExpMatchTypeName = BuiltinTypeName(LanguageTypeKind::RegExpMatch);
 inline constexpr std::string_view kNullableRegExpMatchTypeName = "RegExpMatch?";
 inline constexpr std::string_view kEndianTypeName = "Endian";
-inline constexpr std::string_view kFutureTypeName = "Future";
-inline constexpr std::string_view kCompleterTypeName = "Completer";
-inline constexpr std::string_view kTimerTypeName = "Timer";
-inline constexpr std::string_view kCancellationTokenTypeName = "CancellationToken";
-inline constexpr std::string_view kSetTypeName = "Set";
-inline constexpr std::string_view kMapTypeName = "Map";
+inline constexpr auto kFutureTypeName = BuiltinTypeName(LanguageTypeKind::Future);
+inline constexpr auto kCompleterTypeName = BuiltinTypeName(LanguageTypeKind::Completer);
+inline constexpr auto kTimerTypeName = BuiltinTypeName(LanguageTypeKind::Timer);
+inline constexpr auto kCancellationTokenTypeName =
+    BuiltinTypeName(LanguageTypeKind::CancellationToken);
+inline constexpr auto kSetTypeName = BuiltinTypeName(LanguageTypeKind::Set);
+inline constexpr auto kMapTypeName = BuiltinTypeName(LanguageTypeKind::Map);
 inline constexpr std::string_view kErrorTypeName = "Error";
 inline constexpr std::string_view kTimeoutExceptionTypeName = "TimeoutException";
 inline constexpr std::string_view kDateTypeName = "Date";
@@ -41,13 +45,20 @@ inline constexpr std::string_view kPerformanceTypeName = "performance";
 inline constexpr std::string_view kSleepFunctionName = "sleep";
 
 inline constexpr auto kBuiltinTypeNames = std::to_array<std::string_view>({
-    kVoidTypeName,     kDynamicTypeName,     kBoolTypeName,          kIntTypeName,
-    kDoubleTypeName,   kStringTypeName,      kMutableStringTypeName, kByteArrayTypeName,
-    kByteDataTypeName, kRegExpTypeName,      kRegExpMatchTypeName,   kEndianTypeName,
-    kFutureTypeName,   kCompleterTypeName,   kTimerTypeName,         kCancellationTokenTypeName,
-    kSetTypeName,      kMapTypeName,         kErrorTypeName,         kTimeoutExceptionTypeName,
-    kDateTypeName,     kDatePartsTypeName,   kJsonTypeName,          kMathTypeName,
-    kRandomTypeName,   kPerformanceTypeName,
+    kNullTypeName,          kNeverTypeName,
+    kVoidTypeName,          kDynamicTypeName,
+    kBoolTypeName,          kIntTypeName,
+    kDoubleTypeName,        kStringTypeName,
+    kMutableStringTypeName, kByteArrayTypeName,
+    kByteDataTypeName,      kRegExpTypeName,
+    kRegExpMatchTypeName,   kEndianTypeName,
+    kFutureTypeName,        kCompleterTypeName,
+    kTimerTypeName,         kCancellationTokenTypeName,
+    kSetTypeName,           kMapTypeName,
+    kErrorTypeName,         kTimeoutExceptionTypeName,
+    kDateTypeName,          kDatePartsTypeName,
+    kJsonTypeName,          kMathTypeName,
+    kRandomTypeName,        kPerformanceTypeName,
 });
 
 }  // namespace vela::frontend

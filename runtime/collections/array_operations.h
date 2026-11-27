@@ -10,8 +10,6 @@
 
 namespace vela::runtime {
 
-[[nodiscard]] ExecutionStatus ArrayExecutionStatus(ArrayAccessError error);
-
 [[nodiscard]] std::expected<Value, ExecutionStatus>
 ExecuteArrayBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap);
 

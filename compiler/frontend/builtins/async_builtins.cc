@@ -237,7 +237,7 @@ TypeDescriptor CallbackType(const TypeDescriptor& result,
   for (const auto& parameter : parameters) {
     signature.push_back({.name = {}, .type = parameter});
   }
-  return MakeFunctionType(signature, result, std::nullopt);
+  return MakeFunctionType(signature, result, std::nullopt, std::nullopt);
 }
 
 }  // namespace

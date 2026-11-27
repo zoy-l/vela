@@ -1,4 +1,3 @@
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <limits>
@@ -107,7 +106,6 @@ TEST(HostCollectionTest, ArrayBoundsAndGrowthFailuresPreserveExistingElements) {
   EXPECT_EQ(failed.error().status, ExecutionStatus::OutOfMemory);
   EXPECT_EQ(values->Size(), 1);
   EXPECT_EQ(*values->Get(scope, 0), 42);
-  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
 }
 
 TEST(HostCollectionTest, MapDistinguishesMissingFromNullAndKeepsInsertionOrder) {

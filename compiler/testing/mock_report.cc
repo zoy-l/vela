@@ -27,19 +27,21 @@ constexpr std::size_t kMockTextBudget = 4096;
 
 class MockReportReader final {
  public:
-  explicit MockReportReader(const runtime::MemberTable& members) : layouts_(&members) {}
-  static std::vector<runtime::Value> Items(runtime::Value value);
+  explicit MockReportReader(runtime::Heap& heap, const runtime::MemberTable& members)
+      : heap_(&heap), layouts_(&members) {}
+  [[nodiscard]] std::vector<runtime::Value> Items(runtime::Value value) const;
   [[nodiscard]] static std::vector<runtime::FutureTraceFrame> Trace(runtime::Value value);
-  static std::vector<std::string> Strings(runtime::Value value);
+  [[nodiscard]] std::vector<std::string> Strings(runtime::Value value) const;
   static std::string Text(runtime::Value value);
   static std::int64_t Number(runtime::Value value);
   [[nodiscard]] TestError::MockDetails Read(runtime::Value value) const;
 
  private:
+  runtime::Heap* heap_;
   const runtime::MemberTable* layouts_;
 };
 
-std::vector<runtime::Value> MockReportReader::Items(runtime::Value value) {
+std::vector<runtime::Value> MockReportReader::Items(runtime::Value value) const {
   if (!value.IsObject()) {
     return {};
   }
@@ -51,8 +53,7 @@ std::vector<runtime::Value> MockReportReader::Items(runtime::Value value) {
   std::vector<runtime::Value> items;
   items.reserve(size);
   for (std::size_t index = 0; index < size; ++index) {
-    items.push_back(
-        *runtime::Heap::GetElement(*value.AsObject(), static_cast<std::uint32_t>(index)));
+    items.push_back(*heap_->GetElement(*value.AsObject(), static_cast<std::uint32_t>(index)));
   }
   return items;
 }
@@ -70,7 +71,7 @@ std::int64_t MockReportReader::Number(runtime::Value value) {
   return value.IsInteger() ? value.AsInteger() : 0;
 }
 
-std::vector<std::string> MockReportReader::Strings(runtime::Value value) {
+std::vector<std::string> MockReportReader::Strings(runtime::Value value) const {
   std::vector<std::string> strings;
   for (const auto item : Items(value)) {
     strings.push_back(Text(item));
@@ -130,7 +131,7 @@ void Suite::DescribeMockFailure(runtime::Value value, TestError& error) const {
   }
   error.category = MockFailureName(found->second);
   const auto& layouts = instance_->members();
-  const MockReportReader reader(layouts);
+  const MockReportReader reader(isolate_->heap(), layouts);
   const auto details = layouts.ReadPublicField(value, mock_fields::kDetails);
   if (!details.IsNull()) {
     error.mock = reader.Read(details);

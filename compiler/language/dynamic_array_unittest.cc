@@ -70,7 +70,7 @@ func main(): int {
 })",
                              R"(func main(): int {
   const nullable: int?[] = [null, 42, null];
-  const selected: int?[] = nullable.filter(value => value == null);
+  const selected: null[] = nullable.filter(value => value == null);
   if (selected.length != 2 || selected[0] != null || nullable.find(value => value == 42) != 42 ||
       nullable.find(value => value == null) != null || !nullable.includes(null) ||
       nullable.includes(null, 3)) { return 0; }

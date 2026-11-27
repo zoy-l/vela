@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <iterator>
 #include <limits>
@@ -81,6 +82,16 @@ void RootRange::Attach(Heap& heap, const InstanceStorage& fields) noexcept {
   data_ = &fields;
   count_ = fields.count;
   kind_ = Kind::InstanceFields;
+  heap_->RegisterRoot(*this);
+}
+
+void RootRange::AttachStridedValues(Heap& heap, const StridedValues& values) noexcept {
+  Detach();
+  heap_ = &heap;
+  data_ = values.data;
+  count_ = values.count;
+  stride_ = values.stride;
+  kind_ = values.stride == sizeof(Value) ? Kind::Values : Kind::StridedValues;
   heap_->RegisterRoot(*this);
 }
 
@@ -388,6 +399,13 @@ void Heap::MarkRoots() noexcept {
 void Heap::MarkRoot(const RootRange& root) noexcept {
   if (root.kind_ == RootRange::Kind::Values) {
     for (const Value value : std::span(static_cast<const Value*>(root.data_), root.count_)) {
+      MarkValue(value);
+    }
+  } else if (root.kind_ == RootRange::Kind::StridedValues) {
+    const std::span bytes(static_cast<const std::byte*>(root.data_), root.count_ * root.stride_);
+    for (std::size_t index = 0; index < root.count_; ++index) {
+      Value value;
+      std::memcpy(&value, bytes.subspan(index * root.stride_).data(), sizeof(value));
       MarkValue(value);
     }
   } else if (root.kind_ == RootRange::Kind::Strings) {
