@@ -159,20 +159,14 @@ StringObject* Heap::AllocateString(std::string_view text, std::size_t code_point
   return string;
 }
 
-StringObject* Heap::AllocateString(std::string_view first,
-                                   std::string_view second,
-                                   std::string_view third) noexcept {
+StringObject* Heap::AllocateString(std::string_view first, std::string_view second) noexcept {
   if (first.size() > kMaximumStringLength || second.size() > kMaximumStringLength - first.size()) {
     return nullptr;
   }
-  const auto prefix_length = first.size() + second.size();
-  if (third.size() > kMaximumStringLength - prefix_length) {
-    return nullptr;
-  }
-  const auto length = prefix_length + third.size();
+  const auto length = first.size() + second.size();
   auto* string = AllocateStringStorage({
       .bytes = length,
-      .code_points = Utf8Length(first) + Utf8Length(second) + Utf8Length(third),
+      .code_points = Utf8Length(first) + Utf8Length(second),
   });
   if (string == nullptr) {
     return nullptr;
@@ -180,7 +174,39 @@ StringObject* Heap::AllocateString(std::string_view first,
   const auto bytes = StringStorage(*string, length);
   std::ranges::copy(first, bytes.begin());
   std::ranges::copy(second, bytes.subspan(first.size()).begin());
-  std::ranges::copy(third, bytes.subspan(prefix_length).begin());
+  return string;
+}
+
+StringObject* Heap::ReplaceStringBytes(const StringObject& source,
+                                       std::size_t start,
+                                       std::size_t end,
+                                       const StringObject& inserted) noexcept {
+  const auto text = source.value();
+  const auto replacement = inserted.value();
+  const auto inserted_bytes = replacement.size();
+  const auto removed_bytes = end - start;
+  const auto retained_bytes = text.size() - removed_bytes;
+  if (inserted_bytes > kMaximumStringLength - retained_bytes) {
+    return nullptr;
+  }
+  const auto first = text.substr(0, start);
+  const auto last = text.substr(end);
+  // 复用已有字符串的码点数；只扫描删除区间与保留片段中较短的一侧。
+  const auto retained_points = removed_bytes <= retained_bytes
+                                   ? source.length() - Utf8Length(text.substr(start, removed_bytes))
+                                   : Utf8Length(first) + Utf8Length(last);
+  const auto length = retained_bytes + inserted_bytes;
+  auto* string = AllocateStringStorage({
+      .bytes = length,
+      .code_points = retained_points + inserted.length(),
+  });
+  if (string == nullptr) {
+    return nullptr;
+  }
+  const auto bytes = StringStorage(*string, length);
+  std::ranges::copy(first, bytes.begin());
+  std::ranges::copy(replacement, bytes.subspan(start).begin());
+  std::ranges::copy(last, bytes.subspan(start + inserted_bytes).begin());
   return string;
 }
 

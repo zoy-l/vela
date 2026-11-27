@@ -307,8 +307,12 @@ class Heap final {
   [[nodiscard]] StringObject* AllocateString(std::string_view text,
                                              std::size_t code_points) noexcept;
   [[nodiscard]] StringObject* AllocateString(std::string_view first,
-                                             std::string_view second,
-                                             std::string_view third = {}) noexcept;
+                                             std::string_view second) noexcept;
+  // source 与 inserted 须保根；start/end 已验证为 source 的有序 UTF-8 字节边界。
+  [[nodiscard]] StringObject* ReplaceStringBytes(const StringObject& source,
+                                                 std::size_t start,
+                                                 std::size_t end,
+                                                 const StringObject& inserted) noexcept;
   // 输入为 int/double/bool；格式化器产生 ASCII，直接使用其字节数作为字符数。
   [[nodiscard]] StringObject* AllocateScalarString(Value value) noexcept;
   [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,

@@ -152,11 +152,10 @@ std::expected<Value, ExecutionStatus> ExecuteStringByteBuiltin(Builtin builtin,
   if (!IsByteRange(text, start, end)) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  const auto first = static_cast<std::size_t>(start);
-  const auto last = static_cast<std::size_t>(end);
-  // 接收者与 inserted 由调用窗口保根；一次分配直接复制前缀、插入内容和后缀。
-  return AllocatedValue(heap.AllocateString(text.substr(0, first), arguments[3].AsString()->value(),
-                                            text.substr(last)));
+  const auto& inserted = *arguments[3].AsString();
+  // 接收者与 inserted 由调用窗口保根；堆复用码点元数据并只分配一次结果。
+  return AllocatedValue(heap.ReplaceStringBytes(string, static_cast<std::size_t>(start),
+                                                static_cast<std::size_t>(end), inserted));
 }
 
 }  // namespace vela::runtime

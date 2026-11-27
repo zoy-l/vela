@@ -59,6 +59,57 @@ TEST(StringGcTest, ByteReplacementAllocatesOnlyOneResultWithAliasedRootedInputs)
   EXPECT_EQ(roots.back().AsString()->length(), 3U);
 }
 
+TEST(StringGcTest, ByteReplacementPreservesCodePointCountsAcrossAllBoundaryRanges) {
+  constexpr std::string_view kText("A中😀éZ\0", sizeof("A中😀éZ\0") - 1);
+  constexpr std::array<std::size_t, 8> kBoundaries{0, 1, 4, 8, 9, 11, 12, 13};
+  struct Insertion final {
+    std::string_view text;
+    std::size_t points;
+  };
+  constexpr auto kInsertions = std::to_array<Insertion>({
+      {.text = "", .points = 0},
+      {.text = "ascii", .points = 5},
+      {.text = "汉🙂", .points = 2},
+      {.text = "é", .points = 2},
+      {.text = {"x\0中", sizeof("x\0中") - 1}, .points = 3},
+  });
+  Heap heap(1);
+  std::array roots{Value::Null(), Value::Null(), Value::Null()};
+  RootRange root(heap, roots.data(), roots.size());
+  roots[0] = Value::String(heap.AllocateString(kText));
+  ASSERT_NE(roots[0].AsString(), nullptr);
+  for (const auto& insertion : kInsertions) {
+    roots[1] = Value::String(heap.AllocateString(insertion.text));
+    ASSERT_NE(roots[1].AsString(), nullptr);
+    for (std::size_t first_point = 0; first_point < kBoundaries.size(); ++first_point) {
+      for (auto last_point = first_point; last_point < kBoundaries.size(); ++last_point) {
+        SCOPED_TRACE(testing::Message()
+                     << first_point << ", " << last_point << ", " << insertion.text);
+        const auto start = kBoundaries[first_point];
+        const auto end = kBoundaries[last_point];
+        const std::array arguments{
+            roots[0],
+            Value::Integer(static_cast<std::int64_t>(start)),
+            Value::Integer(static_cast<std::int64_t>(end)),
+            roots[1],
+        };
+        const auto result = ExecuteBuiltin(Builtin::StringReplaceBytes, arguments, heap);
+        ASSERT_TRUE(result);
+        roots[2] = *result;
+        heap.Collect();
+        std::string expected(kText.substr(0, start));
+        expected.append(insertion.text);
+        expected.append(kText.substr(end));
+        const auto* output = roots[2].AsString();
+        const auto points = output->length();
+        EXPECT_EQ(output->value(), expected);
+        EXPECT_EQ(points, kBoundaries.size() - 1 - (last_point - first_point) + insertion.points);
+        EXPECT_EQ(output->ByteOffset(points), expected.size());
+      }
+    }
+  }
+}
+
 TEST(StringGcTest, TrimUsesUnicodeWhiteSpaceAndPreservesNulBomAndZeroWidthSpace) {
   Heap heap(1);
   Value value = Value::Null();
