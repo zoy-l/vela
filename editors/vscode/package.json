@@ -20,7 +20,10 @@
         "enum": ["entity.name.type.enum.vela"],
         "enumMember": ["variable.other.enummember.vela"],
         "type": ["entity.name.type.vela"],
-        "typeParameter": ["entity.name.type.parameter.vela"]
+        "typeParameter": ["entity.name.type.parameter.vela"],
+        "variable": ["variable.other.readwrite.vela"],
+        "variable.readonly": ["variable.other.constant.vela"],
+        "parameter": ["variable.parameter.vela"]
       }
     }],
     "languages": [{

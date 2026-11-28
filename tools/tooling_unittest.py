@@ -119,8 +119,9 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], [".", "(", ","])
                 self.assertNotIn("signatureHelpProvider", capabilities)
                 self.assertEqual(capabilities['semanticTokensProvider']['legend'], {
-                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter', 'enumMember', 'struct'],
-                    'tokenModifiers': ['declaration', 'defaultLibrary']})
+                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter',
+                                   'enumMember', 'struct', 'variable', 'parameter'],
+                    'tokenModifiers': ['declaration', 'defaultLibrary', 'readonly']})
                 self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])
 
@@ -835,8 +836,59 @@ func main(): int {
                 line = source.splitlines()[4]
                 self.assertIn((4, line.index('Box<int>'), 3, 'class', 0), tokens)
                 self.assertIn((4, line.index('Math.PI'), 4, 'class', 2), tokens)
-                self.assertFalse(any(token[0] == 4 and token[1] >= line.index('const Box') for token in tokens))
+                self.assertIn((4, line.index('const Box') + len('const '), 3, 'variable', 5), tokens)
+                self.assertIn((4, line.index('print(Box)') + len('print('), 3, 'variable', 4), tokens)
                 self.assertFalse(any(token[0] == 4 and token[1] == line.index("'Box'") + 1 for token in tokens))
+
+    def test_semantic_tokens_distinguish_const_references_from_mutable_bindings(self) -> None:
+        (self.directory / 'library.vela').write_text(
+            'export const imported = 1;', encoding='utf-8', newline='\n')
+        lines = ("import 'library' as lib;",
+                 "const shared = 2;",
+                 "func main(): void {",
+                 "  let count = shared + lib.imported;",
+                 "  { const count = 3; print(count); }",
+                 "  for (const item in [count]) { print(item); }",
+                 "  print(count);",
+                 "}")
+        messages = self.session([self.open('\n'.join(lines)),
+            request('textDocument/semanticTokens/full', {'textDocument': {'uri': self.uri}}, 'tokens')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        tokens = {token for token in self.semantic_tokens(messages) if token[3] == 'variable'}
+        expected = ((1, 'shared', 5), (3, 'count', 1), (3, 'shared', 4), (3, 'imported', 4),
+                    (4, 'count', 5), (4, 'print(count)', 4), (5, 'item', 5),
+                    (5, 'count', 0), (5, 'print(item)', 4), (6, 'print(count)', 0))
+        self.assertEqual(tokens, {
+            (line, lines[line].index(context) + (len('print(') if context.startswith('print(') else 0),
+             len(context[6:-1] if context.startswith('print(') else context), 'variable', modifiers)
+            for line, context, modifiers in expected
+        })
+
+    def test_semantic_tokens_color_parameters_in_method_and_closure_bodies(self) -> None:
+        lines = (
+            "class Sample {",
+            "  #values: double[][] = [[0.0]];",
+            "  update(action: () => void): void { action(); }",
+            "  #change(index: int, values: double[]): void {",
+            "    print(index);",
+            "    this.update(() => { this.#values[index] = values; });",
+            "    { const index = 0; print(index); }",
+            "  }",
+            "  run(): void { this.#change(index: 0, values: [1.0]); }",
+            "}",
+        )
+        messages = self.session([
+            self.open('\n'.join(lines)),
+            request('textDocument/semanticTokens/full', {'textDocument': {'uri': self.uri}}, 'tokens'),
+        ])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertEqual(
+            [(line, lines[line][column:column + length], modifiers)
+             for line, column, length, kind, modifiers in self.semantic_tokens(messages)
+             if kind == 'parameter'],
+            [(2, 'action', 1), (2, 'action', 0), (3, 'index', 1), (3, 'values', 1),
+             (4, 'index', 0), (5, 'index', 0), (5, 'values', 0)],
+        )
 
     def test_semantic_tokens_use_import_overlays_and_invalidate_on_changes(self) -> None:
         library = self.directory / 'library.vela'

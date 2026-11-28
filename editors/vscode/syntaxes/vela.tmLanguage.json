@@ -160,10 +160,12 @@
     },
     "binding": {
       "name": "meta.binding.vela",
-      "begin": "\\b(let|const)\\s+([A-Za-z_][A-Za-z_0-9]*)\\b",
+      "begin": "\\b(?:(let)\\s+([A-Za-z_][A-Za-z_0-9]*)|(const)\\s+([A-Za-z_][A-Za-z_0-9]*))\\b",
       "beginCaptures": {
-        "1": { "name": "storage.modifier.vela" },
-        "2": { "name": "variable.other.readwrite.vela" }
+        "1": { "name": "storage.type.vela" },
+        "2": { "name": "variable.other.readwrite.vela" },
+        "3": { "name": "storage.type.vela" },
+        "4": { "name": "variable.other.constant.vela" }
       },
       "end": "(?=\\bin\\b|=>|[,;)}\\]])",
       "patterns": [

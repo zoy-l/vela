@@ -176,7 +176,8 @@ function registerSymbolProviders(context, client, flush) {
   const linksChanged = new vscode.EventEmitter();
   const tokensChanged = new vscode.EventEmitter();
   const tokenLegend = new vscode.SemanticTokensLegend(
-    ["class", "interface", "enum", "type", "typeParameter", "enumMember", "struct"], ["declaration", "defaultLibrary"]);
+    ["class", "interface", "enum", "type", "typeParameter", "enumMember", "struct", "variable", "parameter"],
+    ["declaration", "defaultLibrary", "readonly"]);
   context.subscriptions.push(
     linksChanged,
     tokensChanged,

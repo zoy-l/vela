@@ -80,13 +80,17 @@ enum class SemanticTokenKind : std::uint8_t {
   TypeParameter,
   EnumMember,
   Struct,
+  Variable,
+  Parameter,
 };
-inline constexpr auto kSemanticTokenTypes = std::to_array<std::string_view>(
-    {"class", "interface", "enum", "type", "typeParameter", "enumMember", "struct"});
+inline constexpr auto kSemanticTokenTypes =
+    std::to_array<std::string_view>({"class", "interface", "enum", "type", "typeParameter",
+                                     "enumMember", "struct", "variable", "parameter"});
 inline constexpr auto kSemanticTokenModifiers =
-    std::to_array<std::string_view>({"declaration", "defaultLibrary"});
+    std::to_array<std::string_view>({"declaration", "defaultLibrary", "readonly"});
 inline constexpr std::uint32_t kSemanticDeclaration = 1U;
 inline constexpr std::uint32_t kSemanticDefaultLibrary = 2U;
+inline constexpr std::uint32_t kSemanticReadonly = 4U;
 
 struct SemanticToken final {
   TextPosition position;

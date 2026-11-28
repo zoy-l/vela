@@ -199,8 +199,8 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   mock.languages = {
     registerDocumentSemanticTokensProvider(selector, provider, legend) {
       assert.equal(selector.language, "vela");
-      assert.deepEqual(Array.from(legend.tokenTypes), ["class", "interface", "enum", "type", "typeParameter", "enumMember", "struct"]);
-      assert.deepEqual(Array.from(legend.tokenModifiers), ["declaration", "defaultLibrary"]);
+      assert.deepEqual(Array.from(legend.tokenTypes), ["class", "interface", "enum", "type", "typeParameter", "enumMember", "struct", "variable", "parameter"]);
+      assert.deepEqual(Array.from(legend.tokenModifiers), ["declaration", "defaultLibrary", "readonly"]);
       providers.semantic = provider;
       return { dispose() {} };
     },

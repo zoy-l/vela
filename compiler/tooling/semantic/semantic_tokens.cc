@@ -26,6 +26,9 @@ std::optional<SemanticTokenKind> TokenKindFor(CompletionKind kind) {
       return SemanticTokenKind::EnumMember;
     case CompletionKind::Type:
       return SemanticTokenKind::Type;
+    case CompletionKind::Variable:
+    case CompletionKind::Constant:
+      return SemanticTokenKind::Variable;
     default:
       return std::nullopt;
   }
@@ -44,12 +47,25 @@ std::vector<SemanticToken> SemanticIndex::SemanticTokens(PositionEncoding encodi
       continue;
     }
     const Key key{0, token.offset};
-    auto modifiers = declarations_.contains(key) ? kSemanticDeclaration : std::uint32_t{0};
+    const bool is_declaration = declarations_.contains(key);
+    auto modifiers = is_declaration ? kSemanticDeclaration : std::uint32_t{0};
     std::optional<SemanticTokenKind> kind;
     if (const auto found = references_.find(key); found != references_.end()) {
-      const auto& symbol = symbols_[found->second.symbol];
-      kind = symbol.role == Symbol::Role::TypeParameter ? SemanticTokenKind::TypeParameter
-                                                        : TokenKindFor(symbol.completion.kind);
+      const auto& reference = found->second;
+      const auto& symbol = symbols_[reference.symbol];
+      if (symbol.role == Symbol::Role::TypeParameter) {
+        kind = SemanticTokenKind::TypeParameter;
+      } else if (symbol.role == Symbol::Role::Parameter) {
+        // 命名实参的标签也指向参数声明，但不是对参数值的读取。
+        if (is_declaration || reference.expression != nullptr) {
+          kind = SemanticTokenKind::Parameter;
+        }
+      } else {
+        kind = TokenKindFor(symbol.completion.kind);
+      }
+      if (symbol.completion.kind == CompletionKind::Constant) {
+        modifiers |= kSemanticReadonly;
+      }
       if (sources_[symbol.key.first].path.starts_with(frontend::kStandardSourcePrefix)) {
         modifiers |= kSemanticDefaultLibrary;
       }

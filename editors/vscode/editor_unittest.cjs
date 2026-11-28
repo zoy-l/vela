@@ -241,11 +241,36 @@ async function runEditorTests() {
     assert.equal(syntaxTokens.filter(token => token.c === "%"
       && token.t.split(" ").includes("keyword.operator.vela")).length, 1,
       "remainder must receive the arithmetic operator scope");
+    assert.ok(syntaxTokens.some(token => token.c === "futureValue"
+      && token.t.split(" ").includes("variable.other.constant.vela")),
+      "const declarations must use the theme's constant scope");
+    assert.deepEqual((await readSemanticTokens(asyncDocument))
+      .filter(token => token.spelling === "futureValue")
+      .map(({ kind, modifiers }) => [kind, modifiers]),
+      [["variable", ["declaration", "readonly"]], ["variable", ["readonly"]]],
+      "const declarations and references must use the readonly variable token");
     const futureTokens = (await readSemanticTokens(asyncDocument)).filter(token => token.spelling === "Future");
     assert.deepEqual(futureTokens.map(({ kind, modifiers }) => [kind, modifiers]),
       [["type", ["defaultLibrary"]], ["type", ["defaultLibrary"]]],
       "Future annotations and factory receivers must keep built-in type coloring");
     console.log("PASS: async, await, Future and override have syntax colors and preserve semantic type coloring");
+
+    const parameterUri = vscode.Uri.file(path.join(directory, "parameter-highlighting.vela"));
+    const parameterDocument = await openTemporary(parameterUri, [
+      "class Sample {",
+      "  #values: double[][] = [[0.0]];",
+      "  update(action: () => void): void { action(); }",
+      "  #change(index: int, values: double[]): void {",
+      "    this.update(() => { this.#values[index] = values; });",
+      "  }",
+      "}",
+    ].join("\n"));
+    assert.deepEqual((await readSemanticTokens(parameterDocument))
+      .filter(token => token.spelling === "index" || token.spelling === "values")
+      .map(({ spelling, kind, modifiers }) => [spelling, kind, modifiers]),
+      [["index", "parameter", ["declaration"]], ["values", "parameter", ["declaration"]],
+        ["index", "parameter", []], ["values", "parameter", []]],
+      "method parameters and their closure captures must use the same parameter coloring");
 
     await fs.writeFile(path.join(directory, "highlight-library.vela"), [
       "export class remote {}",
