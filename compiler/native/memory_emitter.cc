@@ -326,42 +326,15 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, StoredValue& stored)
   builder_.SetInsertPoint(written);
 }
 
-const ir::Class* FunctionEmitter::FindClass(const SourceType& type) {
-  const auto name = frontend::NonNullableTypeName(type);
-  const auto [cached, inserted] = classes_.try_emplace(name);
-  if (inserted) {
-    const auto owner = std::ranges::find(program_.classes, name, &ir::Class::name);
-    cached->second = owner == program_.classes.end() ? nullptr : &*owner;
-  }
-  return cached->second;
-}
-
-FunctionEmitter::FieldStorage FunctionEmitter::DescribeFieldStorage(
-    const ir::Instruction& instruction) {
-  const auto reading = instruction.opcode == Opcode::GetField;
-  const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
-  const auto* owner = FindClass(receiver);
-  const auto capture_cell = owner != nullptr && owner->kind == ir::Class::Kind::CaptureCell;
-  if (owner != nullptr && !capture_cell) {
-    return {.type = &owner->field_types.at(instruction.index), .capture_cell = false};
-  }
-  // 闭包单元和运行时 callable 保存擦除值，读取表示由目标寄存器决定。
-  return {
-      .type = &source_.value_types.at(reading ? instruction.dst : instruction.lhs),
-      .capture_cell = capture_cell,
-  };
-}
-
 void FunctionEmitter::EmitFieldAccess(const ir::Instruction& instruction,
                                       llvm::Value* object,
-                                      const StoredValueAddress& address) {
+                                      const StoredValueAddress& address,
+                                      FieldStorage storage) {
   const auto reading = instruction.opcode == Opcode::GetField;
   const auto reg = reading ? instruction.dst : instruction.lhs;
   const auto& type = source_.value_types.at(reg);
-  const auto storage = DescribeFieldStorage(instruction);
-  const auto& storage_type = *storage.type;
-  if (storage_type.value_layout != nullptr && !storage.capture_cell) {
-    EmitStructFieldAccess(instruction, object, address, storage_type, type);
+  if (storage.HasInlineValue()) {
+    EmitStructFieldAccess(instruction, object, address, *storage.type, type);
     return;
   }
   if (reading) {
@@ -382,6 +355,7 @@ void FunctionEmitter::EmitStructFieldAccess(const ir::Instruction& instruction,
   const auto reg = reading ? instruction.dst : instruction.lhs;
   auto required = storage_type;
   required.nullable = false;
+  const auto kind_write = field_kind_writes_.at(instruction_index_);
   llvm::Value* payload = llvm::Constant::getNullValue(ValueType(module_.getContext(), required));
   // 可空字段的存在位和物理宽度属于声明布局，不能由本次写入的非空值推断。
   auto* value = reading ? nullptr : ConvertValue(Load(reg), register_type, storage_type);
@@ -399,7 +373,7 @@ void FunctionEmitter::EmitStructFieldAccess(const ir::Instruction& instruction,
       present = ReadStoredValue(slot_address(offset++), flag);
     } else {
       StoredValue stored{.type = &flag, .value = present, .encoded = nullptr};
-      WriteStoredValue(slot_address(offset++), stored, FieldKindWrite::Required);
+      WriteStoredValue(slot_address(offset++), stored, kind_write);
     }
   }
   auto* source = reading ? nullptr : PayloadOf(builder_, value, storage_type);
@@ -425,7 +399,7 @@ void FunctionEmitter::EmitStructFieldAccess(const ir::Instruction& instruction,
           .value = leaf,
           .encoded = EncodeStructSlot(builder_, leaf, leaf_type),
       };
-      WriteStoredValue(leaf_address, stored, FieldKindWrite::Required);
+      WriteStoredValue(leaf_address, stored, kind_write);
     }
   }
   if (reading) {
@@ -436,18 +410,6 @@ void FunctionEmitter::EmitStructFieldAccess(const ir::Instruction& instruction,
     StoredValue stored{.type = &storage_type, .value = value, .encoded = nullptr};
     EmitWriteBarrier(object, stored);
   }
-}
-
-std::optional<std::size_t> FunctionEmitter::InlineFieldOffset(const SourceType& storage_type) {
-  if (storage_type.kind == Kind::Function) {
-    return sizeof(runtime::HeapObject);
-  }
-  const auto* owner = FindClass(storage_type);
-  if (owner == nullptr) {
-    return std::nullopt;
-  }
-  return owner->callable ? sizeof(runtime::HeapObject)
-                         : runtime::NativeMemoryLayout::kInlineObjectFields;
 }
 
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
@@ -476,7 +438,8 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   // 字段编号由静态成员解析确定，实际对象布局在入口边界验证；无需逐次查找布局。
   using runtime::NativeMemoryLayout;
   const auto& receiver = source_.value_types.at(reading ? instruction.lhs : instruction.dst);
-  const auto* owner = FindClass(receiver);
+  const auto storage = field_targets_.Describe(source_, instruction);
+  const auto* owner = storage.owner;
   const auto slot =
       owner == nullptr ? instruction.index : ir::PhysicalFieldOffset(*owner, instruction.index);
   auto* count =
@@ -488,15 +451,16 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
       builder_.getInt64(runtime::FieldStorage::KindOffset(0, slot)));
   llvm::Value* fields = nullptr;
-  if (const auto offset = InlineFieldOffset(receiver)) {
-    fields = ByteAddress(object, *offset);
+  if (receiver.kind == Kind::Function || (owner != nullptr && owner->callable)) {
+    fields = ByteAddress(object, sizeof(runtime::HeapObject));
+  } else if (owner != nullptr) {
+    fields = ByteAddress(object, NativeMemoryLayout::kInlineObjectFields);
   } else {
     fields = LoadInlineObjectFields(builder_, object);
   }
   const auto address = FieldAddress(fields, *builder_.getInt32(slot), kind_offset);
-  EmitFieldAccess(instruction, object, address);
-  if (!reading && instruction.index == 0 &&
-      source_.value_types.at(instruction.dst).kind == Kind::Function) {
+  EmitFieldAccess(instruction, object, address, storage);
+  if (!reading && instruction.index == 0 && receiver.kind == Kind::Function) {
     auto helper =
         module_.getOrInsertFunction(runtime::kNativeCaptureReceiverSymbol, builder_.getInt8Ty(),
                                     builder_.getPtrTy(), builder_.getPtrTy());
@@ -507,7 +471,7 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
 llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
                                                       const ir::Instruction& instruction,
                                                       llvm::Value* slot,
-                                                      std::optional<std::uint32_t> count,
+                                                      const SourceType& field_type,
                                                       llvm::BasicBlock* unavailable) {
   using runtime::FieldState;
   using runtime::InstanceStorage;
@@ -518,14 +482,9 @@ llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
   builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, inspect,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(inspect);
-  llvm::Value* physical_count = nullptr;
-  if (count) {
-    physical_count = builder_.getInt32(*count);
-  } else {
-    physical_count =
-        LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, count)),
-                   MemoryRegion::InstanceHeader);
-  }
+  auto* physical_count =
+      LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, count)),
+                 MemoryRegion::InstanceHeader);
   auto* state_offset = builder_.CreateMul(
       builder_.CreateZExt(physical_count, builder_.getInt64Ty()),
       builder_.getInt64(runtime::FieldStorage::kPayloadBytes + runtime::FieldStorage::kKindBytes));
@@ -548,7 +507,7 @@ llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
             state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
         available, unavailable, llvm::MDBuilder(context).createLikelyBranchWeights());
     builder_.SetInsertPoint(available);
-    const auto width = ir::FieldSlotCount(*DescribeFieldStorage(instruction).type);
+    const auto width = ir::FieldSlotCount(field_type);
     StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(width)),
                 unready->getPointerOperand(), MemoryRegion::InstanceHeader);
     for (std::uint32_t leaf = 0; leaf < width; ++leaf) {
@@ -622,10 +581,12 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   // 字段块可在提交时迁移；只在本安全点之后读取，地址不跨任何运行时调用保留。
   auto* storage = LoadInstanceStorage(builder_, object);
   auto* values = ByteAddress(storage, sizeof(InstanceStorage));
-  builder_.SetInsertPoint(EmitFieldReadiness(storage, instruction, slot, std::nullopt, resolve));
+  const auto field_storage = field_targets_.Describe(source_, instruction);
+  builder_.SetInsertPoint(
+      EmitFieldReadiness(storage, instruction, slot, *field_storage.type, resolve));
   // 全部字段就绪后不再读取或写入逐字段状态，直到发布替换整个字段块。
   const auto address = FieldAddress(values, *slot, kind_offset);
-  EmitFieldAccess(instruction, object, address);
+  EmitFieldAccess(instruction, object, address, field_storage);
   builder_.CreateBr(done);
   builder_.SetInsertPoint(resolve);
   if (reading) {
@@ -692,15 +653,15 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
       std::unreachable();
     }
     const auto receiver = *signature.receiver;
-    guarded_receiver =
-        field_targets_.at(*declaration).owner == program_.layouts.types[receiver].index;
+    guarded_receiver = field_targets_.declarations.at(*declaration).owner ==
+                       program_.layouts.types[receiver].index;
   }
   // 标量字段体的直接调用和反射入口已经验证规范接收者布局及全部字段就绪。
   auto* storage = guarded_receiver
                       ? LoadInstanceStorage(builder_, object)
                       : GuardReadyFields({.object = object, .expected = direct.layout});
   const auto address = DirectFieldAddress(storage, direct.slot, direct.count);
-  EmitFieldAccess(instruction, object, address);
+  EmitFieldAccess(instruction, object, address, field_targets_.Describe(source_, instruction));
 }
 
 const layout::Type& FunctionEmitter::ArrayElement(const ir::Instruction& instruction) const {
@@ -984,6 +945,7 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
     builder_.CreateCondBr(builder_.CreateICmpULT(length, capacity), append, grow);
     builder_.SetInsertPoint(grow);
     // 只有扩容路径进入运行时；轮询可能改变数组，完整 push 必须重新读取当前长度。
+    PrepareErasedArguments(instruction);
     PrepareInlineRuntimeCall();
     EmitRuntimeBuiltin(instruction);
     PollAfterRuntimeCall();

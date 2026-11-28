@@ -267,24 +267,24 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
   }
   const auto field_offset =
       layout.callable() != nullptr ? sizeof(HeapObject) : offsetof(HeapObject, type_metadata);
-  const auto requested_size =
-      std::max(sizeof(HeapObject), field_offset + FieldStorage::Size(layout.field_count()));
+  const auto field_count = layout.field_count();
+  const auto field_bytes = FieldStorage::Size(field_count);
+  const auto requested_size = std::max(sizeof(HeapObject), field_offset + field_bytes);
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
   }
-  return AllocateObject(ObjectKind::Instance, requested_size,
-                        [&layout, initial_fields, field_offset](HeapObject& object) {
-                          object.layout = &layout;
-                          object.inline_field_offset = static_cast<std::uint8_t>(field_offset);
-                          object.auxiliary_length = layout.field_count();
-                          const auto fields = ObjectFieldStorage(object);
-                          static_assert(static_cast<std::uint8_t>(ValueKind::Null) == 0);
-                          std::uninitialized_fill_n(fields.data(), fields.size(), std::byte{0});
-                          for (std::uint32_t index = 0; index < initial_fields.size(); ++index) {
-                            FieldStorage::Store(fields, layout.field_count(), index,
-                                                initial_fields.subspan(index).front());
-                          }
-                        });
+  return AllocateObject(ObjectKind::Instance, requested_size, [&](HeapObject& object) {
+    object.layout = &layout;
+    object.inline_field_offset = static_cast<std::uint8_t>(field_offset);
+    object.auxiliary_length = field_count;
+    const auto header = std::as_writable_bytes(std::span(&object, 1));
+    const std::span fields(header.subspan(field_offset).data(), field_bytes);
+    static_assert(static_cast<std::uint8_t>(ValueKind::Null) == 0);
+    std::uninitialized_fill_n(fields.data(), fields.size(), std::byte{0});
+    for (std::uint32_t index = 0; index < initial_fields.size(); ++index) {
+      FieldStorage::Store(fields, field_count, index, initial_fields.subspan(index).front());
+    }
+  });
 }
 
 void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {
@@ -292,12 +292,9 @@ void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {
   object.allocation_size = allocation.size;
   object.size_class = allocation.size_class;
   object.next = objects_;
-  if (phase() == GcPhase::Mark && !IsLeafObject(object.kind)) {
-    object.gray_next = gray_;
-    gray_ = &object;
-  } else if (phase() == GcPhase::Sweep) {
-    ProcessGrayObject(object);
-    DrainGray();
+  if (IsCollecting()) {
+    TraceMarkedObject(object);
+    DrainGrayIfSweeping();
   }
   objects_ = &object;
   ++object_count_;
@@ -446,7 +443,18 @@ void Heap::MarkObject(HeapObject& object) noexcept {
     return;
   }
   object.mark_bit = barrier_state_.mark_bit;
-  if (IsLeafObject(object.kind)) {
+  TraceMarkedObject(object);
+}
+
+void Heap::TraceMarkedObject(HeapObject& object) noexcept {
+  if (object.kind == ObjectKind::Instance) {
+    const auto& layout = *object.layout;
+    if (object.inline_field_offset != 0 && layout.reference_fields_.empty() && !layout.callable_) {
+      // 固定布局无字段引用或调用环境时，只需保活布局的所属程序。
+      MarkReference(layout.program_owner_);
+      return;
+    }
+  } else if (IsLeafObject(object.kind)) {
     return;
   }
   object.gray_next = gray_;
@@ -635,10 +643,12 @@ void* Heap::AllocatePooledBlock(std::size_t class_index) noexcept {
     const auto storage = page_storage(page);
     const auto required_bytes = sizeof(BlockPage) + ((page->initialized + 1U) * block_size);
     if (required_bytes > page->committed) [[unlikely]] {
-      const auto committed = CommittedHeapPageBytes(required_bytes);
+      // 批量增长提交前缀，避免密集分配逐个触发同一池页的系统调用。
+      const auto growth = std::min(page->committed * 2U, internal::kHeapBlockPageBytes);
+      const auto committed = std::max(CommittedHeapPageBytes(required_bytes), growth);
       const auto extra_bytes = committed - page->committed;
-      const auto tail = storage.subspan(page->committed);
-      if (internal::CommitHeapBlockPage(tail.data(), extra_bytes) !=
+      const auto tail = storage.subspan(page->committed, extra_bytes);
+      if (internal::CommitHeapBlockPage(tail.data(), tail.size()) !=
           internal::HeapPageCommit::Committed) {
         return nullptr;
       }
@@ -682,7 +692,9 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
 
   switch (object.kind) {
     case ObjectKind::Instance:
-      ReleaseInstance(object);
+      if (object.layout->storage() == ClassStorage::Reloadable) {
+        ReleaseReloadableInstance(object);
+      }
       break;
     case ObjectKind::Host:
       ReleaseHostObject(object);
@@ -743,14 +755,18 @@ void Heap::ReleaseBlock(const Allocation& allocation) noexcept {
 }
 
 std::pair<std::size_t, std::size_t> Heap::SelectBlockClass(std::size_t requested_size) noexcept {
+  if (requested_size <= kSizeClasses[1]) {
+    const auto index = static_cast<std::size_t>(requested_size > kSizeClasses.front());
+    return {kSizeClasses[index], index};
+  }
   if (requested_size > kSizeClasses.back()) {
     return {requested_size, kSizeClasses.size()};
   }
-  const auto block_size = std::bit_ceil(std::max(requested_size, kSizeClasses.front()));
+  const auto block_size = std::bit_ceil(requested_size);
   auto class_index =
       static_cast<std::size_t>(std::bit_width(block_size) - std::bit_width(kSizeClasses.front())) *
       2U;
-  if (class_index != 0U && requested_size <= kSizeClasses[class_index - 1U]) {
+  if (requested_size <= kSizeClasses[class_index - 1U]) {
     --class_index;
   }
   return {kSizeClasses[class_index], class_index};

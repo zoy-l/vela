@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -13,6 +14,31 @@ namespace {
 std::int64_t Step(std::int64_t value) {
   return value + 1;
 }
+
+struct Vec2 final {
+  double x;
+  double y;
+};
+
+constexpr double kVerticalSpeed = 2.0;
+
+class ClassBody final {
+ public:
+  explicit ClassBody(Vec2 position) : position_(position), velocity_{.x = 1.0, .y = kVerticalSpeed} {}
+
+  void Step(double delta) {
+    position_.x += velocity_.x * delta;
+    position_.y += velocity_.y * delta;
+  }
+  [[nodiscard]] Vec2 position() const { return position_; }
+
+ private:
+  Vec2 position_;
+  Vec2 velocity_;
+};
+
+constexpr std::int64_t kFrames = 16;
+constexpr double kDelta = 0.5;
 
 }  // namespace
 
@@ -52,16 +78,11 @@ std::int64_t CppCalls(std::span<const std::int64_t> values) {
 }
 
 std::int64_t CppFlatBodies(std::int64_t size) {
-  struct Vec2 final {
-    double x;
-    double y;
-  };
   struct Body final {
     Vec2 position;
     Vec2 velocity;
   };
   std::vector<Body> bodies;
-  constexpr double kVerticalSpeed = 2.0;
   bodies.reserve(static_cast<std::size_t>(size));
   for (std::int64_t index = 0; index < size; ++index) {
     bodies.push_back({
@@ -70,8 +91,6 @@ std::int64_t CppFlatBodies(std::int64_t size) {
     });
   }
   benchmark::DoNotOptimize(bodies.data());
-  constexpr std::int64_t kFrames = 16;
-  constexpr double kDelta = 0.5;
   for (std::int64_t frame = 0; frame < kFrames; ++frame) {
     for (auto& body : bodies) {
       body.position.x += body.velocity.x * kDelta;
@@ -81,6 +100,27 @@ std::int64_t CppFlatBodies(std::int64_t size) {
   double sum = 0;
   for (const auto& body : bodies) {
     sum += body.position.x + body.position.y;
+  }
+  return static_cast<std::int64_t>(sum);
+}
+
+std::int64_t CppClassBodyMethods(std::int64_t size) {
+  std::vector<std::unique_ptr<ClassBody>> bodies;
+  bodies.reserve(static_cast<std::size_t>(size));
+  for (std::int64_t index = 0; index < size; ++index) {
+    const Vec2 position{.x = static_cast<double>(index), .y = static_cast<double>(index * 2)};
+    bodies.push_back(std::make_unique<ClassBody>(position));
+  }
+  benchmark::DoNotOptimize(bodies.data());
+  for (std::int64_t frame = 0; frame < kFrames; ++frame) {
+    for (const auto& body : bodies) {
+      body->Step(kDelta);
+    }
+  }
+  double sum = 0;
+  for (const auto& body : bodies) {
+    const auto position = body->position();
+    sum += position.x + position.y;
   }
   return static_cast<std::int64_t>(sum);
 }

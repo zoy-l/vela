@@ -25,6 +25,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "compiler/native/struct_values.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -430,6 +431,32 @@ bool CanInlineSmallFunction(const ir::Function& function) {
            instruction.opcode == Opcode::SetField ||
            !ir::AnalyzeEffects(function, instruction).MayCollectOnSuccess();
   });
+}
+
+bool CanUseStructLeaf(const ir::Function& function, NativeDebugging debugging) {
+  if (debugging != NativeDebugging::Safepoints || !function.struct_receiver ||
+      !CanInlineSmallFunction(function) || !IsScalar(function.return_type) ||
+      !std::ranges::all_of(function.value_types, [](const auto& type) {
+        return ManagedSlotCount(type) == 0;
+      })) {
+    return false;
+  }
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions[index];
+    if (ir::IsBackJump(instruction, index) || instruction.construction ||
+        instruction.completes_construction) {
+      return false;
+    }
+    if (instruction.opcode == Opcode::Return || instruction.inline_value) {
+      continue;
+    }
+    const auto effects = ir::AnalyzeEffects(function, instruction);
+    if (effects.MayCollectOnSuccess() || effects.may_suspend ||
+        (instruction.opcode != Opcode::Move && (effects.reads_state || effects.writes_state))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool CanUseScalarFieldBody(const ir::Function& function,

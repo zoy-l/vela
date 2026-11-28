@@ -515,6 +515,8 @@ bool HasConsecutiveLanes(llvm::Value* value,
 struct ArrayLoopShape final {
   std::size_t instructions = 0;
   bool has_records = false;
+  bool has_floating_element_writes = false;
+  bool has_calls = false;
 };
 
 std::optional<ArrayLoopShape> AnalyzeArrayLoopShape(const llvm::Loop& loop) {
@@ -524,9 +526,15 @@ std::optional<ArrayLoopShape> AnalyzeArrayLoopShape(const llvm::Loop& loop) {
   for (const auto* block : loop.blocks()) {
     shape.instructions += block->size();
     for (const auto& instruction : *block) {
-      has_elements |= HasStorageTag(instruction, MemoryRegion::Elements);
+      const auto element = HasStorageTag(instruction, MemoryRegion::Elements);
+      has_elements |= element;
       has_fields |= IsFloatingFieldStore(instruction);
       shape.has_records |= instruction.getMetadata(kNativeRecordFieldMetadata) != nullptr;
+      shape.has_calls |= llvm::isa<llvm::CallBase>(instruction);
+      if (const auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction); store != nullptr) {
+        shape.has_floating_element_writes |=
+            element && store->isSimple() && store->getValueOperand()->getType()->isFPOrFPVectorTy();
+      }
     }
   }
   return has_elements && !has_fields ? std::optional(shape) : std::nullopt;
@@ -555,7 +563,10 @@ class ArrayAccessUnrollHintsPass : public llvm::PassInfoMixin<ArrayAccessUnrollH
       if (trips != 0 && trips <= kPartialUnrollCount) {
         continue;
       }
-      const auto bounded_record = shape->has_records && trips == 0 &&
+      // 无调用的单出口内层可以分摊连续更新的循环控制；轮询仍留在外层片段边界。
+      const auto contiguous_update = shape->has_floating_element_writes && !shape->has_calls &&
+                                     loop->getExitingBlock() != nullptr;
+      const auto bounded_record = (shape->has_records || contiguous_update) && trips == 0 &&
                                   instructions <= kExpandedInstructionBudget / kPartialUnrollCount;
       const auto large_known = trips != 0 && instructions > kExpandedInstructionBudget / trips;
       if (bounded_record || large_known) {

@@ -352,6 +352,18 @@ void FunctionEmitter::EmitTraceFrame(llvm::Value* frame, Builder& cleanup, llvm:
   cleanup.SetInsertPoint(restored);
 }
 
+void FunctionEmitter::ClearErasedArguments() {
+  builder_.CreateMemSet(arguments_, builder_.getInt8(0),
+                        temporary_count_ * sizeof(runtime::NativeValue),
+                        llvm::Align(alignof(runtime::NativeValue)));
+}
+
+void FunctionEmitter::PrepareErasedArguments(const ir::Instruction& instruction) {
+  if (erased_arguments_ && HasErasedArguments(instruction)) {
+    ClearErasedArguments();
+  }
+}
+
 bool FunctionEmitter::HasErasedArguments(const ir::Instruction& instruction) const {
   if (instruction.inline_value) {
     return false;
@@ -389,7 +401,17 @@ bool FunctionEmitter::HasErasedArguments(const ir::Instruction& instruction) con
     case Opcode::EqualValue:
     case Opcode::NotEqualValue:
       return ir::AnalyzeEffects(source_, instruction).MayCollectOnSuccess();
-    case Opcode::SetField:
+    case Opcode::SetField: {
+      if (!is_struct(instruction.lhs)) {
+        return false;
+      }
+      if (instruction.field_declaration ||
+          source_.value_types.at(instruction.dst).kind != Kind::Class) {
+        return true;
+      }
+      const auto storage = field_targets_.Describe(source_, instruction);
+      return storage.owner == nullptr || !storage.HasInlineValue();
+    }
     case Opcode::SetGlobal:
     case Opcode::Print:
     case Opcode::NewFuture:
@@ -437,7 +459,7 @@ void FunctionEmitter::InitializeErasedRoots() {
   // 普通根保存内联叶字段；这些区间单独持有擦除后产生的对象身份。
   // 参数逐个装箱、调试快照及恢复快照均可能在填充途中再次分配。
   if (erased_arguments_) {
-    clear(arguments_, temporary_count_ * sizeof(runtime::NativeValue));
+    ClearErasedArguments();
     retain(arguments_, temporary_count_, sizeof(runtime::NativeValue));
   }
   if (debug_values_ != nullptr) {
@@ -599,7 +621,7 @@ void FunctionEmitter::CacheFields() {
     if (field_layouts_.contains(declaration)) {
       continue;
     }
-    const auto target = field_targets_.at(declaration);
+    const auto target = field_targets_.declarations.at(declaration);
     const auto [owner, inserted] = classes.try_emplace(target.owner, nullptr);
     if (inserted) {
       auto* address = builder_.CreateConstGEP1_64(builder_.getPtrTy(), table, target.owner);

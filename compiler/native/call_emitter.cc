@@ -58,7 +58,7 @@ llvm::Value* FunctionEmitter::StructReceiverPlace(const ir::StructReceiver& plac
                  : GlobalStructPlace(builder_, ProgramData(), place.slot, place.type);
     case ir::StructReceiver::Kind::Field: {
       const auto& receiver_type = source_.value_types.at(place.receiver);
-      const auto* owner = FindClass(receiver_type);
+      const auto* owner = field_targets_.FindClass(receiver_type);
       const auto slot = owner == nullptr ? place.slot : ir::PhysicalFieldOffset(*owner, place.slot);
       return owner != nullptr && owner->kind == ir::Class::Kind::CaptureCell
                  ? CapturedStructPlace(builder_, Reference(place.receiver), place.type)
@@ -219,11 +219,13 @@ llvm::BasicBlock* FunctionEmitter::EmitIntrinsicCall(const ir::Instruction& inst
 
 std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& instruction,
                                                          CallableTarget selected,
-                                                         std::optional<std::size_t> borrowed) {
+                                                         std::optional<std::size_t> borrowed,
+                                                         const ir::StructReceiver* array_receiver) {
   const auto& callee = program_.functions.at(selected.function);
   std::vector<llvm::Value*> arguments{body_->getArg(0)};
   const auto closure = selected.mode == CallableMode::Closure;
   const auto bound = selected.mode == CallableMode::BoundMethod;
+  const auto implicit_receiver_count = static_cast<std::size_t>(closure || bound);
   for (std::size_t index = 0; index < callee.parameter_count; ++index) {
     if (index == 0 && borrowed) {
       arguments.push_back(records_.at(*borrowed));
@@ -242,11 +244,12 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
     const auto reg =
         closure && index == 0
             ? instruction.rhs
-            : static_cast<ir::RegisterId>(instruction.lhs + index - ((closure || bound) ? 1 : 0));
+            : static_cast<ir::RegisterId>(instruction.lhs + index - implicit_receiver_count);
     const auto& source_type = source_.value_types.at(reg);
     const auto& target_type = callee.value_types.at(index);
     if (index == 0 && callee.struct_receiver) {
-      arguments.push_back(StructCallReceiver(instruction, reg, target_type));
+      arguments.push_back(
+          array_receiver == nullptr ? StructCallReceiver(instruction, reg, target_type) : nullptr);
       continue;
     }
     auto* value = Load(reg);
@@ -284,7 +287,8 @@ void FunctionEmitter::StoreCallResult(ir::RegisterId reg,
 
 void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
                                    CallableTarget selected,
-                                   std::span<llvm::Value* const> arguments) {
+                                   std::span<llvm::Value*> arguments,
+                                   const ir::StructReceiver* array_receiver) {
   const auto& target = generated_[selected.function];
   const auto& callee = program_.functions.at(selected.function);
   auto* result = arguments.back();
@@ -317,6 +321,10 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
     branch->setMetadata(kNativeBoundedPollMetadata, llvm::MDNode::get(context, {}));
   }
   builder_.SetInsertPoint(leaf);
+  if (array_receiver != nullptr) {
+    // 叶路径的位置描述符不传给可观察调用，内联后可以完全消除。
+    leaf_arguments[1] = StructReceiverPlace(*array_receiver);
+  }
   if (target.budgeted_recursion) {
     leaf_arguments.insert(leaf_arguments.begin() + layout.budget,
                           builder_.getInt32(kRecursiveLeafDepth));
@@ -345,7 +353,15 @@ void FunctionEmitter::EmitLeafCall(const ir::Instruction& instruction,
   builder_.CreateBr(merge);
   builder_.SetInsertPoint(observable);
   PrepareObservableCall();
+  if (array_receiver != nullptr) {
+    arguments[1] = StructReceiverPlace(*array_receiver);
+  }
   auto* called = builder_.CreateCall(target.body, arguments);
+  if (callee.struct_receiver) {
+    // 观察路径使用完整接收位置；正常分支仍可内联并合并相邻的元素访问。
+    called->addFnAttr(llvm::Attribute::NoInline);
+    MarkGuardFailure(*called);
+  }
   CheckStatus(called);
   StoreCallResult(instruction.dst, callee.return_type, result);
   PollAfterRuntimeCall();
@@ -428,9 +444,16 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   const auto selection = SelectCallEntry(selected, instruction_index_);
-  auto arguments = CallArguments(instruction, selected, selection.borrowed);
   const auto call_entry = selection.entry;
   const auto leaf_call = call_entry == CallEntry::Leaf;
+  const auto* place = instruction.struct_receiver.get();
+  const auto* array_receiver = leaf_call && target.leaf_guard == nullptr &&
+                                       callee.struct_receiver && place != nullptr &&
+                                       place->kind == ir::StructReceiver::Kind::Index &&
+                                       place->fields.empty() && !place->type.nullable
+                                   ? place
+                                   : nullptr;
+  auto arguments = CallArguments(instruction, selected, selection.borrowed, array_receiver);
   auto* result = leaf_call || call_entry == CallEntry::ScalarField ? leaf_result_ : result_;
   arguments.back() = result;
   auto* import_done = EmitInlineImportCall(instruction, selected, arguments);
@@ -448,7 +471,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
                                       "call.typed.entry");
     status = builder_.CreateCall(target.body->getFunctionType(), entry, arguments);
   } else if (leaf_call) {
-    EmitLeafCall(instruction, selected, arguments);
+    EmitLeafCall(instruction, selected, arguments, array_receiver);
   } else if (call_entry == CallEntry::ScalarField) {
     status = EmitScalarFieldCall(selected, arguments);
   } else {

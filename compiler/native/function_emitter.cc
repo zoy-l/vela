@@ -69,7 +69,14 @@ bool FunctionEmitter::HasInlineRuntimePath(std::size_t index) const {
   const auto& instruction = source_.instructions.at(index);
   if (instruction.opcode == Opcode::SetField && !instruction.inline_value &&
       source_.value_types.at(instruction.lhs).value_layout != nullptr) {
-    return false;
+    return !HasErasedArguments(instruction);
+  }
+  if (instruction.opcode == Opcode::SetIndex &&
+      source_.value_types.at(instruction.rhs).value_layout != nullptr) {
+    const auto& element = ArrayElement(instruction);
+    // 内联元素的写入不装箱；越界失败由 Fail 在失败分支保存位置和活动根。
+    return element.kind == layout::Type::Kind::Class &&
+           program_.classes.at(element.index).value_layout != nullptr;
   }
   if (ir::IsBuiltinCall(instruction, Builtin::ArrayPush) &&
       source_.value_types.at(instruction.lhs + 1).value_layout != nullptr) {
@@ -786,10 +793,8 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   const auto& instruction = source_.instructions.at(index);
   instruction_index_ = index;
   builder_.SetInsertPoint(blocks_.at(index));
-  if (erased_arguments_ && HasErasedArguments(instruction)) {
-    builder_.CreateMemSet(arguments_, builder_.getInt8(0),
-                          temporary_count_ * sizeof(runtime::NativeValue),
-                          llvm::Align(alignof(runtime::NativeValue)));
+  if (!ir::IsBuiltinCall(instruction, Builtin::ArrayPush)) {
+    PrepareErasedArguments(instruction);
   }
   const auto safepoint = IsBoundaryPollRequired(index);
   boundary_ready_ = nullptr;
@@ -1102,7 +1107,7 @@ FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
       .temporary_count = PlanTemporaryCount(function, program, roots),
       .suspension_capacity = 0,
       .field_accesses = {},
-      .field_kind_writes = FindFieldKindWrites(function, program, roots.safepoints),
+      .field_kind_writes = FindFieldKindWrites(function, program, field_targets, roots.safepoints),
       .direct_calls = {},
       .reflection_operations = PlanReflectionOperations(function, program.functions),
       .arrays = {},

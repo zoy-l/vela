@@ -455,7 +455,7 @@ void FunctionEmitter::EmitReflectedCall(const ir::Instruction& instruction,
         *slow);
     unpacked.push_back(leaf_result_);
     PrepareTraceFrame();
-    EmitLeafCall(instruction, {.function = bound->target}, unpacked);
+    EmitLeafCall(instruction, {.function = bound->target}, unpacked, nullptr);
   } else {
     auto* call = llvm::BasicBlock::Create(context, "reflection.call", body_);
     auto* status = bound == nullptr

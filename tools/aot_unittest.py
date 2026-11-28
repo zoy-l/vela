@@ -956,6 +956,35 @@ export func calculate(): int {
 }
 """)
 
+    def test_struct_leaf_methods_preserve_writes_before_arithmetic_failure(self) -> None:
+        self.check_collected_calculation("struct_leaf_failure", """
+external func collect(): void;
+struct Body {
+  x: int;
+  y: int;
+  update(x: int, y: int): void {
+    this.x += x;
+    this.y += y;
+  }
+}
+func run(values: Body[]): void {
+  const size = values.length;
+  for (let i = 0; i < size; i++) { values[i].update(1, 1); }
+}
+export func calculate(): int {
+  const values = [Body(x: 18, y: 0), Body(x: 20, y: 9223372036854775807),
+                  Body(x: 57, y: 2)];
+  try { run(values); return -1; }
+  catch (error: Error) {
+    if (error.code != 'IntegerOverflow') { return -2; }
+  }
+  collect();
+  if (values[0].y != 1 || values[1].y != 9223372036854775807 ||
+      values[2].x != 57 || values[2].y != 2) { return -3; }
+  return values[0].x + values[0].y + values[1].x + 1;
+}
+""")
+
     def test_inherited_constructors_preserve_defaults_generics_and_factories(self) -> None:
         self.check_collected_calculation("inherited_constructors", """
 external func collect(): void;

@@ -66,12 +66,14 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/local_ssa.h"
 #include "compiler/native/loop_cloning.h"
+#include "compiler/native/memory_regions.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 namespace {
 
 constexpr auto kIntegerBits = std::numeric_limits<std::uint64_t>::digits;
+constexpr auto kArrayLengthBits = std::numeric_limits<std::uint32_t>::digits;
 constexpr auto kValueKindBits = std::numeric_limits<std::uint8_t>::digits;
 // 常见的归约只有两组受查更新，内联容纳其指令集合。
 constexpr unsigned kInlineAllowedValues = 16;
@@ -830,27 +832,89 @@ std::optional<unsigned> RecheckedHeaderEdge(llvm::CondBrInst& branch,
 
 using RecheckedBounds = llvm::DenseMap<llvm::CondBrInst*, unsigned>;
 
-RecheckedBounds FindRecheckedBounds(const CountedLoop& counted, const BoundedRegion& region) {
-  RecheckedBounds result;
-  for (auto* block : region.blocks) {
-    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
-    if (branch == nullptr || branch == counted.condition) {
-      continue;
-    }
-    if (const auto ready = RecheckedHeaderEdge(*branch, counted, region)) {
-      result.try_emplace(branch, *ready);
-    }
+llvm::LoadInst* ArrayLengthLoad(llvm::Value* value) {
+  auto* widened = llvm::dyn_cast<llvm::ZExtInst>(value);
+  if (widened == nullptr) {
+    return nullptr;
   }
-  return result;
+  auto* length = llvm::dyn_cast<llvm::LoadInst>(widened->getOperand(0));
+  if (length == nullptr || !length->isSimple() ||
+      !length->getType()->isIntegerTy(kArrayLengthBits) ||
+      !HasStorageTag(*length, MemoryRegion::HeapHeader)) {
+    return nullptr;
+  }
+  return length;
 }
 
 struct StripMinePlan final {
   CountedLoop counted;
   RecheckedBounds rechecked;
+  llvm::LoadInst* array_length = nullptr;
 };
 
+llvm::Value* ArrayLengthOwner(llvm::LoadInst& length) {
+  std::int64_t offset = 0;
+  auto* owner = llvm::GetPointerBaseWithConstantOffset(length.getPointerOperand(), offset,
+                                                       length.getDataLayout());
+  return std::cmp_equal(offset, runtime::NativeMemoryLayout::kObjectLength) ? owner : nullptr;
+}
+
+std::optional<unsigned> CheckedArrayIndexEdge(llvm::CondBrInst& branch,
+                                              const CountedLoop& counted,
+                                              const llvm::Value& owner,
+                                              const BoundedRegion& region,
+                                              llvm::AAResults& aliases) {
+  auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(branch.getCondition());
+  if (comparison == nullptr || comparison->getOperand(0) != counted.index) {
+    return std::nullopt;
+  }
+  const auto predicate = comparison->getPredicate();
+  if (predicate != llvm::CmpInst::ICMP_ULT && predicate != llvm::CmpInst::ICMP_UGE) {
+    return std::nullopt;
+  }
+  auto* length = ArrayLengthLoad(comparison->getOperand(1));
+  if (length == nullptr || !counted.loop->contains(length)) {
+    return std::nullopt;
+  }
+  const GuardEqualities no_equalities;
+  if (ArrayLengthOwner(*length) != &owner ||
+      !CanCopyGuardLoad(*length, region, no_equalities, aliases, GuardLoadMode::Stable)) {
+    return std::nullopt;
+  }
+  return static_cast<unsigned>(predicate == llvm::CmpInst::ICMP_UGE);
+}
+
+void FindRecheckedBounds(StripMinePlan& plan,
+                         const BoundedRegion& region,
+                         llvm::AAResults& aliases) {
+  const auto& counted = plan.counted;
+  auto* snapshot = ArrayLengthLoad(counted.bound);
+  const auto& loop = *counted.loop;
+  auto* owner = counted.direction == 1 && snapshot != nullptr && loop.isLoopInvariant(snapshot) &&
+                        loop.isLoopInvariant(snapshot->getPointerOperand())
+                    ? ArrayLengthOwner(*snapshot)
+                    : nullptr;
+  for (auto* block : region.blocks) {
+    auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator());
+    if (branch == nullptr || branch == counted.condition) {
+      continue;
+    }
+    auto ready = RecheckedHeaderEdge(*branch, counted, region);
+    if (!ready && owner != nullptr) {
+      ready = CheckedArrayIndexEdge(*branch, counted, *owner, region, aliases);
+      if (ready) {
+        plan.array_length = snapshot;
+      }
+    }
+    if (ready) {
+      plan.rechecked.try_emplace(branch, *ready);
+    }
+  }
+}
+
 std::optional<StripMinePlan> PlanStripMining(const CountedLoop& counted,
-                                             const BoundedRegion& region) {
+                                             const BoundedRegion& region,
+                                             llvm::AAResults& aliases) {
   const auto& loop = *counted.loop;
   const auto* header = loop.getHeader();
   // 分块边界会重新执行循环条件；条件前不得存在可观察的写入或调用。
@@ -861,10 +925,8 @@ std::optional<StripMinePlan> PlanStripMining(const CountedLoop& counted,
       })) {
     return std::nullopt;
   }
-  StripMinePlan plan{
-      .counted = counted,
-      .rechecked = FindRecheckedBounds(counted, region),
-  };
+  StripMinePlan plan{.counted = counted, .rechecked = RecheckedBounds{}};
+  FindRecheckedBounds(plan, region, aliases);
   const auto& guards = region.guards;
   if (guards.empty()) {
     return plan;
@@ -876,6 +938,9 @@ std::optional<StripMinePlan> PlanStripMining(const CountedLoop& counted,
   for (const auto& guard : guards) {
     ready_successors.insert(
         {guard.branch->getParent(), guard.branch->getSuccessor(guard.ready_edge)});
+  }
+  for (const auto& [branch, edge] : plan.rechecked) {
+    ready_successors.try_emplace(branch->getParent(), branch->getSuccessor(edge));
   }
   // 守卫已按成功路径的支配关系排序。每次非空迭代必须到达最后一级守卫，
   // 不能越过可跳过它的分支、break 或 return 提前解引用本轮不使用的参数。
@@ -897,12 +962,6 @@ std::optional<StripMinePlan> PlanStripMining(const CountedLoop& counted,
     }
     if (auto* ready = ready_successors.lookup(block)) {
       pending.push_back(ready);
-    } else if (auto* branch = llvm::dyn_cast<llvm::CondBrInst>(block->getTerminator())) {
-      if (const auto repeated = plan.rechecked.find(branch); repeated != plan.rechecked.end()) {
-        pending.push_back(branch->getSuccessor(repeated->second));
-      } else {
-        pending.append(llvm::succ_begin(block), llvm::succ_end(block));
-      }
     } else {
       pending.append(llvm::succ_begin(block), llvm::succ_end(block));
     }
@@ -1025,8 +1084,8 @@ void GuardBoundedLoop(llvm::Loop& loop,
   RemoveBoundedPolls(guards, mapped);
 }
 
-void RemoveRecheckedBounds(const StripMinePlan& plan, const llvm::ValueToValueMapTy& mapped) {
-  for (const auto& [branch, ready_edge] : plan.rechecked) {
+void RemoveRecheckedBounds(const RecheckedBounds& checks, const llvm::ValueToValueMapTy& mapped) {
+  for (const auto& [branch, ready_edge] : checks) {
     auto* cloned = llvm::dyn_cast_or_null<llvm::CondBrInst>(mapped.lookup(branch));
     if (cloned == nullptr || cloned->getSuccessor(0) == cloned->getSuccessor(1)) {
       continue;
@@ -1071,12 +1130,22 @@ void StripMineBoundedLoop(const StripMinePlan& plan,
   llvm::IRBuilder<>(exit).CreateBr(outer);
   auto* more = counted.direction == 1 ? guard.CreateICmpSLT(start, full_bound)
                                       : guard.CreateICmpSGT(start, full_bound);
+  if (auto* snapshot = plan.array_length) {
+    // 旧长度只用于计数。轮询可能改变数组，必须在每个片段入口重新读取当前长度。
+    auto* length = guard.CreateAlignedLoad(snapshot->getType(), snapshot->getPointerOperand(),
+                                           snapshot->getAlign());
+    length->copyMetadata(*snapshot, {llvm::LLVMContext::MD_tbaa});
+    more = guard.CreateAnd(
+        more,
+        guard.CreateAnd(guard.CreateICmpSGE(start, guard.getInt64(0)),
+                        guard.CreateICmpULE(bound, guard.CreateZExt(length, bound->getType()))));
+  }
   auto* branch = guard.CreateCondBr(more, fast, header);
   placeholder->eraseFromParent();
   branch->setCondition(WithoutPendingPolls(loop, more, region, branch, conditions));
   RemoveBoundedPolls(region.polls, mapped);
   GuardBoundedLoop(loop, region, values, *branch);
-  RemoveRecheckedBounds(plan, mapped);
+  RemoveRecheckedBounds(plan.rechecked, mapped);
 }
 
 unsigned FindLatchTripCount(llvm::Loop& loop, llvm::ScalarEvolution& evolution) {
@@ -1182,7 +1251,8 @@ class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
       }
       const auto counted = MatchCountedLoop(*loop, dominators, &stable);
       const auto limit = NativePollBudget(region.instructions);
-      auto strip_mine = counted && limit != 0 ? PlanStripMining(*counted, region) : std::nullopt;
+      auto strip_mine =
+          counted && limit != 0 ? PlanStripMining(*counted, region, aliases) : std::nullopt;
       if (strip_mine) {
         plans.push_back({
             .loop = loop,

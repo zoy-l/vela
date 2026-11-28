@@ -67,4 +67,4 @@ C++ 使用普通 `std::string` 构造与析构，Vela 使用托管堆和自动 G
 
 公共 Release O3，LLVM/Clang 23.1.5。AOT 使用闭合程序；JIT 使用闭合 Baseline tier、Eager 物化和 LLVM O3。测量范围为两种规模的稳态执行。
 
-采样每项最少 0.2 秒，7 次随机交错。聚合摘要的 `suite.groups.standard_aot` 和 `suite.groups.standard_closed_jit` 保存复现命令和完整过滤器。
+采样每项最少 0.2 秒，7 次随机交错。提交 `0bcaace` 中滚动摘要的 `latest.suite.groups.standard_aot` 和 `latest.suite.groups.standard_closed_jit` 保存复现命令和完整过滤器。

@@ -21,6 +21,7 @@ struct NumericInput final {
 [[nodiscard]] std::int64_t CppArithmetic(std::span<const std::int64_t> values);
 [[nodiscard]] std::int64_t CppCalls(std::span<const std::int64_t> values);
 [[nodiscard]] std::int64_t CppFlatBodies(std::int64_t size);
+[[nodiscard]] std::int64_t CppClassBodyMethods(std::int64_t size);
 
 // 仅入口延迟对照保留不可内联边界；算法用例允许编译器正常内联。
 [[nodiscard]] std::int64_t CppScalarEntry(std::int64_t value);

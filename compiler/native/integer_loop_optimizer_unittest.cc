@@ -377,6 +377,104 @@ void AddEarlyBoundedPollPasses(llvm::FunctionPassManager& passes) {
   AddBoundedPollPasses(passes, FieldLoopUnrolling::Disabled);
 }
 
+enum class ChunkLengthSource : std::uint8_t { Current, Previous, OtherArray, Modified };
+
+class ChunkArrayBoundsTest : public testing::TestWithParam<ChunkLengthSource> {};
+
+TEST_P(ChunkArrayBoundsTest, RemovesOnlyBoundsUsingTheCurrentLengthOfTheSameArray) {
+  llvm::LLVMContext context;
+  const auto module = test::ParseModule(R"(
+declare void @process()
+declare void @resize(ptr)
+define i64 @update(ptr %array, ptr %other, ptr %values, ptr %requests, i64 %start) {
+entry:
+  br label %snapshot
+snapshot:
+  %bound = zext i32 0 to i64
+  br label %header
+header:
+  %i = phi i64 [ %start, %snapshot ], [ %next, %latch ]
+  %more = icmp slt i64 %i, %bound
+  br i1 %more, label %poll, label %done
+poll:
+  %request = load atomic i8, ptr %requests monotonic, align 1, !vela.poll.ready.state !0
+  %pending = icmp ne i8 %request, 0
+  br i1 %pending, label %process, label %bounds, !vela.poll.bounded !1
+process:
+  call void @process()
+  br label %bounds
+bounds:
+  %valid = icmp ult i64 %i, 0
+  br i1 %valid, label %write, label %done
+write:
+  %slot = getelementptr i64, ptr %values, i64 %i
+  store i64 %i, ptr %slot, align 8
+  br label %latch
+latch:
+  %next = add nsw i64 %i, 1
+  br label %header
+done:
+  ret i64 %i
+}
+!0 = !{i8 0}
+!1 = !{}
+)",
+                                        context);
+  ASSERT_NE(module, nullptr);
+  auto& function = *module->getFunction("update");
+  const auto& symbols = *function.getValueSymbolTable();
+  const auto source = GetParam();
+  auto* bound = llvm::cast<llvm::ZExtInst>(symbols.lookup("bound"));
+  llvm::IRBuilder<> snapshot(bound);
+  auto* address = snapshot.CreateConstGEP1_64(snapshot.getInt8Ty(), function.getArg(0),
+                                             runtime::NativeMemoryLayout::kObjectLength);
+  auto* tag = NativeMemoryTag(context, MemoryRegion::HeapHeader);
+  auto* original = snapshot.CreateLoad(snapshot.getInt32Ty(), address);
+  original->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+  bound->setOperand(0, original);
+  auto* valid = llvm::cast<llvm::ICmpInst>(symbols.lookup("valid"));
+  llvm::IRBuilder<> previous(function.getEntryBlock().getTerminator());
+  llvm::IRBuilder<> current(valid);
+  auto& read = source == ChunkLengthSource::Previous ? previous : current;
+  auto* owner = function.getArg(source == ChunkLengthSource::OtherArray ? 1U : 0U);
+  auto* checked_address = read.CreateConstGEP1_64(read.getInt8Ty(), owner,
+                                                runtime::NativeMemoryLayout::kObjectLength);
+  auto* length = read.CreateLoad(read.getInt32Ty(), checked_address, "checked.length");
+  length->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+  valid->setOperand(1, read.CreateZExt(length, valid->getOperand(0)->getType()));
+  if (source == ChunkLengthSource::Previous) {
+    // 计数上界和旧快照来自同一字段，但两次读取之间允许数组改变。
+    previous.CreateCall(module->getFunction("resize"), {owner});
+  }
+  auto* slot = llvm::cast<llvm::Instruction>(symbols.lookup("slot"));
+  slot->getNextNode()->setMetadata(llvm::LLVMContext::MD_tbaa,
+                                   NativeMemoryTag(context, MemoryRegion::Elements));
+  if (source == ChunkLengthSource::Modified) {
+    llvm::IRBuilder<> write(slot);
+    write.CreateStore(write.getInt32(0), address)->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+  }
+  ASSERT_FALSE(llvm::verifyModule(*module));
+  test::RunFunctionPasses(function, AddEarlyBoundedPollPasses);
+  ASSERT_FALSE(llvm::verifyModule(*module));
+  EXPECT_EQ(test::CountLoopsCalling(*module, "process"), 1U);
+  std::size_t length_checks = 0;
+  for (const auto& instruction : llvm::instructions(function)) {
+    const auto* check = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+    if (check == nullptr || !check->getName().starts_with("valid")) {
+      continue;
+    }
+    ++length_checks;
+  }
+  EXPECT_EQ(length_checks, source == ChunkLengthSource::Current ? 1U : 2U);
+}
+
+INSTANTIATE_TEST_SUITE_P(ArrayLengths,
+                         ChunkArrayBoundsTest,
+                         testing::Values(ChunkLengthSource::Current,
+                                          ChunkLengthSource::Previous,
+                                          ChunkLengthSource::OtherArray,
+                                          ChunkLengthSource::Modified));
+
 TEST_P(BoundedPollExitTest, VersionsPostTestCountsAndKeepsCheckedArithmeticAndRequestHandling) {
   llvm::LLVMContext context;
   const auto module = test::ParseModule(R"(

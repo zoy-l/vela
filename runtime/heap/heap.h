@@ -508,6 +508,7 @@ class Heap final {
   void MarkReference(HeapObject* object) noexcept;
   void MarkReference(StringObject* string) noexcept;
   void MarkObject(HeapObject& object) noexcept;
+  void TraceMarkedObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
   void DrainGrayIfSweeping() noexcept;
@@ -559,7 +560,7 @@ class Heap final {
   void ReleaseInstanceStorage(InstanceStorage& storage) noexcept;
   void RegisterInstance(HeapObject& object, InstanceStorage& storage) noexcept;
   void UnregisterInstance(HeapObject& object, InstanceStorage& storage) noexcept;
-  void ReleaseInstance(HeapObject& object) noexcept;
+  void ReleaseReloadableInstance(HeapObject& object) noexcept;
   struct StringSize final {
     std::size_t bytes;
     std::size_t code_points;

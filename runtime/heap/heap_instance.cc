@@ -100,10 +100,7 @@ void Heap::UnregisterInstance(HeapObject& object, InstanceStorage& storage) noex
   }
 }
 
-void Heap::ReleaseInstance(HeapObject& object) noexcept {
-  if (object.layout->storage() == ClassStorage::Inline) {
-    return;
-  }
+void Heap::ReleaseReloadableInstance(HeapObject& object) noexcept {
   auto& storage = *static_cast<InstanceStorage*>(object.native_payload());
   UnregisterInstance(object, storage);
   ReleaseInstanceStorage(storage);

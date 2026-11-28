@@ -44,6 +44,7 @@ inline constexpr std::size_t kMaximumInlineInstructions = 64;
 enum class LeafKind : std::uint8_t { None, Bounded, Guarded, Recursive };
 
 [[nodiscard]] bool CanInlineSmallFunction(const ir::Function& function);
+[[nodiscard]] bool CanUseStructLeaf(const ir::Function& function, NativeDebugging debugging);
 [[nodiscard]] bool CanUseScalarFieldBody(const ir::Function& function,
                                          NativeProgramMode mode,
                                          NativeDebugging debugging);

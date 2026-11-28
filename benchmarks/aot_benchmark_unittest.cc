@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -82,18 +83,18 @@ void VerifyNumericResults(runtime::NativeInstance& instance) {
 }
 
 void VerifyBodyResults(runtime::NativeInstance& instance) {
-  constexpr std::array kKernels{
-      AotKernel::FlatStructFields,
-      AotKernel::FlatStructMethods,
-      AotKernel::ClassBodyMethods,
+  constexpr std::array kReferences{
+      std::pair{AotKernel::FlatStructFields, CppFlatBodies},
+      std::pair{AotKernel::FlatStructMethods, CppFlatBodies},
+      std::pair{AotKernel::ClassBodyMethods, CppClassBodyMethods},
   };
   runtime::NativeExecution execution(instance);
-  for (const auto kernel : kKernels) {
+  for (const auto& [kernel, cpp] : kReferences) {
     const auto problem = std::ranges::find(kAotBenchmarkCases, kernel, &AotBenchmarkCase::kernel);
     ASSERT_NE(problem, kAotBenchmarkCases.end());
     SCOPED_TRACE(problem->name);
     EXPECT_EQ(problem->size, kAotWorkloadSize);
-    const auto expected = CppFlatBodies(problem->size);
+    const auto expected = cpp(problem->size);
     EXPECT_EQ(expected, problem->expected);
     const auto function = instance.FindFunction(problem->name);
     ASSERT_TRUE(function);

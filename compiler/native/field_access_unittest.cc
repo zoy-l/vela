@@ -20,15 +20,23 @@ namespace {
 std::ptrdiff_t RedundantFieldWrites(const ir::Function& function, const ir::Program& program) {
   const auto roots = PlanNativeRoots(function, program.functions, program.native_mode,
                                      NativeDebugging::Safepoints);
-  const auto writes = FindFieldKindWrites(function, program, roots.safepoints);
+  const auto writes =
+      FindFieldKindWrites(function, program, FindFieldTargets(program), roots.safepoints);
   return std::ranges::count(writes, FieldKindWrite::Redundant);
 }
 
 TEST(FieldAccessTest, KeepsInitializationAndKindTransitionsWhileRemovingRepeatedScalarKinds) {
   const auto prepared = ir::test::Prepare(R"(
 class Point { x: double; y: double; optional: double?; any: dynamic; }
+struct Position { x: double; y: double; }
+class Body { position: Position; optional: Position?; }
 export func make(): Point { return Point(x: 1.0, y: 2.0, optional: null, any: null); }
 export func update(point: Point): void { point.x += 1.0; point.y += 2.0; }
+export func updateNested(body: Body): void { body.position.x += 1.0; }
+export func optionalNested(body: Body): void {
+  const p = body.optional;
+  if (p != null) { body.optional = Position(x: p.x + 1.0, y: p.y); }
+}
 export func transitions(point: Point): void {
   point.optional = 1.0; point.optional = 2.0; point.optional = null;
   point.any = 3.0; point.any = 4.0; point.any = 'changed'; point.any = 5.0;
@@ -41,7 +49,12 @@ export func aliased(point: Point, alias: Point): void {
   ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
   const auto& program = prepared.program;
   for (const auto& function : program.functions) {
-    const auto expected = function.name == "update" ? 2 : 0;
+    std::ptrdiff_t expected = 0;
+    if (function.name == "update") {
+      expected = 2;
+    } else if (function.name == "updateNested") {
+      expected = 1;
+    }
     EXPECT_EQ(RedundantFieldWrites(function, program), expected) << function.name;
   }
 }
@@ -79,11 +92,12 @@ export func update(point: Point): void { point.x += 1.0; }
   const auto& function = *found;
   const auto roots = PlanNativeRoots(function, program.functions, program.native_mode,
                                      NativeDebugging::Instructions);
-  const auto writes = FindFieldKindWrites(function, program, roots.safepoints);
+  const auto targets = FindFieldTargets(program);
+  const auto writes = FindFieldKindWrites(function, program, targets, roots.safepoints);
   EXPECT_EQ(std::ranges::count(writes, FieldKindWrite::Redundant), 0);
   program.native_mode = NativeProgramMode::Reloadable;
   const std::vector<std::uint8_t> safepoints(function.instructions.size());
-  const auto recovery = FindFieldKindWrites(function, program, safepoints);
+  const auto recovery = FindFieldKindWrites(function, program, targets, safepoints);
   EXPECT_EQ(std::ranges::count(recovery, FieldKindWrite::Redundant), 0);
 }
 

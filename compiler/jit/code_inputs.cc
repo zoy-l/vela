@@ -330,7 +330,7 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
     Sequence(writer, function.handlers,
              [](BinaryWriter& output, const auto& handler) { Put(output, handler.target); });
     FunctionCodeInputs input;
-    InstructionInputs(writer, function, program, tier, classes, signatures, fields);
+    InstructionInputs(writer, function, program, tier, classes, signatures, fields.declarations);
     Sequence(writer, calls.direct_calls.at(function_index),
              [&](BinaryWriter& output, const auto& target) {
                Put(output, target.has_value());

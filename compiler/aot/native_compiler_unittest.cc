@@ -988,6 +988,61 @@ export func read(values: int[], index: int): int { return values[index]; }
   EXPECT_EQ(text.find("source.position"), std::string::npos);
 }
 
+TEST(NativeCompilerTest, InlineStructFieldWritesRetainBarriersWithoutErasedRoots) {
+  const auto prepared = Prepare(R"(
+export struct Pair { text: string; value: int; }
+export class Holder { pair: Pair; }
+export func write(holder: Holder, text: string, value: int): void {
+  holder.pair = Pair(text: text, value: value);
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {
+                                                    .optimization = NativeOptimization::None,
+                                                    .exports = {"write"},
+                                                    .preserve_ir = true,
+                                                });
+  ASSERT_TRUE(result) << result.error().front().message;
+  llvm::LLVMContext context;
+  const auto module = ParseModule(result->llvm_ir, context);
+  ASSERT_NE(module, nullptr);
+  ASSERT_EQ(result->exports.size(), 1U);
+  const auto* body =
+      module->getFunction("vela_aot_body_" + std::to_string(result->exports.front().function));
+  ASSERT_NE(body, nullptr);
+  const auto has_call = [&](std::string_view symbol) {
+    const auto* target = module->getFunction(symbol);
+    return target != nullptr &&
+           std::ranges::any_of(llvm::instructions(body), [&](const auto& instruction) {
+             const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+             return call != nullptr && call->getCalledFunction() == target;
+           });
+  };
+  EXPECT_FALSE(has_call(runtime::kNativeRootsAttachSymbol));
+  EXPECT_FALSE(has_call(runtime::kNativeRootsExitSymbol));
+  EXPECT_TRUE(has_call(runtime::kNativeWriteBarrierSymbol));
+}
+
+TEST(NativeCompilerTest, CompilesGuardedStructMethodsCalledOnArrayElements) {
+  const auto prepared = Prepare(R"(
+struct Cell {
+  value: int;
+  total(bound: int): int {
+    let sum = 0;
+    for (let i = 0; i < bound; i++) { sum += i; }
+    return sum;
+  }
+}
+export func run(bound: int): int {
+  const cells = [Cell(value: 1)];
+  return cells[0].total(bound);
+}
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result = Compile(prepared.program, {.exports = {"run"}});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+}
+
 std::vector<const llvm::Value*> EscapedRuntimeResults(const llvm::Function& function) {
   std::vector<const llvm::Value*> escaped;
   for (const auto& instruction : llvm::instructions(function)) {

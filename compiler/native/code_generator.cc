@@ -443,7 +443,8 @@ InliningPlan PlanInlining(const ir::Function& function,
     leaf = PlanNonrecursiveLeaf(function, debugging);
     if (leaf == LeafKind::None && mode == NativeProgramMode::Closed &&
         placement == NativeCodePlacement::Linked &&
-        CanUseScalarFieldBody(function, mode, debugging)) {
+        (CanUseScalarFieldBody(function, mode, debugging) ||
+         CanUseStructLeaf(function, debugging))) {
       leaf = LeafKind::Bounded;
     }
     if (leaf == LeafKind::None && debugging == NativeDebugging::Safepoints &&

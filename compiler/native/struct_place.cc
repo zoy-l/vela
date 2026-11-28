@@ -18,6 +18,7 @@
 #include <absl/functional/function_ref.h>
 
 #include "base/execution_status.h"
+#include "compiler/native/memory_regions.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_symbols.h"
@@ -131,6 +132,8 @@ void EmitArrayAccess(Builder& builder,
   auto* length = builder.CreateLoad(
       builder.getInt32Ty(), builder.CreateConstGEP1_64(builder.getInt8Ty(), array,
                                                        runtime::NativeMemoryLayout::kObjectLength));
+  auto* header_tag = NativeMemoryTag(context, MemoryRegion::HeapHeader);
+  length->setMetadata(llvm::LLVMContext::MD_tbaa, header_tag);
   auto* ready = llvm::BasicBlock::Create(context, "element.ready", function);
   auto* invalid = llvm::BasicBlock::Create(context, "element.invalid", function);
   builder.CreateCondBr(
@@ -142,15 +145,20 @@ void EmitArrayAccess(Builder& builder,
   auto* data = builder.CreateLoad(
       builder.getPtrTy(), builder.CreateConstGEP1_64(builder.getInt8Ty(), array,
                                                      runtime::NativeMemoryLayout::kArrayData));
+  data->setMetadata(llvm::LLVMContext::MD_tbaa, header_tag);
   const auto stride =
       std::max<std::uint64_t>(1, module.getDataLayout().getTypeAllocSize(representation));
   auto* address = builder.CreateGEP(builder.getInt8Ty(), data,
                                     builder.CreateMul(index, builder.getInt64(stride)));
+  auto* element_tag = NativeMemoryTag(context, MemoryRegion::Elements);
   if (access == PlaceAccess::Read) {
-    builder.CreateStore(builder.CreateLoad(representation, address), buffer);
+    auto* value = builder.CreateLoad(representation, address);
+    value->setMetadata(llvm::LLVMContext::MD_tbaa, element_tag);
+    builder.CreateStore(value, buffer);
   } else {
     auto* value = builder.CreateLoad(representation, buffer);
-    builder.CreateStore(value, address);
+    auto* write = builder.CreateStore(value, address);
+    write->setMetadata(llvm::LLVMContext::MD_tbaa, element_tag);
     EmitStructWriteBarriers(builder, type,
                             {.execution = function->getArg(0), .object = array, .value = value});
   }

@@ -137,9 +137,10 @@ TEST(HeapAllocationTest, HostDrivenCollectionDoesNotAdvanceDuringAllocation) {
 TEST(HeapAllocationTest, HostDrivenStepPreservesObjectsPublishedDuringSweep) {
   constexpr std::size_t kRetainedObjects = 64U;
   constexpr std::int64_t kPayload = 42;
+  constexpr std::array<std::uint32_t, 1> kReferenceFields{0U};
   Isolate isolate(1U, GcScheduling::kHostDriven);
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateClassLayout(1U, {});
+  const auto* layout = isolate.CreateClassLayout(1U, kReferenceFields);
   std::array<Value, kRetainedObjects> values;
   const RootRange roots(heap, values.data(), values.size());
   for (auto& value : values) {

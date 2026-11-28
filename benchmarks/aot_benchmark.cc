@@ -419,8 +419,9 @@ std::int64_t CppRun(runtime::Isolate& isolate,
       return CppSpectralNorm();
     case AotKernel::FlatStructFields:
     case AotKernel::FlatStructMethods:
-    case AotKernel::ClassBodyMethods:
       return CppFlatBodies(size);
+    case AotKernel::ClassBodyMethods:
+      return CppClassBodyMethods(size);
   }
   return sum;
 }
@@ -602,6 +603,8 @@ int RegisterAotBenchmarks() {
           std::string(compiler::NativeOptimizationName(compiler::NativeOptimization::Release)) +
           "; generic CPU; PIC; checked arithmetic; explicit roots");
   benchmark::AddCustomContext("aot_workload_contract", "runtime-inputs/specialized-completion/v3");
+  benchmark::AddCustomContext("aot_body_cpp_layouts",
+                              "flatStruct*: contiguous values; classBodyMethods: owned pointers");
   benchmark::RegisterBenchmark("entry/stack_bounds", NativeEntryCost<EntryOperation::StackBounds>)
       ->UseRealTime();
   benchmark::RegisterBenchmark("entry/execution", NativeEntryCost<EntryOperation::Execution>)

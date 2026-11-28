@@ -13,7 +13,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 #include "base/builtin.h"
 #include "base/callable.h"
@@ -154,7 +153,6 @@ class FunctionEmitter final {
   llvm::Value* Payload(ir::RegisterId reg);
   llvm::Value* Reference(ir::RegisterId reg);
   const std::string* StringConstant(ir::RegisterId reg) const;
-  std::optional<std::size_t> InlineFieldOffset(const SourceType& type);
   void Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type);
   void Check(llvm::Value* condition, ExecutionStatus failure);
   void CheckReference(llvm::Value* reference);
@@ -255,6 +253,8 @@ class FunctionEmitter final {
   void InitializeDebugValues();
   void StoreDebugValues();
   void InitializeErasedRoots();
+  void ClearErasedArguments();
+  void PrepareErasedArguments(const ir::Instruction& instruction);
   bool HasErasedArguments(const ir::Instruction& instruction) const;
   std::vector<std::uint8_t> debug_live_;
   llvm::Constant* VirtualGraph(std::size_t instruction);
@@ -319,15 +319,10 @@ class FunctionEmitter final {
                         FieldKindWrite kind_write = FieldKindWrite::Required);
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
   void EmitWriteBarrier(llvm::Value* object, StoredValue& stored);
-  const ir::Class* FindClass(const SourceType& type);
-  struct FieldStorage final {
-    const SourceType* type;
-    bool capture_cell;
-  };
-  FieldStorage DescribeFieldStorage(const ir::Instruction& instruction);
   void EmitFieldAccess(const ir::Instruction& instruction,
                        llvm::Value* object,
-                       const StoredValueAddress& address);
+                       const StoredValueAddress& address,
+                       FieldStorage storage);
   void EmitStructFieldAccess(const ir::Instruction& instruction,
                              llvm::Value* object,
                              const StoredValueAddress& address,
@@ -336,7 +331,7 @@ class FunctionEmitter final {
   llvm::BasicBlock* EmitFieldReadiness(llvm::Value* storage,
                                        const ir::Instruction& instruction,
                                        llvm::Value* slot,
-                                       std::optional<std::uint32_t> count,
+                                       const SourceType& field_type,
                                        llvm::BasicBlock* unavailable);
   void EmitField(const ir::Instruction& instruction);
   void EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object);
@@ -409,11 +404,13 @@ class FunctionEmitter final {
   void EmitNamedBaselineCall(const ir::Instruction& instruction, CallableTarget selected);
   void EmitLeafCall(const ir::Instruction& instruction,
                     CallableTarget selected,
-                    std::span<llvm::Value* const> arguments);
+                    std::span<llvm::Value*> arguments,
+                    const ir::StructReceiver* array_receiver);
   llvm::BasicBlock* EmitIntrinsicCall(const ir::Instruction& instruction, std::uint32_t target);
   std::vector<llvm::Value*> CallArguments(const ir::Instruction& instruction,
                                           CallableTarget selected,
-                                          std::optional<std::size_t> borrowed);
+                                          std::optional<std::size_t> borrowed,
+                                          const ir::StructReceiver* array_receiver = nullptr);
   void BindArguments();
   llvm::Value* StructCallReceiver(const ir::Instruction& instruction,
                                   ir::RegisterId reg,
@@ -529,7 +526,6 @@ class FunctionEmitter final {
     std::uint32_t count;
   };
   absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
-  absl::flat_hash_map<std::string_view, const ir::Class*> classes_;
   bool leaf_entry_ = false;
   bool deferred_roots_ = false;
   bool delayed_root_registration_ = false;
