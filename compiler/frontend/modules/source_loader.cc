@@ -26,6 +26,7 @@
 #include "compiler/frontend/modules/module_binding.h"
 #include "compiler/frontend/modules/native_binding_source.h"
 #include "compiler/frontend/modules/source_file.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
@@ -695,13 +696,14 @@ ModuleGraph LoadModuleGraph(std::string_view path, const ModulePaths& imports) {
 }
 
 ParseResult BindModuleGraph(ModuleGraph graph,
-                            std::span<const std::string> retained_standard_names) {
+                            std::span<const std::string> retained_standard_names,
+                            const SourceProgressCallback& progress) {
   if (!graph.diagnostics.empty()) {
     Program failed;
     failed.sources = std::move(graph.sources);
     return {.program = std::move(failed), .diagnostics = std::move(graph.diagnostics)};
   }
-  auto result = BindModules(std::move(graph.modules), std::move(graph.sources));
+  auto result = BindModules(std::move(graph.modules), std::move(graph.sources), progress);
   IncludeStandardRequirements(result, graph.standard_reflection, retained_standard_names);
   BindReflectionSources(result.program);
   for (auto& diagnostic : AddStandardEnvironment(result.program)) {
@@ -730,45 +732,50 @@ ParseResult LoadProgram(std::string_view path,
                         std::span<const SourceInput> overlays,
                         SourceLoadMode mode,
                         std::span<const ReflectionSelection> reflection,
-                        const ModulePaths& imports) {
+                        const ModulePaths& imports,
+                        const SourceProgressCallback& progress) {
   ModuleCache cache;
   cache.imports = imports;
   return BindModuleGraph(ModuleLoader(SourceOrigin::Files, overlays, cache,
                                       SyntaxRetention::Transfer, mode, reflection)
                              .Run(path),
-                         RetainedStandardNames(mode));
+                         RetainedStandardNames(mode), progress);
 }
 
 ParseResult LoadProgram(std::string_view path,
                         ModuleCache& cache,
                         std::span<const SourceInput> overlays,
-                        SourceLoadMode mode) {
+                        SourceLoadMode mode,
+                        const SourceProgressCallback& progress) {
   return BindModuleGraph(
       ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode).Run(path),
-      RetainedStandardNames(mode));
+      RetainedStandardNames(mode), progress);
 }
 
 ParseResult LoadSources(std::span<const SourceInput> sources,
                         std::string_view entry,
                         std::span<const ReflectionSelection> reflection,
-                        const ModulePaths& imports) {
+                        const ModulePaths& imports,
+                        const SourceProgressCallback& progress) {
   ModuleCache cache;
   cache.imports = imports;
-  return BindModuleGraph(ModuleLoader(SourceOrigin::Memory, sources, cache,
-                                      SyntaxRetention::Transfer, SourceLoadMode::Compilation,
-                                      reflection)
-                             .Run(entry));
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer,
+                   SourceLoadMode::Compilation, reflection)
+          .Run(entry),
+      {}, progress);
 }
 
 ParseResult LoadSources(std::span<const SourceInput> sources,
                         std::span<const std::string> roots,
                         ModuleCache& cache,
                         std::span<const std::string> retained_standard_names,
-                        std::span<const ReflectionSelection> reflection) {
+                        std::span<const ReflectionSelection> reflection,
+                        const SourceProgressCallback& progress) {
   return BindModuleGraph(ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Cache,
                                       SourceLoadMode::Compilation, reflection)
                              .Run(roots),
-                         retained_standard_names);
+                         retained_standard_names, progress);
 }
 
 }  // namespace vela::frontend

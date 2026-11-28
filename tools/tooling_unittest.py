@@ -203,6 +203,22 @@ class LanguageServerTest(CommandTestCase):
         self.assertEqual(self.reply(messages, "watched")["result"],
                           self.reply(messages, "closed")["result"])
 
+    def test_invalid_named_argument_marks_only_its_value_without_coalesce_cascades(self) -> None:
+        source = ("class Text { value: string; }\n"
+                  "func build(label: string?): Text? { return label ?? Text(value: label); }")
+        messages = self.session([self.open(source)])
+        diagnostics = self.diagnostics(messages)[-1]["diagnostics"]
+        self.assertEqual(len(diagnostics), 1, diagnostics)
+        diagnostic = diagnostics[0]
+        self.assertEqual(diagnostic["severity"], 1)
+        self.assertEqual(diagnostic["message"],
+                         "cannot pass argument of type 'string?' to parameter 'value' of type 'string'")
+        column = source.splitlines()[1].rindex("label")
+        self.assertEqual(diagnostic["range"], {
+            "start": {"line": 1, "character": column},
+            "end": {"line": 1, "character": column + len("label")},
+        })
+
     def test_unused_parameter_warnings_have_precise_ranges_and_clear_after_unsaved_reads(self) -> None:
         source = "const label = '中😀'; func ignore(value: int): void {}"
         for encoding in ("utf-8", "utf-16"):

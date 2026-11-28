@@ -22,6 +22,7 @@
 #include "base/builtin.h"
 #include "base/declaration.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/flow/capture_analysis.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/modules/source_file.h"
@@ -137,7 +138,7 @@ class TypeChecker final : private InferenceTypeRelations {
   };
 
   [[nodiscard]] static Type InvalidType();
-  void AddDiagnostic(SourceLocation location, std::string message);
+  void AddDiagnostic(SourceLocation location, std::string message, std::size_t length = 0);
   // 泛型参数登记与上界：参数类型按身份唯一，上界在所有声明登记后解析。
   struct TypeParameterInfo final {
     const TypeParameter* declaration = nullptr;
@@ -568,6 +569,9 @@ class TypeChecker final : private InferenceTypeRelations {
                          const Expression& expression,
                          std::span<const std::optional<Type>> checked_arguments = {},
                          CallArgumentNames argument_names = CallArgumentNames::Declared);
+  Type CheckCallArgument(const CallArgument& argument,
+                         const FunctionInfo::Parameter& parameter,
+                         std::optional<Type> checked);
   std::optional<std::size_t> CallParameterIndex(const FunctionInfo& function,
                                                 const CallArgument& argument,
                                                 std::size_t positional);
@@ -740,7 +744,8 @@ class TypeChecker final : private InferenceTypeRelations {
   };
   std::vector<LambdaScope> lambda_scopes_;
   absl::flat_hash_set<std::uint32_t> captured_mutables_;
-  absl::flat_hash_set<const void*> captured_declarations_;
+  absl::flat_hash_set<std::uint32_t> unstable_captures_;
+  CapturedDeclarations captured_declarations_;
   struct PreparedExpression final {
     Type type;
     RefinementDelta refinements;

@@ -18,6 +18,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/ir.h"
@@ -125,7 +126,8 @@ class SourceSession {
   // retained 必须来自本会话的已提交声明身份；候选继承同一单调增长的身份表。
   [[nodiscard]] virtual std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
-      std::span<const DeclarationId> retained = {}) const;
+      std::span<const DeclarationId> retained = {},
+      const frontend::SourceProgressCallback& progress = {}) const;
   [[nodiscard]] std::expected<void, SourceCommitStatus> Commit(const SourceCandidate& candidate);
 
  protected:

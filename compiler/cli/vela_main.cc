@@ -22,6 +22,7 @@
 #include "base/source_location.h"
 #include "compiler/aot/build_command.h"
 #include "compiler/build_info.h"
+#include "compiler/cli/compilation_progress.h"
 #include "compiler/cli/debug_console.h"
 #include "compiler/cli/development_console.h"
 #include "compiler/cli/jit_cache_command.h"
@@ -29,6 +30,7 @@
 #include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/compiler.h"
@@ -112,8 +114,10 @@ int RunFile(std::string_view path, ExecutionMode mode) {
   if (!configuration) {
     return configuration.error().exit_code;
   }
+  vela::tooling::CompilationProgressDisplay progress(std::cerr);
   auto compiler = vela::compiler::jit::Compiler::Create();
   if (!compiler) {
+    progress.Finish();
     PrintDiagnostics(path, compiler.error());
     return kRuntimeErrorExitCode;
   }
@@ -124,7 +128,10 @@ int RunFile(std::string_view path, ExecutionMode mode) {
   if (mode == ExecutionMode::Debug) {
     options.compilation.debugging = vela::compiler::native::NativeDebugging::Instructions;
   }
-  const auto compiled = vela::compiler::jit::CompileFile(**compiler, path, options);
+  const auto compiled = vela::compiler::jit::CompileFile(
+      **compiler, path, options,
+      [&progress](const vela::frontend::SourceProgress& event) { progress.Report(event); });
+  progress.Finish();
   PrintDiagnostics(path, compiled.diagnostics);
   if (!compiled.Succeeded()) {
     return kSourceErrorExitCode;

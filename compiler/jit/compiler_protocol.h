@@ -24,7 +24,7 @@
 
 namespace vela::compiler::jit {
 
-enum class CompilerMessage : std::uint8_t { Response, FilesChanged };
+enum class CompilerMessage : std::uint8_t { Response, FilesChanged, SourceProgress };
 
 enum class CompilerCommand : std::uint8_t {
   Prepare,
@@ -50,6 +50,7 @@ struct SourcePreparationRequest final {
   std::uint64_t committed = 0;
   SourceUpdate update;
   std::vector<DeclarationId> retained;
+  bool report_progress = false;
 };
 
 struct PreparedSourceDescription final {

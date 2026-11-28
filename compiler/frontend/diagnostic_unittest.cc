@@ -61,7 +61,9 @@ INSTANTIATE_TEST_SUITE_P(
         LocatedError{"func f(): int {\n  return true;\n}", "cannot return", "return"},
         LocatedError{"func f(): void {\n  let value: int = true;\n}", "cannot initialize", "value"},
         LocatedError{"func read(value: int): void {}\nfunc f(): void { read(true); }",
-                     "argument type", "true"},
+                     "cannot pass argument of type 'bool'", "true"},
+        LocatedError{"func read(value: int): void {}\nfunc f(): void { read(value: true); }",
+                     "cannot pass argument of type 'bool'", "true"},
         LocatedError{"func read(value: int): void {}\nfunc f(): void { read(other: 1); }",
                      "unknown named", "other"},
         LocatedError{"func read(value: int): void {}\nfunc f(): void { read(); }",
@@ -78,6 +80,32 @@ INSTANTIATE_TEST_SUITE_P(
         LocatedError{"func f(): void {\n  return;\n  print(1);\n}", "unreachable", "print"},
         LocatedError{"func f(): void { switch (1) {\n  case 1: break;\n  case 1: break; } }",
                      "duplicate case", "1:"}));
+
+TEST(SourceDiagnosticTest, NullableNamedArgumentIsTheOnlyErrorBeforeCoalesceCanBeChecked) {
+  constexpr std::string_view source = R"(
+class Text { value: string; }
+func build(label: string?): Text? {
+  return label ?? Text(value: label);
+}
+)";
+  const auto checked = CheckTestSource(source);
+  ASSERT_EQ(checked.diagnostics.size(), 1U) << DiagnosticsText(checked.diagnostics);
+  const auto& diagnostic = checked.diagnostics.front();
+  EXPECT_EQ(diagnostic.message,
+            "cannot pass argument of type 'string?' to parameter 'value' of type 'string'");
+  EXPECT_EQ(diagnostic.location.line, 4U);
+  EXPECT_EQ(diagnostic.location.column, 31U);
+  EXPECT_EQ(diagnostic.length, 5U);
+}
+
+TEST(SourceDiagnosticTest, ValidCallStillReportsAnIndependentCoalesceTypeMismatch) {
+  const auto checked = CheckTestSource(R"(
+class Text { value: string; }
+func build(label: string?): Text? { return label ?? Text(value: 'fallback'); }
+)");
+  ASSERT_EQ(checked.diagnostics.size(), 1U) << DiagnosticsText(checked.diagnostics);
+  EXPECT_EQ(checked.diagnostics.front().message, "coalesce operands must have a common type");
+}
 
 TEST(ParserRecoveryTest, PreservesTheNextFunctionAfterAMissingClosingBrace) {
   const auto parsed = ParseSource("func first(): void {\n  return;\nfunc second(): void {}\n");

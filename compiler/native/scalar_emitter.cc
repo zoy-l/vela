@@ -353,7 +353,8 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
     return;
   }
   if (left_type.kind == right_type.kind &&
-      (left_type.kind == Kind::Map || left_type.kind == Kind::Set)) {
+      (left_type.kind == Kind::Array || left_type.kind == Kind::Map ||
+       left_type.kind == Kind::Set)) {
     // 集合的身份不依赖内容或容量；可空引用的 null 已由同一个原生指针表示。
     auto* equal = builder_.CreateICmpEQ(Load(instruction.lhs), Load(instruction.rhs));
     auto* result = instruction.opcode == Opcode::EqualValue ? equal : builder_.CreateNot(equal);

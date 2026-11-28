@@ -40,7 +40,7 @@ Windows 的托管块页对小 size class 使用 4 KiB，对最大的 4 KiB 槽�
 POSIX 保留 16 KiB 最小块页。对象不移动，只有整页无活对象时才能释放。
 Heap 提交容量包括活槽、页内空隙与可复用页，区别于逻辑分配压力和进程工作集。
 
-UI 宿主在 `DevelopmentOptions::compilation` 中选择 `Materialization::Eager`、
+UI 宿主在 `jit::CompileOptions`（开发会话中为 `DevelopmentOptions::compilation`）中选择 `Materialization::Eager`、
 `NativeCodeTier::Baseline` 与 `NativeOptimization::Baseline`。
 候选返回前全部入口已链接，输入与绘制不会触发编译。热更新在后台线程准备候选，
 就绪后由 Isolate 线程发布。`Materialization::OnDemand` 则在函数首次调用时编译，可能阻塞调用方。
@@ -48,6 +48,25 @@ UI 宿主在 `DevelopmentOptions::compilation` 中选择 `Materialization::Eager
 Baseline 使用局部 SSA 和轻量机器码整理来限制物理栈溢出槽；
 `NativeOptimization::None` 同时控制 IR 和机器码优化，`NativeOptimization::Release` 保留 O3 流水线。
 这些策略与宿主的 Debug/Release 构建独立。
+
+`jit::CompileFile`、`jit::CompileSource`、`jit::CompileModules` 和
+`DevelopmentSession::Prepare` 的可选末尾回调参数接收
+`frontend::SourceProgress`。`File` 事件提供文件路径、已完成数和总数；计数只覆盖依赖图
+发现后逐文件的用户模块绑定，不包括内置 SDK，也不表示整次 JIT 的耗时百分比。
+随后的 `Loading` 事件表示进入整体处理。回调在发起编译的线程同步执行，进程外模式也一样；
+路径只在回调期间有效，回调不得重入编译。未注册回调时编译库保持静默。
+CLI 的 `run`、`debug` 和 `dev` 首次加载向标准错误流显示 `[12/40 · 30%] src/player.vela`，
+后续只显示 loading。终端更新同一行，完成或失败后清除；重定向时输出普通文本行。
+
+需要多个 Isolate 共享程序的宿主可以独立拥有一套 `CreateSources` 源码会话和编译器，
+对 `SourceSession::Prepare` 的不可变候选调用 `Compiler::CompileSource(snapshot, options, reuse)`。
+快照须来自同一编译器创建的源码会话；版本身份和编译配置须与复用的代码缓存一致。
+编译成功后提交源码候选，再把返回的 `shared_ptr<const NativeImage>` 交给各 Isolate 的
+`NativeDispatch::Prepare/Publish`。宿主只在所属线程的入口调用之间或安全点发布，不在编译线程操作 Isolate。
+image 是完整快照，初次加载可直接接纳当前正版本号，后续接纳须严格向前推进；可跳过未接纳版本，
+但自身基线、类型契约、状态迁移与存留特化要求仍逐 Isolate 验证。代码与只读描述共享，
+全局变量、常量对象和绑定槽独立。旧版本由仍存活的程序状态、闭包与执行保活。
+静态 AOT image 可用引用借用，其字节须覆盖所有实例、闭包和执行的生命周期，不要求动态引用计数包装。
 
 `Compiler::CreateExternal({executable, cache})` 启动 SDK 的 `vela compile-server` 子进程。
 通过编译器的公共 `CreateFiles` API 创建文件会话，再把编译器传给四参数的 `DevelopmentSession::Create`。

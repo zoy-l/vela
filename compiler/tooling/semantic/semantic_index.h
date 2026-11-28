@@ -83,9 +83,17 @@ enum class SemanticTokenKind : std::uint8_t {
   Variable,
   Parameter,
 };
-inline constexpr auto kSemanticTokenTypes =
-    std::to_array<std::string_view>({"class", "interface", "enum", "type", "typeParameter",
-                                     "enumMember", "struct", "variable", "parameter"});
+inline constexpr auto kSemanticTokenTypes = std::to_array<std::string_view>({
+    "class",
+    "interface",
+    "enum",
+    "type",
+    "typeParameter",
+    "enumMember",
+    "struct",
+    "variable",
+    "parameter",
+});
 inline constexpr auto kSemanticTokenModifiers =
     std::to_array<std::string_view>({"declaration", "defaultLibrary", "readonly"});
 inline constexpr std::uint32_t kSemanticDeclaration = 1U;
@@ -235,6 +243,8 @@ class SemanticIndex final {
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
   void MarkTypeParameters(std::span<const frontend::TypeParameter> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
+  [[nodiscard]] std::optional<SemanticToken> SemanticTokenFor(const frontend::Token& token,
+                                                              PositionEncoding encoding) const;
   [[nodiscard]] static std::string HoverSignature(const Completion& completion,
                                                   const std::string& owner,
                                                   Symbol::Role role);

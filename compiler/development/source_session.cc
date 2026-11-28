@@ -24,6 +24,7 @@
 #include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
@@ -260,7 +261,8 @@ std::shared_ptr<const CompiledSourceSnapshot> SourceSession::snapshot() const no
 
 std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
     SourceUpdate update,
-    std::span<const DeclarationId> retained) const {
+    std::span<const DeclarationId> retained,
+    const frontend::SourceProgressCallback& progress) const {
   using Clock = std::chrono::steady_clock;
   const auto started = Clock::now();
   auto base = snapshot();
@@ -306,7 +308,7 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   }
   const auto retained_roots = RetainedRoots(*candidate, retained);
   auto parsed = frontend::LoadSources(inputs, retained_roots, candidate->modules,
-                                      base->standard_names, candidate->reflection);
+                                      base->standard_names, candidate->reflection, progress);
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(SourceError(std::move(parsed.diagnostics)));
   }

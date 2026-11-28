@@ -256,6 +256,39 @@ TEST(NativeDispatchTest, ClosedCapturedEntryOwnsItsProgramAndBlocksStopUntilRele
   EXPECT_TRUE(isolate.TryStop());
 }
 
+TEST(NativeDispatchTest, SharedFullImagesAllowIndependentIsolatesToJoinAndCatchUp) {
+  constexpr std::uint64_t kInitialRevision = 7;
+  constexpr std::uint64_t kLatestRevision = 11;
+  Isolate first;
+  Isolate second;
+  auto initial = std::make_shared<VersionedImage>(kInitialRevision, OldAnswer);
+  const std::weak_ptr<VersionedImage> old_lifetime = initial;
+  auto& first_dispatch = first.native_dispatch();
+  auto& second_dispatch = second.native_dispatch();
+  ASSERT_TRUE(PublishVersion(first_dispatch, 0, initial));
+  ASSERT_TRUE(PublishVersion(second_dispatch, 0, initial));
+  EXPECT_EQ(&NativeInstance::Borrow(first_dispatch.current_state()).image(), &initial->image);
+  EXPECT_EQ(&NativeInstance::Borrow(second_dispatch.current_state()).image(), &initial->image);
+  auto first_entry = first_dispatch.FindEntry("main.vela", "answer");
+  auto second_entry = second_dispatch.FindEntry("main.vela", "answer");
+  ASSERT_TRUE(first_entry);
+  ASSERT_TRUE(second_entry);
+  auto latest = std::make_shared<VersionedImage>(kLatestRevision, NewAnswer);
+  ASSERT_TRUE(PublishVersion(first_dispatch, kInitialRevision, latest));
+  EXPECT_EQ(first_entry->Invoke({})->AsInteger(), kNewValue);
+  EXPECT_EQ(second_entry->Invoke({})->AsInteger(), kOldValue);
+  initial.reset();
+  first.heap().Collect();
+  EXPECT_FALSE(old_lifetime.expired());
+  ASSERT_TRUE(PublishVersion(second_dispatch, kInitialRevision, latest));
+  EXPECT_EQ(second_entry->Invoke({})->AsInteger(), kNewValue);
+  second.heap().Collect();
+  EXPECT_TRUE(old_lifetime.expired());
+  const auto repeated = second_dispatch.Prepare(kLatestRevision, Image(latest));
+  ASSERT_FALSE(repeated);
+  EXPECT_EQ(repeated.error().status, NativePublicationStatus::InvalidImage);
+}
+
 TEST(NativeDispatchTest, NamedEntryFollowsReloadAndCapturedEntriesKeepTheirOriginalCodeAlive) {
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();

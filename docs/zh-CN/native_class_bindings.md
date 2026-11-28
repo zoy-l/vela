@@ -189,9 +189,13 @@ python -m tools.vl bindgen --verify-manifest generated/app.bindings.json
 ```
 
 GN 集成使用 [`vela_native_bindings`](../../build/native_bindings.gni)：调用方提供 `config`、
-四个 `outputs`（Vela、C++ 头/源和清单）、`depfile`，以及配置生成和依赖绑定的 `deps`。
-配置的输出目录必须与 GN 声明一致；生成的 C++ 源文件进入宿主目标，目标依赖生成动作及
+全部 `outputs`（Vela、C++ 头、每个 C++ 源和清单）、`depfile`，以及配置生成和依赖绑定的 `deps`。
+配置的输出目录与分片数必须和 GN 声明一致。生成的 C++ 源文件进入宿主目标，目标依赖生成动作及
 `//runtime`。完整配置示例见[生产测试绑定目标](../../compiler/bindgen/BUILD.gn)。
+
+大型模块可用 `cpp_shards` 指定 C++ 翻译单元数量，默认生成一个。生成器按成员数将完整类型
+分配给各分片。分片零保留原始文件名，后续分片以 `_1.cc` 起连续编号。宿主编译并链接所有分片，
+并通过同一个 `Register` 入口按类型顺序登记整个模块。
 
 ## 4. 统一绑定描述与生成产物
 
@@ -215,7 +219,7 @@ C++ 类型声明使用 Clang 的声明和类型打印能力生成；Vela 输出�
 | --- | --- |
 | `app.vela` | 前端、JIT/AOT、LSP、doc、fmt、REPL；可独立静态检查的公开接口 |
 | `app_bindings.h` | 声明显式的模块注册函数；业务宿主负责调用 |
-| `app_bindings.cc` | 编译进宿主的适配入口、所有权编码、类型描述与注册实现 |
+| `app_bindings.cc`、`app_bindings_1.cc` 等 | 编译进宿主的适配入口、所有权编码与类型描述。首个源文件实现模块注册 |
 | `app.bindings.json` | 构建阶段的版本、目标、输入摘要、生成代次和各产物摘要；不是运行时类型表 |
 | `app.d` | 宿主构建系统的增量依赖 |
 

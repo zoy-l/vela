@@ -27,6 +27,7 @@
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "base/streams.h"
+#include "compiler/cli/compilation_progress.h"
 #include "compiler/cli/development_debugger.h"
 #include "compiler/cli/development_diagnostics.h"
 #include "compiler/development/development_files_local.h"
@@ -34,6 +35,7 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
@@ -535,6 +537,7 @@ void DevelopmentConsole::OnProgress(const DevelopmentResult& result) {
 }
 
 int DevelopmentConsole::Run() {
+  CompilationProgressDisplay progress(streams_.errors.get());
   const compiler::CompiledSourceSnapshot empty;
   const auto watched = files_.StartWatching([this] {
     {
@@ -544,11 +547,13 @@ int DevelopmentConsole::Run() {
     changed_.notify_all();
   });
   if (!watched) {
+    progress.Finish();
     Diagnostics(watched.error());
     return kSourceErrorExitCode;
   }
   auto update = files_.Capture(empty);
   if (!update) {
+    progress.Finish();
     Diagnostics(update.error());
     return kSourceErrorExitCode;
   }
@@ -560,6 +565,7 @@ int DevelopmentConsole::Run() {
   options.progress = [this](const DevelopmentResult& result) { OnProgress(result); };
   auto created = DevelopmentSession::Create(files_.entry(), {}, std::move(options));
   if (!created) {
+    progress.Finish();
     Diagnostics(created.error());
     return kSourceErrorExitCode;
   }
@@ -569,7 +575,10 @@ int DevelopmentConsole::Run() {
   repl_ = std::make_unique<compiler::DevelopmentRepl>(
       *session_, PathText(Utf8Path(files_.entry()).parent_path() / "__vela_dev_repl__.vela"));
   session_->isolate().SetOutput(streams_.output.get());
-  auto candidate = session_->Prepare(std::move(*update), DevelopmentOperation::Load);
+  auto candidate = session_->Prepare(
+      std::move(*update), DevelopmentOperation::Load,
+      [&progress](const frontend::SourceProgress& event) { progress.Report(event); });
+  progress.Finish();
   if (!candidate) {
     Print(candidate.error());
     return kSourceErrorExitCode;

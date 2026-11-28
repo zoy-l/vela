@@ -4,6 +4,8 @@ Google Benchmark runs production JIT, AOT and shared-runtime workloads.
 `//benchmarks:vela_benchmarks` contains source execution, runtime, tooling and
 C++ comparisons. `//benchmarks:vela_aot_benchmarks` contains offline AOT,
 reloadable JIT, generic, Map-literal and escape-analysis workloads.
+`//benchmarks:vela_production_benchmarks` contains paired AOT and independent C++
+containers, typed JSON, coroutines and retained-graph workloads; it does not link the JIT/compiler.
 Dependencies and versions are pinned in `DEPS`.
 
 ```powershell
@@ -17,6 +19,7 @@ python -m tools.vl bench --jit-compare
 python -m tools.vl bench --escape-compare
 python -m tools.vl bench --gc-report
 python -m tools.vl bench --reflection-compare
+python -m tools.vl bench --production-compare --retain
 ```
 
 The runner builds Release by default. Arguments after `--` are passed to Google
@@ -27,6 +30,55 @@ destination; the matching Markdown report separates time and memory.
 Release C++ targets use the shared `//build/config:vela_defaults` optimization
 settings: `/clang:-O3` with clang-cl on Windows and `-O3` on macOS/Linux. Benchmark
 targets use the same settings as the SDK; they do not override optimization locally.
+
+## Production AOT versus C++
+
+`--production-compare` checks 46 workload pairs in [production/](production/). It uses the
+production AOT CLI and ordinary Release C++ optimization. Compilation, input preparation and
+warm-up are excluded; complete invocations, result consumption, C++ destruction, Vela automatic
+GC and asynchronous completion are timed. Production defaults and language semantics are unchanged.
+
+| Family | Contract |
+| --- | --- |
+| Containers (23 pairs) | Fresh filter results with natural growth and order-sensitive checksums; late/missing find/includes; object identity, struct equality and tagged numeric values; narrowed filter; empty/small/large/duplicate/dynamic/nested Map literals; NaN and signed-zero equality. C++ ordered Maps combine contiguous entries with an Abseil hash index; updating a duplicate preserves its first position. |
+| Typed JSON (11 pairs) | Shared serialized input bytes; scalar, object, 1,024-item arrays and nested generic models; field presence, unknown-field and type checks; error code/path/expected/actual and byte offset, including UTF-8 before the failure. Both use pinned yyjson syntax parsing. C++ constructs owned structs/strings/vectors; Vela uses `JSON.safeParse<T>`. Constructors run only after the complete batch validates; early/late failures have zero constructor calls. Valid outputs are fully consumed in order. |
+| Async (10 pairs) | Eager start, completed await, queued suspension/resumption, 64 then continuations, shared completion fanout at 1/100/1,000 tasks and zero-delay timers at 1/100/1,000. C++ uses standard coroutine frames, a FIFO ready queue and deadline/sequence timer heap, with no Vela Future or scheduler dependency. This is a reference executor, not a comparison to a third-party C++ async library. |
+| Long run (2 pairs) | A ring retains 64 owned records with generation, string and 64/1,024 integers. Each call replaces one record and checks every retained slot and element. Warm-up fills the ring. The allocation pass checks the ending live-memory plateau and complete cleanup; Vela allows at most 4 KiB growth for variable-length generation strings/allocation granularity. |
+
+Throughput uses normal allocators, seven repetitions, random interleaving and a 0.2-second minimum
+by default. Each latency/allocation backend, case and repetition then runs in its own fresh process.
+Latency uses 2,048 invocations; allocation accounting uses 256. Long-run profiles use 100,000
+invocations per process instead. Override these with `--profile-samples`, `--allocation-samples`
+and `--longrun-samples`. Reports retain the actual counts and measured durations, so a short smoke
+run cannot be mistaken for a long soak. To run a smaller paired selection:
+
+```powershell
+python -m tools.vl bench --production-compare --profile-samples=256 --allocation-samples=64 -- --benchmark_filter='^production/(cpp|aot)/json/' --benchmark_repetitions=3
+```
+
+The Markdown report separates throughput, p50/p95/p99/max latency and memory. JSON retains
+per-case medians and CV. Latencies include clock cost and use nearest-rank quantiles per process;
+reported quantiles are medians across repetitions. The sample buffer is allocated and initialized
+before the resident baseline. No host-entry cost is subtracted. Instrumented allocation timings
+never enter throughput ratios.
+
+C++ allocation profiles use counted allocators for owned container/string storage, coroutine
+frames/queues, yyjson arenas and copied input. Vela profiles count Heap-managed allocations and
+Heap-accounted external buffers. Both count successful allocation requests and requested bytes,
+not allocator metadata, instrumentation bookkeeping or universal process malloc calls. Their allocation scopes differ and are
+labeled separately. Whole-process resident baseline/current/lifetime peak are measured in the
+uninstrumented latency process. Peak RSS growth is lifetime high-water minus post-warm-up RSS;
+it is not a resettable allocator peak. C++ RAII/SSO/value storage and Vela GC remain natural.
+
+Without `--report`, output goes to an OS temporary directory. `--report=PATH.json` writes an aggregate
+JSON and Markdown report, with raw process samples in a sibling `PATH-samples` directory.
+`--retain` requires the complete paired suite, all repetitions, valid checksums, complete profile
+counts and cleanup checks; only then does it atomically promote the aggregate to
+[rolling_summary.json](results/rolling_summary.json). A different predecessor suite is marked
+non-comparable. See [retention rules](../.agents/benchmark_results.md).
+
+Existing async C++ cases in [aot_benchmark.cc](aot_benchmark.cc) remain shared-Vela-runtime controls.
+The independent production references are explicitly named `production/cpp/async/*`.
 
 ## Math and UTF-8 byte APIs versus C++
 
@@ -153,6 +205,28 @@ function. Repeated-leaf arguments select calls per caller and the number of
 callers sharing one callee. Source preparation, code generation and linking are excluded. Run them
 with `python -m tools.vl bench -- --benchmark_filter=^compile/native/`.
 These standalone compiler measurements have no language comparison report.
+
+[jit_policy_benchmark.cc](jit_policy_benchmark.cc) compares the existing LLVM O3, lightweight
+Baseline, and O0 policies through the local development-session API. It registers
+`jit_policy/startup/*` and `jit_policy/steady/*` for the standard-library example, sieve,
+particles, and a generated project with 128 exported page modules plus one entry module.
+The generated entry calls two pages; eager compilation prepares every entry before publication.
+All cases keep the Baseline code tier, source-line debugging, and eager materialization fixed,
+with object caching disabled.
+
+Startup timing includes fresh compiler/session creation, file capture, parsing, type checking,
+Typed IR, native generation, optimization, object emission, linking, and initial publication.
+It excludes fixture creation, the instruction-selector probe, process startup, first script
+execution, verification, and destruction. The probe warms global LLVM target initialization
+before timing and records `fast_isel_enabled` from the target machine after object emission.
+The flag reports enablement, not the fraction of instructions selected by FastISel.
+Steady timing measures the public `InvokeEntry` call after main/input initialization and a heap
+baseline; normal allocation and GC remain timed. Every startup sample and steady invocation
+checks its expected result. Startup counters separate source preparation and native stages.
+
+```powershell
+python -m tools.vl bench -- --benchmark_filter=^jit_policy/ --benchmark_min_time=0.15s --benchmark_repetitions=9 --benchmark_enable_random_interleaving=true
+```
 
 [repeated_field_benchmark.cc](repeated_field_benchmark.cc) supplies
 `compile/aot/repeated_fields/*` in `vela_aot_benchmarks`. It measures Release AOT

@@ -437,10 +437,12 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
   if (const auto checked = CheckPublication(base_revision); !checked) {
     return std::unexpected(checked.error());
   }
-  if (!image->IsReloadable() || image->revision != base_revision + 1) {
+  // image 是完整程序快照。新执行域可直接接纳当前版本，落后的执行域可跳过未接纳版本；
+  // 自身基线仍由 CheckPublication 校验，类型契约和迁移仍在下游完整验证。
+  if (!image->IsReloadable() || image->revision <= base_revision) {
     return std::unexpected(NativePublicationError{
         .status = NativePublicationStatus::InvalidImage,
-        .message = "reloadable native image must advance the publication revision by one",
+        .message = "reloadable native image must advance the publication revision",
         .declaration = {},
     });
   }

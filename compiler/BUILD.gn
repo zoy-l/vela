@@ -92,6 +92,7 @@ source_set("frontend") {
     "frontend/modules/source_file.h",
     "frontend/modules/source_loader.cc",
     "frontend/modules/source_loader.h",
+    "frontend/modules/source_progress.h",
     "frontend/syntax/ast.cc",
     "frontend/syntax/ast.h",
     "frontend/syntax/ast_clone.cc",
@@ -297,6 +298,18 @@ source_set("standard_streams") {
   } else {
     sources += [ "cli/standard_streams_posix.cc" ]
   }
+}
+
+source_set("compilation_progress") {
+  sources = [
+    "cli/compilation_progress.cc",
+    "cli/compilation_progress.h",
+  ]
+  public_deps = [ ":frontend" ]
+  deps = [
+    ":standard_streams",
+    "//base",
+  ]
 }
 
 source_set("interactive") {
@@ -674,6 +687,7 @@ source_set("development_tools") {
   ]
   public_deps = [ ":development" ]
   deps = [
+    ":compilation_progress",
     ":development_diagnostics",
     ":project_configuration",
   ]
@@ -702,6 +716,7 @@ source_set("checkpoint_publication") {
 executable("vela_jit_tests") {
   testonly = true
   sources = [
+    "cli/compilation_progress_unittest.cc",
     "development/development_files_unittest.cc",
     "development/development_repl_unittest.cc",
     "development/development_session_unittest.cc",
@@ -733,6 +748,7 @@ executable("vela_jit_tests") {
   ]
   deps = [
     ":checkpoint_publication",
+    ":compilation_progress",
     ":development",
     ":jit",
     ":jit_external",
@@ -841,6 +857,7 @@ executable("vela") {
   deps = [
     ":aot_driver",
     ":build_info",
+    ":compilation_progress",
     ":development_tools",
     ":interactive",
     ":jit",

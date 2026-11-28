@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/binary.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/jit/compiler_protocol.h"
 
 namespace vela::compiler::jit {
@@ -48,6 +49,34 @@ void CompilerProcess::SetFileChanged(std::uint64_t resource_id, std::function<vo
   }
 }
 
+std::expected<void, std::string> CompilerProcess::QueueProgress(std::span<const std::byte> bytes) {
+  BinaryReader reader(bytes);
+  const auto stage = reader.Read<std::uint8_t>();
+  auto path = reader.Text();
+  const auto counts = reader.Record<std::uint64_t, std::uint64_t>();
+  if (!stage || *stage > static_cast<std::uint8_t>(frontend::SourceProgressKind::Loading) ||
+      !path || !counts || reader.remaining() != 0) {
+    return std::unexpected("invalid compiler source progress");
+  }
+  const auto [completed, total] = *counts;
+  const auto kind = static_cast<frontend::SourceProgressKind>(*stage);
+  if (completed > total ||
+      (kind == frontend::SourceProgressKind::File && (completed == 0 || path->empty()))) {
+    return std::unexpected("invalid compiler source progress");
+  }
+  {
+    const std::scoped_lock lock(response_mutex_);
+    progress_.push_back({
+        .kind = kind,
+        .path = std::move(*path),
+        .completed = static_cast<std::size_t>(completed),
+        .total = static_cast<std::size_t>(total),
+    });
+  }
+  response_ready_.notify_one();
+  return {};
+}
+
 void CompilerProcess::ReadMessages() {
   std::string failure;
   for (;;) {
@@ -69,6 +98,12 @@ void CompilerProcess::ReadMessages() {
         response_ = std::move(*message);
       }
       response_ready_.notify_one();
+    } else if (kind == CompilerMessage::SourceProgress) {
+      const auto queued = QueueProgress(*message);
+      if (!queued) {
+        failure = queued.error();
+        break;
+      }
     } else if (kind == CompilerMessage::FilesChanged) {
       BinaryReader reader(*message);
       const auto resource_id = reader.Read<std::uint64_t>();
@@ -113,7 +148,8 @@ void CompilerProcess::CloseStreams() {
 }
 
 std::expected<std::vector<std::byte>, std::string> CompilerProcess::Exchange(
-    std::span<const std::byte> request) {
+    std::span<const std::byte> request,
+    const frontend::SourceProgressCallback& progress) {
   const std::scoped_lock lock(mutex_);
   {
     const std::scoped_lock response_lock(response_mutex_);
@@ -125,7 +161,27 @@ std::expected<std::vector<std::byte>, std::string> CompilerProcess::Exchange(
     return std::unexpected(std::move(written.error()));
   }
   std::unique_lock response_lock(response_mutex_);
-  response_ready_.wait(response_lock, [this] { return response_ || !channel_; });
+  for (;;) {
+    response_ready_.wait(response_lock,
+                         [this] { return response_ || !progress_.empty() || !channel_; });
+    auto pending = std::move(progress_);
+    progress_.clear();
+    response_lock.unlock();
+    if (progress) {
+      for (const auto& event : pending) {
+        progress({
+            .kind = event.kind,
+            .path = event.path,
+            .completed = event.completed,
+            .total = event.total,
+        });
+      }
+    }
+    response_lock.lock();
+    if (progress_.empty() && (response_ || !channel_)) {
+      break;
+    }
+  }
   if (!response_) {
     // wait 已保证收到响应或通道失败；这里直接返回通道的终态错误。
     return std::unexpected(channel_.error());

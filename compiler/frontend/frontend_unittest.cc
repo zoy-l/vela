@@ -146,7 +146,6 @@ TEST(FrontendTest, RejectsArrayTypeMismatchesWithoutConversions) {
       "enum E { a } func main(): int { let a: E[] = [1]; return 0; }",
       "class A {} class B {} func main(): int { let a: A[] = [B()]; return 0; }",
       "func main(): int { let a: int[] = [1]; a = [false]; return 0; }",
-      "func main(): int { let a: int[] = [1]; let equal: bool = a == a; return 0; }",
       "func f(): void {} func main(): int { [f()]; return 0; }",
   });
   for (const auto source : kInvalidSources) {

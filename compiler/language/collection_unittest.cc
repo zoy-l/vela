@@ -26,6 +26,9 @@ func sameMap<T>(left: Map<string, T>?, right: Map<string, T>?): bool {
 func sameSet<T>(left: Set<T>?, right: Set<T>?): bool {
   return left == right;
 }
+func sameArray<T>(left: T[]?, right: T[]?): bool {
+  return left == right;
+}
 func main(): int {
   const map = Map<string, int>();
   const otherMap = Map<string, int>();
@@ -37,26 +40,36 @@ func main(): int {
   set.add(42);
   otherSet.add(42);
   const setAlias = set;
-  if (map != mapAlias || map == otherMap || set != setAlias || set == otherSet) {
+  const array = [42];
+  const otherArray = [42];
+  const arrayAlias = array;
+  if (map != mapAlias || map == otherMap || set != setAlias || set == otherSet ||
+      array != arrayAlias || array == otherArray) {
     return 0;
   }
   if (!sameMap(map, mapAlias) || sameMap(map, otherMap) ||
-      !sameSet(set, setAlias) || sameSet(set, otherSet)) {
+      !sameSet(set, setAlias) || sameSet(set, otherSet) ||
+      !sameArray(array, arrayAlias) || sameArray(array, otherArray)) {
     return 0;
   }
   if (!sameMap<int>(null, null) || sameMap(map, null) || sameMap(null, map) ||
-      !sameSet<int>(null, null) || sameSet(set, null) || sameSet(null, set)) {
+      !sameSet<int>(null, null) || sameSet(set, null) || sameSet(null, set) ||
+      !sameArray<int>(null, null) || sameArray(array, null) || sameArray(null, array)) {
     return 0;
   }
   const dynamicMap: dynamic = map;
   const dynamicSet: dynamic = set;
+  const dynamicArray: dynamic = array;
   if (dynamicMap != mapAlias || dynamicSet != setAlias ||
-      dynamicMap == otherMap || dynamicSet == otherSet) {
+      dynamicMap == otherMap || dynamicSet == otherSet || dynamicArray != arrayAlias ||
+      dynamicArray == otherArray) {
     return 0;
   }
   map.clear();
   set.clear();
-  if (map != mapAlias || set != setAlias || map == otherMap || set == otherSet) {
+  array[0] = 0;
+  if (map != mapAlias || set != setAlias || map == otherMap || set == otherSet ||
+      array != arrayAlias || array == otherArray) {
     return 0;
   }
   return 42;

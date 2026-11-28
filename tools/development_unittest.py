@@ -77,6 +77,19 @@ class DevelopmentCommandTest(CommandTestCase):
         self.process.stdout.close()
         self.process.stderr.close()
 
+    def test_initial_compilation_reports_files_then_loading(self) -> None:
+        (self.directory / "player.vela").write_text(
+            "export func score(): int { return 42; }", encoding="utf-8", newline="\n")
+        self.write("import 'player'; func main(): void { } export func read(): int { return score(); }")
+        self.start(entry="main.vela")
+        errors = [line for name, line in self.history if name == "err"]
+        files = [line for line in errors if line.startswith("[")]
+        self.assertEqual(files, ["[1/2 · 50%] main.vela", "[2/2 · 100%] player.vela"])
+        last_file = errors.index(files[-1])
+        self.assertEqual(errors[last_file + 1], "loading")
+        self.send(".call read")
+        self.wait("out", "^42$")
+
     def test_relative_entry_hot_reload_keeps_state_and_explicit_reload_reexecutes_entry(self) -> None:
         self.write("let score = 10; func main(): void { score = 42; } "
                    "export func read(): int { return score; }")

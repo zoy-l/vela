@@ -353,7 +353,7 @@ void TypeChecker::CheckTemplateFunction(const Function& function, const ClassInf
   } else {
     CheckTopLevelFunctionAttributes(function);
   }
-  CollectCapturedMutableDeclarations(function, captured_declarations_);
+  CollectCapturedDeclarations(function, captured_declarations_);
   const auto signature = ResolveSignature(function);
   CheckFunctionBody(function, signature, owner);
   if (ErrorCount(diagnostics_) != errors) {
@@ -374,7 +374,7 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
   if (IsValid(self) && found != classes_.end()) {
     const auto& info = found->second;
     CheckClassAttributes(source, self);
-    CollectCapturedMutableDeclarations(source, captured_declarations_);
+    CollectCapturedDeclarations(source, captured_declarations_);
     CheckClassBody(source, info);
     for (const auto& method : source.method_templates) {
       CheckTemplateFunction(method, &info);
@@ -572,7 +572,7 @@ void TypeChecker::RegisterSpecializations() {
                                           specializer_->ClassSource(index));
     }
     ResolveClass(source, classes_.at(source.name));
-    CollectCapturedMutableDeclarations(source, captured_declarations_);
+    CollectCapturedDeclarations(source, captured_declarations_);
   }
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
@@ -582,7 +582,7 @@ void TypeChecker::RegisterSpecializations() {
   while (registered_functions_ < specializer_->function_count()) {
     const auto& function = specializer_->function(registered_functions_++);
     functions_.try_emplace(function.name, ResolveSignature(function));
-    CollectCapturedMutableDeclarations(function, captured_declarations_);
+    CollectCapturedDeclarations(function, captured_declarations_);
   }
   RegisterMethodApplications();
 }

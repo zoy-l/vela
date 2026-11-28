@@ -555,10 +555,14 @@ categories.
 ## Array predicate contracts
 
 Boolean function bodies infer independent true and false first-parameter refinements from all
-successful return paths through the shared flow checker. Assignment or mutable capture of that
-parameter invalidates the proof. Immutable condition aliases store branch facts by binding identity
-in the transactional refinement state; writes invalidate dependent aliases, and calls or suspension
-invalidate mutable capture facts. Function values retain both contracts through layout descriptions, native images,
+successful return paths through the shared flow checker. Assignment to that parameter, including
+writes from a closure, invalidates the proof. Immutable condition aliases store branch facts by
+binding identity in the transactional refinement state; writes invalidate dependent aliases.
+Calls and suspension invalidate facts for captured bindings assigned anywhere in their lexical
+scope, including owner writes during an asynchronous closure's suspension. Captures without
+assignments retain refinements across calls and suspension; mutable captures still share storage
+so owner assignments remain visible.
+Function values retain both contracts through layout descriptions, native images,
 serialization, AOT reachability and runtime signature interning. Erasing a refinement to an
 ordinary boolean function type is allowed; it cannot manufacture a stronger predicate.
 Virtual dispatch cannot acquire a refinement solely from a base implementation's body.

@@ -1,6 +1,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/ir/ir.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/compiler_protocol.h"
@@ -49,6 +50,17 @@ class ServiceOutput final {
     message.Write(static_cast<std::uint8_t>(CompilerMessage::FilesChanged));
     if (const auto sent = Send(message.bytes()); !sent) {
       std::println(stderr, "Vela file notification: {}", sent.error());
+    }
+  }
+  void Progress(const frontend::SourceProgress& progress) {
+    BinaryWriter message;
+    message.Write(static_cast<std::uint8_t>(progress.kind));
+    message.Write(progress.path);
+    message.Write(static_cast<std::uint64_t>(progress.completed));
+    message.Write(static_cast<std::uint64_t>(progress.total));
+    message.Write(static_cast<std::uint8_t>(CompilerMessage::SourceProgress));
+    if (const auto sent = Send(message.bytes()); !sent) {
+      std::println(stderr, "Vela compiler progress: {}", sent.error());
     }
   }
 
@@ -179,7 +191,13 @@ std::expected<void, std::string> PrepareSources(BinaryReader& reader,
       return {};
     }
   }
-  auto prepared = source.Prepare(std::move(request->update), request->retained);
+  frontend::SourceProgressCallback progress;
+  if (request->report_progress) {
+    progress = [messages = state.output](const frontend::SourceProgress& event) {
+      messages->Progress(event);
+    };
+  }
+  auto prepared = source.Prepare(std::move(request->update), request->retained, progress);
   if (!prepared) {
     EncodeSourceResponse(output, std::move(prepared.error()));
     return {};

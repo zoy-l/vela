@@ -16,6 +16,7 @@ from tools.escape_benchmark_report import escape_comparison_report
 from tools.gc_benchmark_report import gc_report
 from tools.native_class_benchmark_report import native_class_comparison_report
 from tools.reflection_benchmark_report import reflection_comparison_report
+from tools import production_report
 from tools.build import build
 from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, ROOT, executable_name
@@ -67,14 +68,24 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="release")
     comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument('--production-compare', action='store_const', dest='report_mode',
+                            const='production_compare', help='Compare production AOT and independent C++ with isolated memory and latency profiles')
     for name, mode in REPORT_MODES.items():
         comparison.add_argument("--" + name.replace("_", "-"), action="store_const",
                                 dest="report_mode", const=name, help=mode.help)
     parser.add_argument("--report", type=Path, help="Benchmark JSON report (default: out/benchmarks/<mode>.json)")
+    parser.add_argument('--profile-samples', type=int, default=2048)
+    parser.add_argument('--allocation-samples', type=int, default=256)
+    parser.add_argument('--longrun-samples', type=int, default=100000)
+    parser.add_argument('--retain', action='store_true', help='Atomically retain a complete production comparison')
     options, forwarded = split_forwarded_arguments(arguments)
     parsed = parser.parse_args(options)
     parsed.benchmark_arguments = forwarded
     reporting = parsed.report_mode is not None
+    if min(parsed.profile_samples, parsed.allocation_samples, parsed.longrun_samples) < 1:
+        parser.error('profile sample counts must be positive')
+    if parsed.retain and parsed.report_mode != 'production_compare':
+        parser.error('--retain requires --production-compare')
     if parsed.report and not reporting:
         parser.error("--report requires a report mode")
     if parsed.report and parsed.report.suffix != ".json":
@@ -102,6 +113,9 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     output = build(parsed.variant, "benchmarks")
+    if parsed.report_mode == 'production_compare':
+        production_report.run(output / executable_name('vela_production_benchmarks'), output, parsed)
+        return
     mode = REPORT_MODES.get(parsed.report_mode)
     name = mode.executable if mode else "vela_benchmarks"
     executable = output / executable_name(name)

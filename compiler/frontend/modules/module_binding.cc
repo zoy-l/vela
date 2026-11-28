@@ -1,7 +1,10 @@
 #include "compiler/frontend/modules/module_binding.h"
 #include "base/declaration.h"
 #include "compiler/frontend/modules/source_file.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -47,8 +50,13 @@ struct ModuleScope final {
 
 class ModuleBinding final {
  public:
-  ModuleBinding(std::vector<SourceModule> modules, std::vector<SourceFile> sources)
-      : modules_(std::move(modules)), sources_(std::move(sources)), scopes_(modules_.size()) {}
+  ModuleBinding(std::vector<SourceModule> modules,
+                std::vector<SourceFile> sources,
+                SourceProgressCallback progress = {})
+      : modules_(std::move(modules)),
+        sources_(std::move(sources)),
+        scopes_(modules_.size()),
+        progress_(std::move(progress)) {}
 
   ParseResult Run();
   Diagnostics BindStandard(Program& program);
@@ -88,6 +96,7 @@ class ModuleBinding final {
   std::vector<SourceModule> modules_;
   std::vector<SourceFile> sources_;
   std::vector<ModuleScope> scopes_;
+  SourceProgressCallback progress_;
   Diagnostics diagnostics_;
   std::uint32_t current_ = 0;
   std::vector<std::vector<std::string_view>> locals_;
@@ -559,6 +568,9 @@ ParseResult ModuleBinding::Run() {
   }
   Program combined;
   const auto can_bind = diagnostics_.empty();
+  const auto total = static_cast<std::size_t>(std::ranges::count_if(
+      sources_, [](const SourceFile& source) { return IsFileModule(source.path); }));
+  std::size_t completed = 0;
   for (auto& module : modules_) {
     combined.import_sources.push_back(std::move(module.dependencies));
     // 声明与导入表已经建立；函数体中的未知名字不能阻止后续依赖绑定其声明身份。
@@ -573,7 +585,20 @@ ParseResult ModuleBinding::Run() {
     }
     module.program.imports.clear();
     AppendProgram(combined, std::move(module.program));
+    const auto& path = sources_[current_].path;
+    if (progress_ && IsFileModule(path)) {
+      progress_({
+          .kind = SourceProgressKind::File,
+          .path = path,
+          .completed = ++completed,
+          .total = total,
+      });
+    }
     ++current_;
+  }
+  if (progress_) {
+    progress_(
+        {.kind = SourceProgressKind::Loading, .path = {}, .completed = completed, .total = total});
   }
   combined.sources = std::move(sources_);
   return {.program = std::move(combined), .diagnostics = std::move(diagnostics_)};
@@ -588,8 +613,10 @@ Diagnostics ModuleBinding::BindStandard(Program& program) {
 
 }  // namespace
 
-ParseResult BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources) {
-  return ModuleBinding(std::move(modules), std::move(sources)).Run();
+ParseResult BindModules(std::vector<SourceModule> modules,
+                        std::vector<SourceFile> sources,
+                        const SourceProgressCallback& progress) {
+  return ModuleBinding(std::move(modules), std::move(sources), progress).Run();
 }
 
 Diagnostics BindStandardDeclarations(Program& program, SourceFile source) {

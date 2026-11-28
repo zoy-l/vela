@@ -259,7 +259,7 @@ void TypeChecker::InvalidateAssignments(const AssignmentEffects& effects) {
 }
 
 void TypeChecker::InvalidateCapturedRefinements() {
-  refinements_.Erase(captured_mutables_);
+  refinements_.Erase(unstable_captures_);
 }
 
 const TypeChecker::AssignmentEffects& TypeChecker::LoopAssignments::Body() {

@@ -1,8 +1,10 @@
 #include "compiler/frontend/modules/source_loader.h"
 
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -10,12 +12,68 @@
 #include "base/testing/directory.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/native_binding_source.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/parser.h"
 
 namespace vela::frontend {
 namespace {
 
 class SourceCaptureTest : public vela::test::DirectoryTest {};
+
+TEST(SourceProgressTest, CountsEachUserFileOnceAfterDiscoveringTheWholeGraph) {
+  const std::array inputs{
+      SourceInput{.path = "main.vela", .text = "import 'left'; import 'right'; import 'sdk:test';"},
+      SourceInput{.path = "left.vela", .text = "import 'shared';"},
+      SourceInput{.path = "right.vela", .text = "import 'shared';"},
+      SourceInput{.path = "shared.vela", .text = "export func value(): int { return 42; }"},
+  };
+  std::vector<std::string> paths;
+  bool loading = false;
+  const auto parsed = LoadSources(inputs, "main.vela", {}, {}, [&](const SourceProgress& event) {
+    if (event.kind == SourceProgressKind::Loading) {
+      loading = true;
+      EXPECT_EQ(event.completed, inputs.size());
+      EXPECT_EQ(event.total, inputs.size());
+      return;
+    }
+    EXPECT_FALSE(loading);
+    paths.emplace_back(event.path);
+    EXPECT_EQ(event.completed, paths.size());
+    EXPECT_EQ(event.total, inputs.size());
+  });
+  EXPECT_FALSE(HasErrors(parsed.diagnostics)) << DiagnosticsText(parsed.diagnostics);
+  EXPECT_EQ(paths,
+            (std::vector<std::string>{"main.vela", "left.vela", "right.vela", "shared.vela"}));
+  EXPECT_TRUE(loading);
+}
+
+TEST_F(SourceCaptureTest, CachedDiskLoadingReportsTheSameRealFileCount) {
+  ASSERT_NO_FATAL_FAILURE(Write("main.vela", "import 'library';"));
+  ASSERT_NO_FATAL_FAILURE(Write("library.vela", "export func value(): int { return 42; }"));
+  ModuleCache cache;
+  const auto entry = PathText(directory() / "main.vela");
+  for (int pass = 0; pass < 2; ++pass) {
+    std::size_t completed = 0;
+    const auto parsed = LoadProgram(entry, cache, {}, SourceLoadMode::Compilation,
+                                    [&](const SourceProgress& event) {
+                                      if (event.kind == SourceProgressKind::File) {
+                                        EXPECT_EQ(event.completed, ++completed);
+                                        EXPECT_EQ(event.total, 2U);
+                                      }
+                                    });
+    EXPECT_FALSE(HasErrors(parsed.diagnostics)) << DiagnosticsText(parsed.diagnostics);
+    EXPECT_EQ(completed, 2U);
+  }
+}
+
+TEST(SourceProgressTest, SyntaxFailureDoesNotReportUnprocessedFilesAsCompleted) {
+  const std::array inputs{SourceInput{.path = "main.vela", .text = "func broken("}};
+  std::size_t notifications = 0;
+  const auto parsed =
+      LoadSources(inputs, "main.vela", {}, {}, [&](const SourceProgress&) { ++notifications; });
+  EXPECT_TRUE(HasErrors(parsed.diagnostics));
+  EXPECT_EQ(notifications, 0U);
+}
 
 TEST_F(SourceCaptureTest, BindingManifestReportsJsonParseFailure) {
   ASSERT_NO_FATAL_FAILURE(Write("generated.bindings.json", "{"));

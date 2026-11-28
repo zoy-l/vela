@@ -11,7 +11,8 @@ import unittest
 from tools.config import ROOT
 from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
                                     PROGRAM_CASES)
-from tools.test_support import CommandTestCase, closed_output_command, pending_command
+from tools.test_support import (CommandTestCase, closed_output_command, compilation_diagnostics,
+                                pending_command)
 
 
 class CommandTest(CommandTestCase):
@@ -50,6 +51,36 @@ class CommandTest(CommandTestCase):
         for example in examples:
             with self.subTest(example=example.relative_to(ROOT).as_posix()):
                 self.invoke("check", example)
+
+    def test_run_reports_real_file_progress_without_changing_program_output(self) -> None:
+        self.write("src/player.vela", "export func score(): int { return 42; }")
+        self.write_entry("import 'src/player'; func main(): int { return score(); }")
+        result = self.cached_run()
+        self.assertEqual(result.stdout, "42\n")
+        self.assertEqual(result.stderr, "loading\n[1/2 · 50%] main.vela\n"
+                         "[2/2 · 100%] src/player.vela\nloading\n")
+
+    def test_compilation_progress_finishes_before_source_diagnostics(self) -> None:
+        self.write_entry("func main(): int { return 'wrong'; }")
+        result = self.invoke("run", self.entry, code=65)
+        self.assertTrue(result.stderr.startswith("loading\n[1/1 · 100%] main.vela\nloading\n"))
+        self.assertIn("error:", compilation_diagnostics(result.stderr))
+        self.assertNotIn("\r", result.stderr)
+        self.assertNotIn("\x1b", result.stderr)
+        self.write_entry("func broken(")
+        rejected = self.invoke("run", self.entry, code=65)
+        self.assertTrue(rejected.stderr.startswith("loading\n"))
+        self.assertNotIn("100%", rejected.stderr)
+        self.assertIn("error:", compilation_diagnostics(rejected.stderr))
+
+    def test_progress_prefix_does_not_consume_program_loading_messages(self) -> None:
+        prefix = "loading\n[1/1 · 100%] main.vela\nloading\n"
+        self.assertEqual(compilation_diagnostics(prefix + "loading\nprogram error\n"),
+                         "loading\nprogram error\n")
+        self.assertEqual(compilation_diagnostics("loading\nsource error\n"), "source error\n")
+        self.assertEqual(compilation_diagnostics("native error\n"), "native error\n")
+        self.assertEqual(compilation_diagnostics(prefix.replace("\n", "\r\n") + "program error\r\n"),
+                         "program error\r\n")
 
     def test_jit_cache_prepares_imported_code_without_executing_it(self) -> None:
         library = self.directory / "page.vela"
@@ -209,7 +240,7 @@ class CommandTest(CommandTestCase):
                     self.assertIn("at $lambda" if name == "reported_background_error" else "at main",
                                   result.stderr)
                 else:
-                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(compilation_diagnostics(result.stderr), "")
 
     def test_full_case_mappings_match_pinned_ucd_inputs(self) -> None:
         data = (ROOT / "third_party/unicode_data/inputs/SpecialCasing.txt").read_text(encoding="utf-8")

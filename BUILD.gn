@@ -47,5 +47,6 @@ group("benchmarks") {
   deps = [
     "//benchmarks:vela_aot_benchmarks",
     "//benchmarks:vela_benchmarks",
+    "//benchmarks:vela_production_benchmarks",
   ]
 }

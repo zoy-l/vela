@@ -401,12 +401,13 @@ static_assert(sizeof(Counter) == sizeof(int));
         native_command(self, [self.compiler, *self.platform_arguments, *flags,
                               "-I" + str(ROOT / "include"), self.source], cwd=self.directory)
 
-    def binding_config(self, module: str = "app", *, dependencies: list[str] | None = None) -> Path:
+    def binding_config(self, module: str = "app", *, dependencies: list[str] | None = None,
+                       cpp_shards: int = 1) -> Path:
         return self.write(module + ".json", json.dumps({
             "module": module, "headers": [self.header.name],
             "translation_unit": self.source.name,
             "compilation_database": self.database.name, "output": "generated/" + module,
-            "dependencies": dependencies or []}))
+            "dependencies": dependencies or [], "cpp_shards": cpp_shards}))
 
     def test_publishes_checked_deterministic_dual_output_and_rejects_mixed_generation(self) -> None:
         self.write_header("""#include <cstdint>
@@ -414,13 +415,21 @@ class VELA_CLASS("app.Counter") Counter final { public:
   explicit Counter(std::int64_t initial) noexcept;
   VELA_NAME("add") std::int64_t Add(std::int64_t delta) noexcept;
   VELA_GETTER("value") std::int64_t Value() const noexcept;
+};
+class VELA_CLASS("app.Clock") Clock final { public:
+  static double Now() noexcept;
 };""")
-        config = self.binding_config()
+        config = self.binding_config(cpp_shards=2)
         manifest = generate(config, self.collector, self.resource)
         output = manifest.parent
-        self.assertEqual(verify_manifest(manifest)["registration"], "vela::bindings::module_app::Register")
+        checked = verify_manifest(manifest)
+        self.assertEqual(checked["registration"], "vela::bindings::module_app::Register")
+        self.assertEqual(set(checked["products"]), {
+            "app.vela", "app.d", "app_bindings.h", "app_bindings.cc", "app_bindings_1.cc",
+        })
         self.assertIn("export external class Counter", (output / "app.vela").read_text())
         self.assertIn("static_cast<NativeThunk", (output / "app_bindings.cc").read_text())
+        self.assertIn("NativeFunction::Bind", (output / "app_bindings_1.cc").read_text())
         self.assertTrue((output / "app.d").read_text(encoding="utf-8").startswith(
             "generated/app/app.bindings.json: "))
         before = {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
@@ -429,19 +438,20 @@ class VELA_CLASS("app.Counter") Counter final { public:
         generate(config, self.collector, self.resource)
         self.assertEqual(before, {path.name: (path.read_bytes(), path.stat().st_mtime_ns)
                                   for path in output.iterdir()})
-        self.check_generated_cpp(output / "app_bindings.cc")
+        for source in sorted(output.glob("app_bindings*.cc")):
+            self.check_generated_cpp(source)
         script = output / "app.vela"
         self.invoke("check", str(script))
         self.invoke("fmt", "--check", str(script))
         documentation = self.directory / "bindings.md"
         self.invoke("doc", str(script), str(documentation))
         self.assertIn("external class Counter = 'app.Counter'", documentation.read_text(encoding="utf-8"))
-        generated_cpp = output / "app_bindings.cc"
+        generated_cpp = output / "app_bindings_1.cc"
         original_cpp = generated_cpp.read_bytes()
         generated_cpp.write_bytes(original_cpp + b"// mixed\n")
         rejected = self.invoke("check", str(script), code=65)
         self.assertIn("binding product fingerprint mismatch", rejected.stderr)
-        self.assertIn("app_bindings.cc", rejected.stderr)
+        self.assertIn("app_bindings_1.cc", rejected.stderr)
         generated_cpp.write_bytes(original_cpp)
         (output / "app.vela").write_text("// broken generation\n", encoding="utf-8", newline="\n")
         with self.assertRaisesRegex(ValueError, "Stale or mixed"):

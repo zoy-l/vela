@@ -9,6 +9,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -21,6 +22,94 @@ struct BasicLanguageProgram final {
 };
 
 class BasicLanguageExecutionTest : public testing::TestWithParam<BasicLanguageProgram> {};
+
+TEST(ConditionalTypeTest, UsesContextualTypeForNullableSubclassBranches) {
+  runtime::Isolate isolate{1};
+  test::ExpectStableAnswer(R"(
+class Base {}
+class Child extends Base {}
+class Sibling extends Base {}
+
+func select(flag: bool): Base? {
+  return flag ? Child() : null;
+}
+
+func selectSibling(flag: bool): Base {
+  return flag ? Child() : Sibling();
+}
+
+func main(): int {
+  const values: Base?[] = [true ? Child() : null, false ? null : Child()];
+  const first = values[0];
+  const second = values[1];
+  const result = (select(true) is Child) ? 42 : 0;
+  if (first is Child && second is Child && (selectSibling(false) is Sibling)) {
+    return result;
+  }
+  return 0;
+}
+)",
+                           isolate);
+}
+
+TEST(ConditionalTypeTest, InfersNullableBranchesWithoutContext) {
+  runtime::Isolate isolate{1};
+  test::ExpectStableAnswer(R"(
+class Child {}
+func main(): int {
+  const present = true ? Child() : null;
+  const missing = true ? null : Child();
+  const reversed = false ? null : Child();
+  const nested = true ? (false ? null : Child()) : null;
+  if (present is Child && missing == null && reversed is Child && nested is Child) return 42;
+  return 0;
+}
+)",
+                           isolate);
+}
+
+TEST(ConditionalTypeTest, ReadOnlyCapturesStayNarrowedAcrossNestedConstructorArguments) {
+  runtime::Isolate isolate{1};
+  test::ExpectStableAnswer(R"(
+class Widget {}
+class Style {}
+class Text extends Widget { value: string; style: Style; }
+class Box extends Widget { style: Style; child: Widget; }
+func build(description: string?): () => Widget? {
+  return (): Widget? => description == null ? null : Box(
+    style: Style(),
+    child: Text(value: description, style: Style()),
+  );
+}
+func main(): int {
+  const empty = build(null);
+  if (empty() != null) return 0;
+  const content = build('Vela');
+  const widget = content();
+  if (widget is Box) {
+    const text = widget.child;
+    if (text is Text) return text.value.length + 38;
+  }
+  return 0;
+}
+)",
+                           isolate);
+}
+
+TEST(ConditionalTypeTest, ReadOnlyClosuresObserveOwnerAssignmentsThroughSharedStorage) {
+  runtime::Isolate isolate{1};
+  test::ExpectStableAnswer(R"(
+func main(): int {
+  let value: int? = 1;
+  const read = (): int? => value;
+  value = 21;
+  const observed = read();
+  if (observed == null) return 0;
+  return observed * 2;
+}
+)",
+                           isolate);
+}
 
 TEST_P(BasicLanguageExecutionTest, ChecksCompilesAndExecutesWithGcPressure) {
   const auto& parameter = GetParam();

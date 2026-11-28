@@ -17,6 +17,8 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "compiler/frontend/modules/source_progress.h"
+
 namespace vela::compiler::jit {
 
 enum class CompilerCommand : std::uint8_t;
@@ -48,13 +50,22 @@ class CompilerProcess final {
   // 回调只唤醒消费者，不重入 Exchange；注销等待当前通知结束。
   void SetFileChanged(std::uint64_t resource_id, std::function<void()> changed);
   void Release(CompilerCommand command, std::uint64_t resource_id);
-  std::expected<std::vector<std::byte>, std::string> Exchange(std::span<const std::byte> request);
+  std::expected<std::vector<std::byte>, std::string> Exchange(
+      std::span<const std::byte> request,
+      const frontend::SourceProgressCallback& progress = {});
 
  private:
+  struct PendingProgress final {
+    frontend::SourceProgressKind kind;
+    std::string path;
+    std::size_t completed;
+    std::size_t total;
+  };
   static std::expected<std::shared_ptr<CompilerProcess>, std::string> FinishStart(
       CompilerStreams streams,
       CompilerProcessHandle process);
   void ReadMessages();
+  std::expected<void, std::string> QueueProgress(std::span<const std::byte> bytes);
   void CloseStreams();
   CompilerStreams streams_;
   CompilerProcessHandle process_;
@@ -62,6 +73,7 @@ class CompilerProcess final {
   std::mutex response_mutex_;
   std::condition_variable response_ready_;
   std::optional<std::vector<std::byte>> response_;
+  std::vector<PendingProgress> progress_;
   std::expected<void, std::string> channel_;
   std::mutex callbacks_mutex_;
   absl::flat_hash_map<std::uint64_t, std::function<void()>> callbacks_;

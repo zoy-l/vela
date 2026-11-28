@@ -22,6 +22,7 @@
 #include "base/path.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/compiler.h"
 #include "runtime/isolate/external_resources.h"
@@ -219,14 +220,16 @@ DevelopmentSession::CompilationBase DevelopmentSession::BeginCompilation() {
 
 std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepare(
     SourceUpdate update,
-    DevelopmentOperation operation) {
-  return Prepare(std::move(update), operation, {});
+    DevelopmentOperation operation,
+    const frontend::SourceProgressCallback& progress) {
+  return Prepare(std::move(update), operation, {}, progress);
 }
 
 std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepare(
     SourceUpdate update,
     DevelopmentOperation operation,
-    std::span<const DeclarationId> retained) {
+    std::span<const DeclarationId> retained,
+    const frontend::SourceProgressCallback& progress) {
   const auto base = BeginCompilation();
   const auto previous = base.sources->snapshot();
   DevelopmentResult result;
@@ -260,8 +263,8 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     }
     replacement = std::move(*created);
   }
-  auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update))
-                            : base.sources->Prepare(update, retained);
+  auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update), {}, progress)
+                            : base.sources->Prepare(update, retained, progress);
   result.timings.source = Clock::now() - started;
   if (!source) {
     switch (source.error().status) {
@@ -398,7 +401,7 @@ void DevelopmentSession::Publish() {
       pending_.reset();
       isolate_->heap().Collect();
       const auto retained = isolate_->native_dispatch().RetainedDeclarations();
-      auto candidate = Prepare(std::move(update), operation, retained);
+      auto candidate = Prepare(std::move(update), operation, retained, {});
       if (!candidate) {
         result_ = std::move(candidate.error());
         result_.request = original.request;

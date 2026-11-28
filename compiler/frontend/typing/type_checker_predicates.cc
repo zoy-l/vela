@@ -36,7 +36,7 @@ void TypeChecker::RefinePredicateCall(const Expression& condition, ConditionTrut
       return;
     }
     const auto* binding = LookupLocal(argument.text);
-    if (binding == nullptr || captured_mutables_.contains(binding->id)) {
+    if (binding == nullptr || unstable_captures_.contains(binding->id)) {
       return;
     }
     const auto binding_id = binding->id;
@@ -107,7 +107,7 @@ void TypeChecker::RecordPredicateReturn(const Expression& expression) {
     return;
   }
   auto& predicate = *predicate_scope_;
-  if (predicate.assigned || captured_mutables_.contains(predicate.binding)) {
+  if (predicate.assigned || unstable_captures_.contains(predicate.binding)) {
     return;
   }
   std::optional<bool> returned;
@@ -189,7 +189,7 @@ std::optional<TypeChecker::Type> TypeChecker::PredicateUpperBound(const Type& fi
 
 TypeChecker::PredicateResult TypeChecker::FinishPredicate() {
   auto predicate = std::exchange(predicate_scope_, std::nullopt);
-  if (!predicate || predicate->assigned || captured_mutables_.contains(predicate->binding)) {
+  if (!predicate || predicate->assigned || unstable_captures_.contains(predicate->binding)) {
     return {};
   }
   const auto validate = [&](std::optional<Type> type) -> std::optional<Type> {

@@ -1,5 +1,6 @@
 #include "compiler/frontend/modules/native_binding_source.h"
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <string>
@@ -47,12 +48,15 @@ std::expected<void, std::string> VerifyNativeBindingSource(const std::filesystem
     return std::unexpected("binding manifest generation does not match source: " +
                            PathText(manifest_path));
   }
-  if (!yyjson_is_obj(products) || yyjson_obj_size(products) != 4) {
-    return std::unexpected("binding manifest must contain four fingerprints: " +
+  constexpr std::size_t kOtherProducts = 3;
+  const auto product_count = yyjson_obj_size(products);
+  if (product_count <= kOtherProducts) {
+    return std::unexpected("binding manifest has an invalid product count: " +
                            PathText(manifest_path));
   }
-  for (const std::string_view suffix : {".vela", "_bindings.h", "_bindings.cc", ".d"}) {
-    const auto name = PathText(path.stem()) + std::string(suffix);
+  const auto module = PathText(path.stem());
+  const auto script_name = module + ".vela";
+  const auto verify = [&](const std::string& name) -> std::expected<void, std::string> {
     const auto* expected = GetJsonField(products, name);
     if (!yyjson_is_str(expected)) {
       return std::unexpected("missing binding fingerprint for " + name + ": " +
@@ -68,8 +72,20 @@ std::expected<void, std::string> VerifyNativeBindingSource(const std::filesystem
     if (ContentFingerprint(*product).Hex() != fingerprint) {
       return std::unexpected("binding product fingerprint mismatch: " + PathText(product_path));
     }
-    if (suffix == ".vela" && ContentFingerprint(source).Hex() != fingerprint) {
+    if (name == script_name && ContentFingerprint(source).Hex() != fingerprint) {
       return std::unexpected("captured binding source fingerprint mismatch: " + PathText(path));
+    }
+    return {};
+  };
+  for (const std::string_view suffix : {".vela", "_bindings.h", "_bindings.cc", ".d"}) {
+    if (auto result = verify(module + std::string(suffix)); !result) {
+      return result;
+    }
+  }
+  const auto shards = product_count - kOtherProducts;
+  for (std::size_t index = 1; index < shards; ++index) {
+    if (auto result = verify(module + "_bindings_" + std::to_string(index) + ".cc"); !result) {
+      return result;
     }
   }
   return {};

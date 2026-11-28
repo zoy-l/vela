@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,12 @@ NATIVE_TEST_INCLUDES = (ROOT, ROOT / "include", ROOT / "third_party/abseil-cpp",
                         ROOT / "third_party/googletest/googletest/include")
 NATIVE_PACKAGE_AVAILABLE = (sys.platform in {"win32", "darwin"}
                             or bool(os.environ.get("VELA_TEST_TARGET_SUPPORT_SPEC")))
+
+
+def compilation_diagnostics(output: str) -> str:
+    """Keep diagnostics and program errors after the CLI's plain compilation prefix."""
+    return re.sub(r"\Aloading\r?\n(?:(?:\[\d+/\d+ · \d+%\] [^\r\n]+\r?\n)+loading\r?\n)?",
+                  "", output, count=1)
 
 
 def vela_executable() -> Path:
@@ -126,7 +133,10 @@ def pending_command(test: unittest.TestCase, arguments: list[str | Path], readin
         output.seek(0)
         errors.seek(0)
         test.assertTrue(output.read().startswith(readiness), "main readiness marker was not output")
-        test.assertEqual(errors.read(), b"")
+        diagnostics = errors.read().decode("utf-8")
+        if len(arguments) > 1 and arguments[1] == "run":
+            diagnostics = compilation_diagnostics(diagnostics)
+        test.assertEqual(diagnostics, "")
 
 
 class CommandTestCase(unittest.TestCase):

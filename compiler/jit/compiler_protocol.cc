@@ -400,7 +400,7 @@ auto Fields(Record& value) {
 template <class Record>
   requires std::is_same_v<std::remove_cv_t<Record>, SourcePreparationRequest>
 auto Fields(Record& value) {
-  return std::tie(value.committed, value.update, value.retained);
+  return std::tie(value.committed, value.update, value.retained, value.report_progress);
 }
 
 template <class Record>

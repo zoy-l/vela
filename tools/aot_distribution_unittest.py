@@ -13,7 +13,8 @@ import unittest
 
 from tools.config import ROOT, executable_name, static_library_name
 from tools.test_support import (NATIVE_PACKAGE_AVAILABLE, closed_output_command, compile_native_c_object,
-                                compile_native_host, create_native_package, native_command,
+                                compilation_diagnostics, compile_native_host, create_native_package,
+                                native_command,
                                 native_test_libraries, pending_command, vela_executable)
 from tools.aot_c_fixture import host_source as c_host_source
 from tools.program_fixtures import (OUTPUT_FAILURE_SOURCE, PENDING_OUTPUT_PREFIX, PENDING_SOURCE,
@@ -107,20 +108,21 @@ class NativeDistributionTest(unittest.TestCase):
                         source.write_text(source_text, encoding="utf-8", newline="\n")
                         jit = subprocess.run([str(original), "run", str(source)], cwd=work,
                                             capture_output=True, text=True, encoding="utf-8", timeout=30)
+                        jit_errors = compilation_diagnostics(jit.stderr)
                         application = work / executable_name("app")
                         built = subprocess.run([str(compiler), "build", str(source), "-o", str(application)],
                                                cwd=work, env=environment, capture_output=True,
                                                text=True, encoding="utf-8", timeout=30)
                         if jit.returncode == 65:
                             self.assertEqual(built.returncode, 65, built.stderr)
-                            self.assertEqual(built.stderr, jit.stderr)
+                            self.assertEqual(built.stderr, jit_errors)
                         else:
                             self.assertEqual(built.returncode, 0, built.stderr)
                             native = subprocess.run([str(application)], cwd=work, env=environment,
                                                     capture_output=True, text=True, encoding="utf-8", timeout=30)
                             self.assertEqual(native.returncode, jit.returncode, native.stderr + jit.stderr)
                             self.assertEqual(native.stdout, jit.stdout)
-                            self.assertEqual(built.stderr + native.stderr, jit.stderr)
+                            self.assertEqual(built.stderr + native.stderr, jit_errors)
                         source.unlink()
                         count += 1
                         compared += 1
@@ -156,7 +158,7 @@ class NativeDistributionTest(unittest.TestCase):
                     self.assertEqual(jit.stdout, stdout)
                     app = work / executable_name(name + " 原生")
                     run([compiler, "build", source, "-o", app])
-                    applications.append((app, expected, stdout, jit.stderr))
+                    applications.append((app, expected, stdout, compilation_diagnostics(jit.stderr)))
 
             pending_source = work / "pending.vela"
             pending_source.write_text(PENDING_SOURCE, encoding="utf-8", newline="\n")

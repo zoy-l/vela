@@ -154,7 +154,7 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidInference{"func apply<T>(operation:(T)=>T,value:T):T{return operation(value);} "
                          "func main():int{const operation = (value:dynamic):dynamic=>value; "
                          "return apply<int>(operation,1);}",
-                         "call argument type does not match"},
+                         "cannot pass argument of type"},
         InvalidInference{"func apply<T>(operation:(int)=>T):T{return operation(1);} "
                          "func main():int{return apply((value:dynamic):int=>42);}",
                          "does not match type evidence"},

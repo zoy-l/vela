@@ -210,6 +210,87 @@ func choose(flag: bool, value: string?): int {
                    .Succeeded());
 }
 
+TEST(RefinementTest, ReadOnlyCapturesKeepNullableConditionalFactsAcrossConstructorCalls) {
+  const auto checked = CheckTestSource(R"(
+class Widget {}
+class Style {}
+class Text extends Widget { value: string; style: Style; }
+class Box extends Widget { style: Style; child: Widget; }
+func build(description: string?): () => Widget? {
+  return (): Widget? => description == null ? null : Box(
+    style: Style(),
+    child: Text(value: description, style: Style()),
+  );
+}
+)");
+  EXPECT_TRUE(checked.diagnostics.empty()) << DiagnosticsText(checked.diagnostics);
+}
+
+TEST(RefinementTest, ShadowedWritesAndFieldWritesDoNotInvalidateReadOnlyCaptures) {
+  const auto checked = CheckTestSource(R"(
+func inspect(value: string?): int {
+  const read = (): string? => value;
+  const clear = (value: string?): void => { value = null; };
+  if (value == null) return 0;
+  clear(read());
+  return value.length;
+}
+class Holder { value: string?; }
+func inspectHolder(holder: Holder?): int {
+  const clear = (): void => { if (holder != null) holder.value = null; };
+  if (holder == null) return 0;
+  clear();
+  return holder.value == null ? 42 : 0;
+}
+)");
+  EXPECT_TRUE(checked.Succeeded()) << DiagnosticsText(checked.diagnostics);
+  ASSERT_EQ(checked.diagnostics.size(), 1U);
+  const auto& diagnostic = checked.diagnostics.front();
+  EXPECT_EQ(diagnostic.severity, DiagnosticSeverity::Warning);
+  EXPECT_EQ(diagnostic.code, DiagnosticCode::UnusedParameter);
+  EXPECT_EQ(diagnostic.message, "parameter 'value' is never read");
+}
+
+TEST(RefinementTest, NestedCapturedAssignmentsAndUpdatesInvalidateFactsAfterCalls) {
+  for (const auto* const update : {"x = null", "x += 1", "x++", "--x"}) {
+    SCOPED_TRACE(update);
+    const auto source = std::string(R"(
+func inspect(x: int?): int {
+  const makeWriter = (): () => void => {
+    return (): void => { if (x != null) { )") +
+                        update + R"(; } };
+  };
+  if (x == null) return 0;
+  makeWriter()();
+  return x + 1;
+}
+)";
+    const auto checked = CheckTestSource(source);
+    EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [](const Diagnostic& diagnostic) {
+      return diagnostic.message.contains("'x' may be null");
+    })) << DiagnosticsText(checked.diagnostics);
+  }
+}
+
+TEST(RefinementTest, OwnerWritesInvalidateCapturedFactsAcrossSuspension) {
+  const auto checked = CheckTestSource(R"(
+async func inspect(): Future<int> {
+  let value: string? = 'ready';
+  const read = async (): Future<int> => {
+    if (value == null) return 0;
+    await sleep(0);
+    return value.length;
+  };
+  const pending = read();
+  value = null;
+  return await pending;
+}
+)");
+  ASSERT_EQ(checked.diagnostics.size(), 1U) << DiagnosticsText(checked.diagnostics);
+  EXPECT_EQ(checked.diagnostics.front().severity, DiagnosticSeverity::Error);
+  EXPECT_TRUE(checked.diagnostics.front().message.contains("nullable receiver"));
+}
+
 TEST(RefinementTest, NestedShortCircuitAndBranchesDoNotRestoreInvalidatedCapturedFacts) {
   EXPECT_FALSE(CheckTestSource(R"(
 func inspect(flag: bool): int {

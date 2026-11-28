@@ -29,12 +29,18 @@ config("test_includes") {
   include_dirs = [ root_gen_dir ]
 }
 
+test_binding_sources = [
+  "$target_gen_dir/fixture/bindingfixture_bindings.cc",
+  "$target_gen_dir/fixture/bindingfixture_bindings_1.cc",
+]
+
 generated_file("test_configuration") {
   testonly = true
   outputs = [ "$target_gen_dir/fixture.json" ]
   output_conversion = "json"
   contents = {
     module = "bindingfixture"
+    cpp_shards = 2
     headers = [ rebase_path("test_host.h", target_gen_dir) ]
     translation_unit = rebase_path("test_input.cc", target_gen_dir)
     compilation_database =
@@ -47,11 +53,10 @@ vela_native_bindings("test_generation") {
   testonly = true
   config = "$target_gen_dir/fixture.json"
   outputs = [
-    "$target_gen_dir/fixture/bindingfixture.vela",
-    "$target_gen_dir/fixture/bindingfixture_bindings.h",
-    "$target_gen_dir/fixture/bindingfixture_bindings.cc",
-    "$target_gen_dir/fixture/bindingfixture.bindings.json",
-  ]
+              "$target_gen_dir/fixture/bindingfixture.vela",
+              "$target_gen_dir/fixture/bindingfixture_bindings.h",
+              "$target_gen_dir/fixture/bindingfixture.bindings.json",
+            ] + test_binding_sources
   depfile = "$target_gen_dir/fixture/bindingfixture.d"
   deps = [ ":test_configuration" ]
 }
@@ -73,10 +78,9 @@ generated_file("test_paths") {
 source_set("test_bindings") {
   testonly = true
   sources = [
-    "$target_gen_dir/fixture/bindingfixture_bindings.cc",
-    "test_host.h",
-    "test_input.cc",
-  ]
+              "test_host.h",
+              "test_input.cc",
+            ] + test_binding_sources
   public = [
     "$target_gen_dir/fixture/bindingfixture_bindings.h",
     "$target_gen_dir/fixture_paths.h",

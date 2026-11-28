@@ -172,6 +172,8 @@ TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {
   const auto counts = isolate.layout_counts();
   const auto second = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(&(*first)->image(), &image);
+  EXPECT_EQ(&(*second)->image(), &image);
   EXPECT_EQ(isolate.layout_counts(), counts);
   EXPECT_EQ((*first)->layouts().classes.front(), (*second)->layouts().classes.front());
   const auto first_constants = test::InstanceConstants(**first);
@@ -185,6 +187,7 @@ TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {
   Isolate other(1);
   const auto third = NativeInstance::Instantiate(other, image);
   ASSERT_TRUE(third.has_value());
+  EXPECT_EQ(&(*third)->image(), &image);
   EXPECT_NE((*first)->layouts().classes.front(), (*third)->layouts().classes.front());
 }
 

@@ -16,6 +16,7 @@
 #include <semaphore>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,7 @@
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/ir/ir.h"
 #include "compiler/jit/compiler_protocol.h"
 #include "compiler/jit/test_support.h"
@@ -405,6 +407,50 @@ TEST_F(ExternalCompilerTest, FileChangesNotifyTheHostWithoutPolling) {
   const auto answer = (*session)->RunEntry();
   ASSERT_TRUE(answer);
   EXPECT_EQ(answer->AsInteger(), 42);
+}
+
+TEST_F(ExternalCompilerTest, SourceProgressRunsOnTheCallerAndDrainsBeforeTheResponse) {
+  auto compiler =
+      Compiler::CreateExternal({.executable = Executable(), .cache = directory() / "cache"});
+  ASSERT_TRUE(compiler);
+  auto created = (*compiler)->CreateSources(
+      {.entry = "main.vela", .diagnostics = {}, .reflection = {}, .imports = {}});
+  ASSERT_TRUE(created);
+  auto& source = **created;
+  SourceUpdate update;
+  update.changes.push_back(
+      {.path = "main.vela", .text = "export func answer(): int { return 42; }"});
+  constexpr std::size_t kLibraries = 32;
+  for (std::size_t index = 0; index < kLibraries; ++index) {
+    auto path = "library" + std::to_string(index) + ".vela";
+    update.added_roots.push_back(path);
+    update.changes.push_back({.path = std::move(path), .text = ""});
+  }
+  const auto caller = std::this_thread::get_id();
+  std::size_t completed = 0;
+  std::size_t loading = 0;
+  const auto prepared =
+      source.Prepare(std::move(update), {}, [&](const frontend::SourceProgress& event) {
+        EXPECT_EQ(std::this_thread::get_id(), caller);
+        EXPECT_EQ(event.total, kLibraries + 1);
+        if (event.kind == frontend::SourceProgressKind::File) {
+          EXPECT_EQ(loading, 0U);
+          EXPECT_EQ(event.completed, ++completed);
+          EXPECT_FALSE(event.path.empty());
+        } else {
+          ++loading;
+          EXPECT_EQ(completed, kLibraries + 1);
+        }
+      });
+  ASSERT_TRUE(prepared) << frontend::DiagnosticsText(prepared.error().diagnostics);
+  EXPECT_EQ(completed, kLibraries + 1);
+  EXPECT_EQ(loading, 1U);
+  ASSERT_TRUE(source.Commit(*prepared));
+  const auto silent = source.Prepare(
+      {.base_revision = source.snapshot()->revision, .changes = {}, .added_roots = {}});
+  ASSERT_TRUE(silent) << frontend::DiagnosticsText(silent.error().diagnostics);
+  EXPECT_EQ(completed, kLibraries + 1);
+  EXPECT_EQ(loading, 1U);
 }
 
 TEST_F(ExternalCompilerTest, SourceDeltasRetainUnchangedTextsAndApplyDeletions) {

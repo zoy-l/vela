@@ -27,13 +27,14 @@ Result Equality(Opcode operation, internal::NumericOperands operands) {
     if (left.kind() != right.kind()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    if (left.IsObject()) {
-      const auto kind = Heap::KindOf(*left.AsObject());
-      const auto* layout = Heap::ClassOf(*left.AsObject());
-      if (kind == ObjectKind::Array || kind == ObjectKind::MutableString ||
-          (layout != nullptr && (layout->callable() != nullptr))) {
-        return std::unexpected(ExecutionStatus::TypeError);
-      }
+    const auto has_identity_comparison = [](const HeapObject& object) {
+      const auto* layout = Heap::ClassOf(object);
+      return Heap::KindOf(object) != ObjectKind::MutableString &&
+             (layout == nullptr || layout->callable() == nullptr);
+    };
+    if (left.IsObject() &&
+        (!has_identity_comparison(*left.AsObject()) || !has_identity_comparison(*right.AsObject()))) {
+      return std::unexpected(ExecutionStatus::TypeError);
     }
   }
   const auto equal = IsEqualValue(left, right);

@@ -373,7 +373,7 @@ void SessionReporter::WriteHuman(const ReportEvent& event) {
       *output_ << "\r\033[K[" << completed_ << "] ";
       progress_visible_ = true;
     }
-    *output_ << event.file << " :: " << event.name << " [" << StatusName(*status) << ']';
+    *output_ << event.name << " [" << StatusName(*status) << ']';
     if (!event.skip_reason.empty()) {
       *output_ << ' ' << event.skip_reason;
     }

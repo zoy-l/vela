@@ -1,21 +1,22 @@
 #include "compiler/frontend/flow/capture_analysis.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <ranges>
 #include <string>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
 namespace {
 
 class CaptureAnalysis final {
  public:
-  explicit CaptureAnalysis(absl::flat_hash_set<const void*>& captured) : captured_(&captured) {}
+  explicit CaptureAnalysis(CapturedDeclarations& captured) : captured_(&captured) {}
   void Run(const Program& program);
   void Run(const Function& function);
   void Run(const Class& owner);
@@ -26,15 +27,17 @@ class CaptureAnalysis final {
     BindingKind kind = BindingKind::Mutable;
     std::size_t lambda_depth = 0;
   };
+  enum class Access : std::uint8_t { Read, Write };
+  void RecordReference(const Expression& expression, Access access);
   void Walk(const Function& function);
   void Walk(const Class& owner);
   void Walk(const Statement* statement);
-  void Walk(const Expression* expression);
+  void Walk(const Expression* expression, Access access = Access::Read);
   void WalkScoped(const Statement* statement);
   void Declare(const std::string& name, const void* node, BindingKind kind);
 
   std::vector<absl::flat_hash_map<std::string, Declaration>> scopes_;
-  absl::flat_hash_set<const void*>* captured_;
+  CapturedDeclarations* captured_;
   std::size_t lambda_depth_ = 0;
 };
 
@@ -55,21 +58,44 @@ void CaptureAnalysis::Walk(const Function& function) {
   scopes_.pop_back();
 }
 
-void CaptureAnalysis::Walk(const Expression* expression) {
+void CaptureAnalysis::RecordReference(const Expression& expression, Access access) {
+  for (const auto& scope : scopes_ | std::views::reverse) {
+    const auto found = scope.find(expression.text);
+    if (found == scope.end()) {
+      continue;
+    }
+    const auto& declaration = found->second;
+    if (declaration.kind == BindingKind::Mutable) {
+      if (declaration.lambda_depth < lambda_depth_) {
+        captured_->mutables.insert(declaration.node);
+      }
+      if (access == Access::Write) {
+        captured_->assigned.insert(declaration.node);
+      }
+    }
+    return;
+  }
+}
+
+void CaptureAnalysis::Walk(const Expression* expression, Access access) {
   if (expression == nullptr) {
     return;
   }
   if (expression->kind == Expression::Kind::Name) {
-    for (const auto& scope : scopes_ | std::views::reverse) {
-      const auto found = scope.find(expression->text);
-      if (found != scope.end()) {
-        const auto& declaration = found->second;
-        if (declaration.kind == BindingKind::Mutable && declaration.lambda_depth < lambda_depth_) {
-          captured_->insert(declaration.node);
-        }
-        break;
-      }
-    }
+    RecordReference(*expression, access);
+    return;
+  }
+  if ((expression->kind == Expression::Kind::Binary && expression->operation == TokenKind::Equal) ||
+      expression->kind == Expression::Kind::CompoundAssignment) {
+    Walk(expression->left.get(), Access::Write);
+    Walk(expression->right.get());
+    return;
+  }
+  if (expression->kind == Expression::Kind::Unary &&
+      (expression->operation == TokenKind::PlusPlus ||
+       expression->operation == TokenKind::MinusMinus)) {
+    Walk(expression->operand.get(), Access::Write);
+    return;
   }
   if (expression->function) {
     ++lambda_depth_;
@@ -176,18 +202,15 @@ void CaptureAnalysis::Run(const Class& owner) {
 
 }  // namespace
 
-void CollectCapturedMutableDeclarations(const Program& program,
-                                        absl::flat_hash_set<const void*>& declarations) {
+void CollectCapturedDeclarations(const Program& program, CapturedDeclarations& declarations) {
   CaptureAnalysis(declarations).Run(program);
 }
 
-void CollectCapturedMutableDeclarations(const Function& function,
-                                        absl::flat_hash_set<const void*>& declarations) {
+void CollectCapturedDeclarations(const Function& function, CapturedDeclarations& declarations) {
   CaptureAnalysis(declarations).Run(function);
 }
 
-void CollectCapturedMutableDeclarations(const Class& owner,
-                                        absl::flat_hash_set<const void*>& declarations) {
+void CollectCapturedDeclarations(const Class& owner, CapturedDeclarations& declarations) {
   CaptureAnalysis(declarations).Run(owner);
 }
 

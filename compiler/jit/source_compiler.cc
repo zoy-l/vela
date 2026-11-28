@@ -7,6 +7,7 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/compiler.h"
@@ -34,23 +35,30 @@ SourceResult CompileParsed(Compiler& compiler,
 
 SourceResult CompileSource(Compiler& compiler,
                            std::string_view source,
-                           const SourceOptions& options) {
+                           const SourceOptions& options,
+                           const frontend::SourceProgressCallback& progress) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileModules(compiler, std::span(&input, 1), input.path, options);
+  return CompileModules(compiler, std::span(&input, 1), input.path, options, progress);
 }
 
 SourceResult CompileModules(Compiler& compiler,
                             std::span<const frontend::SourceInput> sources,
                             std::string_view entry,
-                            const SourceOptions& options) {
-  return CompileParsed(compiler, frontend::LoadSources(sources, entry, options.reflection, options.imports),
-                       options);
+                            const SourceOptions& options,
+                            const frontend::SourceProgressCallback& progress) {
+  return CompileParsed(
+      compiler,
+      frontend::LoadSources(sources, entry, options.reflection, options.imports, progress),
+      options);
 }
 
-SourceResult CompileFile(Compiler& compiler, std::string_view path, const SourceOptions& options) {
+SourceResult CompileFile(Compiler& compiler,
+                         std::string_view path,
+                         const SourceOptions& options,
+                         const frontend::SourceProgressCallback& progress) {
   return CompileParsed(compiler,
                        frontend::LoadProgram(path, {}, frontend::SourceLoadMode::Compilation,
-                                             options.reflection, options.imports),
+                                             options.reflection, options.imports, progress),
                        options);
 }
 

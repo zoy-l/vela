@@ -190,6 +190,7 @@ executable("vela_benchmarks") {
     "execution_benchmark.cc",
     "file_capture_benchmark.cc",
     "gc_strategy_benchmark.cc",
+    "jit_policy_benchmark.cc",
     "json_benchmark.cc",
     "liveness_benchmark.cc",
     "mock_benchmark.cc",
@@ -236,6 +237,86 @@ executable("vela_benchmarks") {
     "//third_party:benchmark_main",
     "//third_party:llvm",
     "//third_party:pcre2",
+  ]
+}
+
+production_directory = "$target_gen_dir/production_native"
+production_object = "$production_directory/workload.o"
+production_compiler = "$root_out_dir/vela"
+if (target_os == "win") {
+  production_object = "$production_directory/workload.obj"
+  production_compiler += ".exe"
+}
+
+action("production_native_inputs") {
+  testonly = true
+  script = "//tools/production_benchmarks.py"
+  inputs = [
+    "//tools/aot_benchmarks.py",
+    "//tools/production_cases.py",
+    "//tools/production_json_cases.py",
+    "//tools/production_async_cases.py",
+    "//tools/production_churn_cases.py",
+  ]
+  outputs = [
+    production_object,
+    "$production_object.h",
+    "$production_object.aot.json",
+    "$production_directory/workload.vela",
+    "$production_directory/entries.h",
+    "$production_directory/build_metrics.json",
+    "$production_directory/cases.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(production_compiler, root_build_dir),
+    "--output",
+    rebase_path(production_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
+}
+
+source_set("production_measurement") {
+  testonly = true
+  sources = [
+    "production/allocation.cc",
+    "production/allocation.h",
+    "production/async_runtime.h",
+    "production/contract.h",
+    "production/measurement.cc",
+    "production/measurement.h",
+  ]
+  public_deps = [
+    ":process_memory",
+    "//third_party:abseil",
+    "//third_party:benchmark",
+  ]
+}
+
+executable("vela_production_benchmarks") {
+  testonly = true
+  sources = [
+    "production/aot.cc",
+    "production/aot.h",
+    "production/async.cc",
+    "production/async.h",
+    "production/churn.cc",
+    "production/churn.h",
+    "production/containers.cc",
+    "production/containers.h",
+    "production/json.cc",
+    "production/json.h",
+    "production/main.cc",
+    production_object,
+  ]
+  include_dirs = [ root_gen_dir ]
+  deps = [
+    ":process_memory",
+    ":production_measurement",
+    ":production_native_inputs",
+    "//base:json",
+    "//runtime",
+    "//third_party:benchmark",
   ]
 }
 
@@ -339,11 +420,20 @@ source_set("jit_benchmark_support") {
     "heap_metrics.h",
     "jit_benchmark.cc",
     "jit_benchmark.h",
-    "process_memory.h",
     "workload.h",
     "workload_benchmark.cc",
     "workload_benchmark.h",
   ]
+  public_deps = [
+    ":process_memory",
+    "//compiler:development",
+  ]
+  deps = [ "//third_party:benchmark" ]
+}
+
+source_set("process_memory") {
+  testonly = true
+  sources = [ "process_memory.h" ]
   if (target_os == "win") {
     sources += [ "process_memory_win.cc" ]
   } else if (target_os == "mac") {
@@ -351,8 +441,6 @@ source_set("jit_benchmark_support") {
   } else {
     sources += [ "process_memory_linux.cc" ]
   }
-  public_deps = [ "//compiler:development" ]
-  deps = [ "//third_party:benchmark" ]
 }
 
 source_set("aot_benchmark_kernels") {
@@ -370,6 +458,7 @@ executable("vela_benchmark_tests") {
   sources = [
     "aot_benchmark_unittest.cc",
     "jit_benchmark_unittest.cc",
+    "production/measurement_unittest.cc",
     aot_object,
   ]
   include_dirs = [ root_gen_dir ]
@@ -379,6 +468,7 @@ executable("vela_benchmark_tests") {
     ":aot_benchmark_kernels",
     ":aot_native_inputs",
     ":jit_benchmark_support",
+    ":production_measurement",
     "//base:test_directory",
     "//third_party:gtest_main",
   ]

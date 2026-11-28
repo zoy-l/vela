@@ -19,6 +19,7 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
@@ -149,7 +150,8 @@ class DevelopmentSession final {
 
   [[nodiscard]] std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(
       SourceUpdate update,
-      DevelopmentOperation operation);
+      DevelopmentOperation operation,
+      const frontend::SourceProgressCallback& progress = {});
   [[nodiscard]] DevelopmentResult Submit(DevelopmentCandidate candidate);
   [[nodiscard]] runtime::NativeSafepointEndpoint safepoint_endpoint() const;
   void SetDebugger(runtime::NativeDebugger* debugger) noexcept;
@@ -217,7 +219,8 @@ class DevelopmentSession final {
   std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(
       SourceUpdate update,
       DevelopmentOperation operation,
-      std::span<const DeclarationId> retained);
+      std::span<const DeclarationId> retained,
+      const frontend::SourceProgressCallback& progress);
 
   const std::shared_ptr<const DevelopmentSessionIdentity> identity_;
   std::string entry_;

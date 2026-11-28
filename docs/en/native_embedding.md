@@ -31,7 +31,7 @@ by library compilation and package probes. AOT library manifests expose `sources
 systems can track the complete imported source graph with depfiles.
 
 For UI hosts, select `Materialization::Eager`, `NativeCodeTier::Baseline`, and
-`NativeOptimization::Baseline` in `DevelopmentOptions::compilation`. Every entry is linked before
+`NativeOptimization::Baseline` in `jit::CompileOptions` (or `DevelopmentOptions::compilation`). Every entry is linked before
 the candidate returns, so input and drawing do not trigger compilation. Prepare hot-reload candidates
 on a background thread and publish them on the Isolate thread when ready. `Materialization::OnDemand`
 instead defers compilation until each function's first call and can block that caller. Both modes
@@ -40,6 +40,32 @@ The baseline policy performs local SSA simplification and
 light machine-code optimization to bound stack spills. `NativeOptimization::None` controls both
 IR and machine-code optimization; `NativeOptimization::Release` retains the O3 pipeline.
 These choices are independent of the host's Debug/Release build.
+
+The optional final callback argument to `jit::CompileFile`, `jit::CompileSource`,
+`jit::CompileModules`, and `DevelopmentSession::Prepare` receives `frontend::SourceProgress`.
+Each `File` event reports a path,
+completed count, and total. Counts cover user-module binding after dependency discovery, exclude
+built-in SDK modules, and do not estimate total JIT time. A subsequent `Loading` event marks whole-program
+processing. Callbacks run synchronously on the requesting thread, including external compilation;
+paths are borrowed for the callback, which must not reenter compilation. Without a callback, the
+compiler library remains silent. Initial `run`, `debug`, and `dev` compilation writes
+`[12/40 · 30%] src/player.vela` to stderr, followed only by loading. Terminals update one line and clear
+it on completion or failure; redirected output uses plain text lines.
+
+Hosts sharing a program across Isolates can own one `CreateSources` source session and compiler,
+then pass the immutable candidate from `SourceSession::Prepare` to
+`Compiler::CompileSource(snapshot, options, reuse)`. The snapshot must come from a source session
+created by that compiler; version identity and compilation options must match the reuse cache.
+Commit the source candidate after successful compilation and distribute the returned
+`shared_ptr<const NativeImage>` through each Isolate's `NativeDispatch::Prepare/Publish`.
+Publish on the owning thread between entry calls or at a safepoint, never on the compilation thread.
+Images are complete snapshots: initial loading may join the current positive revision, and later
+publication must advance strictly. Consumers may skip unpublished revisions while still validating
+their own baseline, type contracts, migrations, and retained specializations. Code and read-only
+descriptions are shared; globals, managed constants, and binding slots remain independent.
+Reachable program states, closures, and executions retain older images. Static AOT image bytes may
+be borrowed by reference if they outlive all instances, closures, and executions; no dynamic
+reference-counted wrapper is required.
 
 `Compiler::CreateExternal({executable, cache})` starts the SDK's `vela compile-server` process.
 Use the compiler's public `CreateFiles` API and pass the compiler to the four-argument

@@ -32,6 +32,11 @@ def read_object(path: Path) -> dict:
     return result
 
 
+def cpp_sources(module: str, shards: int) -> list[str]:
+    return [f"{module}_bindings.cc", *(f"{module}_bindings_{index}.cc"
+                                      for index in range(1, shards))]
+
+
 def verify_manifest(path: Path, visiting: set[Path] | None = None) -> dict:
     """Reject stale inputs and mixed products before any consumer uses a dependency."""
     path = path.resolve(strict=True)
@@ -50,9 +55,12 @@ def verify_manifest(path: Path, visiting: set[Path] | None = None) -> dict:
     if not isinstance(bindings, dict) or not isinstance(bindings.get("module"), str):
         raise ValueError(f"Invalid binding model: {path}")
     module = bindings.get("module")
-    expected = {f"{module}.vela", f"{module}_bindings.h", f"{module}_bindings.cc", f"{module}.d"}
     products = manifest.get("products", {})
-    if not isinstance(products, dict) or set(products) != expected:
+    if not isinstance(products, dict) or len(products) < 4:
+        raise ValueError(f"Incomplete binding products: {path}")
+    expected = {f"{module}.vela", f"{module}_bindings.h", f"{module}.d",
+                *cpp_sources(module, len(products) - 3)}
+    if set(products) != expected:
         raise ValueError(f"Incomplete binding products: {path}")
     for name, expected_hash in products.items():
         product = path.parent / name
@@ -77,9 +85,13 @@ def verify_manifest(path: Path, visiting: set[Path] | None = None) -> dict:
 def configuration(path: Path) -> dict:
     config = read_object(path)
     required = {"module", "headers", "translation_unit", "compilation_database", "output"}
-    if not required <= config.keys() or config.keys() - required - {"dependencies", "callbacks", "opaque"}:
+    if not required <= config.keys() or config.keys() - required - {
+            "dependencies", "callbacks", "opaque", "cpp_shards"}:
         raise ValueError("Binding config requires module, headers, translation_unit, "
-                         "compilation_database, output, and optional dependencies")
+                         "compilation_database, and output")
+    shards = config.setdefault("cpp_shards", 1)
+    if type(shards) is not int or not 1 <= shards <= 0xFFFFFFFF:
+        raise ValueError("Binding config requires cpp_shards to be a positive unsigned integer")
     for name in required - {"headers"}:
         if not isinstance(config[name], str) or not config[name]:
             raise ValueError(f"Binding config requires a nonempty {name} string")
@@ -129,6 +141,8 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
     dependency_paths = config["dependencies"]
     dependencies = [verify_manifest(path) for path in dependency_paths]
     module = config["module"]
+    shards = config["cpp_shards"]
+    sources = cpp_sources(module, shards)
     output = config["output"]
     manifest_path = output / f"{module}.bindings.json"
     generator = generator.resolve(strict=True)
@@ -137,6 +151,7 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
                  "--source=" + str(config["translation_unit"]),
                  "--resource-dir=" + str(resource.resolve(strict=True)),
                  "--output-directory=" + str(output),
+                 f"--cpp-shards={shards}",
                  *["--header=" + str(path) for path in config["headers"]],
                  *["--callback=" + name for name in config["callbacks"]],
                  *["--opaque=" + name for name in config["opaque"]],
@@ -146,6 +161,8 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
         raise ValueError(result.stderr.strip() or "Binding collection failed")
     bindings = json.loads(result.stdout)
     products = bindings.pop("products")
+    if set(products) != {f"{module}.vela", f"{module}_bindings.h", *sources}:
+        raise ValueError("Binding generator returned an unexpected set of products")
     parsed_fingerprints = bindings["input_fingerprints"]
     current_fingerprints = fingerprints(generator, list(parsed_fingerprints))
     if current_fingerprints != parsed_fingerprints:
@@ -163,13 +180,14 @@ def generate(config_path: Path, generator: Path, resource: Path, *, check: bool 
         inputs.update(path.parent / name for name in dependency["products"])
     input_paths = sorted(inputs)
     input_hashes = {str(path): digest(path) for path in input_paths}
-    # This token couples the C++ translation unit to its traits header at compile time.
+    # Every C++ translation unit must match the same traits header at compile time.
     token = hashlib.sha256(canonical({"inputs": input_hashes, "bindings": bindings,
                                       "products": products})).hexdigest()
     namespace = bindings["registration"].removesuffix("::Register")
     products[f"{module}_bindings.h"] += (
         f'namespace {namespace} {{ inline constexpr std::string_view kGeneration = "{token}"; }}\n')
-    products[f"{module}_bindings.cc"] += f'static_assert({namespace}::kGeneration == "{token}");\n'
+    for name in sources:
+        products[name] += f'static_assert({namespace}::kGeneration == "{token}");\n'
     products[f"{module}.vela"] = f"// Binding generation: {token}\n" + products[f"{module}.vela"]
     encoded = {name: (format_cpp(text, formatter, style) if name.endswith((".h", ".cc"))
                        else text.encode("utf-8")) for name, text in products.items()}

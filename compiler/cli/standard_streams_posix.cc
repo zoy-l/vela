@@ -10,6 +10,10 @@ bool IsInteractiveStandardOutput() noexcept {
   return isatty(STDOUT_FILENO) != 0;
 }
 
+bool IsInteractiveStandardError() noexcept {
+  return isatty(STDERR_FILENO) != 0;
+}
+
 std::expected<void, std::string> SetBinaryStandardStreams() {
   return {};
 }

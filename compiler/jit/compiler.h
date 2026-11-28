@@ -26,7 +26,6 @@
 namespace vela::compiler {
 class SourceSession;
 class DevelopmentFiles;
-class DevelopmentSession;
 struct SourceSessionConfiguration;
 struct CompiledSourceSnapshot;
 }
@@ -102,6 +101,12 @@ class Compiler {
       std::shared_ptr<const ir::Program> program,
       const CompileOptions& options,
       CodeReuseCache* reuse = nullptr) = 0;
+  // 只编译本 Compiler 创建的源码会话所提供的不可变快照，不创建 Isolate；
+  // 宿主可把同一 image 发布到多个独立执行域。
+  [[nodiscard]] virtual std::expected<CompiledImage, frontend::Diagnostics> CompileSource(
+      const std::shared_ptr<const CompiledSourceSnapshot>& source,
+      const CompileOptions& options,
+      CodeReuseCache* reuse = nullptr);
   [[nodiscard]] CodeResourceCounts resource_counts() const noexcept;
 
  protected:
@@ -110,11 +115,6 @@ class Compiler {
   [[nodiscard]] const std::shared_ptr<CodeResourceCounters>& resource_counters() const noexcept {
     return counters_;
   }
-  friend class ::vela::compiler::DevelopmentSession;
-  virtual std::expected<CompiledImage, frontend::Diagnostics> CompileSource(
-      const std::shared_ptr<const CompiledSourceSnapshot>& source,
-      const CompileOptions& options,
-      CodeReuseCache* reuse);
 
  private:
   std::shared_ptr<CodeLinker> jit_;

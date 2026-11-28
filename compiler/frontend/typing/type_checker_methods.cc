@@ -326,7 +326,7 @@ void TypeChecker::RegisterMethodApplications() {
       interface.methods.try_emplace(method.name, std::move(signature));
     } else {
       classes_.at(owner).methods.try_emplace(method.name, std::move(signature));
-      CollectCapturedMutableDeclarations(method, captured_declarations_);
+      CollectCapturedDeclarations(method, captured_declarations_);
     }
     if (!method.IsVirtualMethod()) {
       continue;

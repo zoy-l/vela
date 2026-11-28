@@ -15,6 +15,7 @@
 #include "base/declaration.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/compiler_process.h"
 #include "compiler/jit/compiler_protocol.h"
@@ -56,7 +57,8 @@ class ExternalSourceSession final : public SourceSession {
         lease_(std::make_shared<SourceLease>(std::move(process), resource_id)) {}
   std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
-      std::span<const DeclarationId> retained) const override {
+      std::span<const DeclarationId> retained,
+      const frontend::SourceProgressCallback& progress) const override {
     const auto failure = [](std::string message) {
       return std::unexpected(SourceCandidateError{
           .diagnostics = jit::CompilationDiagnostic(std::move(message)),
@@ -74,8 +76,9 @@ class ExternalSourceSession final : public SourceSession {
                                           .committed = base->compiler_token,
                                           .update = std::move(update),
                                           .retained = {retained.begin(), retained.end()},
+                                          .report_progress = static_cast<bool>(progress),
                                       });
-    auto response = lease_->process->Exchange(request.bytes());
+    auto response = lease_->process->Exchange(request.bytes(), progress);
     if (!response) {
       return failure(std::move(response.error()));
     }

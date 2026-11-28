@@ -14,6 +14,10 @@ bool IsInteractiveStandardOutput() noexcept {
   return _isatty(1) != 0;
 }
 
+bool IsInteractiveStandardError() noexcept {
+  return _isatty(2) != 0;
+}
+
 std::expected<void, std::string> SetBinaryStandardStreams() {
   constexpr int kStandardInputDescriptor = 0;
   constexpr int kStandardOutputDescriptor = 1;

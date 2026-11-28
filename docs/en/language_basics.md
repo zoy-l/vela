@@ -86,6 +86,9 @@ value establishes a non-null fact; a nullable or dynamic value cannot prove it.
 An assignment replaces the previous fact. Calls that may modify a captured mutable
 local invalidate its fact. Promotion does not change the declared type, so an
 `int?` local can still be assigned null and can still use `??`.
+Captured locals without assignments preserve their facts across calls. Mutable
+captures share storage; owner assignments also invalidate captured facts across
+calls and suspension because an asynchronous closure can resume after them.
 Branches intersect facts at joins. Loops and switches conservatively discard
 facts for locals they may write. Loop backedges and continue paths cannot
 reuse a fact that a previous iteration could invalidate.
@@ -107,6 +110,8 @@ under the [string-context rules](strings.md).
 Conditional expressions check each arm with its condition's facts and merge
 only facts shared by both arms. A write in one arm does not affect checking
 the other arm; for example, `value != null ? value.length : 0` is valid.
+A `T` arm and a `null` arm infer `T?`. An expected type can also provide a common
+supertype for both arms, such as `Widget?` for `null` and a `Text` widget.
 
 Fields and indexed elements are not promoted because another operation may
 change their contents. For a non-null value, copy the value to a local and check
@@ -127,10 +132,10 @@ const result: int = value ?? 42; // result is 42; value remains null.
 Null comparisons are allowed for value types. Null equals only null. Equality
 allows matching underlying types, plus class and interface types where one is a
 subtype of the other. Non-null strings compare by contents, primitives by their
-typed equality, and objects, `Map<K, V>`, and `Set<T>` by identity. Array and
-builder equality remain undefined except for comparison with null.
+typed equality, and objects, arrays, maps, and sets by identity. String
+builders and functions support comparison with null.
 
-Statically typed Map/Set `==` and `!=` require matching collection kinds and type arguments;
+Statically typed array, Map, and Set `==` and `!=` require matching collection kinds and type arguments;
 either operand may be nullable. Separately created collections remain unequal
 even when their contents match. Mutating a collection does not change its identity.
 JIT and AOT compare statically typed collection pointers directly, including
@@ -180,6 +185,10 @@ syntax and type errors. Import resolution failures point to the importing
 string literal. In-memory multi-source compilation uses `<source:1>`,
 `<source:2>`, etc. Single unnamed sources retain line/column without a path.
 The CLI renders `path:line:column: error: message`.
+
+An argument type error points to its value, including for named arguments, and
+reports its actual type, parameter name, and required type. A failed call does
+not produce further type errors from expressions that depend on its result.
 
 Duplicate declarations point to the repeated declaration token; duplicate
 enum members retain their individual location. Unterminated block comments

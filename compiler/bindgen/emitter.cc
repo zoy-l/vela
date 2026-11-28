@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -491,58 +492,108 @@ void EmitThunk(std::ostream& output,
   output << ");\n}\n";
 }
 
-std::string EmitCpp(const Module& module) {
-  std::ostringstream output;
-  output << "#include " << Quote(module.name + "_bindings.h", '"')
-         << "\n"
-            "#include <utility>\n#include <vector>\n"
-            "#include \"runtime/native/native_class.h\"\n"
-            "#include \"runtime/native/native_context.h\"\n"
-            "namespace {\n";
-  std::size_t index = 0;
-  for (const auto& type : module.classes) {
-    for (const auto& member : type.members) {
-      EmitThunk(output, type, member, "NativeThunk" + std::to_string(index++));
+std::string ThunkName(std::size_t type, std::size_t member) {
+  return "NativeThunk" + std::to_string(type) + "_" + std::to_string(member);
+}
+
+void EmitClassFactory(std::ostream& output, const Class& type, std::size_t index) {
+  output << "runtime::NativeClass MakeNativeClass" << index << "() {\n"
+         << "std::vector<runtime::NativeClassMember> members;\n"
+         << "members.reserve(" << type.members.size() << ");\n";
+  for (std::size_t member_index = 0; member_index < type.members.size(); ++member_index) {
+    const auto& member = type.members[member_index];
+    const auto kind = static_cast<unsigned>(member.kind);
+    output << "members.push_back({.kind = static_cast<NativeMemberKind>(" << kind
+           << "), .name = " << Quote(member.name, '"') << ", .parameter_names = {";
+    bool comma = false;
+    for (const auto& parameter : member.parameters) {
+      output << (comma ? ", " : "") << Quote(parameter.name, '"');
+      comma = true;
     }
+    const auto target = ThunkName(index, member_index);
+    output << "}, .function = runtime::NativeFunction::Bind<"
+           << (member.kind == MemberKind::Static && !member.implementation ? target + "Target"
+                                                                           : "&" + target)
+           << ">(" << Quote(member.key, '"') << ")});\n";
   }
-  output << "}\nnamespace " << RegistrationNamespace(module.name) << " {\n"
-         << "std::expected<void, runtime::NativeRegistrationError> Register(runtime::Isolate& "
+  output << "auto type = runtime::NativeClass::Define<::" << type.cpp
+         << ">(std::move(members));\ntype.contract = " << Quote(PublicContract(type), '"')
+         << ";\nreturn type;\n}\n";
+}
+
+void EmitRegistration(std::ostream& output, std::size_t class_count) {
+  output << "namespace detail {\n";
+  for (std::size_t index = 0; index < class_count; ++index) {
+    output << "runtime::NativeClass MakeNativeClass" << index << "();\n";
+  }
+  output << "}\nstd::expected<void, runtime::NativeRegistrationError> Register(runtime::Isolate& "
             "isolate) {\n"
-            "std::vector<runtime::NativeClass> classes;\n";
-  index = 0;
-  for (const auto& type : module.classes) {
-    if (!type.enumerators.empty()) {
-      continue;
-    }
-    output << "{\nstd::vector<runtime::NativeClassMember> members;\n";
-    for (const auto& member : type.members) {
-      const auto kind = static_cast<unsigned>(member.kind);
-      output << "members.push_back({.kind = static_cast<NativeMemberKind>(" << kind
-             << "), .name = " << Quote(member.name, '"') << ", .parameter_names = {";
-      bool comma = false;
-      for (const auto& parameter : member.parameters) {
-        output << (comma ? ", " : "") << Quote(parameter.name, '"');
-        comma = true;
-      }
-      const auto target = "NativeThunk" + std::to_string(index++);
-      output << "}, .function = runtime::NativeFunction::Bind<"
-             << (member.kind == MemberKind::Static && !member.implementation ? target + "Target"
-                                                                             : "&" + target)
-             << ">(" << Quote(member.key, '"') << ")});\n";
-    }
-    output << "auto type = runtime::NativeClass::Define<::" << type.cpp
-           << ">(std::move(members));\ntype.contract = " << Quote(PublicContract(type), '"')
-           << ";\nclasses.push_back(std::move(type));\n}\n";
+            "std::vector<runtime::NativeClass> classes;\n"
+         << "classes.reserve(" << class_count << ");\n";
+  for (std::size_t index = 0; index < class_count; ++index) {
+    output << "classes.push_back(detail::MakeNativeClass" << index << "());\n";
   }
-  output << "return isolate.RegisterNativeModule(std::move(classes));\n}\n}\n";
-  return output.str();
+  output << "return isolate.RegisterNativeModule(std::move(classes));\n}\n";
+}
+
+void EmitCpp(const Module& module, std::size_t shard_count, llvm::json::Object& products) {
+  std::vector<const Class*> classes;
+  std::vector<std::size_t> order;
+  for (const auto& type : module.classes) {
+    if (type.enumerators.empty()) {
+      order.push_back(classes.size());
+      classes.push_back(&type);
+    }
+  }
+  // 先分配成员最多的类型，登记仍按原有类型顺序执行。
+  std::ranges::stable_sort(order, std::greater<>{},
+                           [&](std::size_t index) { return classes[index]->members.size(); });
+  struct Shard final {
+    std::size_t weight = 0;
+    std::vector<std::size_t> classes;
+  };
+  std::vector<Shard> shards(shard_count);
+  for (const auto index : order) {
+    auto& shard = *std::ranges::min_element(shards, {}, &Shard::weight);
+    shard.classes.push_back(index);
+    shard.weight += 1 + classes[index]->members.size();
+  }
+  const auto registration_namespace = RegistrationNamespace(module.name);
+  const auto basename = module.name + "_bindings";
+  for (std::size_t shard_index = 0; shard_index < shard_count; ++shard_index) {
+    const auto& shard = shards[shard_index];
+    std::ostringstream output;
+    output << "#include " << Quote(basename + ".h", '"')
+           << "\n#include <utility>\n#include <vector>\n"
+              "#include \"runtime/native/native_class.h\"\n"
+              "#include \"runtime/native/native_context.h\"\n"
+              "namespace {\n";
+    for (const auto index : shard.classes) {
+      const auto& type = *classes[index];
+      for (std::size_t member = 0; member < type.members.size(); ++member) {
+        EmitThunk(output, type, type.members[member], ThunkName(index, member));
+      }
+    }
+    output << "}\nnamespace " << registration_namespace << " {\nnamespace detail {\n";
+    for (const auto index : shard.classes) {
+      EmitClassFactory(output, *classes[index], index);
+    }
+    output << "}\n";
+    if (shard_index == 0) {
+      EmitRegistration(output, classes.size());
+    }
+    output << "}\n";
+    const auto suffix = shard_index == 0 ? "" : "_" + std::to_string(shard_index);
+    products[basename + suffix + ".cc"] = output.str();
+  }
 }
 
 }  // namespace
 
 std::expected<llvm::json::Object, std::string> Emit(Module& module,
                                                     const std::set<std::string>& headers,
-                                                    const std::string& output_directory) {
+                                                    const std::string& output_directory,
+                                                    std::size_t cpp_shards) {
   auto script = EmitScript(module, output_directory);
   if (!script) {
     return std::unexpected(script.error());
@@ -550,7 +601,7 @@ std::expected<llvm::json::Object, std::string> Emit(Module& module,
   llvm::json::Object products;
   products[module.name + ".vela"] = std::move(*script);
   products[module.name + "_bindings.h"] = EmitHeader(module, headers);
-  products[module.name + "_bindings.cc"] = EmitCpp(module);
+  EmitCpp(module, cpp_shards, products);
   return products;
 }
 

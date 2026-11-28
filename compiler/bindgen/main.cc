@@ -53,6 +53,7 @@ struct Options final {
                                            llvm::cl::cat(category)};
   llvm::cl::list<std::string> callbacks{"callback", llvm::cl::ZeroOrMore, llvm::cl::cat(category)};
   llvm::cl::list<std::string> opaque{"opaque", llvm::cl::ZeroOrMore, llvm::cl::cat(category)};
+  llvm::cl::opt<unsigned> cpp_shards{"cpp-shards", llvm::cl::init(1), llvm::cl::cat(category)};
 };
 
 class SelectedDatabase final : public clang::tooling::CompilationDatabase {
@@ -170,6 +171,11 @@ int Collect(const Options& options) {
     llvm::errs() << "module must be a non-keyword Vela identifier\n";
     return 1;
   }
+  const auto cpp_shards = options.cpp_shards.getValue();
+  if (cpp_shards == 0) {
+    llvm::errs() << "cpp-shards must be positive\n";
+    return 1;
+  }
   std::string error;
   const auto commands = clang::tooling::JSONCompilationDatabase::loadFromFile(
       options.database.getValue(), error, clang::tooling::JSONCommandLineSyntax::AutoDetect);
@@ -242,7 +248,8 @@ int Collect(const Options& options) {
     return 1;
   }
   collection.module.input_fingerprints = files->fingerprints();
-  auto products = Emit(collection.module, collection.headers, options.output.getValue());
+  auto products =
+      Emit(collection.module, collection.headers, options.output.getValue(), cpp_shards);
   if (!products) {
     llvm::errs() << products.error() << '\n';
     return 1;

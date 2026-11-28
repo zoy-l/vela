@@ -6,6 +6,7 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/modules/source_progress.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/jit/compiler.h"
@@ -33,13 +34,16 @@ struct SourceResult final {
                                          const SourceOptions& options = {});
 [[nodiscard]] SourceResult CompileSource(Compiler& compiler,
                                          std::string_view source,
-                                         const SourceOptions& options = {});
+                                         const SourceOptions& options = {},
+                                         const frontend::SourceProgressCallback& progress = {});
 [[nodiscard]] SourceResult CompileModules(Compiler& compiler,
                                           std::span<const frontend::SourceInput> sources,
                                           std::string_view entry,
-                                          const SourceOptions& options = {});
+                                          const SourceOptions& options = {},
+                                          const frontend::SourceProgressCallback& progress = {});
 [[nodiscard]] SourceResult CompileFile(Compiler& compiler,
                                        std::string_view path,
-                                       const SourceOptions& options = {});
+                                       const SourceOptions& options = {},
+                                       const frontend::SourceProgressCallback& progress = {});
 
 }  // namespace vela::compiler::jit

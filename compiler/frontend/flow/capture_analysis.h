@@ -6,12 +6,15 @@
 
 namespace vela::frontend {
 
-// 在控制流收窄前确定可被闭包写入的声明；结果只借用该 AST 的稳定节点地址。
-void CollectCapturedMutableDeclarations(const Program& program,
-                                        absl::flat_hash_set<const void*>& declarations);
-void CollectCapturedMutableDeclarations(const Function& function,
-                                        absl::flat_hash_set<const void*>& declarations);
-void CollectCapturedMutableDeclarations(const Class& owner,
-                                        absl::flat_hash_set<const void*>& declarations);
+struct CapturedDeclarations final {
+  // 可变捕获共享存储；实际被赋值的捕获可能在调用或挂起期间变化。
+  absl::flat_hash_set<const void*> mutables;
+  absl::flat_hash_set<const void*> assigned;
+};
+
+// 在控制流收窄前分析捕获；结果只借用该 AST 的稳定节点地址。
+void CollectCapturedDeclarations(const Program& program, CapturedDeclarations& declarations);
+void CollectCapturedDeclarations(const Function& function, CapturedDeclarations& declarations);
+void CollectCapturedDeclarations(const Class& owner, CapturedDeclarations& declarations);
 
 }  // namespace vela::frontend

@@ -27,6 +27,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/semantic_model.h"
+#include "compiler/frontend/typing/type_inference.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/frontend/typing/unused_imports.h"
 #include "compiler/frontend/typing/unused_parameters.h"
@@ -54,7 +55,7 @@ TypeCheckResult TypeChecker::CheckPrepared(Program& program,
     return {.diagnostics = std::move(specialization_errors), .model = {}};
   }
   specializer_ = &specializer;
-  CollectCapturedMutableDeclarations(program, captured_declarations_);
+  CollectCapturedDeclarations(program, captured_declarations_);
   sources_ = program.sources;
 
   CollectTypes(program);
@@ -168,12 +169,13 @@ void TypeChecker::ReportUnused(const Program& program) {
   }
 }
 
-void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
+void TypeChecker::AddDiagnostic(SourceLocation location, std::string message, std::size_t length) {
   diagnostics_.push_back({
       .location = location,
       .message = std::move(message),
       .source_path =
           location.source_id < sources_.size() ? sources_[location.source_id].path : std::string(),
+      .length = length,
   });
 }
 
@@ -772,6 +774,23 @@ std::optional<std::size_t> TypeChecker::CallParameterIndex(const FunctionInfo& f
   return std::nullopt;
 }
 
+TypeChecker::Type TypeChecker::CheckCallArgument(const CallArgument& argument,
+                                                 const FunctionInfo::Parameter& parameter,
+                                                 std::optional<Type> checked) {
+  const auto& expected = parameter.type;
+  const auto& value = *argument.value;
+  auto actual = checked ? *checked : CheckExpression(value, &expected);
+  RecordConversion(value, expected, actual);
+  if (IsValid(actual) && !CanAssign(expected, actual)) {
+    AddDiagnostic(value.location,
+                  "cannot pass argument of type '" + TypeNameFor(actual) + "' to parameter '" +
+                      parameter.name + "' of type '" + TypeNameFor(expected) + "'",
+                  value.kind == Expression::Kind::Name ? value.text.size() : 0);
+    return InvalidType();
+  }
+  return actual;
+}
+
 TypeChecker::Type TypeChecker::CheckFunctionCall(
     const FunctionInfo& function,
     const Expression& expression,
@@ -781,6 +800,8 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
       &expression, CallDescriptor{.signature = function, .argument_names = argument_names});
   const auto& arguments = expression.arguments;
   const auto location = expression.location;
+  const auto diagnostics_begin = diagnostics_.size();
+  bool valid_arguments = true;
   std::vector<bool> assigned(function.parameters.size(), false);
   std::vector<std::uint32_t> order;
   order.reserve(arguments.size());
@@ -808,13 +829,8 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
     }
     assigned.at(index) = true;
     order.push_back(static_cast<std::uint32_t>(index));
-    const auto expected = parameter.type;
     const auto checked = checked_arguments.empty() ? std::nullopt : checked_arguments[source_index];
-    const Type actual = checked ? *checked : CheckExpression(*argument.value, &expected);
-    RecordConversion(*argument.value, expected, actual);
-    if (IsValid(actual) && !CanAssign(expected, actual)) {
-      AddDiagnostic(argument.location, "call argument type does not match parameter type");
-    }
+    valid_arguments &= IsValid(CheckCallArgument(argument, parameter, checked));
   }
   for (std::size_t index = 0; index < assigned.size(); ++index) {
     const auto& parameter = function.parameters.at(index);
@@ -824,7 +840,9 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
     }
   }
   facts_.argument_order.insert_or_assign(&expression, std::move(order));
-  return function.return_type;
+  return valid_arguments && !HasErrors(std::span(diagnostics_).subspan(diagnostics_begin))
+             ? function.return_type
+             : InvalidType();
 }
 
 TypeChecker::Type TypeChecker::LookupName(const Expression& expression, const Type* expected) {
@@ -911,8 +929,11 @@ const TypeChecker::LocalBinding* TypeChecker::DeclareLocal(std::string_view name
     AddDiagnostic(location, "duplicate local name '" + std::string(name) + "'");
     return nullptr;
   }
-  if (captured_declarations_.contains(declaration)) {
+  if (captured_declarations_.mutables.contains(declaration)) {
     captured_mutables_.insert(binding_id);
+    if (captured_declarations_.assigned.contains(declaration)) {
+      unstable_captures_.insert(binding_id);
+    }
   }
   if (declaration != nullptr) {
     facts_.bindings.emplace(declaration, binding_id);
@@ -1189,6 +1210,13 @@ TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
   if (CanAssign(when_false, when_true)) {
     return when_false;
   }
+  if (const auto common =
+          TypeInference::CommonType(DescribeType(when_true), DescribeType(when_false))) {
+    return ResolveType(*common, VoidTypePolicy::Allowed);
+  }
+  if (expected != nullptr && CanAssign(*expected, when_true) && CanAssign(*expected, when_false)) {
+    return *expected;
+  }
   AddDiagnostic(expression.location, "conditional branches must have a common type");
   return InvalidType();
 }
@@ -1304,8 +1332,8 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     static_cast<void>(RecordDynamicOperands(expression, left, right));
     return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
-  if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
-      left.kind == Type::Kind::Function) {
+  if (left.kind == Type::Kind::MutableString || right.kind == Type::Kind::MutableString ||
+      left.kind == Type::Kind::Function || right.kind == Type::Kind::Function) {
     AddDiagnostic(expression.location, "equality is not defined for this type");
     return InvalidType();
   }
