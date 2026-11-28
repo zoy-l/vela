@@ -1,6 +1,6 @@
 enum Action {
   open,
-  close
+  close,
 }
 
 func describe(action: Action): string {

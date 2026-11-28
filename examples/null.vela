@@ -1,0 +1,12 @@
+func echoNull(value: null): null {
+  return value;
+}
+
+func main(): void {
+  const explicit: null = echoNull(null);
+  const inferred = null; // Inferred as null.
+  const values: null[] = [explicit, inferred];
+
+  print(values[0]); // null
+  print(values.length); // 2
+}

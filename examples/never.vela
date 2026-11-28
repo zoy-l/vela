@@ -1,0 +1,20 @@
+func fail(message: string): never {
+  throw Error(message: message);
+}
+
+func requireValue(value: int?): int {
+  if (value == null) {
+    fail('missing value');
+  }
+  return value; // Only the non-null path can reach this return.
+}
+
+func main(): void {
+  print(requireValue(42)); // 42
+
+  try {
+    print(requireValue(null)); // Throws before print runs.
+  } catch (error: Error) {
+    print(error.message); // missing value
+  }
+}

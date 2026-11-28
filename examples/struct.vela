@@ -1,0 +1,22 @@
+struct Point {
+  x: int;
+  y: int;
+
+  translate(dx: int, dy: int): void {
+    this.x += dx;
+    this.y += dy;
+  }
+}
+
+func main(): void {
+  const original = Point(x: 1, y: 2);
+  let copy = original;
+  copy.translate(3, 4);
+  print('original: ${original.x}, ${original.y}'); // original: 1, 2
+  print('copy: ${copy.x}, ${copy.y}'); // copy: 4, 6
+
+  const points: Point[] = [original];
+  points[0].translate(5, 6);
+  const first = points[0];
+  print('array element: ${first.x}, ${first.y}'); // array element: 6, 8
+}

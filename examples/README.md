@@ -18,7 +18,10 @@ output and where evaluation stops.
 | [bitwise.vela](bitwise.vela) | 64-bit `~`, `&`, `\|`, `^`, `<<`, `>>`, and `>>>` | `-6`, `1`, `7`, `6`, `20`, `-2`, `4611686018427387902`, `1099511627776` |
 | [conditional.vela](conditional.vela) | Right-associative `? :` and evaluation of only the selected branch | `high`, `pass`, `retry`, `selected`, `42` |
 | [null_safe.vela](null_safe.vela) | `?.`, `?.[]`, and `??`; skipped method calls, index expressions, and default expressions | `fallback`, `empty`, `Vela`, `no label`, `label: Vela`, `7`, `index evaluated`, `42` |
+| [null.vela](null.vela) | Explicit `null` parameter and return types, literal inference, and `null[]` | `null`, `2` |
+| [never.vela](never.vela) | Non-returning functions, null narrowing after a guard, and catching the thrown error | `42`, `missing value` |
 | [inheritance.vela](inheritance.vela) | Single inheritance, implicit and explicit `super(...)`, two interfaces, inherited fields, and `override` | `2`, `40`, `2`, `42`, `42`, `bonus counter` |
+| [struct.vela](struct.vela) | Named construction, value copying, and in-place updates to struct array elements | `original: 1, 2`, `copy: 4, 6`, `array element: 6, 8` |
 | [accessors.vela](accessors.vela) | Getter/setter property access and a computed read-only property | `10`, `21`, `42` |
 | [async_tasks.vela](async_tasks.vela) | Async main, `await`, `sleep`, `Future.wait`, `Future.value`, and `Future.microtask` | `42`, `7`, `8`, `0` |
 | [numeric_parse.vela](numeric_parse.vela) | Decimal/hexadecimal integers, nullable tryParse, and decimal exponents | `42`, `255`, `0`, `125`, `0` |
@@ -34,7 +37,10 @@ For example:
 .\out\release\vela.exe run examples\bitwise.vela
 .\out\release\vela.exe run examples\conditional.vela
 .\out\release\vela.exe run examples\null_safe.vela
+.\out\release\vela.exe run examples\null.vela
+.\out\release\vela.exe run examples\never.vela
 .\out\release\vela.exe run examples\inheritance.vela
+.\out\release\vela.exe run examples\struct.vela
 .\out\release\vela.exe run examples\accessors.vela
 .\out\release\vela.exe run examples\async_tasks.vela
 ```

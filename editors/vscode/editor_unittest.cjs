@@ -133,6 +133,26 @@ async function runEditorTests() {
     assert.ok(svg.includes('viewBox="0 0 16 16"'), "language file icons must be bundled for both themes");
   }
   const root = path.resolve(__dirname, "../..");
+  const structUri = vscode.Uri.file(path.join(root, "examples", "struct.vela"));
+  const structDocument = await vscode.workspace.openTextDocument(structUri);
+  const structSyntax = await vscode.commands.executeCommand("_workbench.captureSyntaxTokens", structUri);
+  for (const [spelling, scope] of [["struct", "storage.type.vela"], ["Point", "entity.name.type.vela"]]) {
+    const token = structSyntax.find(token => token.c === spelling && token.t.split(" ").includes(scope));
+    assert.ok(token, `${spelling} must receive ${scope}`);
+    for (const theme of ["dark_modern", "light_modern", "dark_plus", "light_plus"]) {
+      assert.ok(token.r[theme] && !token.r[theme].startsWith("default:"),
+        `${spelling} must have a syntax color in ${theme}`);
+    }
+  }
+  const structSource = structDocument.getText();
+  const structTypes = (await readSemanticTokens(structDocument)).filter(token => token.kind === "struct");
+  assert.deepEqual(structTypes.map(({ offset, spelling, modifiers }) => [offset, spelling, modifiers]), [
+    [structSource.indexOf("Point {"), "Point", ["declaration"]],
+    [structSource.indexOf("Point(x:"), "Point", []],
+    [structSource.indexOf("Point[]"), "Point", []]
+  ]);
+  console.log("PASS: struct keywords and names are highlighted in the runnable example");
+
   const configurationUri = vscode.Uri.file(path.join(__dirname, "language-configuration.json"));
   await vscode.workspace.openTextDocument(configurationUri);
   await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", configurationUri);
