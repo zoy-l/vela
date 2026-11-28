@@ -266,22 +266,55 @@ func main(): int { return read(42); }
 )");
 }
 
-TEST(ControlFlowCompilerTest, AssignmentNarrowsNominalTypesUntilTheirNextWrite) {
+TEST(ControlFlowCompilerTest, NominalSubtypeAccessRequiresANarrowingCheck) {
   test::ExpectRunAnswer(R"(
 class Base {}
 class Child extends Base { answer: int = 42; }
-func main(): int { let value: Base = Child(); return value.answer; }
-)");
-  const auto compiled = ir::test::Prepare(R"(
-class Base {}
-class Child extends Base { answer: int = 42; }
-func read(reset: bool): int {
-  let value: Base = Child();
-  if (reset) value = Base();
-  return value.answer;
+func main(): int {
+  let value: Base = Base();
+  value = Child();
+  if (value is Child) return value.answer;
+  return 0;
 }
 )");
-  EXPECT_FALSE(compiled.Succeeded());
+  for (const auto* const body : {
+           "const value: Base = Child(); return value.answer;",
+           "let value: Base = Base(); value = Child(); return value.answer;",
+       }) {
+    SCOPED_TRACE(body);
+    const auto compiled = ir::test::Prepare(std::string(R"(
+class Base {}
+class Child extends Base { answer: int = 42; }
+func read(): int {
+)") + body + "}");
+    EXPECT_FALSE(compiled.Succeeded());
+  }
+}
+
+TEST(ControlFlowCompilerTest, ComparesInterfaceAndImplementingClassByIdentity) {
+  test::ExpectRunAnswer(R"(
+interface Owner {}
+class Element implements Owner {}
+class Other implements Owner {}
+func compare(owner: Owner?, element: Element): bool {
+  const declared: Owner = element;
+  if (owner == null || owner != declared) return false;
+  return element == owner && owner == element;
+}
+func main(): int {
+  const element = Element();
+  const owner: Owner? = element;
+  return compare(owner, element) &&
+         !compare(Element(), element) && !compare(Other(), element) &&
+         !compare(null, element) ? 42 : 0;
+}
+)");
+  EXPECT_FALSE(ir::test::Prepare(R"(
+class First {}
+class Second {}
+func compare(left: First, right: Second): bool { return left == right; }
+)")
+                   .Succeeded());
 }
 
 TEST(ControlFlowCompilerTest, NeverCollectionElementsDoNotConstrainLaterElementTypes) {

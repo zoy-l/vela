@@ -20,12 +20,6 @@ void TypeChecker::RefineAssignedLocal(const LocalBinding& binding, const Type& v
     predicate_scope_->assigned = true;
   }
   refinements_.Invalidate(binding.id);
-  if (value.kind != Type::Kind::Never && value.kind != Type::Kind::Null &&
-      IsSubtype(value, binding.type) &&
-      !IsSameType(value, binding.type)) {
-    refinements_.Set(binding.id, value);
-    return;
-  }
   if (binding.type.kind != Type::Kind::Dynamic && IsPotentiallyNullable(binding.type) &&
       IsValid(value) && !IsPotentiallyNullable(value)) {
     refinements_.Set(binding.id, NonNullable(binding.type));

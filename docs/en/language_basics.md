@@ -124,11 +124,11 @@ let value: int? = null;
 const result: int = value ?? 42; // result is 42; value remains null.
 ```
 
-Null comparisons are allowed for value types. Equality of nullable values
-requires the same underlying type; null equals only null. Non-null strings
-compare by contents, primitives by their existing typed equality, and class
-objects, `Map<K, V>`, and `Set<T>` by identity. Array and builder equality remain
-undefined except for comparison with null.
+Null comparisons are allowed for value types. Null equals only null. Equality
+allows matching underlying types, plus class and interface types where one is a
+subtype of the other. Non-null strings compare by contents, primitives by their
+typed equality, and objects, `Map<K, V>`, and `Set<T>` by identity. Array and
+builder equality remain undefined except for comparison with null.
 
 Statically typed Map/Set `==` and `!=` require matching collection kinds and type arguments;
 either operand may be nullable. Separately created collections remain unequal

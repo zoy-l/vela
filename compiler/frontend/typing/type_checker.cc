@@ -1309,8 +1309,16 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     AddDiagnostic(expression.location, "equality is not defined for this type");
     return InvalidType();
   }
-  if (!IsSameType(NonNullable(left), NonNullable(right))) {
-    AddDiagnostic(expression.location, "comparison operands must have the same type");
+  const auto lhs = NonNullable(left);
+  const auto rhs = NonNullable(right);
+  if (IsSameType(lhs, rhs)) {
+    return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
+  }
+  const auto is_object = [](const Type& type) {
+    return type.kind == Type::Kind::Class || type.kind == Type::Kind::Interface;
+  };
+  if (!is_object(lhs) || !is_object(rhs) || (!IsSubtype(lhs, rhs) && !IsSubtype(rhs, lhs))) {
+    AddDiagnostic(expression.location, "comparison requires the same type or related object types");
     return InvalidType();
   }
   return {.kind = Type::Kind::Bool, .name = kBoolTypeName};

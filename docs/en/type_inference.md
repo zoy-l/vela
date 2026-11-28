@@ -23,10 +23,12 @@ not imply its complement on false: `value != null && value > 0` proves non-null
 only when true. Negative type tests narrow only when the remaining type can be
 represented.
 
-Assignment can refine a local to the assigned subtype. Reassignment invalidates
-dependent condition aliases; calls and `await` invalidate facts about mutable
-captures. Proofs do not cross closure bodies or acquire guarantees from virtual
-implementations that an override could change.
+An initializer supplies the type of an unannotated local. For an annotated
+local, an initializer or later assignment of a non-null value can establish
+non-nullness of the declared type. Access to members of a more specific nominal
+type requires a type test or cast. Reassignment invalidates dependent condition
+aliases. Calls and `await` invalidate facts about mutable captures. Proofs do
+not cross closure bodies or acquire guarantees from virtual implementations.
 
 ## Generic calls and shared constraints
 
